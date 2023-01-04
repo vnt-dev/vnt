@@ -29,6 +29,9 @@ Virtual Network Tools
 ### 特性
 - IP层数据转发
 - Nat穿透
+  - 点对点穿透
+  - 服务端中继转发
 
 ### Todo
 - 数据加密
+- 客户端中继转发
