@@ -24,6 +24,7 @@ Virtual Network Tools
 - Mac
 - Linux
 - Windows
+  - 依赖 wintun.dll(https://www.wintun.net/)
 
 ### 特性
 - IP层数据转发
