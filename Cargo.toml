@@ -30,7 +30,7 @@ console = "0.15.2"
 mac_address = "1.1.4"
 clap = { version = "4.0.32", features = ["derive"] }
 [target.'cfg(any(unix))'.dependencies]
-tun = { version = "0.5" }
+tun = { path = "./rust-tun" }
 sudo = "0.6.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]

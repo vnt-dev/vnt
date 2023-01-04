@@ -1,0 +1,45 @@
+[package]
+name = "tun"
+version = "0.5.4"
+edition = "2018"
+
+authors = ["meh. <meh@schizofreni.co>"]
+license = "WTFPL"
+
+description = "TUN device creation and handling."
+repository = "https://github.com/meh/rust-tun"
+keywords = ["tun", "network", "tunnel", "bindings"]
+
+[dependencies]
+libc = "0.2"
+thiserror = "1"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios", target_os = "android"))'.dependencies]
+tokio = { version = "1", features = ["net", "macros"], optional = true }
+tokio-util = { version = "0.6", features = ["codec"], optional = true }
+bytes = { version = "1", optional = true }
+byteorder = { version = "1", optional = true }
+# This is only for the `ready` macro.
+futures-core = { version = "0.3", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+ioctl = { version = "0.6", package = "ioctl-sys" }
+
+[dev-dependencies]
+packet = "0.1"
+futures = "0.3"
+
+[features]
+async = ["tokio", "tokio-util", "bytes", "byteorder", "futures-core"]
+
+[[example]]
+name = "read-async"
+required-features = [ "async", "tokio/rt-multi-thread" ]
+
+[[example]]
+name = "read-async-codec"
+required-features = [ "async", "tokio/rt-multi-thread" ]
+
+[[example]]
+name = "ping-tun"
+required-features = [ "async", "tokio/rt-multi-thread" ]

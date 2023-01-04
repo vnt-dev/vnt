@@ -1,12 +1,13 @@
 use std::io;
 use std::io::{Error, Read, Write};
 use std::net::Ipv4Addr;
+use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use bytes::BufMut;
-use tun::platform::posix::{Reader, Writer};
 use tun::Device;
+use tun::platform::posix::{Reader, Writer};
 
 pub fn create_tun(
     address: Ipv4Addr,
@@ -29,27 +30,27 @@ pub fn create_tun(
 
     let dev = tun::create(&config).unwrap();
 
-    let up_eth_str: String = format!("ifconfig utun3 {:?} {:?} up ", address, gateway);
+    // let up_eth_str: String = format!("ifconfig utun3 {:?} {:?} up ", address, gateway);
     let route_add_str: String = format!(
         "sudo route -n add -net {:?} -netmask {:?} {:?}",
         address, netmask, gateway
     );
-
-    let up_eth_out = Command::new("sh")
-        .arg("-c")
-        .arg(up_eth_str)
-        .output()
-        .expect("sh exec error!");
-    if !up_eth_out.status.success(){
-        return Err(crate::error::Error::Stop(format!("设置地址失败:{:?}", up_eth_out)));
-    }
+    //
+    // let up_eth_out = Command::new("sh")
+    //     .arg("-c")
+    //     .arg(up_eth_str)
+    //     .output()
+    //     .expect("sh exec error!");
+    // if !up_eth_out.status.success() {
+    //     return Err(crate::error::Error::Stop(format!("设置地址失败:{:?}", up_eth_out)));
+    // }
     // println!("{:?}", up_eth_out);
     let if_config_out = Command::new("sh")
         .arg("-c")
         .arg(route_add_str)
         .output()
         .expect("sh exec error!");
-    if !if_config_out.status.success(){
+    if !if_config_out.status.success() {
         return Err(crate::error::Error::Stop(format!("设置路由失败:{:?}", if_config_out)));
     }
     // println!("{:?}", if_config_out);
