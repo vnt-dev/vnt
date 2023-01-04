@@ -28,6 +28,7 @@ Virtual Network Tools
 
 ### 特性
 - IP层数据转发
+  - tun虚拟网卡
 - Nat穿透
   - 点对点穿透
   - 服务端中继转发
