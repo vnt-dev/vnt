@@ -82,15 +82,15 @@ pub fn init_nat_info(public_ip: u32, public_port: u16) {
 
 #[derive(Clone, Debug)]
 pub struct CurrentDeviceInfo {
-    virtual_ip: Ipv4Addr,
-    virtual_gateway: Ipv4Addr,
-    virtual_netmask: Ipv4Addr,
+    pub(crate) virtual_ip: Ipv4Addr,
+    pub(crate) virtual_gateway: Ipv4Addr,
+    pub(crate)  virtual_netmask: Ipv4Addr,
     //网络地址
-    virtual_network: Ipv4Addr,
+    pub(crate)  virtual_network: Ipv4Addr,
     //直接广播地址
-    broadcast_address: Ipv4Addr,
+    pub(crate)   broadcast_address: Ipv4Addr,
     //链接的服务器地址
-    connect_server: SocketAddr,
+    pub(crate)  connect_server: SocketAddr,
 }
 
 impl CurrentDeviceInfo {
@@ -114,11 +114,11 @@ impl CurrentDeviceInfo {
 
 #[derive(Clone,Debug)]
 pub struct Route {
-    address: SocketAddr,
+    pub(crate) address: SocketAddr,
     //用心跳探测延迟，收包时更新
-    delay: i64,
+    pub(crate) delay: i64,
     //收包时更新，如果太久没有收到消息则剔除
-    recv_time: i64,
+    pub(crate) recv_time: i64,
 }
 
 impl Route {
@@ -126,7 +126,7 @@ impl Route {
         Self {
             address,
             delay: -1,
-            recv_time: Local::now().timestamp(),
+            recv_time: Local::now().timestamp_millis(),
         }
     }
 }

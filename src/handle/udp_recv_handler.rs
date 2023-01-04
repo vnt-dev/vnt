@@ -200,12 +200,12 @@ fn other_handle(
         }
         Protocol::Control => {
             match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
-                ControlPacket::PingPacket(_) => {
+                ControlPacket::PingPacket(ping) => {
                     net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
                     udp.send_to(&net_packet.buffer()[..12], peer_addr)?;
                 }
                 ControlPacket::PongPacket(pong_packet) => {
-                    let current_time = Local::now().timestamp();
+                    let current_time = Local::now().timestamp_millis();
                     let rt = current_time - pong_packet.time();
                     if rt >= 0 {
                         if peer_addr == server_addr {

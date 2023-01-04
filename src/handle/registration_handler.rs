@@ -91,7 +91,7 @@ fn registration_request_packet(token: String, mac_address: String) -> Result<Net
 
 pub fn fast_registration(udp: &UdpSocket, server_address: SocketAddr) -> Result<()> {
     let last = REGISTRATION_TIME.load(Ordering::Relaxed);
-    let new = Local::now().timestamp();
+    let new = Local::now().timestamp_millis();
     if new - last < 2000
         || REGISTRATION_TIME
         .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
@@ -106,7 +106,7 @@ pub fn fast_registration(udp: &UdpSocket, server_address: SocketAddr) -> Result<
     if let Some((token, mac_address)) = option {
         let request_packet = registration_request_packet(token, mac_address)?;
         udp.send_to(request_packet.buffer(), server_address)?;
-        REGISTRATION_TIME.store(Local::now().timestamp(), Ordering::Relaxed);
+        REGISTRATION_TIME.store(Local::now().timestamp_millis(), Ordering::Relaxed);
         return Ok(());
     }
     return Err(Error::Stop("注册信息不存在".to_string()));

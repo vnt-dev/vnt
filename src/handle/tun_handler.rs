@@ -71,7 +71,7 @@ fn handle(
     ipv4_turn_packet.set_payload(ipv4_packet.buffer);
     //优先发到直连到地址
     if let Some(route) = DIRECT_ROUTE_TABLE.get(&dest_ip) {
-        let current_time = Local::now().timestamp();
+        let current_time = Local::now().timestamp_millis();
         if current_time - route.recv_time < 3_000 {
             udp.send_to(&net_packet.buffer()[..(4 + 8 + data_len)], route.address)?;
             return Ok(());

@@ -70,6 +70,7 @@ pub struct PongPacket<B> {
     buffer: B,
 }
 
+
 impl<B: AsRef<[u8]>> PingPacket<B> {
     pub fn new(buffer: B) -> Result<PingPacket<B>> {
         let len = buffer.as_ref().len();
@@ -98,6 +99,15 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> PingPacket<B> {
     }
 }
 
+impl<B: AsRef<[u8]>> fmt::Debug for PingPacket<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PingPacket")
+            .field("time", &self.time())
+            .field("epoch", &self.epoch())
+            .finish()
+    }
+}
+
 impl<B: AsRef<[u8]>> PongPacket<B> {
     pub fn new(buffer: B) -> Result<PongPacket<B>> {
         let len = buffer.as_ref().len();
@@ -117,6 +127,14 @@ impl<B: AsRef<[u8]>> PongPacket<B> {
 impl<B: AsRef<[u8]> + AsMut<[u8]>> PongPacket<B> {
     pub fn set_time(&mut self, time: i64) {
         self.buffer.as_mut()[..8].copy_from_slice(&time.to_be_bytes())
+    }
+}
+
+impl<B: AsRef<[u8]>> fmt::Debug for PongPacket<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PongPacket")
+            .field("time", &self.time())
+            .finish()
     }
 }
 

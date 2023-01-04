@@ -1,11 +1,11 @@
 use std::{io, thread};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+use std::sync::atomic::Ordering;
 
 use clap::Parser;
 use console::style;
-use crossbeam::sync::Parker;
 
-use crate::handle::{CurrentDeviceInfo, DEVICE_LIST, NAT_INFO, NatInfo};
+use crate::handle::{CurrentDeviceInfo, DEVICE_LIST, DIRECT_ROUTE_TABLE, NAT_INFO, NatInfo, SERVER_RT};
 use crate::handle::registration_handler::registration;
 use crate::tun_device::create_tun;
 
@@ -96,16 +96,14 @@ fn main() {
     println!("virtual_gateway:{:?}", virtual_gateway);
     println!("virtual_netmask:{:?}", virtual_netmask);
     println!("当前设备ip(virtual_ip):{}", style(virtual_ip).green());
-    let parker = Parker::new();
     //心跳线程
     {
-        let un_parker = parker.unparker().clone();
         let udp = udp.try_clone().unwrap();
         let _ = thread::spawn(move || {
             if let Err(e) = handle::heartbeat_handler::handle_loop(udp, server_address) {
                 println!("心跳线程停止:{:?}", e);
             }
-            un_parker.unpark();
+            std::process::exit(1);
         });
     }
     //初始化nat数据
@@ -117,7 +115,6 @@ fn main() {
     let (punch_sender, cone_receiver, req_symmetric_receiver, res_symmetric_receiver) = handle::punch_handler::bounded();
     //udp数据处理
     {
-        let un_parker = parker.unparker().clone();
         // 低优先级的udp数据通道
         let (sender, receiver) = crossbeam::channel::bounded(100);
         let udp1 = udp.try_clone().unwrap();
@@ -132,16 +129,15 @@ fn main() {
             ) {
                 println!("udp数据处理线程停止:{:?}", e);
             }
-            un_parker.unpark();
+            std::process::exit(1);
         });
         let udp1 = udp.try_clone().unwrap();
-        let un_parker = parker.unparker().clone();
         let _ = thread::spawn(move || {
             let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
             if let Err(e) = handle::udp_recv_handler::other_loop(udp1, receiver, current_device, punch_sender) {
                 println!("udp数据处理线程停止:{:?}", e);
             }
-            un_parker.unpark();
+            std::process::exit(1);
         });
     }
     //打洞处理
@@ -171,15 +167,82 @@ fn main() {
     //tun数据处理
     {
         let udp = udp.try_clone().unwrap();
-        let un_parker = parker.unparker().clone();
         let _ = thread::spawn(move || {
             let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
             if let Err(e) = handle::tun_handler::handle_loop(udp, tun_reader, current_device) {
                 println!("tun数据处理线程停止:{:?}", e);
             }
-            un_parker.unpark();
+            std::process::exit(1);
         });
     }
-    parker.park();
-    std::process::exit(1);
+    use console::Term;
+    let term = Term::stdout();
+    let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
+    loop {
+        println!("{}", style("Please enter the command (Usage: list,status,exit,help):").color256(102));
+        match term.read_line() {
+            Ok(cmd) => {
+                command(cmd.trim(), &current_device);
+            }
+            Err(e) => {
+                println!("read_line:{:?}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+fn command(cmd: &str, current_device: &CurrentDeviceInfo) {
+    match cmd {
+        "list" => {
+            let server_delay = SERVER_RT.load(Ordering::Relaxed);
+            let device_list_lock = DEVICE_LIST.lock();
+            let (_epoch, device_list) = device_list_lock.clone();
+            drop(device_list_lock);
+            if device_list.is_empty() {
+                println!("No other devices found");
+                return;
+            }
+            for ip in device_list {
+                if let Some(route_ref) = DIRECT_ROUTE_TABLE.get(&ip) {
+                    let str = if route_ref.value().delay >= 0 {
+                        format!("{}(p2p delay:{}ms)", ip, route_ref.value().delay)
+                    } else {
+                        format!("{}(p2p)", ip)
+                    };
+                    drop(route_ref);
+                    println!("{}", style(str).green());
+                } else {
+                    let str = if server_delay >= 0 {
+                        format!("{}(relay delay:{}ms)", ip, server_delay * 2)
+                    } else {
+                        format!("{}(relay)", ip)
+                    };
+                    println!("{}", style(str).blue());
+                }
+            }
+        }
+        "status" => {
+            let server_delay = SERVER_RT.load(Ordering::Relaxed);
+            println!("Virtual ip:{}", style(current_device.virtual_ip).green());
+            println!("Virtual gateway:{}", style(current_device.virtual_gateway).green());
+            println!("Relay server :{}", style(current_device.connect_server).green());
+            if server_delay >= 0 {
+                println!("Delay of relay server :{}", style(server_delay).green());
+            }
+        }
+        "help" | "h" => {
+            println!("Options: ");
+            println!("{} , Query the virtual IP of other devices", style("list").green());
+            println!("{} , View current device status", style("status").green());
+            println!("{} , Exit the program", style("exit").green());
+        }
+        "exit" => {
+            std::process::exit(1);
+        }
+        _ => {
+            println!("command {} not fount. ", style(cmd).red());
+            println!("Try to enter: '{}'", style("help").green());
+        }
+    }
 }
