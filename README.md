@@ -16,6 +16,7 @@ Virtual Network Tools
 
 <img width="437" alt="图片" src="https://user-images.githubusercontent.com/49143209/210380969-4a7c0f23-1e88-4ab6-9cc2-0c0f086848ac.png">
 
+- token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
 ### 支持平台
 - Mac
 - Linux
