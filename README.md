@@ -18,9 +18,10 @@ Virtual Network Tools
 
   <img width="437" alt="图片" src="https://user-images.githubusercontent.com/49143209/210380969-4a7c0f23-1e88-4ab6-9cc2-0c0f086848ac.png">
 
-- 查看其他已连接的设备(p2p表示NAT打洞成功，relay表示使用服务器中继转发)
+- 使用"list"查看其他已连接的设备(p2p表示NAT打洞成功，relay表示使用服务器中继转发),"status"查看当前设备状态
 
-  ![图片](https://user-images.githubusercontent.com/49143209/210683578-df4ee958-6e77-44f4-b6af-2b9c907a952a.png)
+  ![图片](https://user-images.githubusercontent.com/49143209/210685314-6e0d674f-b481-4150-bc84-275155c565fc.png)
+
 
 - token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
 - 公共服务器目前的配置是2核4G 4Mbps，有需要再扩展~
