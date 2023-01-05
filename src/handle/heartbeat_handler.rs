@@ -36,7 +36,7 @@ pub fn handle_loop(udp: UdpSocket, server_addr: SocketAddr) -> Result<()> {
                 let _ = udp.send_to(net_packet.buffer(), route.address);
             } else {
                 DIRECT_ROUTE_TABLE.remove_if(&virtual_ip, |_, route| {
-                    current_time - route.recv_time <= MAX_INTERVAL
+                    current_time - route.recv_time > MAX_INTERVAL
                 });
             }
         }
