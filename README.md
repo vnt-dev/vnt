@@ -30,6 +30,7 @@ Virtual Network Tools
 - 需要root/管理员权限
 - 使用命令行运行
 - Mac和Linux下需要加可执行权限(例如:chmod +x ./switch-macos)
+- 暂时固定使用的10.13.0.1/24网段，需要避免和已有的路由冲突
 
 ### 支持平台
 - Mac
