@@ -18,7 +18,7 @@ Virtual Network Tools
 
   <img width="437" alt="图片" src="https://user-images.githubusercontent.com/49143209/210380969-4a7c0f23-1e88-4ab6-9cc2-0c0f086848ac.png">
 
-- 使用"list"查看其他已连接的设备(p2p表示NAT打洞成功，relay表示使用服务器中继转发),"status"查看当前设备状态
+- 输入"list"查看其他已连接的设备(p2p表示NAT打洞成功，relay表示使用服务器中继转发),"status"查看当前设备状态
 
   ![图片](https://user-images.githubusercontent.com/49143209/210685314-6e0d674f-b481-4150-bc84-275155c565fc.png)
 
