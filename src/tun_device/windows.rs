@@ -51,6 +51,7 @@ pub fn create_tun(
                 }
             },
             Err(e) => {
+                log::error!("wintun.dll not found");
                 println!("{}", console::style("wintun.dll not found").red());
                 return Err(Error::Stop(format!("{:?}", e)));
             }

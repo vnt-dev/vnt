@@ -148,9 +148,10 @@ pub fn nat_test_() -> io::Result<NatType> {
     }
     Ok(NatType::Cone)
 }
+
 #[test]
-fn nat_test_run(){
+fn nat_test_run() {
     let udp = UdpSocket::bind("0.0.0.0:101").unwrap();
     let print = public_ip_list_(&udp).unwrap();
-    println!("{:?}",print);
+    println!("{:?}", print);
 }

@@ -31,7 +31,29 @@ struct Args {
     token: String,
 }
 
+fn log_init() {
+    let home = dirs::home_dir().unwrap().join(".switch");
+    if !home.exists() {
+        std::fs::create_dir(&home).expect(" Failed to create '.switch' directory");
+    }
+    let logfile = log4rs::append::file::FileAppender::builder()
+        // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
+        .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new("{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n")))
+        .build(home.join("switch.log"))
+        .unwrap();
+    let config = log4rs::Config::builder()
+        .appender(log4rs::config::Appender::builder().build("logfile", Box::new(logfile)))
+        .build(
+            log4rs::config::Root::builder()
+                .appender("logfile")
+                .build(log::LevelFilter::Info),
+        )
+        .unwrap();
+    let _ = log4rs::init_config(config);
+}
+
 fn main() {
+    log_init();
     let args = Args::parse();
     #[cfg(windows)]
     if !admin_check::is_app_elevated() {
@@ -72,6 +94,7 @@ fn main() {
                 if e.kind() == io::ErrorKind::AddrInUse {
                     port += 1;
                 } else {
+                    log::error!("创建udp失败 {:?}",e);
                     println!("创建udp失败:{:?}", e);
                     panic!()
                 }
@@ -101,6 +124,7 @@ fn main() {
         let udp = udp.try_clone().unwrap();
         let _ = thread::spawn(move || {
             if let Err(e) = handle::heartbeat_handler::handle_loop(udp, server_address) {
+                log::error!("心跳线程停止 {:?}",e);
                 println!("心跳线程停止:{:?}", e);
             }
             std::process::exit(1);
@@ -127,6 +151,7 @@ fn main() {
                 tun_writer,
                 current_device,
             ) {
+                log::error!("udp数据处理线程停止 {:?}",e);
                 println!("udp数据处理线程停止:{:?}", e);
             }
             std::process::exit(1);
@@ -135,6 +160,7 @@ fn main() {
         let _ = thread::spawn(move || {
             let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
             if let Err(e) = handle::udp_recv_handler::other_loop(udp1, receiver, current_device, punch_sender) {
+                log::error!("udp数据处理线程停止 {:?}",e);
                 println!("udp数据处理线程停止:{:?}", e);
             }
             std::process::exit(1);
@@ -146,6 +172,7 @@ fn main() {
         let _ = thread::spawn(move || {
             let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
             if let Err(e) = handle::punch_handler::cone_handle_loop(cone_receiver, udp1, current_device) {
+                log::error!("打洞响应线程停止 {:?}",e);
                 println!("打洞响应线程停止:{:?}", e);
             }
         });
@@ -153,6 +180,7 @@ fn main() {
         let _ = thread::spawn(move || {
             let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
             if let Err(e) = handle::punch_handler::req_symmetric_handle_loop(req_symmetric_receiver, udp1, current_device) {
+                log::error!("打洞触发线程停止 {:?}",e);
                 println!("打洞触发线程停止:{:?}", e);
             }
         });
@@ -160,6 +188,7 @@ fn main() {
         let _ = thread::spawn(move || {
             let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
             if let Err(e) = handle::punch_handler::res_symmetric_handle_loop(res_symmetric_receiver, udp1, current_device) {
+                log::error!("打洞触发线程停止 {:?}",e);
                 println!("打洞触发线程停止:{:?}", e);
             }
         });
@@ -170,6 +199,7 @@ fn main() {
         let _ = thread::spawn(move || {
             let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
             if let Err(e) = handle::tun_handler::handle_loop(udp, tun_reader, current_device) {
+                log::error!("tun数据处理线程停止 {:?}",e);
                 println!("tun数据处理线程停止:{:?}", e);
             }
             std::process::exit(1);

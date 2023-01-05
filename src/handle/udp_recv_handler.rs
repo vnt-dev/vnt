@@ -59,7 +59,8 @@ pub fn recv_loop(
                 }
             }
             Err(e) => {
-                println!("{:?}", e);
+                log::error!("{:?}",e);
+                // println!("{:?}", e);
             }
         };
     }
@@ -115,7 +116,7 @@ fn recv_handle(
                     return Err(Error::Stop("处理线程停止".to_string()));
                 }
                 Err(e) => {
-                    println!("子线程处理 :{:?}", e);
+                    log::error!("子线程处理 {:?}",e);
                 }
             }
         }
@@ -137,7 +138,7 @@ pub fn other_loop(
                 return Err(Error::Stop(str));
             }
             Err(e) => {
-                println!("{:?}", e)
+                log::error!("other_loop {:?}",e);
             }
         }
     }
@@ -194,7 +195,7 @@ fn other_handle(
                     }
                 }
                 InErrorPacket::OtherError(e) => {
-                    println!("{:?}", e.message());
+                    log::error!("OtherError {:?}",e.message());
                 }
             }
         }
@@ -292,7 +293,7 @@ fn other_handle(
             }
         }
         Protocol::UnKnow(p) => {
-            println!("未知协议:{}", p)
+            log::error!("未知协议 {}",p);
         }
     }
     Ok(())

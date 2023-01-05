@@ -215,7 +215,7 @@ pub fn res_symmetric_handle_loop(
                     }
                 }
                 if let Err(e) = handle(&udp, list, packet.buffer()) {
-                    println!("{:?}", e);
+                    log::error!("{:?}",e)
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -269,7 +269,7 @@ pub fn handle_loop(
                     }
                 }
                 if let Err(e) = handle(&udp, list, packet.buffer()) {
-                    println!("{:?}", e);
+                    log::error!("{:?}",e)
                 }
             }
             Err(_) => {
@@ -302,7 +302,7 @@ fn punch_request_handle(udp: &UdpSocket, cur_info: &CurrentDeviceInfo) -> Result
         if let Err(e) = send_punch(&udp,
                                    &cur_info,
                                    nat_info) {
-            println!("发送打洞数据失败 :{:?}", e);
+            log::error!("发送打洞数据失败 {:?}",e)
         }
         Ok(())
     } else {

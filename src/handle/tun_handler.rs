@@ -120,7 +120,7 @@ pub fn handle_loop(
         match handle(&udp, data, &cur_info, &mut net_packet) {
             Ok(_) => {}
             Err(e) => {
-                println!("{:?}", e)
+                log::error!("{:?}",e)
             }
         }
     }

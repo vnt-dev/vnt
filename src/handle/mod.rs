@@ -1,4 +1,4 @@
-use std::net::{ Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
@@ -84,13 +84,13 @@ pub fn init_nat_info(public_ip: u32, public_port: u16) {
 pub struct CurrentDeviceInfo {
     pub(crate) virtual_ip: Ipv4Addr,
     pub(crate) virtual_gateway: Ipv4Addr,
-    pub(crate)  virtual_netmask: Ipv4Addr,
+    pub(crate) virtual_netmask: Ipv4Addr,
     //网络地址
-    pub(crate)  virtual_network: Ipv4Addr,
+    pub(crate) virtual_network: Ipv4Addr,
     //直接广播地址
-    pub(crate)   broadcast_address: Ipv4Addr,
+    pub(crate) broadcast_address: Ipv4Addr,
     //链接的服务器地址
-    pub(crate)  connect_server: SocketAddr,
+    pub(crate) connect_server: SocketAddr,
 }
 
 impl CurrentDeviceInfo {
@@ -112,7 +112,7 @@ impl CurrentDeviceInfo {
     }
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct Route {
     pub(crate) address: SocketAddr,
     //用心跳探测延迟，收包时更新
