@@ -1,7 +1,6 @@
 use std::io;
 use std::io::{Error, Read, Write};
 use std::net::Ipv4Addr;
-use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
@@ -28,7 +27,7 @@ pub fn create_tun(
         config.packet_information(true);
     });
 
-    let dev = tun::create(&config).unwrap();
+    let mut dev = tun::create(&config).unwrap();
 
     // let up_eth_str: String = format!("ifconfig utun3 {:?} {:?} up ", address, gateway);
     let route_add_str: String = format!(
@@ -104,53 +103,3 @@ impl TunWriter {
         }
     }
 }
-
-// pub fn main1() {
-//     loop {
-//         let len = reader.read(&mut buffer).unwrap();
-//         println!("{:?}", &buffer[..len]);
-//         match ip::Packet::new(&buffer[4..len]) {
-//             Ok(ip::Packet::V4(pkt)) => {
-//                 match icmp::Packet::new(pkt.payload()) {
-//                     Ok(icmp) => {
-//                         match icmp.echo() {
-//                             Ok(icmp) => {
-//                                 println!("{:?}", icmp);
-//                                 let reply = ip::v4::Builder::default()
-//                                     .id(0x42)
-//                                     .unwrap()
-//                                     .ttl(64)
-//                                     .unwrap()
-//                                     .source(pkt.destination())
-//                                     .unwrap()
-//                                     .destination(pkt.source())
-//                                     .unwrap()
-//                                     .icmp()
-//                                     .unwrap()
-//                                     .echo()
-//                                     .unwrap()
-//                                     .reply()
-//                                     .unwrap()
-//                                     .identifier(icmp.identifier())
-//                                     .unwrap()
-//                                     .sequence(icmp.sequence())
-//                                     .unwrap()
-//                                     .payload(icmp.payload())
-//                                     .unwrap()
-//                                     .build()
-//                                     .unwrap();
-//                                 let l = reply.len();
-//                                 &mut buffer[4..(l + 4)].copy_from_slice(&reply);
-//                                 // writer.write_all(&buffer[..4]).unwrap();
-//                                 writer.write_all(&buffer[..(l + 4)]).unwrap();
-//                             }
-//                             Err(_) => {}
-//                         }
-//                     }
-//                     Err(_) => {}
-//                 }
-//             }
-//             _ => {}
-//         }
-//     }
-// }
