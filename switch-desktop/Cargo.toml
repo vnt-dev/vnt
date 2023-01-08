@@ -1,0 +1,23 @@
+[package]
+name = "switch-desktop"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+switch = {path="../switch"}
+mac_address = "1.1.4"
+clap = { version = "4.0.32", features = ["derive"] }
+console = "0.15.2"
+dirs = "4.0.0"
+log = "0.4.17"
+log4rs = "1.2.0"
+tokio = { version = "1.24.1", features = ["full"] }
+
+[target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
+sudo = "0.6.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
+runas = "0.2.1"

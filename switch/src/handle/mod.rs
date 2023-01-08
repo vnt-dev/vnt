@@ -32,6 +32,26 @@ lazy_static! {
     /// 当前设备的nat信息
     pub static ref NAT_INFO:Mutex<Option<NatInfo>> = const_mutex(None);
 }
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ApplicationStatus {
+    Starting,
+    Stopping,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ConnectStatus {
+    Connecting,
+    Connected,
+}
+
+impl Into<u8> for ConnectStatus {
+    fn into(self) -> u8 {
+        match self {
+            ConnectStatus::Connecting => 0,
+            ConnectStatus::Connected => 1,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct NatInfo {
@@ -80,17 +100,17 @@ pub fn init_nat_info(public_ip: u32, public_port: u16) {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct CurrentDeviceInfo {
-    pub(crate) virtual_ip: Ipv4Addr,
-    pub(crate) virtual_gateway: Ipv4Addr,
-    pub(crate) virtual_netmask: Ipv4Addr,
+    pub virtual_ip: Ipv4Addr,
+    pub virtual_gateway: Ipv4Addr,
+    pub virtual_netmask: Ipv4Addr,
     //网络地址
-    pub(crate) virtual_network: Ipv4Addr,
+    pub virtual_network: Ipv4Addr,
     //直接广播地址
-    pub(crate) broadcast_address: Ipv4Addr,
+    pub broadcast_address: Ipv4Addr,
     //链接的服务器地址
-    pub(crate) connect_server: SocketAddr,
+    pub connect_server: SocketAddr,
 }
 
 impl CurrentDeviceInfo {
@@ -114,18 +134,35 @@ impl CurrentDeviceInfo {
 
 #[derive(Clone, Debug)]
 pub struct Route {
-    pub(crate) address: SocketAddr,
+    pub route_type: RouteType,
+    pub address: SocketAddr,
     //用心跳探测延迟，收包时更新
-    pub(crate) delay: i64,
+    pub rt: i64,
     //收包时更新，如果太久没有收到消息则剔除
-    pub(crate) recv_time: i64,
+    pub recv_time: i64,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum RouteType {
+    ServerRelay,
+    P2P,
+}
+
+impl Into<u8> for RouteType {
+    fn into(self) -> u8 {
+        match self {
+            RouteType::ServerRelay => 0,
+            RouteType::P2P => 1
+        }
+    }
 }
 
 impl Route {
     pub fn new(address: SocketAddr) -> Self {
         Self {
+            route_type: RouteType::P2P,
             address,
-            delay: -1,
+            rt: -1,
             recv_time: Local::now().timestamp_millis(),
         }
     }

@@ -23,7 +23,7 @@ impl TunWriter {
     }
 }
 
-pub struct TunReader(Arc<Session>);
+pub struct TunReader(pub(crate) Arc<Session>);
 
 impl TunReader {
     pub fn next(&self) -> io::Result<Packet> {
@@ -52,14 +52,13 @@ pub fn create_tun(
             },
             Err(e) => {
                 log::error!("wintun.dll not found");
-                println!("{}", console::style("wintun.dll not found").red());
-                return Err(Error::Stop(format!("{:?}", e)));
+                return Err(Error::Stop(format!("wintun.dll not found {:?}", e)));
             }
         }
     };
-    let adapter = match Adapter::open(&win_tun, "Demo") {
+    let adapter = match Adapter::open(&win_tun, "Switch") {
         Ok(a) => a,
-        Err(_) => match Adapter::create(&win_tun, "Example", "Demo", None) {
+        Err(_) => match Adapter::create(&win_tun, "Switch", "Switch", None) {
             Ok(adapter) => adapter,
 
             Err(e) => return Err(Error::Stop(format!("{:?}", e))),

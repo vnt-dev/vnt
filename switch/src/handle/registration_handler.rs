@@ -4,16 +4,19 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use chrono::Local;
+use crossbeam::atomic::AtomicCell;
 use parking_lot::RwLock;
 use protobuf::Message;
 
 use crate::error::*;
+use crate::handle::ConnectStatus;
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
 use crate::protocol::{error_packet, NetPacket, Protocol, service_packet, Version};
 
 lazy_static::lazy_static! {
     static ref REQUEST:RwLock<Option<(String,String)>> = parking_lot::const_rwlock(None);
     static ref REGISTRATION_TIME:AtomicI64=AtomicI64::new(0);
+    pub(crate) static ref CONNECTION_STATUS:AtomicCell<ConnectStatus> = AtomicCell::new(ConnectStatus::Connecting);
 }
 
 ///向中继服务器注册，token标识一个虚拟网关，mac_address防止多次注册时得到的ip不一致
@@ -56,6 +59,7 @@ pub fn registration(
                             RegistrationResponse::parse_from_bytes(net_packet.payload())?;
                         let _ = REQUEST.write().replace((token, mac_address));
                         udp.set_read_timeout(None)?;
+                        CONNECTION_STATUS.store(ConnectStatus::Connected);
                         return Ok(response);
                     }
                     _ => {}
@@ -100,6 +104,7 @@ pub fn fast_registration(udp: &UdpSocket, server_address: SocketAddr) -> Result<
         //短时间不重复注册
         return Ok(());
     }
+    CONNECTION_STATUS.store(ConnectStatus::Connecting);
     let lock = REQUEST.read();
     let option = lock.clone();
     drop(lock);

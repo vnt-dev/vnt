@@ -1,18 +1,21 @@
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::Ordering;
+use std::thread;
 
 use chrono::Local;
-use crossbeam::channel::{Receiver, Sender, TrySendError};
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 use protobuf::Message;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::watch;
 
-use crate::CurrentDeviceInfo;
+use crate::{ApplicationStatus, CurrentDeviceInfo};
 use crate::error::*;
-use crate::handle::{ADDR_TABLE, DEVICE_LIST, DIRECT_ROUTE_TABLE, NAT_INFO, Route, SERVER_RT};
+use crate::handle::{ADDR_TABLE, ConnectStatus, DEVICE_LIST, DIRECT_ROUTE_TABLE, NAT_INFO, Route, SERVER_RT};
 use crate::handle::punch_handler::PunchSender;
-use crate::handle::registration_handler::fast_registration;
+use crate::handle::registration_handler::{CONNECTION_STATUS, fast_registration};
 use crate::proto::message::{DeviceList, Punch, RegistrationResponse};
 use crate::protocol::{control_packet, NetPacket, Protocol, service_packet, turn_packet, Version};
 use crate::protocol::control_packet::{ControlPacket, PunchResponsePacket};
@@ -20,7 +23,42 @@ use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::turn_packet::TurnPacket;
 use crate::tun_device::TunWriter;
 
-pub fn recv_loop(
+const UDP_STOP_BUF: [u8; 1] = [0u8];
+
+pub async fn udp_recv_start<F>(
+    mut status_watch: watch::Receiver<ApplicationStatus>,
+    udp: UdpSocket,
+    server_addr: SocketAddr,
+    other_sender: Sender<(SocketAddr, Vec<u8>)>,
+    mut tun_writer: TunWriter,
+    current_device: CurrentDeviceInfo,
+    stop_fn: F)
+    where F: FnOnce() + Send + 'static {
+    {
+        let udp = udp.try_clone().unwrap();
+        tokio::spawn(async move {
+            let _ = status_watch.changed().await;
+            let mut addr = udp.local_addr().unwrap();
+            addr.set_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+            udp.send_to(&UDP_STOP_BUF, addr).unwrap();
+        });
+    }
+
+    thread::spawn(move || {
+        if let Err(e) = recv_loop(
+            udp,
+            server_addr,
+            other_sender,
+            tun_writer,
+            current_device,
+        ) {
+            log::error!("udp数据处理线程停止 {:?}",e);
+        }
+        stop_fn();
+    });
+}
+
+fn recv_loop(
     udp: UdpSocket,
     server_addr: SocketAddr,
     other_sender: Sender<(SocketAddr, Vec<u8>)>,
@@ -29,11 +67,14 @@ pub fn recv_loop(
 ) -> Result<()> {
     let mut buf = [0u8; 65536];
     let mut local_addr = udp.local_addr()?;
-    local_addr.set_ip(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+    local_addr.set_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
     loop {
         match udp.recv_from(&mut buf) {
             Ok((len, addr)) => {
                 if addr == local_addr {
+                    if len == 1 && &buf[..len] == &UDP_STOP_BUF {
+                        return Ok(());
+                    }
                     //本地的包直接再发到网卡，这个主要用于处理当前虚拟ip的icmp ping
                     if let Ok(ip) = IpV4Packet::new(&buf[..len]) {
                         if ip.destination_ip() == current_device.virtual_ip {
@@ -55,12 +96,13 @@ pub fn recv_loop(
                     Err(Error::Stop(str)) => {
                         return Err(Error::Stop(str));
                     }
-                    Err(_) => {}
+                    Err(e) => {
+                        log::error!("{:?}",e);
+                    }
                 }
             }
             Err(e) => {
                 log::error!("{:?}",e);
-                // println!("{:?}", e);
             }
         };
     }
@@ -112,8 +154,8 @@ fn recv_handle(
             let v = net_packet.buffer().to_vec();
             match other_sender.try_send((recv_addr, v)) {
                 Ok(_) => {}
-                Err(TrySendError::Disconnected(_)) => {
-                    return Err(Error::Stop("处理线程停止".to_string()));
+                Err(TrySendError::Closed(_)) => {
+                    return Err(Error::Stop("子处理线程停止".to_string()));
                 }
                 Err(e) => {
                     log::error!("子线程处理 {:?}",e);
@@ -124,21 +166,50 @@ fn recv_handle(
     Ok(())
 }
 
-pub fn other_loop(
+pub async fn udp_other_recv_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
+                                     udp: UdpSocket,
+                                     receiver: Receiver<(SocketAddr, Vec<u8>)>,
+                                     current_device: CurrentDeviceInfo,
+                                     sender: PunchSender,
+                                     stop_fn: F) where F: FnOnce() + Send + 'static {
+    tokio::spawn(async move {
+        match other_loop(status_watch, udp, receiver, current_device, sender).await {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("{:?}",e);
+            }
+        }
+        stop_fn();
+    });
+}
+
+async fn other_loop(
+    mut status_watch: watch::Receiver<ApplicationStatus>,
     udp: UdpSocket,
-    receiver: Receiver<(SocketAddr, Vec<u8>)>,
+    mut receiver: Receiver<(SocketAddr, Vec<u8>)>,
     current_device: CurrentDeviceInfo,
     sender: PunchSender,
 ) -> Result<()> {
     loop {
-        let (peer_addr, buf) = receiver.recv()?;
-        match other_handle(&udp, buf, peer_addr, &current_device, &sender) {
-            Ok(_) => {}
-            Err(Error::Stop(str)) => {
-                return Err(Error::Stop(str));
+        tokio::select! {
+            rs = receiver.recv()=>{
+                if let Some((peer_addr, buf)) = rs {
+                    match other_handle(&udp, buf, peer_addr, &current_device, &sender) {
+                        Ok(_) => {}
+                        Err(Error::Stop(str)) => {
+                            return Err(Error::Stop(str));
+                        }
+                        Err(e) => {
+                            log::error!("other_loop {:?}",e);
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                log::error!("other_loop {:?}",e);
+            status = status_watch.changed() =>{
+                status?;
+                if *status_watch.borrow() != ApplicationStatus::Starting{
+                    return Ok(())
+                }
             }
         }
     }
@@ -163,6 +234,7 @@ fn other_handle(
                 service_packet::Protocol::RegistrationResponse => {
                     let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
                     crate::handle::init_nat_info(response.public_ip, response.public_port as u16);
+                    CONNECTION_STATUS.store(ConnectStatus::Connected);
                     //todo 重连之后ip可能会发生改变(目前2分钟内未重连则会释放ip)，需要更新本地ip(或者保证重连ip不变)
                 }
                 service_packet::Protocol::UpdateDeviceList => {
@@ -215,7 +287,7 @@ fn other_handle(
                             //其他设备
                             if let Some(virtual_ip) = ADDR_TABLE.get(&peer_addr) {
                                 if let Some(mut info) = DIRECT_ROUTE_TABLE.get_mut(&virtual_ip) {
-                                    info.delay = rt;
+                                    info.rt = rt;
                                     info.recv_time = current_time;
                                 }
                             }

@@ -2,14 +2,16 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::thread;
 use std::time::Duration;
 
-use crossbeam::channel::{Receiver, RecvTimeoutError, Sender, SendError, TrySendError};
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use protobuf::Message;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::watch;
 
-use crate::{CurrentDeviceInfo, DEVICE_LIST, NAT_INFO, NatInfo};
+use crate::{CurrentDeviceInfo, DEVICE_LIST, handle::NAT_INFO, handle::NatInfo};
 use crate::error::*;
-use crate::handle::DIRECT_ROUTE_TABLE;
+use crate::handle::{ApplicationStatus, DIRECT_ROUTE_TABLE};
 use crate::proto::message::{NatType, Punch, Step};
 use crate::protocol::{control_packet, NetPacket, Protocol, turn_packet, Version};
 use crate::protocol::control_packet::PunchRequestPacket;
@@ -20,9 +22,9 @@ lazy_static! {
 }
 /// 每一种类型一个通道，减少相互干扰
 pub fn bounded() -> (PunchSender, ConeReceiver, ReqSymmetricReceiver, ResSymmetricReceiver) {
-    let (cone_sender, cone_receiver) = crossbeam::channel::bounded(3);
-    let (req_symmetric_sender, req_symmetric_receiver) = crossbeam::channel::bounded(1);
-    let (res_symmetric_sender, res_symmetric_receiver) = crossbeam::channel::bounded(1);
+    let (cone_sender, cone_receiver) = tokio::sync::mpsc::channel(3);
+    let (req_symmetric_sender, req_symmetric_receiver) = tokio::sync::mpsc::channel(1);
+    let (res_symmetric_sender, res_symmetric_receiver) = tokio::sync::mpsc::channel(1);
     (PunchSender::new(cone_sender, req_symmetric_sender, res_symmetric_sender),
      ConeReceiver(cone_receiver), ReqSymmetricReceiver(req_symmetric_receiver),
      ResSymmetricReceiver(res_symmetric_receiver))
@@ -51,21 +53,21 @@ impl PunchSender {
             res_symmetric_sender,
         }
     }
-    pub fn send(&self, punch: Punch) -> std::result::Result<(), SendError<Punch>> {
-        match punch.nat_type.enum_value_or_default() {
-            NatType::Symmetric => {
-                if punch.reply {
-                    // 为true表示回应，也就是主动发起的打洞操作
-                    self.res_symmetric_sender.send(punch)
-                } else {
-                    self.req_symmetric_sender.send(punch)
-                }
-            }
-            NatType::Cone => {
-                self.cone_sender.send(punch)
-            }
-        }
-    }
+    // pub fn send(&self, punch: Punch) -> std::result::Result<(), SendError<Punch>> {
+    //     match punch.nat_type.enum_value_or_default() {
+    //         NatType::Symmetric => {
+    //             if punch.reply {
+    //                 // 为true表示回应，也就是主动发起的打洞操作
+    //                 self.res_symmetric_sender.blocking_send(punch)
+    //             } else {
+    //                 self.req_symmetric_sender.blocking_send(punch)
+    //             }
+    //         }
+    //         NatType::Cone => {
+    //             self.cone_sender.blocking_send(punch)
+    //         }
+    //     }
+    // }
     pub fn try_send(&self, punch: Punch) -> std::result::Result<(), TrySendError<Punch>> {
         match punch.nat_type.enum_value_or_default() {
             NatType::Symmetric => {
@@ -83,7 +85,7 @@ impl PunchSender {
     }
 }
 
-fn handle(udp: &UdpSocket, punch_list: Vec<Punch>, buf: &[u8]) -> Result<()> {
+fn handle(status_watch: &watch::Receiver<ApplicationStatus>, udp: &UdpSocket, punch_list: Vec<Punch>, buf: &[u8]) -> Result<()> {
     let mut counter = 0u64;
     for punch in punch_list {
         let dest = Ipv4Addr::from(punch.virtual_ip);
@@ -99,6 +101,11 @@ fn handle(udp: &UdpSocket, punch_list: Vec<Punch>, buf: &[u8]) -> Result<()> {
                         for pub_ip in punch.public_ip_list {
                             let pub_ip = Ipv4Addr::from(pub_ip);
                             for range in 0..punch.public_port_range + 1 {
+                                if counter & 10 == 10 {
+                                    if status_watch.has_changed()? {
+                                        return Ok(());
+                                    }
+                                }
                                 let right_port = ((punch.public_port + range) & 0xFFFF) as u16;
                                 let left_port = ((0xFFFF + punch.public_port - range) & 0xFFFF) as u16;
                                 if right_port != 0 {
@@ -128,6 +135,11 @@ fn handle(udp: &UdpSocket, punch_list: Vec<Punch>, buf: &[u8]) -> Result<()> {
                         for pub_ip in punch.public_ip_list {
                             let pub_ip = Ipv4Addr::from(pub_ip);
                             for port in 1..0xFFFF {
+                                if counter & 10 == 10 {
+                                    if status_watch.has_changed()? {
+                                        return Ok(());
+                                    }
+                                }
                                 udp.send_to(
                                     buf,
                                     SocketAddr::V4(SocketAddrV4::new(pub_ip, port)),
@@ -156,22 +168,56 @@ fn handle(udp: &UdpSocket, punch_list: Vec<Punch>, buf: &[u8]) -> Result<()> {
 }
 
 /// 给对称nat发送打洞数据包
-pub fn req_symmetric_handle_loop(
-    receiver: ReqSymmetricReceiver,
-    udp: UdpSocket,
-    cur_info: CurrentDeviceInfo,
-) -> Result<()> {
+pub async fn req_symmetric_handler_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
+                                         receiver: ReqSymmetricReceiver,
+                                         udp: UdpSocket,
+                                         cur_info: CurrentDeviceInfo,
+                                         stop_fn: F) where F: FnOnce() +Send+'static{
     let receiver = receiver.0;
-    handle_loop(receiver, udp, cur_info)
+    tokio::spawn(async move {
+        match handle_loop(status_watch, receiver, udp, cur_info).await {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("{:?}",e)
+            }
+        }
+        stop_fn()
+    });
 }
 
+// pub fn req_symmetric_handle_loop(
+//     receiver: ReqSymmetricReceiver,
+//     udp: UdpSocket,
+//     cur_info: CurrentDeviceInfo,
+// ) -> Result<()> {
+//     let receiver = receiver.0;
+//     handle_loop(receiver, udp, cur_info)
+// }
+
 /// 给对称nat发送打洞数据包，处理主动发起的打洞操作
-pub fn res_symmetric_handle_loop(
-    receiver: ResSymmetricReceiver,
+pub async fn res_symmetric_handler_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
+                                         receiver: ResSymmetricReceiver,
+                                         udp: UdpSocket,
+                                         cur_info: CurrentDeviceInfo,
+                                         stop_fn: F) where F: FnOnce() +Send+'static{
+    let receiver = receiver.0;
+    tokio::spawn(async move {
+        match res_symmetric_handle_loop(status_watch, receiver, udp, cur_info).await {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("{:?}",e)
+            }
+        }
+        stop_fn()
+    });
+}
+
+async fn res_symmetric_handle_loop(
+    mut status_watch: watch::Receiver<ApplicationStatus>,
+    mut receiver: Receiver<Punch>,
     udp: UdpSocket,
     cur_info: CurrentDeviceInfo,
 ) -> Result<()> {
-    let receiver = receiver.0;
     let mut buf = [0u8; 12];
     let mut packet = NetPacket::new(&mut buf)?;
     packet.set_version(Version::V1);
@@ -182,64 +228,88 @@ pub fn res_symmetric_handle_loop(
         let mut punch_packet = PunchRequestPacket::new(packet.payload_mut())?;
         punch_packet.set_source(cur_info.virtual_ip);
     }
+    match tokio::time::timeout(Duration::from_secs(30), receiver.recv()).await {
+        Ok(_) => {}
+        Err(e) => {}
+    }
     loop {
-        match receiver.recv_timeout(Duration::from_secs(30)) {
-            Ok(punch) => {
-                let mut list = Vec::new();
-                list.push(punch);
-                loop {
-                    match receiver.try_recv() {
-                        Ok(punch) => {
+        tokio::select! {
+            rs = tokio::time::timeout(Duration::from_secs(30), receiver.recv()) =>{
+                match rs {
+                    Ok(punch) => {
+                        if let Some(punch) = punch{
+                            let mut list = Vec::new();
                             list.push(punch);
-                        }
-                        Err(_) => {
-                            break;
+                            loop {
+                                match receiver.try_recv() {
+                                    Ok(punch) => {
+                                        list.push(punch);
+                                    }
+                                    Err(_) => {
+                                        break;
+                                    }
+                                }
+                            }
+                            for punch in &list {
+                                let dest = Ipv4Addr::from(punch.virtual_ip);
+                                match punch.step.enum_value_or_default() {
+                                    Step::Step1 => {
+                                        STEP_MAP.insert(dest, Step::Step2);
+                                    }
+                                    Step::Step2 => {
+                                        STEP_MAP.insert(dest, Step::Step3);
+                                    }
+                                    Step::Step3 => {
+                                        STEP_MAP.insert(dest, Step::Step4);
+                                    }
+                                    Step::Step4 => {
+                                        STEP_MAP.insert(dest, Step::Step1);
+                                    }
+                                }
+                            }
+                            if let Err(e) = handle(&status_watch,&udp, list, packet.buffer()) {
+                                log::error!("{:?}",e)
+                            }
+                        }else {
+                            return Err(Error::Stop("打洞线程通道关闭".to_string()));
                         }
                     }
-                }
-                for punch in &list {
-                    let dest = Ipv4Addr::from(punch.virtual_ip);
-                    match punch.step.enum_value_or_default() {
-                        Step::Step1 => {
-                            STEP_MAP.insert(dest, Step::Step2);
-                        }
-                        Step::Step2 => {
-                            STEP_MAP.insert(dest, Step::Step3);
-                        }
-                        Step::Step3 => {
-                            STEP_MAP.insert(dest, Step::Step4);
-                        }
-                        Step::Step4 => {
-                            STEP_MAP.insert(dest, Step::Step1);
-                        }
+                    Err(_) => {
+                        punch_request_handle(&udp, &cur_info)?;
                     }
                 }
-                if let Err(e) = handle(&udp, list, packet.buffer()) {
-                    log::error!("{:?}",e)
+            }
+            status = status_watch.changed() =>{
+                status?;
+                if *status_watch.borrow() != ApplicationStatus::Starting{
+                    return Ok(())
                 }
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                punch_request_handle(&udp, &cur_info)?;
-            }
-            Err(_) => {
-                return Err(Error::Stop("打洞线程通道关闭".to_string()));
             }
         }
     }
 }
 
 /// 给锥形nat发送打洞数据包
-pub fn cone_handle_loop(
-    receiver: ConeReceiver,
-    udp: UdpSocket,
-    cur_info: CurrentDeviceInfo,
-) -> Result<()> {
+pub async fn cone_handler_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
+                                receiver: ConeReceiver,
+                                udp: UdpSocket,
+                                cur_info: CurrentDeviceInfo,
+                                stop_fn: F) where F: FnOnce()+Send +'static{
     let receiver = receiver.0;
-    handle_loop(receiver, udp, cur_info)
+    tokio::spawn(async move {
+        match handle_loop(status_watch, receiver, udp, cur_info).await {
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("{:?}",e)
+            }
+        }
+        stop_fn();
+    });
 }
 
-pub fn handle_loop(
-    receiver: Receiver<Punch>,
+async fn handle_loop(
+    mut status_watch: watch::Receiver<ApplicationStatus>,
+    mut receiver: Receiver<Punch>,
     udp: UdpSocket,
     cur_info: CurrentDeviceInfo,
 ) -> Result<()> {
@@ -254,26 +324,33 @@ pub fn handle_loop(
         punch_packet.set_source(cur_info.virtual_ip);
     }
     loop {
-        match receiver.recv() {
-            Ok(punch) => {
-                let mut list = Vec::new();
-                list.push(punch);
-                loop {
-                    match receiver.try_recv() {
-                        Ok(punch) => {
-                            list.push(punch);
+        tokio::select! {
+            punch = receiver.recv() =>{
+                 if let Some(punch) = punch{
+                     let mut list = Vec::new();
+                        list.push(punch);
+                        loop {
+                            match receiver.try_recv() {
+                                Ok(punch) => {
+                                    list.push(punch);
+                                }
+                                Err(_) => {
+                                    break;
+                                }
+                            }
                         }
-                        Err(_) => {
-                            break;
+                        if let Err(e) = handle(&status_watch,&udp, list, packet.buffer()) {
+                            log::error!("{:?}",e)
                         }
-                    }
-                }
-                if let Err(e) = handle(&udp, list, packet.buffer()) {
-                    log::error!("{:?}",e)
-                }
+                 }else {
+                     return Err(Error::Stop("打洞线程通道关闭".to_string()));
+                 }
             }
-            Err(_) => {
-                return Err(Error::Stop("打洞线程通道关闭".to_string()));
+             status = status_watch.changed() =>{
+                status?;
+                if *status_watch.borrow() != ApplicationStatus::Starting{
+                    return Ok(())
+                }
             }
         }
     }
@@ -282,15 +359,6 @@ pub fn handle_loop(
 fn select_sleep(counter: &mut u64) {
     *counter += 1;
     thread::sleep(Duration::from_millis(1));
-    // if *counter > 1 {
-    //     if cone_nat {
-    //         thread::sleep(Duration::from_millis(2));
-    //     } else {
-    //         if (*counter) & 10 == 10 {
-    //             thread::sleep(Duration::from_millis(1));
-    //         }
-    //     }
-    // }
 }
 
 

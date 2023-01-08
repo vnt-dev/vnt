@@ -1,12 +1,17 @@
 /// 接收tun数据，并且转发到udp上
-use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::os::fd::AsRawFd;
+use std::thread;
 
 use chrono::Local;
+use tokio::sync::watch;
+
 use packet::icmp::icmp::IcmpPacket;
 use packet::icmp::Kind;
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 
+use crate::ApplicationStatus;
 use crate::error::*;
 use crate::handle::{CurrentDeviceInfo, DIRECT_ROUTE_TABLE};
 use crate::protocol::{NetPacket, Protocol, Version};
@@ -73,8 +78,9 @@ fn handle(
     if let Some(route) = DIRECT_ROUTE_TABLE.get(&dest_ip) {
         let current_time = Local::now().timestamp_millis();
         if current_time - route.recv_time < 3_000 {
-            udp.send_to(&net_packet.buffer()[..(4 + 8 + data_len)], route.address)?;
-            return Ok(());
+            if udp.send_to(&net_packet.buffer()[..(4 + 8 + data_len)], route.address).is_ok() {
+                return Ok(());
+            }
         }
     }
     udp.send_to(&net_packet.buffer()[..(4 + 8 + data_len)], cur_info.connect_server)?;
@@ -82,7 +88,28 @@ fn handle(
 }
 
 #[cfg(target_os = "windows")]
-pub fn handle_loop(
+pub async fn handler_start<F>(mut status_watch: watch::Receiver<ApplicationStatus>,
+                              udp: UdpSocket,
+                              tun_reader: TunReader,
+                              cur_info: CurrentDeviceInfo, stop_fn: F)
+    where F: FnOnce() + Send + 'static {
+    let session = tun_reader.0.clone();
+    tokio::spawn(async move {
+        let _ = status_watch.changed().await;
+        session.shutdown();
+        let udp = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let _ = udp.send_to(&[0],SocketAddr::new(IpAddr::V4(cur_info.virtual_gateway),10));
+    });
+    thread::spawn(move || {
+        if let Err(e) = handle_loop(udp, tun_reader, cur_info) {
+            log::error!("tun数据处理线程停止 {:?}",e);
+        }
+        stop_fn();
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn handle_loop(
     udp: UdpSocket,
     tun_reader: TunReader,
     cur_info: CurrentDeviceInfo,
@@ -103,7 +130,31 @@ pub fn handle_loop(
     }
 }
 
-#[cfg(any(unix))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub async fn handler_start<F>(mut status_watch: watch::Receiver<ApplicationStatus>,
+                              udp: UdpSocket,
+                              tun_reader: TunReader,
+                              cur_info: CurrentDeviceInfo, stop_fn: F)
+    where F: FnOnce() + Send + 'static {
+    let raw_fd = tun_reader.0.as_raw_fd();
+    tokio::spawn(async move {
+        let _ = status_watch.changed().await;
+        // 让tun接收线程关闭
+        unsafe {
+            libc::close(raw_fd);
+        }
+        let udp = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let _ = udp.send_to(&[0],SocketAddr::new(IpAddr::V4(cur_info.virtual_gateway),10));
+    });
+    thread::spawn(move || {
+        if let Err(e) = handle_loop(udp, tun_reader, cur_info) {
+            log::error!(" tun数据处理线程停止 {:?}",e);
+        }
+        stop_fn();
+    });
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn handle_loop(
     udp: UdpSocket,
     mut tun_reader: TunReader,

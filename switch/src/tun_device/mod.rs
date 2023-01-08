@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux",target_os = "android"))]
 pub use linux::create_tun;
 #[cfg(target_os = "macos")]
 pub use mac::create_tun;
@@ -11,7 +11,7 @@ pub use windows::create_tun;
 
 #[cfg(target_os = "macos")]
 pub mod mac;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux",target_os = "android"))]
 pub mod linux;
 #[cfg(any(unix))]
 pub mod unix;

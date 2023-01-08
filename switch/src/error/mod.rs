@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum Error {
     #[error("packet error")]
     PacketError(#[from] packet::error::Error),
+    #[error("TokioWatchRecvError")]
+    TokioWatchRecvError(#[from] tokio::sync::watch::error::RecvError),
     #[error("Io error")]
     Io(#[from] io::Error),
     #[error("Channel error")]

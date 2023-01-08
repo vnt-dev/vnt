@@ -46,5 +46,6 @@ Virtual Network Tools
   - 服务端中继转发
 
 ### Todo
+- 支持安卓
 - 数据加密
 - 客户端中继转发
