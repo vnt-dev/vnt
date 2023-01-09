@@ -31,7 +31,11 @@
 - 使用命令行运行
 - Mac和Linux下需要加可执行权限(例如:chmod +x ./switch-macos)
 - 暂时固定使用的10.13.0.1/24网段，需要避免和已有的路由冲突
-
+## 编译
+ 前提条件:安装rust编译环境(https://www.rust-lang.org/zh-CN/tools/install)
+ 
+ cmd进入switch-desktop目录，执行cargo build
+ 
 ### 支持平台
 - Mac
 - Linux
