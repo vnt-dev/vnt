@@ -1,6 +1,5 @@
 /// 接收tun数据，并且转发到udp上
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::os::fd::AsRawFd;
 use std::thread;
 
 use chrono::Local;
