@@ -130,7 +130,7 @@ fn handle_loop(
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 pub async fn handler_start<F>(mut status_watch: watch::Receiver<ApplicationStatus>,
                               udp: UdpSocket,
                               tun_reader: TunReader,
@@ -139,7 +139,7 @@ pub async fn handler_start<F>(mut status_watch: watch::Receiver<ApplicationStatu
     let raw_fd = tun_reader.0.as_raw_fd();
     tokio::spawn(async move {
         let _ = status_watch.changed().await;
-        // 让tun接收线程关闭
+        // 让tun接收线程关闭，问题：如果改变tun配置，可能导致tun接收线程无法关闭
         unsafe {
             libc::close(raw_fd);
         }
@@ -154,7 +154,7 @@ pub async fn handler_start<F>(mut status_watch: watch::Receiver<ApplicationStatu
     });
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 pub fn handle_loop(
     udp: UdpSocket,
     mut tun_reader: TunReader,
