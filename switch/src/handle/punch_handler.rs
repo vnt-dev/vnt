@@ -249,7 +249,7 @@ async fn res_symmetric_handle_loop(
     }
     match tokio::time::timeout(Duration::from_secs(30), receiver.recv()).await {
         Ok(_) => {}
-        Err(e) => {}
+        Err(_e) => {}
     }
     loop {
         tokio::select! {

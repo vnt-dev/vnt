@@ -32,7 +32,7 @@ pub async fn udp_recv_start<F>(
     udp: UdpSocket,
     server_addr: SocketAddr,
     other_sender: Sender<(SocketAddr, Vec<u8>)>,
-    mut tun_writer: TunWriter,
+    tun_writer: TunWriter,
     current_device: CurrentDeviceInfo,
     stop_fn: F,
 ) where
@@ -275,7 +275,7 @@ fn other_handle(
         }
         Protocol::Control => {
             match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
-                ControlPacket::PingPacket(ping) => {
+                ControlPacket::PingPacket(_ping) => {
                     net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
                     udp.send_to(&net_packet.buffer()[..12], peer_addr)?;
                 }
