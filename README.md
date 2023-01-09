@@ -34,7 +34,7 @@
 ## 编译
  前提条件:安装rust编译环境(https://www.rust-lang.org/zh-CN/tools/install)
  
- cmd进入switch-desktop目录，执行cargo build
+ 到项目根目录下执行 cargo build -p switch-desktop
  
 ### 支持平台
 - Mac
