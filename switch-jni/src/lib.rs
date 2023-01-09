@@ -1,9 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr};
-use std::str::Utf8Error;
+
 
 use jni::errors::Error;
-use jni::objects::{JClass, JList, JObject, JString, JValue};
-use jni::sys::{jbyte, jint, jintArray, jlong, jobject, jobjectArray, jsize};
+use jni::objects::{JClass, JObject, JString, JValue};
+use jni::sys::{jbyte, jint, jintArray, jlong, jobject, jsize};
 use jni::JNIEnv;
 
 use switch::handle::{CurrentDeviceInfo, Route};
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn Java_org_switches_jni_Switch_start0(
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_org_switches_jni_Switch_stop0(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     raw_switch: jlong,
 ) {
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn Java_org_switches_jni_Switch_route0(
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_org_switches_jni_Switch_serverRt0(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     raw_switch: jlong,
 ) -> jlong {
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn Java_org_switches_jni_Switch_serverRt0(
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_org_switches_jni_Switch_connectionStatus0(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     raw_switch: jlong,
 ) -> jbyte {
