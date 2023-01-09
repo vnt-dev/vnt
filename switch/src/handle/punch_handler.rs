@@ -5,29 +5,37 @@ use std::time::Duration;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use protobuf::Message;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch;
 
-use crate::{CurrentDeviceInfo, DEVICE_LIST, handle::NAT_INFO, handle::NatInfo};
 use crate::error::*;
 use crate::handle::{ApplicationStatus, DIRECT_ROUTE_TABLE};
 use crate::proto::message::{NatType, Punch, Step};
-use crate::protocol::{control_packet, NetPacket, Protocol, turn_packet, Version};
 use crate::protocol::control_packet::PunchRequestPacket;
 use crate::protocol::turn_packet::TurnPacket;
+use crate::protocol::{control_packet, turn_packet, NetPacket, Protocol, Version};
+use crate::{handle::NatInfo, handle::NAT_INFO, CurrentDeviceInfo, DEVICE_LIST};
 
 lazy_static! {
-    pub static ref STEP_MAP:DashMap<Ipv4Addr,Step> = DashMap::new();
+    pub static ref STEP_MAP: DashMap<Ipv4Addr, Step> = DashMap::new();
 }
 /// 每一种类型一个通道，减少相互干扰
-pub fn bounded() -> (PunchSender, ConeReceiver, ReqSymmetricReceiver, ResSymmetricReceiver) {
+pub fn bounded() -> (
+    PunchSender,
+    ConeReceiver,
+    ReqSymmetricReceiver,
+    ResSymmetricReceiver,
+) {
     let (cone_sender, cone_receiver) = tokio::sync::mpsc::channel(3);
     let (req_symmetric_sender, req_symmetric_receiver) = tokio::sync::mpsc::channel(1);
     let (res_symmetric_sender, res_symmetric_receiver) = tokio::sync::mpsc::channel(1);
-    (PunchSender::new(cone_sender, req_symmetric_sender, res_symmetric_sender),
-     ConeReceiver(cone_receiver), ReqSymmetricReceiver(req_symmetric_receiver),
-     ResSymmetricReceiver(res_symmetric_receiver))
+    (
+        PunchSender::new(cone_sender, req_symmetric_sender, res_symmetric_sender),
+        ConeReceiver(cone_receiver),
+        ReqSymmetricReceiver(req_symmetric_receiver),
+        ResSymmetricReceiver(res_symmetric_receiver),
+    )
 }
 
 pub struct ConeReceiver(Receiver<Punch>);
@@ -44,9 +52,11 @@ pub struct PunchSender {
 }
 
 impl PunchSender {
-    pub fn new(cone_sender: Sender<Punch>,
-               req_symmetric_sender: Sender<Punch>,
-               res_symmetric_sender: Sender<Punch>, ) -> Self {
+    pub fn new(
+        cone_sender: Sender<Punch>,
+        req_symmetric_sender: Sender<Punch>,
+        res_symmetric_sender: Sender<Punch>,
+    ) -> Self {
         Self {
             cone_sender,
             req_symmetric_sender,
@@ -78,14 +88,17 @@ impl PunchSender {
                     self.req_symmetric_sender.try_send(punch)
                 }
             }
-            NatType::Cone => {
-                self.cone_sender.try_send(punch)
-            }
+            NatType::Cone => self.cone_sender.try_send(punch),
         }
     }
 }
 
-fn handle(status_watch: &watch::Receiver<ApplicationStatus>, udp: &UdpSocket, punch_list: Vec<Punch>, buf: &[u8]) -> Result<()> {
+fn handle(
+    status_watch: &watch::Receiver<ApplicationStatus>,
+    udp: &UdpSocket,
+    punch_list: Vec<Punch>,
+    buf: &[u8],
+) -> Result<()> {
     let mut counter = 0u64;
     for punch in punch_list {
         let dest = Ipv4Addr::from(punch.virtual_ip);
@@ -107,7 +120,8 @@ fn handle(status_watch: &watch::Receiver<ApplicationStatus>, udp: &UdpSocket, pu
                                     }
                                 }
                                 let right_port = ((punch.public_port + range) & 0xFFFF) as u16;
-                                let left_port = ((0xFFFF + punch.public_port - range) & 0xFFFF) as u16;
+                                let left_port =
+                                    ((0xFFFF + punch.public_port - range) & 0xFFFF) as u16;
                                 if right_port != 0 {
                                     // println!("{:?}", SocketAddr::V4(SocketAddrV4::new(pub_ip, right_port)));
                                     udp.send_to(
@@ -140,10 +154,7 @@ fn handle(status_watch: &watch::Receiver<ApplicationStatus>, udp: &UdpSocket, pu
                                         return Ok(());
                                     }
                                 }
-                                udp.send_to(
-                                    buf,
-                                    SocketAddr::V4(SocketAddrV4::new(pub_ip, port)),
-                                )?;
+                                udp.send_to(buf, SocketAddr::V4(SocketAddrV4::new(pub_ip, port)))?;
                                 select_sleep(&mut counter);
                             }
                         }
@@ -168,17 +179,21 @@ fn handle(status_watch: &watch::Receiver<ApplicationStatus>, udp: &UdpSocket, pu
 }
 
 /// 给对称nat发送打洞数据包
-pub async fn req_symmetric_handler_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
-                                         receiver: ReqSymmetricReceiver,
-                                         udp: UdpSocket,
-                                         cur_info: CurrentDeviceInfo,
-                                         stop_fn: F) where F: FnOnce() +Send+'static{
+pub async fn req_symmetric_handler_start<F>(
+    status_watch: watch::Receiver<ApplicationStatus>,
+    receiver: ReqSymmetricReceiver,
+    udp: UdpSocket,
+    cur_info: CurrentDeviceInfo,
+    stop_fn: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
     let receiver = receiver.0;
     tokio::spawn(async move {
         match handle_loop(status_watch, receiver, udp, cur_info).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}",e)
+                log::error!("{:?}", e)
             }
         }
         stop_fn()
@@ -195,17 +210,21 @@ pub async fn req_symmetric_handler_start<F>(status_watch: watch::Receiver<Applic
 // }
 
 /// 给对称nat发送打洞数据包，处理主动发起的打洞操作
-pub async fn res_symmetric_handler_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
-                                         receiver: ResSymmetricReceiver,
-                                         udp: UdpSocket,
-                                         cur_info: CurrentDeviceInfo,
-                                         stop_fn: F) where F: FnOnce() +Send+'static{
+pub async fn res_symmetric_handler_start<F>(
+    status_watch: watch::Receiver<ApplicationStatus>,
+    receiver: ResSymmetricReceiver,
+    udp: UdpSocket,
+    cur_info: CurrentDeviceInfo,
+    stop_fn: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
     let receiver = receiver.0;
     tokio::spawn(async move {
         match res_symmetric_handle_loop(status_watch, receiver, udp, cur_info).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}",e)
+                log::error!("{:?}", e)
             }
         }
         stop_fn()
@@ -290,17 +309,21 @@ async fn res_symmetric_handle_loop(
 }
 
 /// 给锥形nat发送打洞数据包
-pub async fn cone_handler_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
-                                receiver: ConeReceiver,
-                                udp: UdpSocket,
-                                cur_info: CurrentDeviceInfo,
-                                stop_fn: F) where F: FnOnce()+Send +'static{
+pub async fn cone_handler_start<F>(
+    status_watch: watch::Receiver<ApplicationStatus>,
+    receiver: ConeReceiver,
+    udp: UdpSocket,
+    cur_info: CurrentDeviceInfo,
+    stop_fn: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
     let receiver = receiver.0;
     tokio::spawn(async move {
         match handle_loop(status_watch, receiver, udp, cur_info).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}",e)
+                log::error!("{:?}", e)
             }
         }
         stop_fn();
@@ -361,23 +384,19 @@ fn select_sleep(counter: &mut u64) {
     thread::sleep(Duration::from_millis(1));
 }
 
-
 fn punch_request_handle(udp: &UdpSocket, cur_info: &CurrentDeviceInfo) -> Result<()> {
     let nat_info_lock = NAT_INFO.lock();
     let nat_info = nat_info_lock.clone();
     drop(nat_info_lock);
     if let Some(nat_info) = nat_info {
-        if let Err(e) = send_punch(&udp,
-                                   &cur_info,
-                                   nat_info) {
-            log::error!("发送打洞数据失败 {:?}",e)
+        if let Err(e) = send_punch(&udp, &cur_info, nat_info) {
+            log::error!("发送打洞数据失败 {:?}", e)
         }
         Ok(())
     } else {
         Err(Error::Stop("未初始化nat信息".to_string()))
     }
 }
-
 
 fn send_punch(udp: &UdpSocket, cur_info: &CurrentDeviceInfo, nat_info: NatInfo) -> Result<()> {
     let lock = DEVICE_LIST.lock();
@@ -391,15 +410,19 @@ fn send_punch(udp: &UdpSocket, cur_info: &CurrentDeviceInfo, nat_info: NatInfo) 
             } else {
                 Step::Step1
             };
-            let bytes = punch_packet(cur_info.virtual_ip,
-                                     nat_info.clone(), ip, step)?;
+            let bytes = punch_packet(cur_info.virtual_ip, nat_info.clone(), ip, step)?;
             udp.send_to(&bytes, cur_info.connect_server)?;
         }
     }
     Ok(())
 }
 
-fn punch_packet(virtual_ip: Ipv4Addr, nat_info: NatInfo, dest: Ipv4Addr, step: Step) -> Result<Vec<u8>> {
+fn punch_packet(
+    virtual_ip: Ipv4Addr,
+    nat_info: NatInfo,
+    dest: Ipv4Addr,
+    step: Step,
+) -> Result<Vec<u8>> {
     let mut punch_reply = Punch::new();
     punch_reply.reply = false;
     punch_reply.virtual_ip = u32::from_be_bytes(virtual_ip.octets());

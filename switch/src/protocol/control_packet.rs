@@ -70,7 +70,6 @@ pub struct PongPacket<B> {
     buffer: B,
 }
 
-
 impl<B: AsRef<[u8]>> PingPacket<B> {
     pub fn new(buffer: B) -> Result<PingPacket<B>> {
         let len = buffer.as_ref().len();

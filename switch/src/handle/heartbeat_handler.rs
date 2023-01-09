@@ -5,27 +5,36 @@ use chrono::Local;
 use tokio::sync::watch::Receiver;
 use tokio::time::sleep;
 
-use crate::{CurrentDeviceInfo, DEVICE_LIST};
 use crate::error::*;
 use crate::handle::{ApplicationStatus, DIRECT_ROUTE_TABLE};
-use crate::protocol::{control_packet, NetPacket, Protocol, Version};
 use crate::protocol::control_packet::PingPacket;
+use crate::protocol::{control_packet, NetPacket, Protocol, Version};
+use crate::{CurrentDeviceInfo, DEVICE_LIST};
 
-pub async fn start<F>(status_watch: Receiver<ApplicationStatus>,
-                      udp: UdpSocket, cur_info: CurrentDeviceInfo, stop_fn: F)
-    where F: FnOnce() + Send + 'static {
+pub async fn start<F>(
+    status_watch: Receiver<ApplicationStatus>,
+    udp: UdpSocket,
+    cur_info: CurrentDeviceInfo,
+    stop_fn: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
     tokio::spawn(async move {
         match handle_loop(status_watch, udp, cur_info.connect_server).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}",e)
+                log::error!("{:?}", e)
             }
         }
         stop_fn();
     });
 }
 
-async fn handle_loop(mut status_watch: Receiver<ApplicationStatus>, udp: UdpSocket, server_addr: SocketAddr) -> Result<()> {
+async fn handle_loop(
+    mut status_watch: Receiver<ApplicationStatus>,
+    udp: UdpSocket,
+    server_addr: SocketAddr,
+) -> Result<()> {
     const INTERVAL: u64 = 3000;
     const MAX_INTERVAL: i64 = 3000 * 3;
     let mut buf = [0u8; (4 + 8 + 4)];

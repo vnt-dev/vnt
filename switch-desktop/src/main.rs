@@ -1,14 +1,18 @@
 use clap::Parser;
 use console::style;
 
-use switch::*;
 use switch::handle::RouteType;
+use switch::*;
 
 #[cfg(windows)]
 mod windows_admin_check;
 
 #[derive(Parser, Debug)]
-#[command(author = "Lu Beilin", version, about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信")]
+#[command(
+    author = "Lu Beilin",
+    version,
+    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+)]
 struct Args {
     /// 32位字符
     /// 相同token的设备之间才能通信。
@@ -27,7 +31,9 @@ fn log_init() {
     }
     let logfile = log4rs::append::file::FileAppender::builder()
         // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
-        .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new("{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n")))
+        .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
+            "{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n",
+        )))
         .build(home.join("switch.log"))
         .unwrap();
     let config = log4rs::Config::builder()
@@ -52,7 +58,9 @@ fn main() {
             .ok()
             .and_then(|p| p.to_str().map(|p| p.to_string()))
         {
-            let _ = runas::Command::new(&absolute_path).args(&args[1..]).status()
+            let _ = runas::Command::new(&absolute_path)
+                .args(&args[1..])
+                .status()
                 .expect("failed to execute");
         } else {
             panic!("failed to execute")
@@ -72,10 +80,19 @@ fn main() {
     let term = Term::stdout();
     println!("{}", style("started").green());
     let current_device = switch.current_device();
-    println!("当前虚拟ip(virtual ip): {:?}", style(current_device.virtual_ip).green());
-    println!("虚拟网关(virtual gateway): {:?}", style(current_device.virtual_gateway).green());
+    println!(
+        "当前虚拟ip(virtual ip): {:?}",
+        style(current_device.virtual_ip).green()
+    );
+    println!(
+        "虚拟网关(virtual gateway): {:?}",
+        style(current_device.virtual_gateway).green()
+    );
     loop {
-        println!("{}", style("Please enter the command (Usage: list,status,exit,help):").color256(102));
+        println!(
+            "{}",
+            style("Please enter the command (Usage: list,status,exit,help):").color256(102)
+        );
         match term.read_line() {
             Ok(cmd) => {
                 if command(cmd.trim(), &switch).is_err() {
@@ -128,16 +145,28 @@ fn command(cmd: &str, switch: &Switch) -> Result<(), ()> {
             let server_rt = switch.server_rt();
             let current_device = switch.current_device();
             println!("Virtual ip:{}", style(current_device.virtual_ip).green());
-            println!("Virtual gateway:{}", style(current_device.virtual_gateway).green());
-            println!("Connection status :{}", style(format!("{:?}", switch.connection_status())).green());
-            println!("Relay server :{}", style(current_device.connect_server).green());
+            println!(
+                "Virtual gateway:{}",
+                style(current_device.virtual_gateway).green()
+            );
+            println!(
+                "Connection status :{}",
+                style(format!("{:?}", switch.connection_status())).green()
+            );
+            println!(
+                "Relay server :{}",
+                style(current_device.connect_server).green()
+            );
             if server_rt >= 0 {
                 println!("Delay of relay server :{}ms", style(server_rt).green());
             }
         }
         "help" | "h" => {
             println!("Options: ");
-            println!("{} , Query the virtual IP of other devices", style("list").green());
+            println!(
+                "{} , Query the virtual IP of other devices",
+                style("list").green()
+            );
             println!("{} , View current device status", style("status").green());
             println!("{} , Exit the program", style("exit").green());
         }

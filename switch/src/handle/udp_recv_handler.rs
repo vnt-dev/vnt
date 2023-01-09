@@ -7,21 +7,23 @@ use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 use protobuf::Message;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch;
 
-use crate::{ApplicationStatus, CurrentDeviceInfo};
 use crate::error::*;
-use crate::handle::{ADDR_TABLE, ConnectStatus, DEVICE_LIST, DIRECT_ROUTE_TABLE, NAT_INFO, Route, SERVER_RT};
 use crate::handle::punch_handler::PunchSender;
-use crate::handle::registration_handler::{CONNECTION_STATUS, fast_registration};
+use crate::handle::registration_handler::{fast_registration, CONNECTION_STATUS};
+use crate::handle::{
+    ConnectStatus, Route, ADDR_TABLE, DEVICE_LIST, DIRECT_ROUTE_TABLE, NAT_INFO, SERVER_RT,
+};
 use crate::proto::message::{DeviceList, Punch, RegistrationResponse};
-use crate::protocol::{control_packet, NetPacket, Protocol, service_packet, turn_packet, Version};
 use crate::protocol::control_packet::{ControlPacket, PunchResponsePacket};
 use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::turn_packet::TurnPacket;
+use crate::protocol::{control_packet, service_packet, turn_packet, NetPacket, Protocol, Version};
 use crate::tun_device::TunWriter;
+use crate::{ApplicationStatus, CurrentDeviceInfo};
 
 const UDP_STOP_BUF: [u8; 1] = [0u8];
 
@@ -32,8 +34,10 @@ pub async fn udp_recv_start<F>(
     other_sender: Sender<(SocketAddr, Vec<u8>)>,
     mut tun_writer: TunWriter,
     current_device: CurrentDeviceInfo,
-    stop_fn: F)
-    where F: FnOnce() + Send + 'static {
+    stop_fn: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
     {
         let udp = udp.try_clone().unwrap();
         tokio::spawn(async move {
@@ -45,14 +49,8 @@ pub async fn udp_recv_start<F>(
     }
 
     thread::spawn(move || {
-        if let Err(e) = recv_loop(
-            udp,
-            server_addr,
-            other_sender,
-            tun_writer,
-            current_device,
-        ) {
-            log::error!("udp数据处理线程停止 {:?}",e);
+        if let Err(e) = recv_loop(udp, server_addr, other_sender, tun_writer, current_device) {
+            log::error!("udp数据处理线程停止 {:?}", e);
         }
         stop_fn();
     });
@@ -97,12 +95,12 @@ fn recv_loop(
                         return Err(Error::Stop(str));
                     }
                     Err(e) => {
-                        log::error!("{:?}",e);
+                        log::error!("{:?}", e);
                     }
                 }
             }
             Err(e) => {
-                log::error!("{:?}",e);
+                log::error!("{:?}", e);
             }
         };
     }
@@ -158,7 +156,7 @@ fn recv_handle(
                     return Err(Error::Stop("子处理线程停止".to_string()));
                 }
                 Err(e) => {
-                    log::error!("子线程处理 {:?}",e);
+                    log::error!("子线程处理 {:?}", e);
                 }
             }
         }
@@ -166,17 +164,21 @@ fn recv_handle(
     Ok(())
 }
 
-pub async fn udp_other_recv_start<F>(status_watch: watch::Receiver<ApplicationStatus>,
-                                     udp: UdpSocket,
-                                     receiver: Receiver<(SocketAddr, Vec<u8>)>,
-                                     current_device: CurrentDeviceInfo,
-                                     sender: PunchSender,
-                                     stop_fn: F) where F: FnOnce() + Send + 'static {
+pub async fn udp_other_recv_start<F>(
+    status_watch: watch::Receiver<ApplicationStatus>,
+    udp: UdpSocket,
+    receiver: Receiver<(SocketAddr, Vec<u8>)>,
+    current_device: CurrentDeviceInfo,
+    sender: PunchSender,
+    stop_fn: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
     tokio::spawn(async move {
         match other_loop(status_watch, udp, receiver, current_device, sender).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}",e);
+                log::error!("{:?}", e);
             }
         }
         stop_fn();
@@ -267,7 +269,7 @@ fn other_handle(
                     }
                 }
                 InErrorPacket::OtherError(e) => {
-                    log::error!("OtherError {:?}",e.message());
+                    log::error!("OtherError {:?}", e.message());
                 }
             }
         }
@@ -301,7 +303,8 @@ fn other_handle(
                     //回应
                     let mut punch_response = PunchResponsePacket::new(net_packet.payload_mut())?;
                     punch_response.set_source(current_device.virtual_ip);
-                    net_packet.set_transport_protocol(control_packet::Protocol::PunchResponse.into());
+                    net_packet
+                        .set_transport_protocol(control_packet::Protocol::PunchResponse.into());
                     udp.send_to(net_packet.buffer(), peer_addr)?;
                     let route = Route::new(peer_addr);
                     DIRECT_ROUTE_TABLE.insert(src, route);
@@ -329,7 +332,8 @@ fn other_handle(
                             if !punch.reply {
                                 let mut punch_reply = Punch::new();
                                 punch_reply.reply = true;
-                                punch_reply.virtual_ip = u32::from_be_bytes(current_device.virtual_ip.octets());
+                                punch_reply.virtual_ip =
+                                    u32::from_be_bytes(current_device.virtual_ip.octets());
                                 punch_reply.step = punch.step;
                                 if let Err(_) = sender.try_send(punch) {
                                     return Ok(());
@@ -339,15 +343,20 @@ fn other_handle(
                                     punch_reply.public_ip_list = info.public_ips.clone();
                                     punch_reply.public_port = info.public_port as u32;
                                     punch_reply.public_port_range = info.public_port_range as u32;
-                                    punch_reply.nat_type = protobuf::EnumOrUnknown::new(info.nat_type);
+                                    punch_reply.nat_type =
+                                        protobuf::EnumOrUnknown::new(info.nat_type);
                                     drop(nat_info);
                                     let bytes = punch_reply.write_to_bytes()?;
-                                    let mut net_packet = NetPacket::new(vec![0u8; 4 + 8 + bytes.len()])?;
+                                    let mut net_packet =
+                                        NetPacket::new(vec![0u8; 4 + 8 + bytes.len()])?;
                                     net_packet.set_version(Version::V1);
                                     net_packet.set_protocol(Protocol::OtherTurn);
-                                    net_packet.set_transport_protocol(turn_packet::Protocol::Punch.into());
+                                    net_packet.set_transport_protocol(
+                                        turn_packet::Protocol::Punch.into(),
+                                    );
                                     net_packet.set_ttl(255);
-                                    let mut turn_packet = TurnPacket::new(net_packet.payload_mut())?;
+                                    let mut turn_packet =
+                                        TurnPacket::new(net_packet.payload_mut())?;
                                     turn_packet.set_source(current_device.virtual_ip);
                                     turn_packet.set_destination(src);
                                     turn_packet.set_payload(&bytes);
@@ -365,7 +374,7 @@ fn other_handle(
             }
         }
         Protocol::UnKnow(p) => {
-            log::error!("未知协议 {}",p);
+            log::error!("未知协议 {}", p);
         }
     }
     Ok(())

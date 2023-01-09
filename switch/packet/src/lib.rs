@@ -133,7 +133,6 @@ fn u32c(x: u8, y: u8) -> u32 {
     ((x as u32) << 8) | y as u32
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

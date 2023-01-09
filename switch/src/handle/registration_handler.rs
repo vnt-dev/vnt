@@ -11,7 +11,7 @@ use protobuf::Message;
 use crate::error::*;
 use crate::handle::ConnectStatus;
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
-use crate::protocol::{error_packet, NetPacket, Protocol, service_packet, Version};
+use crate::protocol::{error_packet, service_packet, NetPacket, Protocol, Version};
 
 lazy_static::lazy_static! {
     static ref REQUEST:RwLock<Option<(String,String)>> = parking_lot::const_rwlock(None);
@@ -98,8 +98,8 @@ pub fn fast_registration(udp: &UdpSocket, server_address: SocketAddr) -> Result<
     let new = Local::now().timestamp_millis();
     if new - last < 2000
         || REGISTRATION_TIME
-        .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
-        .is_err()
+            .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
     {
         //短时间不重复注册
         return Ok(());

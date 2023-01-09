@@ -5,8 +5,8 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use bytes::BufMut;
-use tun::Device;
 use tun::platform::posix::{Reader, Writer};
+use tun::Device;
 
 use crate::tun_device::{TunReader, TunWriter};
 
@@ -36,4 +36,3 @@ pub fn create_tun(
         TunReader(reader, packet_information),
     ))
 }
-

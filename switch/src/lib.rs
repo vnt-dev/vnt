@@ -7,15 +7,18 @@ use tokio::sync::watch;
 
 use error::*;
 
-use crate::handle::{ApplicationStatus, ConnectStatus, CurrentDeviceInfo, DEVICE_LIST, DIRECT_ROUTE_TABLE, Route, RouteType, SERVER_RT};
 use crate::handle::registration_handler::CONNECTION_STATUS;
+use crate::handle::{
+    ApplicationStatus, ConnectStatus, CurrentDeviceInfo, Route, RouteType, DEVICE_LIST,
+    DIRECT_ROUTE_TABLE, SERVER_RT,
+};
 
-pub mod tun_device;
-pub mod nat;
 pub mod error;
 pub mod handle;
+pub mod nat;
 pub mod proto;
 pub mod protocol;
+pub mod tun_device;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -25,10 +28,7 @@ pub struct Config {
 
 impl Config {
     pub fn new(token: String, mac_address: String) -> Self {
-        Self {
-            token,
-            mac_address,
-        }
+        Self { token, mac_address }
     }
 }
 
@@ -50,9 +50,7 @@ impl Switch {
                 switch.runtime = Some(runtime);
                 Ok(switch)
             }
-            Err(e) => {
-                Err(e)
-            }
+            Err(e) => Err(e),
         };
     }
     pub fn stop(self) {
@@ -89,7 +87,11 @@ impl Switch {
 
 impl Switch {
     pub async fn start_(token: String, mac_address: String) -> Result<Self> {
-        let server_address = "nat1.wherewego.top:29876".to_socket_addrs().unwrap().next().unwrap();
+        let server_address = "nat1.wherewego.top:29876"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap();
         let mut port = 101 as u16;
         let udp = loop {
             match UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(0), port))) {
@@ -100,14 +102,15 @@ impl Switch {
                     if e.kind() == io::ErrorKind::AddrInUse {
                         port += 1;
                     } else {
-                        log::error!("创建udp失败 {:?}",e);
+                        log::error!("创建udp失败 {:?}", e);
                         return Err(Error::Stop("udp bind error".to_string()));
                     }
                 }
             }
         };
         //注册
-        let response = handle::registration_handler::registration(&udp, server_address, token, mac_address)?;
+        let response =
+            handle::registration_handler::registration(&udp, server_address, token, mac_address)?;
         {
             let ip_list = response
                 .virtual_ip_list
@@ -121,8 +124,10 @@ impl Switch {
         let virtual_ip = Ipv4Addr::from(response.virtual_ip);
         let virtual_gateway = Ipv4Addr::from(response.virtual_gateway);
         let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
-        let (status_sender, status_receiver) = tokio::sync::watch::channel(ApplicationStatus::Starting);
-        let current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
+        let (status_sender, status_receiver) =
+            tokio::sync::watch::channel(ApplicationStatus::Starting);
+        let current_device =
+            CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
         let wait_group = WaitGroup::new();
         //心跳线程
         {
@@ -130,7 +135,8 @@ impl Switch {
             let wait_group1 = wait_group.clone();
             handle::heartbeat_handler::start(status_receiver.clone(), udp, current_device, || {
                 drop(wait_group1);
-            }).await;
+            })
+            .await;
         }
         //初始化nat数据
         handle::init_nat_info(response.public_ip, response.public_port as u16);
@@ -138,7 +144,8 @@ impl Switch {
         let (tun_writer, tun_reader) =
             tun_device::create_tun(virtual_ip, virtual_netmask, virtual_gateway)?;
         // 打洞数据通道
-        let (punch_sender, cone_receiver, req_symmetric_receiver, res_symmetric_receiver) = handle::punch_handler::bounded();
+        let (punch_sender, cone_receiver, req_symmetric_receiver, res_symmetric_receiver) =
+            handle::punch_handler::bounded();
         //udp数据处理
         {
             // 低优先级的udp数据通道
@@ -155,51 +162,74 @@ impl Switch {
                 || {
                     drop(wait_group1);
                 },
-            ).await;
+            )
+            .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
-            handle::udp_recv_handler::udp_other_recv_start(status_receiver.clone(), udp1,
-                                                           receiver, current_device, punch_sender,
-                                                           || {
-                                                               drop(wait_group1);
-                                                           }).await;
+            handle::udp_recv_handler::udp_other_recv_start(
+                status_receiver.clone(),
+                udp1,
+                receiver,
+                current_device,
+                punch_sender,
+                || {
+                    drop(wait_group1);
+                },
+            )
+            .await;
         }
         //打洞处理
         {
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
-            handle::punch_handler::cone_handler_start(status_receiver.clone(),
-                                                      cone_receiver, udp1,
-                                                      current_device,
-                                                      || {
-                                                          drop(wait_group1);
-                                                      }).await;
+            handle::punch_handler::cone_handler_start(
+                status_receiver.clone(),
+                cone_receiver,
+                udp1,
+                current_device,
+                || {
+                    drop(wait_group1);
+                },
+            )
+            .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
-            handle::punch_handler::req_symmetric_handler_start(status_receiver.clone(),
-                                                               req_symmetric_receiver, udp1,
-                                                               current_device,
-                                                               || {
-                                                                   drop(wait_group1);
-                                                               }).await;
+            handle::punch_handler::req_symmetric_handler_start(
+                status_receiver.clone(),
+                req_symmetric_receiver,
+                udp1,
+                current_device,
+                || {
+                    drop(wait_group1);
+                },
+            )
+            .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
-            handle::punch_handler::res_symmetric_handler_start(status_receiver.clone(),
-                                                               res_symmetric_receiver,
-                                                               udp1,
-                                                               current_device,
-                                                               || {
-                                                                   drop(wait_group1);
-                                                               }).await;
+            handle::punch_handler::res_symmetric_handler_start(
+                status_receiver.clone(),
+                res_symmetric_receiver,
+                udp1,
+                current_device,
+                || {
+                    drop(wait_group1);
+                },
+            )
+            .await;
         }
         //tun数据处理
         {
             let wait_group1 = wait_group.clone();
-            handle::tun_handler::handler_start(status_receiver.clone(), udp,
-                                               tun_reader, current_device,
-                                               || {
-                                                   drop(wait_group1);
-                                               }).await;
+            handle::tun_handler::handler_start(
+                status_receiver.clone(),
+                udp,
+                tun_reader,
+                current_device,
+                || {
+                    drop(wait_group1);
+                },
+            )
+            .await;
         }
         Ok(Switch {
             current_device,

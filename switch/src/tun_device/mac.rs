@@ -5,8 +5,8 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use bytes::BufMut;
-use tun::Device;
 use tun::platform::posix::{Reader, Writer};
+use tun::Device;
 
 use crate::tun_device::{TunReader, TunWriter};
 
@@ -36,7 +36,10 @@ pub fn create_tun(
         .output()
         .expect("sh exec error!");
     if !up_eth_out.status.success() {
-        return Err(crate::error::Error::Stop(format!("设置地址失败:{:?}", up_eth_out)));
+        return Err(crate::error::Error::Stop(format!(
+            "设置地址失败:{:?}",
+            up_eth_out
+        )));
     }
     let if_config_out = Command::new("sh")
         .arg("-c")
@@ -44,7 +47,10 @@ pub fn create_tun(
         .output()
         .expect("sh exec error!");
     if !if_config_out.status.success() {
-        return Err(crate::error::Error::Stop(format!("设置路由失败:{:?}", if_config_out)));
+        return Err(crate::error::Error::Stop(format!(
+            "设置路由失败:{:?}",
+            if_config_out
+        )));
     }
     // println!("{:?}", if_config_out);
     // let cmd_str: String = " ifconfig|grep  flags=8051|awk -F ':' '{print $1}'|tail -1".to_string();
@@ -65,4 +71,3 @@ pub fn create_tun(
         TunReader(reader, packet_information),
     ))
 }
-

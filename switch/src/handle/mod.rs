@@ -62,10 +62,12 @@ pub struct NatInfo {
 }
 
 impl NatInfo {
-    pub fn new(public_ips: Vec<u32>,
-               public_port: u16,
-               public_port_range: u16,
-               nat_type: NatType, ) -> Self {
+    pub fn new(
+        public_ips: Vec<u32>,
+        public_port: u16,
+        public_port_range: u16,
+        nat_type: NatType,
+    ) -> Self {
         Self {
             public_ips,
             public_port,
@@ -87,9 +89,7 @@ pub fn init_nat_info(public_ip: u32, public_port: u16) {
                     public_ips.push(ip);
                 }
             }
-            let nat_info = NatInfo::new(public_ips,
-                                        public_port,
-                                        port_range, nat_type);
+            let nat_info = NatInfo::new(public_ips, public_port, port_range, nat_type);
             // println!("nat信息:{:?}",nat_info);
             let mut nat_info_lock = NAT_INFO.lock();
             nat_info_lock.replace(nat_info);
@@ -114,7 +114,12 @@ pub struct CurrentDeviceInfo {
 }
 
 impl CurrentDeviceInfo {
-    pub fn new(virtual_ip: Ipv4Addr, virtual_gateway: Ipv4Addr, virtual_netmask: Ipv4Addr, connect_server: SocketAddr) -> Self {
+    pub fn new(
+        virtual_ip: Ipv4Addr,
+        virtual_gateway: Ipv4Addr,
+        virtual_netmask: Ipv4Addr,
+        connect_server: SocketAddr,
+    ) -> Self {
         let broadcast_address = (!u32::from_be_bytes(virtual_netmask.octets()))
             | u32::from_be_bytes(virtual_gateway.octets());
         let broadcast_address = Ipv4Addr::from(broadcast_address);
@@ -152,7 +157,7 @@ impl Into<u8> for RouteType {
     fn into(self) -> u8 {
         match self {
             RouteType::ServerRelay => 0,
-            RouteType::P2P => 1
+            RouteType::P2P => 1,
         }
     }
 }

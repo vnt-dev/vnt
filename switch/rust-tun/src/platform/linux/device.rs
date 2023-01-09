@@ -77,10 +77,10 @@ impl Device {
 
             req.ifru.flags = device_type
                 | if config.platform.packet_information {
-                0
-            } else {
-                IFF_NO_PI
-            }
+                    0
+                } else {
+                    IFF_NO_PI
+                }
                 | if queues_num > 1 { IFF_MULTI_QUEUE } else { 0 };
 
             for _ in 0..queues_num {

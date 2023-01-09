@@ -1,7 +1,7 @@
-use std::{io, thread};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
+use std::{io, thread};
 
 use crate::proto::message::NatType;
 
