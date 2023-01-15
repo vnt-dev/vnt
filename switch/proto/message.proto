@@ -2,6 +2,8 @@ syntax = "proto3";
 message RegistrationRequest{
   string token = 1;
   string mac_address = 2;
+  string name = 3;
+  bool is_fast = 4;
 }
 
 message RegistrationResponse{
@@ -9,14 +11,19 @@ message RegistrationResponse{
   fixed32 virtual_gateway = 2;
   fixed32 virtual_netmask = 3;
   uint32 epoch = 4;
-  repeated fixed32 virtual_ip_list = 5;
+  repeated DeviceInfo device_info_list = 5;
   fixed32 public_ip = 6;
   uint32 public_port = 7;
+}
+message DeviceInfo{
+  string name = 1;
+  fixed32 virtual_ip = 2;
+  uint32 device_status = 3;
 }
 
 message DeviceList{
   uint32 epoch = 1;
-  repeated fixed32 virtual_ip_list = 2;
+  repeated DeviceInfo device_info_list = 2;
 }
 
 message Punch{

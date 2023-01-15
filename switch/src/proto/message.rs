@@ -33,6 +33,10 @@ pub struct RegistrationRequest {
     pub token: ::std::string::String,
     // @@protoc_insertion_point(field:RegistrationRequest.mac_address)
     pub mac_address: ::std::string::String,
+    // @@protoc_insertion_point(field:RegistrationRequest.name)
+    pub name: ::std::string::String,
+    // @@protoc_insertion_point(field:RegistrationRequest.is_fast)
+    pub is_fast: bool,
     // special fields
     // @@protoc_insertion_point(special_field:RegistrationRequest.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -50,7 +54,7 @@ impl RegistrationRequest {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(2);
+        let mut fields = ::std::vec::Vec::with_capacity(4);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "token",
@@ -61,6 +65,16 @@ impl RegistrationRequest {
             "mac_address",
             |m: &RegistrationRequest| { &m.mac_address },
             |m: &mut RegistrationRequest| { &mut m.mac_address },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "name",
+            |m: &RegistrationRequest| { &m.name },
+            |m: &mut RegistrationRequest| { &mut m.name },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "is_fast",
+            |m: &RegistrationRequest| { &m.is_fast },
+            |m: &mut RegistrationRequest| { &mut m.is_fast },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<RegistrationRequest>(
             "RegistrationRequest",
@@ -86,6 +100,12 @@ impl ::protobuf::Message for RegistrationRequest {
                 18 => {
                     self.mac_address = is.read_string()?;
                 },
+                26 => {
+                    self.name = is.read_string()?;
+                },
+                32 => {
+                    self.is_fast = is.read_bool()?;
+                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -104,6 +124,12 @@ impl ::protobuf::Message for RegistrationRequest {
         if !self.mac_address.is_empty() {
             my_size += ::protobuf::rt::string_size(2, &self.mac_address);
         }
+        if !self.name.is_empty() {
+            my_size += ::protobuf::rt::string_size(3, &self.name);
+        }
+        if self.is_fast != false {
+            my_size += 1 + 1;
+        }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -115,6 +141,12 @@ impl ::protobuf::Message for RegistrationRequest {
         }
         if !self.mac_address.is_empty() {
             os.write_string(2, &self.mac_address)?;
+        }
+        if !self.name.is_empty() {
+            os.write_string(3, &self.name)?;
+        }
+        if self.is_fast != false {
+            os.write_bool(4, self.is_fast)?;
         }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -135,6 +167,8 @@ impl ::protobuf::Message for RegistrationRequest {
     fn clear(&mut self) {
         self.token.clear();
         self.mac_address.clear();
+        self.name.clear();
+        self.is_fast = false;
         self.special_fields.clear();
     }
 
@@ -142,6 +176,8 @@ impl ::protobuf::Message for RegistrationRequest {
         static instance: RegistrationRequest = RegistrationRequest {
             token: ::std::string::String::new(),
             mac_address: ::std::string::String::new(),
+            name: ::std::string::String::new(),
+            is_fast: false,
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -177,8 +213,8 @@ pub struct RegistrationResponse {
     pub virtual_netmask: u32,
     // @@protoc_insertion_point(field:RegistrationResponse.epoch)
     pub epoch: u32,
-    // @@protoc_insertion_point(field:RegistrationResponse.virtual_ip_list)
-    pub virtual_ip_list: ::std::vec::Vec<u32>,
+    // @@protoc_insertion_point(field:RegistrationResponse.device_info_list)
+    pub device_info_list: ::std::vec::Vec<DeviceInfo>,
     // @@protoc_insertion_point(field:RegistrationResponse.public_ip)
     pub public_ip: u32,
     // @@protoc_insertion_point(field:RegistrationResponse.public_port)
@@ -223,9 +259,9 @@ impl RegistrationResponse {
             |m: &mut RegistrationResponse| { &mut m.epoch },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
-            "virtual_ip_list",
-            |m: &RegistrationResponse| { &m.virtual_ip_list },
-            |m: &mut RegistrationResponse| { &mut m.virtual_ip_list },
+            "device_info_list",
+            |m: &RegistrationResponse| { &m.device_info_list },
+            |m: &mut RegistrationResponse| { &mut m.device_info_list },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "public_ip",
@@ -268,10 +304,7 @@ impl ::protobuf::Message for RegistrationResponse {
                     self.epoch = is.read_uint32()?;
                 },
                 42 => {
-                    is.read_repeated_packed_fixed32_into(&mut self.virtual_ip_list)?;
-                },
-                45 => {
-                    self.virtual_ip_list.push(is.read_fixed32()?);
+                    self.device_info_list.push(is.read_message()?);
                 },
                 53 => {
                     self.public_ip = is.read_fixed32()?;
@@ -303,7 +336,10 @@ impl ::protobuf::Message for RegistrationResponse {
         if self.epoch != 0 {
             my_size += ::protobuf::rt::uint32_size(4, self.epoch);
         }
-        my_size += 5 * self.virtual_ip_list.len() as u64;
+        for value in &self.device_info_list {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        };
         if self.public_ip != 0 {
             my_size += 1 + 4;
         }
@@ -328,8 +364,8 @@ impl ::protobuf::Message for RegistrationResponse {
         if self.epoch != 0 {
             os.write_uint32(4, self.epoch)?;
         }
-        for v in &self.virtual_ip_list {
-            os.write_fixed32(5, *v)?;
+        for v in &self.device_info_list {
+            ::protobuf::rt::write_message_field_with_cached_size(5, v, os)?;
         };
         if self.public_ip != 0 {
             os.write_fixed32(6, self.public_ip)?;
@@ -358,7 +394,7 @@ impl ::protobuf::Message for RegistrationResponse {
         self.virtual_gateway = 0;
         self.virtual_netmask = 0;
         self.epoch = 0;
-        self.virtual_ip_list.clear();
+        self.device_info_list.clear();
         self.public_ip = 0;
         self.public_port = 0;
         self.special_fields.clear();
@@ -370,7 +406,7 @@ impl ::protobuf::Message for RegistrationResponse {
             virtual_gateway: 0,
             virtual_netmask: 0,
             epoch: 0,
-            virtual_ip_list: ::std::vec::Vec::new(),
+            device_info_list: ::std::vec::Vec::new(),
             public_ip: 0,
             public_port: 0,
             special_fields: ::protobuf::SpecialFields::new(),
@@ -397,13 +433,171 @@ impl ::protobuf::reflect::ProtobufValue for RegistrationResponse {
 }
 
 #[derive(PartialEq,Clone,Default,Debug)]
+// @@protoc_insertion_point(message:DeviceInfo)
+pub struct DeviceInfo {
+    // message fields
+    // @@protoc_insertion_point(field:DeviceInfo.name)
+    pub name: ::std::string::String,
+    // @@protoc_insertion_point(field:DeviceInfo.virtual_ip)
+    pub virtual_ip: u32,
+    // @@protoc_insertion_point(field:DeviceInfo.device_status)
+    pub device_status: u32,
+    // special fields
+    // @@protoc_insertion_point(special_field:DeviceInfo.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a DeviceInfo {
+    fn default() -> &'a DeviceInfo {
+        <DeviceInfo as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl DeviceInfo {
+    pub fn new() -> DeviceInfo {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(3);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "name",
+            |m: &DeviceInfo| { &m.name },
+            |m: &mut DeviceInfo| { &mut m.name },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "virtual_ip",
+            |m: &DeviceInfo| { &m.virtual_ip },
+            |m: &mut DeviceInfo| { &mut m.virtual_ip },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "device_status",
+            |m: &DeviceInfo| { &m.device_status },
+            |m: &mut DeviceInfo| { &mut m.device_status },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<DeviceInfo>(
+            "DeviceInfo",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for DeviceInfo {
+    const NAME: &'static str = "DeviceInfo";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.name = is.read_string()?;
+                },
+                21 => {
+                    self.virtual_ip = is.read_fixed32()?;
+                },
+                24 => {
+                    self.device_status = is.read_uint32()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.name.is_empty() {
+            my_size += ::protobuf::rt::string_size(1, &self.name);
+        }
+        if self.virtual_ip != 0 {
+            my_size += 1 + 4;
+        }
+        if self.device_status != 0 {
+            my_size += ::protobuf::rt::uint32_size(3, self.device_status);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.name.is_empty() {
+            os.write_string(1, &self.name)?;
+        }
+        if self.virtual_ip != 0 {
+            os.write_fixed32(2, self.virtual_ip)?;
+        }
+        if self.device_status != 0 {
+            os.write_uint32(3, self.device_status)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> DeviceInfo {
+        DeviceInfo::new()
+    }
+
+    fn clear(&mut self) {
+        self.name.clear();
+        self.virtual_ip = 0;
+        self.device_status = 0;
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static DeviceInfo {
+        static instance: DeviceInfo = DeviceInfo {
+            name: ::std::string::String::new(),
+            virtual_ip: 0,
+            device_status: 0,
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for DeviceInfo {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("DeviceInfo").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for DeviceInfo {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for DeviceInfo {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+#[derive(PartialEq,Clone,Default,Debug)]
 // @@protoc_insertion_point(message:DeviceList)
 pub struct DeviceList {
     // message fields
     // @@protoc_insertion_point(field:DeviceList.epoch)
     pub epoch: u32,
-    // @@protoc_insertion_point(field:DeviceList.virtual_ip_list)
-    pub virtual_ip_list: ::std::vec::Vec<u32>,
+    // @@protoc_insertion_point(field:DeviceList.device_info_list)
+    pub device_info_list: ::std::vec::Vec<DeviceInfo>,
     // special fields
     // @@protoc_insertion_point(special_field:DeviceList.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -429,9 +623,9 @@ impl DeviceList {
             |m: &mut DeviceList| { &mut m.epoch },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
-            "virtual_ip_list",
-            |m: &DeviceList| { &m.virtual_ip_list },
-            |m: &mut DeviceList| { &mut m.virtual_ip_list },
+            "device_info_list",
+            |m: &DeviceList| { &m.device_info_list },
+            |m: &mut DeviceList| { &mut m.device_info_list },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<DeviceList>(
             "DeviceList",
@@ -455,10 +649,7 @@ impl ::protobuf::Message for DeviceList {
                     self.epoch = is.read_uint32()?;
                 },
                 18 => {
-                    is.read_repeated_packed_fixed32_into(&mut self.virtual_ip_list)?;
-                },
-                21 => {
-                    self.virtual_ip_list.push(is.read_fixed32()?);
+                    self.device_info_list.push(is.read_message()?);
                 },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
@@ -475,7 +666,10 @@ impl ::protobuf::Message for DeviceList {
         if self.epoch != 0 {
             my_size += ::protobuf::rt::uint32_size(1, self.epoch);
         }
-        my_size += 5 * self.virtual_ip_list.len() as u64;
+        for value in &self.device_info_list {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        };
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -485,8 +679,8 @@ impl ::protobuf::Message for DeviceList {
         if self.epoch != 0 {
             os.write_uint32(1, self.epoch)?;
         }
-        for v in &self.virtual_ip_list {
-            os.write_fixed32(2, *v)?;
+        for v in &self.device_info_list {
+            ::protobuf::rt::write_message_field_with_cached_size(2, v, os)?;
         };
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -506,14 +700,14 @@ impl ::protobuf::Message for DeviceList {
 
     fn clear(&mut self) {
         self.epoch = 0;
-        self.virtual_ip_list.clear();
+        self.device_info_list.clear();
         self.special_fields.clear();
     }
 
     fn default_instance() -> &'static DeviceList {
         static instance: DeviceList = DeviceList {
             epoch: 0,
-            virtual_ip_list: ::std::vec::Vec::new(),
+            device_info_list: ::std::vec::Vec::new(),
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -885,25 +1079,30 @@ impl Step {
 }
 
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\rmessage.proto\"L\n\x13RegistrationRequest\x12\x14\n\x05token\x18\x01\
+    \n\rmessage.proto\"y\n\x13RegistrationRequest\x12\x14\n\x05token\x18\x01\
     \x20\x01(\tR\x05token\x12\x1f\n\x0bmac_address\x18\x02\x20\x01(\tR\nmacA\
-    ddress\"\x83\x02\n\x14RegistrationResponse\x12\x1d\n\nvirtual_ip\x18\x01\
-    \x20\x01(\x07R\tvirtualIp\x12'\n\x0fvirtual_gateway\x18\x02\x20\x01(\x07\
-    R\x0evirtualGateway\x12'\n\x0fvirtual_netmask\x18\x03\x20\x01(\x07R\x0ev\
-    irtualNetmask\x12\x14\n\x05epoch\x18\x04\x20\x01(\rR\x05epoch\x12&\n\x0f\
-    virtual_ip_list\x18\x05\x20\x03(\x07R\rvirtualIpList\x12\x1b\n\tpublic_i\
-    p\x18\x06\x20\x01(\x07R\x08publicIp\x12\x1f\n\x0bpublic_port\x18\x07\x20\
-    \x01(\rR\npublicPort\"J\n\nDeviceList\x12\x14\n\x05epoch\x18\x01\x20\x01\
-    (\rR\x05epoch\x12&\n\x0fvirtual_ip_list\x18\x02\x20\x03(\x07R\rvirtualIp\
-    List\"\xef\x01\n\x05Punch\x12\x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tv\
-    irtualIp\x12$\n\x0epublic_ip_list\x18\x02\x20\x03(\x07R\x0cpublicIpList\
-    \x12\x1f\n\x0bpublic_port\x18\x03\x20\x01(\rR\npublicPort\x12*\n\x11publ\
-    ic_port_range\x18\x04\x20\x01(\rR\x0fpublicPortRange\x12#\n\x08nat_type\
-    \x18\x05\x20\x01(\x0e2\x08.NatTypeR\x07natType\x12\x14\n\x05reply\x18\
-    \x06\x20\x01(\x08R\x05reply\x12\x19\n\x04step\x18\x07\x20\x01(\x0e2\x05.\
-    StepR\x04step*\"\n\x07NatType\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\
-    \x10\x01*2\n\x04Step\x12\t\n\x05Step1\x10\0\x12\t\n\x05Step2\x10\x01\x12\
-    \t\n\x05Step3\x10\x02\x12\t\n\x05Step4\x10\x03b\x06proto3\
+    ddress\x12\x12\n\x04name\x18\x03\x20\x01(\tR\x04name\x12\x17\n\x07is_fas\
+    t\x18\x04\x20\x01(\x08R\x06isFast\"\x92\x02\n\x14RegistrationResponse\
+    \x12\x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12'\n\x0fvirtua\
+    l_gateway\x18\x02\x20\x01(\x07R\x0evirtualGateway\x12'\n\x0fvirtual_netm\
+    ask\x18\x03\x20\x01(\x07R\x0evirtualNetmask\x12\x14\n\x05epoch\x18\x04\
+    \x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x05\x20\x03(\x0b2\
+    \x0b.DeviceInfoR\x0edeviceInfoList\x12\x1b\n\tpublic_ip\x18\x06\x20\x01(\
+    \x07R\x08publicIp\x12\x1f\n\x0bpublic_port\x18\x07\x20\x01(\rR\npublicPo\
+    rt\"d\n\nDeviceInfo\x12\x12\n\x04name\x18\x01\x20\x01(\tR\x04name\x12\
+    \x1d\n\nvirtual_ip\x18\x02\x20\x01(\x07R\tvirtualIp\x12#\n\rdevice_statu\
+    s\x18\x03\x20\x01(\rR\x0cdeviceStatus\"Y\n\nDeviceList\x12\x14\n\x05epoc\
+    h\x18\x01\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x02\x20\
+    \x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xef\x01\n\x05Punch\x12\
+    \x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12$\n\x0epublic_ip_\
+    list\x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\n\x0bpublic_port\x18\
+    \x03\x20\x01(\rR\npublicPort\x12*\n\x11public_port_range\x18\x04\x20\x01\
+    (\rR\x0fpublicPortRange\x12#\n\x08nat_type\x18\x05\x20\x01(\x0e2\x08.Nat\
+    TypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\x01(\x08R\x05reply\x12\
+    \x19\n\x04step\x18\x07\x20\x01(\x0e2\x05.StepR\x04step*\"\n\x07NatType\
+    \x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01*2\n\x04Step\x12\t\n\
+    \x05Step1\x10\0\x12\t\n\x05Step2\x10\x01\x12\t\n\x05Step3\x10\x02\x12\t\
+    \n\x05Step4\x10\x03b\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
@@ -921,9 +1120,10 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
     file_descriptor.get(|| {
         let generated_file_descriptor = generated_file_descriptor_lazy.get(|| {
             let mut deps = ::std::vec::Vec::with_capacity(0);
-            let mut messages = ::std::vec::Vec::with_capacity(4);
+            let mut messages = ::std::vec::Vec::with_capacity(5);
             messages.push(RegistrationRequest::generated_message_descriptor_data());
             messages.push(RegistrationResponse::generated_message_descriptor_data());
+            messages.push(DeviceInfo::generated_message_descriptor_data());
             messages.push(DeviceList::generated_message_descriptor_data());
             messages.push(Punch::generated_message_descriptor_data());
             let mut enums = ::std::vec::Vec::with_capacity(2);

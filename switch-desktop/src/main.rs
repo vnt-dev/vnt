@@ -1,17 +1,19 @@
 use clap::Parser;
 use console::style;
 
-use switch::handle::RouteType;
 use switch::*;
+use switch::handle::{PeerDeviceStatus, RouteType};
 
 #[cfg(windows)]
 mod windows_admin_check;
+#[cfg(windows)]
+mod windows;
 
 #[derive(Parser, Debug)]
 #[command(
-    author = "Lu Beilin",
-    version,
-    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+author = "Lu Beilin",
+version,
+about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 struct Args {
     /// 32位字符
@@ -20,8 +22,11 @@ struct Args {
     /// 32-bit characters.
     /// Only devices with the same token can communicate with each other.
     /// It is recommended to use uuid to ensure uniqueness
-    #[arg(short, long)]
+    #[arg(long)]
     token: String,
+    /// 给设备一个名称，为空时默认用系统版本信息
+    #[arg(long)]
+    name: Option<String>,
 }
 
 fn log_init() {
@@ -29,6 +34,7 @@ fn log_init() {
     if !home.exists() {
         std::fs::create_dir(&home).expect(" Failed to create '.switch' directory");
     }
+    let stderr = log4rs::append::console::ConsoleAppender::builder().target(log4rs::append::console::Target::Stderr).build();
     let logfile = log4rs::append::file::FileAppender::builder()
         // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
         .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
@@ -38,9 +44,15 @@ fn log_init() {
         .unwrap();
     let config = log4rs::Config::builder()
         .appender(log4rs::config::Appender::builder().build("logfile", Box::new(logfile)))
+        .appender(
+            log4rs::config::Appender::builder()
+                .filter(Box::new(log4rs::filter::threshold::ThresholdFilter::new(log::LevelFilter::Error)))
+                .build("stderr", Box::new(stderr)),
+        )
         .build(
             log4rs::config::Root::builder()
                 .appender("logfile")
+                .appender("stderr")
                 .build(log::LevelFilter::Info),
         )
         .unwrap();
@@ -75,7 +87,23 @@ fn main() {
     }
     println!("{}", style("starting...").green());
     let mac_address = mac_address::get_mac_address().unwrap().unwrap().to_string();
-    let switch = Switch::start(Config::new(args.token, mac_address)).unwrap();
+    let switch = match Config::new(args.token, mac_address, args.name, || {}) {
+        Ok(config) => {
+            match Switch::start(config) {
+                Ok(switch) => {
+                    switch
+                }
+                Err(e) => {
+                    log::error!("{:?}",e);
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("{:?}",e);
+            return;
+        }
+    };
     use console::Term;
     let term = Term::stdout();
     println!("{}", style("started").green());
@@ -122,22 +150,27 @@ fn command(cmd: &str, switch: &Switch) -> Result<(), ()> {
                 println!("No other devices found");
                 return Ok(());
             }
-            for ip in device_list {
-                let route = switch.route(&ip);
-                if route.route_type == RouteType::P2P {
-                    let str = if route.rt >= 0 {
-                        format!("{}(p2p delay:{}ms)", ip, route.rt)
+            for peer_device_info in device_list {
+                let route = switch.route(&peer_device_info.virtual_ip);
+                if peer_device_info.status == PeerDeviceStatus::Online {
+                    if route.route_type == RouteType::P2P {
+                        let str = if route.rt >= 0 {
+                            format!("[{}] {}(p2p delay:{}ms)", peer_device_info.name, peer_device_info.virtual_ip, route.rt)
+                        } else {
+                            format!("[{}] {}(p2p)", peer_device_info.name, peer_device_info.virtual_ip)
+                        };
+                        println!("{}", style(str).green());
                     } else {
-                        format!("{}(p2p)", ip)
-                    };
-                    println!("{}", style(str).green());
+                        let str = if server_rt >= 0 {
+                            format!("[{}] {}(relay delay:{}ms)", peer_device_info.name, peer_device_info.virtual_ip, server_rt * 2)
+                        } else {
+                            format!("[{}] {}(relay)", peer_device_info.name, peer_device_info.virtual_ip)
+                        };
+                        println!("{}", style(str).blue());
+                    }
                 } else {
-                    let str = if server_rt >= 0 {
-                        format!("{}(relay delay:{}ms)", ip, server_rt * 2)
-                    } else {
-                        format!("{}(relay)", ip)
-                    };
-                    println!("{}", style(str).blue());
+                    let str = format!("[{}] {}(Offline)", peer_device_info.name, peer_device_info.virtual_ip);
+                    println!("{}", style(str).red());
                 }
             }
         }

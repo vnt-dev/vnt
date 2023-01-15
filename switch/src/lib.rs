@@ -1,17 +1,18 @@
+use std::borrow::Borrow;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use crossbeam::atomic::AtomicCell;
 use crossbeam::sync::WaitGroup;
+use parking_lot::Mutex;
 use tokio::sync::watch;
 
 use error::*;
 
+use crate::handle::{ApplicationStatus, ConnectStatus, CurrentDeviceInfo, DEVICE_LIST, DIRECT_ROUTE_TABLE, PeerDeviceInfo, Route, RouteType, SERVER_RT};
 use crate::handle::registration_handler::CONNECTION_STATUS;
-use crate::handle::{
-    ApplicationStatus, ConnectStatus, CurrentDeviceInfo, Route, RouteType, DEVICE_LIST,
-    DIRECT_ROUTE_TABLE, SERVER_RT,
-};
 
 pub mod error;
 pub mod handle;
@@ -21,31 +22,54 @@ pub mod protocol;
 pub mod tun_device;
 
 #[derive(Clone, Debug)]
-pub struct Config {
+pub struct Config<F> {
     pub token: String,
     pub mac_address: String,
+    pub name: String,
+    pub abnormal_call: F,
 }
 
-impl Config {
-    pub fn new(token: String, mac_address: String) -> Self {
-        Self { token, mac_address }
+impl<F> Config<F> {
+    pub fn new(token: String, mac_address: String, name: Option<String>, abnormal_call: F) -> Result<Self> where
+        F: FnOnce() + Send + 'static {
+        if token.is_empty() || token.len() > 64 {
+            return Err(Error::Stop("token invalid".to_string()));
+        }
+        if mac_address.len() != 12 + 5 {
+            return Err(Error::Stop("mac_address invalid".to_string()));
+        }
+        if let Some(name) = name {
+            if name.is_empty() || name.len() > 64 {
+                return Err(Error::Stop("name invalid".to_string()));
+            }
+            Ok(Self { token, mac_address, name, abnormal_call })
+        } else {
+            let info = os_info::get();
+            let name = if info.version() != &os_info::Version::Unknown {
+                format!("{} {}", info.os_type(), info.version())
+            } else {
+                format!("{}", info.os_type())
+            };
+            Ok(Self { token, mac_address, name, abnormal_call })
+        }
     }
 }
 
 pub struct Switch {
     current_device: CurrentDeviceInfo,
-    status_sender: watch::Sender<ApplicationStatus>,
+    status_sender: Arc<Mutex<watch::Sender<ApplicationStatus>>>,
     wait_group: WaitGroup,
     runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl Switch {
-    pub fn start(config: Config) -> Result<Self> {
+    pub fn start<F>(config: Config<F>) -> Result<Self> where
+        F: FnOnce() + Send + 'static {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
-        return match runtime.block_on(Switch::start_(config.token, config.mac_address)) {
+        return match runtime.block_on(Switch::start_(config)) {
             Ok(mut switch) => {
                 switch.runtime = Some(runtime);
                 Ok(switch)
@@ -54,7 +78,7 @@ impl Switch {
         };
     }
     pub fn stop(self) {
-        let _ = self.status_sender.send(ApplicationStatus::Stopping);
+        Self::call_stop(self.status_sender);
         self.wait_group.wait();
     }
     pub fn current_device(&self) -> &CurrentDeviceInfo {
@@ -66,7 +90,7 @@ impl Switch {
     pub fn connection_status(&self) -> ConnectStatus {
         CONNECTION_STATUS.load()
     }
-    pub fn device_list(&self) -> Vec<Ipv4Addr> {
+    pub fn device_list(&self) -> Vec<PeerDeviceInfo> {
         let device_list_lock = DEVICE_LIST.lock();
         let (_epoch, device_list) = device_list_lock.clone();
         drop(device_list_lock);
@@ -86,8 +110,15 @@ impl Switch {
 }
 
 impl Switch {
-    pub async fn start_(token: String, mac_address: String) -> Result<Self> {
-        let server_address = "nat1.wherewego.top:29876"
+    fn call_stop(status_sender: Arc<Mutex<watch::Sender<ApplicationStatus>>>) -> bool {
+        let lock = status_sender.lock();
+        let status = lock.send_replace(ApplicationStatus::Stopping);
+        return status == ApplicationStatus::Starting;
+    }
+    pub async fn start_<F>(config: Config<F>) -> Result<Self> where
+        F: FnOnce() + Send + 'static {
+        // let server_address = "nat1.wherewego.top:29876"
+        let server_address = "127.0.0.1:29876"
             .to_socket_addrs()
             .unwrap()
             .next()
@@ -110,12 +141,12 @@ impl Switch {
         };
         //注册
         let response =
-            handle::registration_handler::registration(&udp, server_address, token, mac_address)?;
+            handle::registration_handler::registration(&udp, server_address, config.token, config.mac_address, config.name)?;
         {
             let ip_list = response
-                .virtual_ip_list
-                .iter()
-                .map(|ip| Ipv4Addr::from(*ip))
+                .device_info_list
+                .into_iter()
+                .map(|info| PeerDeviceInfo::new(Ipv4Addr::from(info.virtual_ip), info.name, info.device_status as u8))
                 .collect();
             let mut dev = DEVICE_LIST.lock();
             dev.0 = response.epoch;
@@ -125,18 +156,27 @@ impl Switch {
         let virtual_gateway = Ipv4Addr::from(response.virtual_gateway);
         let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
         let (status_sender, status_receiver) =
-            tokio::sync::watch::channel(ApplicationStatus::Starting);
+            watch::channel(ApplicationStatus::Starting);
         let current_device =
             CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
         let wait_group = WaitGroup::new();
+        let status_sender = Arc::new(parking_lot::const_mutex(status_sender));
+        let call = Arc::new(AtomicCell::new(Some(config.abnormal_call)));
         //心跳线程
         {
             let udp = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
-            handle::heartbeat_handler::start(status_receiver.clone(), udp, current_device, || {
+            let status_sender1 = status_sender.clone();
+            let call1 = call.clone();
+            handle::heartbeat_handler::start(status_receiver.clone(), udp, current_device, move || {
+                if Self::call_stop(status_sender1) {
+                    if let Some(call) = call1.take() {
+                        call();
+                    }
+                }
                 drop(wait_group1);
             })
-            .await;
+                .await;
         }
         //初始化nat数据
         handle::init_nat_info(response.public_ip, response.public_port as u16);
@@ -152,6 +192,8 @@ impl Switch {
             let (sender, receiver) = tokio::sync::mpsc::channel(50);
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
+            let status_sender1 = status_sender.clone();
+            let call1 = call.clone();
             handle::udp_recv_handler::udp_recv_start(
                 status_receiver.clone(),
                 udp1,
@@ -159,77 +201,117 @@ impl Switch {
                 sender,
                 tun_writer,
                 current_device,
-                || {
+                move || {
+                    if Self::call_stop(status_sender1) {
+                        if let Some(call) = call1.take() {
+                            call();
+                        }
+                    }
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
+            let status_sender1 = status_sender.clone();
+            let call1 = call.clone();
             handle::udp_recv_handler::udp_other_recv_start(
                 status_receiver.clone(),
                 udp1,
                 receiver,
                 current_device,
                 punch_sender,
-                || {
+                move || {
+                    if Self::call_stop(status_sender1) {
+                        if let Some(call) = call1.take() {
+                            call();
+                        }
+                    }
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
         }
         //打洞处理
         {
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
+            let status_sender1 = status_sender.clone();
+            let call1 = call.clone();
             handle::punch_handler::cone_handler_start(
                 status_receiver.clone(),
                 cone_receiver,
                 udp1,
                 current_device,
-                || {
+                move || {
+                    if Self::call_stop(status_sender1) {
+                        if let Some(call) = call1.take() {
+                            call();
+                        }
+                    }
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
+            let status_sender1 = status_sender.clone();
+            let call1 = call.clone();
             handle::punch_handler::req_symmetric_handler_start(
                 status_receiver.clone(),
                 req_symmetric_receiver,
                 udp1,
                 current_device,
-                || {
+                move || {
+                    if Self::call_stop(status_sender1) {
+                        if let Some(call) = call1.take() {
+                            call();
+                        }
+                    }
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
+            let status_sender1 = status_sender.clone();
+            let call1 = call.clone();
             handle::punch_handler::res_symmetric_handler_start(
                 status_receiver.clone(),
                 res_symmetric_receiver,
                 udp1,
                 current_device,
-                || {
+                move || {
+                    if Self::call_stop(status_sender1) {
+                        if let Some(call) = call1.take() {
+                            call();
+                        }
+                    }
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
         }
         //tun数据处理
         {
             let wait_group1 = wait_group.clone();
+            let status_sender1 = status_sender.clone();
+            let call1 = call.clone();
             handle::tun_handler::handler_start(
                 status_receiver.clone(),
                 udp,
                 tun_reader,
                 current_device,
-                || {
+                move || {
+                    if Self::call_stop(status_sender1) {
+                        if let Some(call) = call1.take() {
+                            call();
+                        }
+                    }
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
         }
         Ok(Switch {
             current_device,

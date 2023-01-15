@@ -10,12 +10,12 @@ use packet::icmp::Kind;
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 
+use crate::ApplicationStatus;
 use crate::error::*;
 use crate::handle::{CurrentDeviceInfo, DIRECT_ROUTE_TABLE};
-use crate::protocol::turn_packet::TurnPacket;
 use crate::protocol::{NetPacket, Protocol, Version};
+use crate::protocol::turn_packet::TurnPacket;
 use crate::tun_device::TunReader;
-use crate::ApplicationStatus;
 
 /// 是否在一个网段
 fn check_dest(dest: Ipv4Addr, cur_info: &CurrentDeviceInfo) -> bool {
@@ -114,7 +114,7 @@ pub async fn handler_start<F>(
     });
     thread::spawn(move || {
         if let Err(e) = handle_loop(udp, tun_reader, cur_info) {
-            log::error!("tun数据处理线程停止 {:?}", e);
+            log::warn!("tun数据处理线程停止 {:?}", e);
         }
         stop_fn();
     });
@@ -132,7 +132,7 @@ fn handle_loop(udp: UdpSocket, tun_reader: TunReader, cur_info: CurrentDeviceInf
         match handle(&udp, data.bytes_mut(), &cur_info, &mut net_packet) {
             Ok(_) => {}
             Err(e) => {
-                println!("{:?}", e)
+                log::warn!("{:?}", e)
             }
         }
     }
@@ -164,7 +164,7 @@ pub async fn handler_start<F>(
     });
     thread::spawn(move || {
         if let Err(e) = handle_loop(udp, tun_reader, cur_info) {
-            log::error!(" tun数据处理线程停止 {:?}", e);
+            log::warn!(" tun数据处理线程停止 {:?}", e);
         }
         stop_fn();
     });
@@ -187,7 +187,7 @@ pub fn handle_loop(
         match handle(&udp, data, &cur_info, &mut net_packet) {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}", e)
+                log::warn!("{:?}", e)
             }
         }
     }

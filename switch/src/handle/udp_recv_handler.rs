@@ -23,7 +23,7 @@ use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::turn_packet::TurnPacket;
 use crate::protocol::{control_packet, service_packet, turn_packet, NetPacket, Protocol, Version};
 use crate::tun_device::TunWriter;
-use crate::{ApplicationStatus, CurrentDeviceInfo};
+use crate::{ApplicationStatus, CurrentDeviceInfo, PeerDeviceInfo};
 
 const UDP_STOP_BUF: [u8; 1] = [0u8];
 
@@ -50,7 +50,7 @@ pub async fn udp_recv_start<F>(
 
     thread::spawn(move || {
         if let Err(e) = recv_loop(udp, server_addr, other_sender, tun_writer, current_device) {
-            log::error!("udp数据处理线程停止 {:?}", e);
+            log::warn!("udp数据处理线程停止 {:?}", e);
         }
         stop_fn();
     });
@@ -95,12 +95,12 @@ fn recv_loop(
                         return Err(Error::Stop(str));
                     }
                     Err(e) => {
-                        log::error!("{:?}", e);
+                        log::warn!("{:?}", e);
                     }
                 }
             }
             Err(e) => {
-                log::error!("{:?}", e);
+                log::warn!("{:?}", e);
             }
         };
     }
@@ -156,7 +156,7 @@ fn recv_handle(
                     return Err(Error::Stop("子处理线程停止".to_string()));
                 }
                 Err(e) => {
-                    log::error!("子线程处理 {:?}", e);
+                    log::warn!("子线程处理 {:?}", e);
                 }
             }
         }
@@ -178,7 +178,7 @@ pub async fn udp_other_recv_start<F>(
         match other_loop(status_watch, udp, receiver, current_device, sender).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}", e);
+                log::warn!("{:?}", e);
             }
         }
         stop_fn();
@@ -202,7 +202,7 @@ async fn other_loop(
                             return Err(Error::Stop(str));
                         }
                         Err(e) => {
-                            log::error!("other_loop {:?}",e);
+                            log::warn!("other_loop {:?}",e);
                         }
                     }
                 }
@@ -241,10 +241,10 @@ fn other_handle(
                 }
                 service_packet::Protocol::UpdateDeviceList => {
                     let device_list = DeviceList::parse_from_bytes(net_packet.payload())?;
-                    let ip_list: Vec<Ipv4Addr> = device_list
-                        .virtual_ip_list
-                        .iter()
-                        .map(|ip| Ipv4Addr::from(*ip))
+                    let ip_list = device_list
+                        .device_info_list
+                        .into_iter()
+                        .map(|info| PeerDeviceInfo::new(Ipv4Addr::from(info.virtual_ip), info.name, info.device_status as u8))
                         .collect();
                     let mut dev = DEVICE_LIST.lock();
                     if dev.0 < device_list.epoch || device_list.epoch - dev.0 > u32::MAX >> 2 {
@@ -269,7 +269,7 @@ fn other_handle(
                     }
                 }
                 InErrorPacket::OtherError(e) => {
-                    log::error!("OtherError {:?}", e.message());
+                    log::warn!("OtherError {:?}", e.message());
                 }
             }
         }
@@ -369,12 +369,10 @@ fn other_handle(
                     }
                     turn_packet::Protocol::UnKnow(_) => {}
                 }
-            } else {
-                panic!("ip")
             }
         }
         Protocol::UnKnow(p) => {
-            log::error!("未知协议 {}", p);
+            log::warn!("未知协议 {}", p);
         }
     }
     Ok(())

@@ -5,17 +5,17 @@ use std::time::Duration;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use protobuf::Message;
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::watch;
 
+use crate::{CurrentDeviceInfo, DEVICE_LIST, handle::NAT_INFO, handle::NatInfo};
 use crate::error::*;
 use crate::handle::{ApplicationStatus, DIRECT_ROUTE_TABLE};
 use crate::proto::message::{NatType, Punch, Step};
+use crate::protocol::{control_packet, NetPacket, Protocol, turn_packet, Version};
 use crate::protocol::control_packet::PunchRequestPacket;
 use crate::protocol::turn_packet::TurnPacket;
-use crate::protocol::{control_packet, turn_packet, NetPacket, Protocol, Version};
-use crate::{handle::NatInfo, handle::NAT_INFO, CurrentDeviceInfo, DEVICE_LIST};
 
 lazy_static! {
     pub static ref STEP_MAP: DashMap<Ipv4Addr, Step> = DashMap::new();
@@ -193,7 +193,7 @@ pub async fn req_symmetric_handler_start<F>(
         match handle_loop(status_watch, receiver, udp, cur_info).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}", e)
+                log::warn!("{:?}", e)
             }
         }
         stop_fn()
@@ -224,7 +224,7 @@ pub async fn res_symmetric_handler_start<F>(
         match res_symmetric_handle_loop(status_watch, receiver, udp, cur_info).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}", e)
+                log::warn!("{:?}", e)
             }
         }
         stop_fn()
@@ -287,7 +287,7 @@ async fn res_symmetric_handle_loop(
                                 }
                             }
                             if let Err(e) = handle(&status_watch,&udp, list, packet.buffer()) {
-                                log::error!("{:?}",e)
+                                log::warn!("{:?}",e)
                             }
                         }else {
                             return Err(Error::Stop("打洞线程通道关闭".to_string()));
@@ -323,7 +323,7 @@ pub async fn cone_handler_start<F>(
         match handle_loop(status_watch, receiver, udp, cur_info).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}", e)
+                log::warn!("{:?}", e)
             }
         }
         stop_fn();
@@ -363,7 +363,7 @@ async fn handle_loop(
                             }
                         }
                         if let Err(e) = handle(&status_watch,&udp, list, packet.buffer()) {
-                            log::error!("{:?}",e)
+                            log::warn!("{:?}",e)
                         }
                  }else {
                      return Err(Error::Stop("打洞线程通道关闭".to_string()));
@@ -390,7 +390,7 @@ fn punch_request_handle(udp: &UdpSocket, cur_info: &CurrentDeviceInfo) -> Result
     drop(nat_info_lock);
     if let Some(nat_info) = nat_info {
         if let Err(e) = send_punch(&udp, &cur_info, nat_info) {
-            log::error!("发送打洞数据失败 {:?}", e)
+            log::warn!("发送打洞数据失败 {:?}", e)
         }
         Ok(())
     } else {
@@ -402,7 +402,8 @@ fn send_punch(udp: &UdpSocket, cur_info: &CurrentDeviceInfo, nat_info: NatInfo) 
     let lock = DEVICE_LIST.lock();
     let list = lock.1.clone();
     drop(lock);
-    for ip in list {
+    for peer_info in list {
+        let ip = peer_info.virtual_ip;
         //只向ip比自己大的发起打洞，避免双方同时发起打洞浪费流量
         if ip > cur_info.virtual_ip && !DIRECT_ROUTE_TABLE.contains_key(&ip) {
             let step = if let Some(step) = STEP_MAP.get(&ip) {

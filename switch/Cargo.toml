@@ -24,7 +24,7 @@ chrono = "0.4.23"
 lazy_static = "1.4.0"
 moka = "0.9.6"
 protobuf = "3.2.0"
-
+os_info = "3.5.1"
 tokio = { version = "1.24.1", features = ["full"] }
 [target.'cfg(any(unix))'.dependencies]
 tun = { path = "./rust-tun" }

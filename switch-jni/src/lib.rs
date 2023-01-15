@@ -1,19 +1,34 @@
 use std::net::{IpAddr, Ipv4Addr};
 
-
 use jni::errors::Error;
-use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::{jbyte, jint, jintArray, jlong, jobject, jsize};
 use jni::JNIEnv;
+use jni::objects::{JClass, JObject, JString, JValue};
+use jni::sys::{jbyte, jint, jintArray, jlong, jobject, jobjectArray, jsize};
 
-use switch::handle::{CurrentDeviceInfo, Route};
 use switch::{Config, Switch};
+use switch::handle::{CurrentDeviceInfo, PeerDeviceInfo, Route};
 
-fn to_string(env: &JNIEnv, config: JObject, name: &str) -> Result<Option<String>, Error> {
+fn to_string_not_null(env: &JNIEnv, config: JObject, name: &str) -> Result<String, Error> {
     let value = env.get_field(config, name, "Ljava/lang/String;")?.l()?;
     if value.is_null() {
         env.throw_new("Ljava/lang/NullPointerException", &name)
             .expect("throw");
+        return Err(Error::NullPtr(name));
+    }
+    let value = env.get_string(JString::from(value))?;
+    match value.to_str() {
+        Ok(value) => Ok(value.to_string()),
+        Err(_) => {
+            env.throw_new("Ljava/lang/RuntimeException", "not utf-8")
+                .expect("throw");
+            return Err(Error::JavaException);
+        }
+    }
+}
+
+fn to_string(env: &JNIEnv, config: JObject, name: &str) -> Result<Option<String>, Error> {
+    let value = env.get_field(config, name, "Ljava/lang/String;")?.l()?;
+    if value.is_null() {
         return Ok(None);
     }
     let value = env.get_string(JString::from(value))?;
@@ -22,26 +37,36 @@ fn to_string(env: &JNIEnv, config: JObject, name: &str) -> Result<Option<String>
         Err(_) => {
             env.throw_new("Ljava/lang/RuntimeException", "not utf-8")
                 .expect("throw");
-            Ok(None)
+            return Err(Error::JavaException);
         }
     }
 }
 
 fn start(env: &JNIEnv, config: JObject) -> Result<Option<Switch>, Error> {
-    if let Some(token) = to_string(&env, config, "token")? {
-        if let Some(mac_address) = to_string(&env, config, "macAddress")? {
-            match Switch::start(Config::new(token, mac_address)) {
-                Ok(switch) => {
-                    return Ok(Some(switch));
-                }
-                Err(e) => {
-                    env.throw_new(
-                        "Ljava/lang/RuntimeException",
-                        format!("switch start failed {:?}", e),
-                    )
-                    .expect("throw");
-                }
-            }
+    let token = to_string_not_null(&env, config, "token")?;
+    let mac_address = to_string_not_null(&env, config, "macAddress")?;
+    let name = to_string(&env, config, "name")?;
+    let config = match Config::new(token, mac_address, name,||{}) {
+        Ok(config) => { config }
+        Err(e) => {
+            env.throw_new(
+                "Ljava/lang/RuntimeException",
+                format!("switch start failed {:?}", e),
+            )
+                .expect("throw");
+            return Ok(None);
+        }
+    };
+    match Switch::start(config) {
+        Ok(switch) => {
+            return Ok(Some(switch));
+        }
+        Err(e) => {
+            env.throw_new(
+                "Ljava/lang/RuntimeException",
+                format!("switch start failed {:?}", e),
+            )
+                .expect("throw");
         }
     }
     Ok(None)
@@ -93,7 +118,7 @@ pub unsafe extern "C" fn Java_org_switches_jni_Switch_deviceList0(
     env: JNIEnv,
     _class: JClass,
     raw_switch: jlong,
-) -> jintArray {
+) -> jobjectArray {
     let switch = raw_switch as *mut Switch;
     match device_list(&env, (&*switch).device_list()) {
         Ok(arr) => arr,
@@ -149,19 +174,28 @@ fn route(env: &JNIEnv, route: Route) -> Result<jobject, Error> {
     Ok(route.into_raw())
 }
 
-fn device_list(env: &JNIEnv, device_list: Vec<Ipv4Addr>) -> Result<jintArray, Error> {
+fn device_list(env: &JNIEnv, device_list: Vec<PeerDeviceInfo>) -> Result<jobjectArray, Error> {
     if device_list.is_empty() {
         return Ok(std::ptr::null_mut());
     }
-    let arr = env.new_int_array(device_list.len() as jsize)?;
-    let devices: Vec<jint> = device_list
-        .iter()
-        .map(|ip| {
-            let ip: u32 = (*ip).into();
-            ip as jint
-        })
-        .collect();
-    env.set_int_array_region(arr, 0, &devices)?;
+    let arr = env.new_object_array(device_list.len() as jsize,
+                                   "org/switches/jni/PeerDeviceInfo",
+                                   JObject::null())?;
+    let mut index = 0;
+    for peer_info in device_list {
+        let virtual_ip: u32 = peer_info.virtual_ip.into();
+        let name = peer_info.name;
+        let status = peer_info.status.into();
+        let info = env.new_object(
+            "org/switches/jni/PeerDeviceInfo",
+            "(BLjava/lang/String;J)V",
+            &[JValue::Int(virtual_ip as jint),
+                JValue::Object(env.new_string(name)?.into()),
+                JValue::Byte(status as jbyte)],
+        )?;
+        env.set_object_array_element(arr, index, info)?;
+        index += 1;
+    }
     Ok(arr)
 }
 

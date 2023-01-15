@@ -19,7 +19,7 @@ lazy_static! {
     /// 0. 机器纪元，每一次上线或者下线都会增1，由服务端维护，用于感知网络中机器变化
     /// 服务端和客户端的不一致，则服务端会推送新的设备列表
     /// 1. 网络中的虚拟ip列表
-    pub static ref DEVICE_LIST:Mutex<(u32,Vec<Ipv4Addr>)> = const_mutex((0,Vec::new()));
+    pub static ref DEVICE_LIST:Mutex<(u32,Vec<PeerDeviceInfo>)> = const_mutex((0,Vec::new()));
     /// 服务器延迟
     pub static ref SERVER_RT:AtomicI64 = AtomicI64::new(-1);
     /// id
@@ -32,6 +32,49 @@ lazy_static! {
     /// 当前设备的nat信息
     pub static ref NAT_INFO:Mutex<Option<NatInfo>> = const_mutex(None);
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerDeviceInfo {
+    pub virtual_ip: Ipv4Addr,
+    pub name: String,
+    pub status: PeerDeviceStatus,
+}
+
+impl PeerDeviceInfo {
+    pub fn new(virtual_ip: Ipv4Addr,
+               name: String,
+               status: u8, ) -> Self {
+        Self {
+            virtual_ip,
+            name,
+            status: PeerDeviceStatus::from(status),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum PeerDeviceStatus {
+    Online,
+    Offline,
+}
+
+impl Into<u8> for PeerDeviceStatus {
+    fn into(self) -> u8 {
+        match self {
+            PeerDeviceStatus::Online => 0,
+            PeerDeviceStatus::Offline => 1,
+        }
+    }
+}
+
+impl From<u8> for PeerDeviceStatus {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => PeerDeviceStatus::Online,
+            _ => PeerDeviceStatus::Offline
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ApplicationStatus {
     Starting,

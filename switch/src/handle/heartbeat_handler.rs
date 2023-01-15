@@ -23,7 +23,7 @@ pub async fn start<F>(
         match handle_loop(status_watch, udp, cur_info.connect_server).await {
             Ok(_) => {}
             Err(e) => {
-                log::error!("{:?}", e)
+                log::warn!("{:?}", e)
             }
         }
         stop_fn();
