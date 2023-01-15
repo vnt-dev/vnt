@@ -268,8 +268,11 @@ fn other_handle(
                         fast_registration(&udp, server_addr)?;
                     }
                 }
+                InErrorPacket::AddressExhausted => {
+                    return Err(Error::Stop("IP address has been exhausted".to_string()));
+                }
                 InErrorPacket::OtherError(e) => {
-                    log::warn!("OtherError {:?}", e.message());
+                    log::error!("OtherError {:?}", e.message());
                 }
             }
         }

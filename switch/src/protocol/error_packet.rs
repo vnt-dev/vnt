@@ -4,6 +4,7 @@ use crate::error::*;
 pub enum Protocol {
     TokenError,
     Disconnect,
+    AddressExhausted,
     Other(u8),
 }
 
@@ -12,6 +13,7 @@ impl From<u8> for Protocol {
         match value {
             1 => Self::TokenError,
             2 => Self::Disconnect,
+            3 => Self::AddressExhausted,
             val => Self::Other(val),
         }
     }
@@ -22,6 +24,7 @@ impl Into<u8> for Protocol {
         match self {
             Protocol::TokenError => 1,
             Protocol::Disconnect => 2,
+            Protocol::AddressExhausted => 3,
             Protocol::Other(val) => val,
         }
     }
@@ -30,6 +33,7 @@ impl Into<u8> for Protocol {
 pub enum InErrorPacket<B> {
     TokenError,
     Disconnect,
+    AddressExhausted,
     OtherError(ErrorPacket<B>),
 }
 
@@ -38,6 +42,7 @@ impl<B: AsRef<[u8]>> InErrorPacket<B> {
         match Protocol::from(protocol) {
             Protocol::TokenError => Ok(InErrorPacket::TokenError),
             Protocol::Disconnect => Ok(InErrorPacket::Disconnect),
+            Protocol::AddressExhausted => Ok(InErrorPacket::AddressExhausted),
             Protocol::Other(_) => Ok(InErrorPacket::OtherError(ErrorPacket::new(buffer)?)),
         }
     }
