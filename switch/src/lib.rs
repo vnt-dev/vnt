@@ -1,8 +1,8 @@
-use std::borrow::Borrow;
+
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
+use std::sync::atomic::{Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossbeam::atomic::AtomicCell;
 use crossbeam::sync::WaitGroup;
@@ -11,8 +11,11 @@ use tokio::sync::watch;
 
 use error::*;
 
-use crate::handle::{ApplicationStatus, ConnectStatus, CurrentDeviceInfo, DEVICE_LIST, DIRECT_ROUTE_TABLE, PeerDeviceInfo, Route, RouteType, SERVER_RT};
 use crate::handle::registration_handler::CONNECTION_STATUS;
+use crate::handle::{
+    ApplicationStatus, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, Route, RouteType,
+    DEVICE_LIST, DIRECT_ROUTE_TABLE, SERVER_RT,
+};
 
 pub mod error;
 pub mod handle;
@@ -30,8 +33,15 @@ pub struct Config<F> {
 }
 
 impl<F> Config<F> {
-    pub fn new(token: String, mac_address: String, name: Option<String>, abnormal_call: F) -> Result<Self> where
-        F: FnOnce() + Send + 'static {
+    pub fn new(
+        token: String,
+        mac_address: String,
+        name: Option<String>,
+        abnormal_call: F,
+    ) -> Result<Self>
+    where
+        F: FnOnce() + Send + 'static,
+    {
         if token.is_empty() || token.len() > 64 {
             return Err(Error::Stop("token invalid".to_string()));
         }
@@ -42,7 +52,12 @@ impl<F> Config<F> {
             if name.is_empty() || name.len() > 64 {
                 return Err(Error::Stop("name invalid".to_string()));
             }
-            Ok(Self { token, mac_address, name, abnormal_call })
+            Ok(Self {
+                token,
+                mac_address,
+                name,
+                abnormal_call,
+            })
         } else {
             let info = os_info::get();
             let name = if info.version() != &os_info::Version::Unknown {
@@ -50,7 +65,12 @@ impl<F> Config<F> {
             } else {
                 format!("{}", info.os_type())
             };
-            Ok(Self { token, mac_address, name, abnormal_call })
+            Ok(Self {
+                token,
+                mac_address,
+                name,
+                abnormal_call,
+            })
         }
     }
 }
@@ -63,8 +83,10 @@ pub struct Switch {
 }
 
 impl Switch {
-    pub fn start<F>(config: Config<F>) -> Result<Self> where
-        F: FnOnce() + Send + 'static {
+    pub fn start<F>(config: Config<F>) -> Result<Self>
+    where
+        F: FnOnce() + Send + 'static,
+    {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -80,6 +102,9 @@ impl Switch {
     pub fn stop(self) {
         Self::call_stop(self.status_sender);
         self.wait_group.wait();
+    }
+    pub fn stop_async(&self) {
+        Self::call_stop(self.status_sender.clone());
     }
     pub fn current_device(&self) -> &CurrentDeviceInfo {
         &self.current_device
@@ -115,14 +140,12 @@ impl Switch {
         let status = lock.send_replace(ApplicationStatus::Stopping);
         return status == ApplicationStatus::Starting;
     }
-    pub async fn start_<F>(config: Config<F>) -> Result<Self> where
-        F: FnOnce() + Send + 'static {
+    pub async fn start_<F>(config: Config<F>) -> Result<Self>
+    where
+        F: FnOnce() + Send + 'static,
+    {
         // let server_address = "nat1.wherewego.top:29876"
-        let server_address = "127.0.0.1:29876"
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap();
+        let server_address = "127.0.0.1:29876".to_socket_addrs().unwrap().next().unwrap();
         let mut port = 101 as u16;
         let udp = loop {
             match UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(0), port))) {
@@ -140,13 +163,24 @@ impl Switch {
             }
         };
         //注册
-        let response =
-            handle::registration_handler::registration(&udp, server_address, config.token, config.mac_address, config.name)?;
+        let response = handle::registration_handler::registration(
+            &udp,
+            server_address,
+            config.token,
+            config.mac_address,
+            config.name,
+        )?;
         {
             let ip_list = response
                 .device_info_list
                 .into_iter()
-                .map(|info| PeerDeviceInfo::new(Ipv4Addr::from(info.virtual_ip), info.name, info.device_status as u8))
+                .map(|info| {
+                    PeerDeviceInfo::new(
+                        Ipv4Addr::from(info.virtual_ip),
+                        info.name,
+                        info.device_status as u8,
+                    )
+                })
                 .collect();
             let mut dev = DEVICE_LIST.lock();
             dev.0 = response.epoch;
@@ -155,8 +189,7 @@ impl Switch {
         let virtual_ip = Ipv4Addr::from(response.virtual_ip);
         let virtual_gateway = Ipv4Addr::from(response.virtual_gateway);
         let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
-        let (status_sender, status_receiver) =
-            watch::channel(ApplicationStatus::Starting);
+        let (status_sender, status_receiver) = watch::channel(ApplicationStatus::Starting);
         let current_device =
             CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, server_address);
         let wait_group = WaitGroup::new();
@@ -168,15 +201,20 @@ impl Switch {
             let wait_group1 = wait_group.clone();
             let status_sender1 = status_sender.clone();
             let call1 = call.clone();
-            handle::heartbeat_handler::start(status_receiver.clone(), udp, current_device, move || {
-                if Self::call_stop(status_sender1) {
-                    if let Some(call) = call1.take() {
-                        call();
+            handle::heartbeat_handler::start(
+                status_receiver.clone(),
+                udp,
+                current_device,
+                move || {
+                    if Self::call_stop(status_sender1) {
+                        if let Some(call) = call1.take() {
+                            call();
+                        }
                     }
-                }
-                drop(wait_group1);
-            })
-                .await;
+                    drop(wait_group1);
+                },
+            )
+            .await;
         }
         //初始化nat数据
         handle::init_nat_info(response.public_ip, response.public_port as u16);
@@ -210,7 +248,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-                .await;
+            .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
             let status_sender1 = status_sender.clone();
@@ -230,7 +268,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-                .await;
+            .await;
         }
         //打洞处理
         {
@@ -252,7 +290,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-                .await;
+            .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
             let status_sender1 = status_sender.clone();
@@ -271,7 +309,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-                .await;
+            .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
             let status_sender1 = status_sender.clone();
@@ -290,7 +328,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-                .await;
+            .await;
         }
         //tun数据处理
         {
@@ -311,7 +349,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-                .await;
+            .await;
         }
         Ok(Switch {
             current_device,

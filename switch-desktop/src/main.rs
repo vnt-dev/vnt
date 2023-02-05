@@ -1,19 +1,23 @@
+use std::io;
+use std::path::PathBuf;
+
 use clap::Parser;
 use console::style;
 
-use switch::*;
-use switch::handle::{PeerDeviceStatus, RouteType};
 
-#[cfg(windows)]
-mod windows_admin_check;
+use switch::handle::{PeerDeviceStatus, RouteType};
+use switch::*;
+
+mod command;
+mod config;
 #[cfg(windows)]
 mod windows;
 
 #[derive(Parser, Debug)]
 #[command(
-author = "Lu Beilin",
-version,
-about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+    author = "Lu Beilin",
+    version,
+    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 struct Args {
     /// 32位字符
@@ -29,24 +33,52 @@ struct Args {
     name: Option<String>,
 }
 
-fn log_init() {
-    let home = dirs::home_dir().unwrap().join(".switch");
+fn log_init_service(home: PathBuf) -> io::Result<()> {
     if !home.exists() {
-        std::fs::create_dir(&home).expect(" Failed to create '.switch' directory");
+        std::fs::create_dir(&home)?;
     }
-    let stderr = log4rs::append::console::ConsoleAppender::builder().target(log4rs::append::console::Target::Stderr).build();
     let logfile = log4rs::append::file::FileAppender::builder()
         // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
         .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
             "{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n",
         )))
-        .build(home.join("switch.log"))
-        .unwrap();
-    let config = log4rs::Config::builder()
+        .build(home.join("switch-service.log"))?;
+    match log4rs::Config::builder()
+        .appender(log4rs::config::Appender::builder().build("logfile", Box::new(logfile)))
+        .build(
+            log4rs::config::Root::builder()
+                .appender("logfile")
+                .build(log::LevelFilter::Info),
+        ) {
+        Ok(config) => {
+            let _ = log4rs::init_config(config);
+        }
+        Err(_) => {}
+    }
+    Ok(())
+}
+
+fn log_init() -> io::Result<()> {
+    let home = dirs::home_dir().unwrap().join(".switch");
+    if !home.exists() {
+        std::fs::create_dir(&home)?;
+    }
+    let stderr = log4rs::append::console::ConsoleAppender::builder()
+        .target(log4rs::append::console::Target::Stderr)
+        .build();
+    let logfile = log4rs::append::file::FileAppender::builder()
+        // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
+        .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
+            "{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n",
+        )))
+        .build(home.join("switch.log"))?;
+    match log4rs::Config::builder()
         .appender(log4rs::config::Appender::builder().build("logfile", Box::new(logfile)))
         .appender(
             log4rs::config::Appender::builder()
-                .filter(Box::new(log4rs::filter::threshold::ThresholdFilter::new(log::LevelFilter::Error)))
+                .filter(Box::new(log4rs::filter::threshold::ThresholdFilter::new(
+                    log::LevelFilter::Error,
+                )))
                 .build("stderr", Box::new(stderr)),
         )
         .build(
@@ -54,53 +86,57 @@ fn log_init() {
                 .appender("logfile")
                 .appender("stderr")
                 .build(log::LevelFilter::Info),
-        )
-        .unwrap();
-    let _ = log4rs::init_config(config);
+        ) {
+        Ok(config) => {
+            let _ = log4rs::init_config(config);
+        }
+        Err(_) => {}
+    }
+    Ok(())
 }
 
+#[cfg(windows)]
+fn main() {
+    let args: Vec<_> = std::env::args().collect();
+    if args.len() == 3 && args[1] == windows::SERVICE_FLAG {
+        //以服务的方式启动
+        let _ = log_init_service(PathBuf::from(&args[2]));
+        config::set_home(PathBuf::from(&args[2]));
+        log::info!("config  {:?}", PathBuf::from(&args[2]));
+        log::info!("config  {:?}", config::read_config());
+        windows::service::start();
+        return;
+    } else {
+        let _ = log_init();
+        windows::main0();
+    }
+    // println!("{}", style("starting...").green());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn main() {
     log_init();
     let args = Args::parse();
-    #[cfg(windows)]
-    if !windows_admin_check::is_app_elevated() {
-        let args: Vec<_> = std::env::args().collect();
-        println!("{}", style("正在启动管理员权限执行...").red());
-        if let Some(absolute_path) = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.to_str().map(|p| p.to_string()))
-        {
-            let _ = runas::Command::new(&absolute_path)
-                .args(&args[1..])
-                .status()
-                .expect("failed to execute");
-        } else {
-            panic!("failed to execute")
-        }
-        return;
-    }
-
-    #[cfg(any(unix))]
     if sudo::RunningAs::Root != sudo::check() {
         println!("{}", style("需要使用root权限执行...").red());
         sudo::escalate_if_needed().unwrap();
     }
     println!("{}", style("starting...").green());
+    start(args.token, args.name);
+}
+
+pub fn start(token: String, name: Option<String>) {
     let mac_address = mac_address::get_mac_address().unwrap().unwrap().to_string();
-    let switch = match Config::new(args.token, mac_address, args.name, || {}) {
-        Ok(config) => {
-            match Switch::start(config) {
-                Ok(switch) => {
-                    switch
-                }
-                Err(e) => {
-                    log::error!("{:?}",e);
-                    return;
-                }
+    let switch = match Config::new(token, mac_address, name, || {}) {
+        Ok(config) => match Switch::start(config) {
+            Ok(switch) => switch,
+            Err(e) => {
+                log::error!("{:?}", e);
+                return;
             }
-        }
+        },
         Err(e) => {
-            log::error!("{:?}",e);
+            log::error!("{:?}", e);
             return;
         }
     };
@@ -155,21 +191,38 @@ fn command(cmd: &str, switch: &Switch) -> Result<(), ()> {
                 if peer_device_info.status == PeerDeviceStatus::Online {
                     if route.route_type == RouteType::P2P {
                         let str = if route.rt >= 0 {
-                            format!("[{}] {}(p2p delay:{}ms)", peer_device_info.name, peer_device_info.virtual_ip, route.rt)
+                            format!(
+                                "[{}] {}(p2p delay:{}ms)",
+                                peer_device_info.name, peer_device_info.virtual_ip, route.rt
+                            )
                         } else {
-                            format!("[{}] {}(p2p)", peer_device_info.name, peer_device_info.virtual_ip)
+                            format!(
+                                "[{}] {}(p2p)",
+                                peer_device_info.name, peer_device_info.virtual_ip
+                            )
                         };
                         println!("{}", style(str).green());
                     } else {
                         let str = if server_rt >= 0 {
-                            format!("[{}] {}(relay delay:{}ms)", peer_device_info.name, peer_device_info.virtual_ip, server_rt * 2)
+                            format!(
+                                "[{}] {}(relay delay:{}ms)",
+                                peer_device_info.name,
+                                peer_device_info.virtual_ip,
+                                server_rt * 2
+                            )
                         } else {
-                            format!("[{}] {}(relay)", peer_device_info.name, peer_device_info.virtual_ip)
+                            format!(
+                                "[{}] {}(relay)",
+                                peer_device_info.name, peer_device_info.virtual_ip
+                            )
                         };
                         println!("{}", style(str).blue());
                     }
                 } else {
-                    let str = format!("[{}] {}(Offline)", peer_device_info.name, peer_device_info.virtual_ip);
+                    let str = format!(
+                        "[{}] {}(Offline)",
+                        peer_device_info.name, peer_device_info.virtual_ip
+                    );
                     println!("{}", style(str).red());
                 }
             }

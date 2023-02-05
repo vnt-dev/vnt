@@ -11,8 +11,8 @@ use protobuf::Message;
 use crate::error::*;
 use crate::handle::ConnectStatus;
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
-use crate::protocol::{error_packet, NetPacket, Protocol, service_packet, Version};
 use crate::protocol::error_packet::InErrorPacket;
+use crate::protocol::{service_packet, NetPacket, Protocol, Version};
 
 lazy_static::lazy_static! {
     static ref REQUEST:RwLock<Option<(String,String,String)>> = parking_lot::const_rwlock(None);
@@ -29,7 +29,8 @@ pub fn registration(
     name: String,
 ) -> Result<RegistrationResponse> {
     // todo 和服务器通信加密
-    let request_packet = registration_request_packet(token.clone(), mac_address.clone(), name.clone(), false)?;
+    let request_packet =
+        registration_request_packet(token.clone(), mac_address.clone(), name.clone(), false)?;
     let buf = request_packet.buffer();
     let mut counter = 0;
     let mut recv_buf = [0u8; 10240];
@@ -68,30 +69,20 @@ pub fn registration(
                 }
             }
             Protocol::Error => {
-                return match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
-                    Ok(e) => {
-                        match e {
-                            InErrorPacket::TokenError => {
-                                Err(Error::Stop("token错误".to_string()))
-                            }
-                            InErrorPacket::Disconnect => {
-                                Err(Error::Stop("断开连接".to_string()))
-                            }
-                            InErrorPacket::OtherError(e) => {
-                                match e.message() {
-                                    Ok(str) => {
-                                        Err(Error::Stop(str))
-                                    }
-                                    Err(e) => {
-                                        Err(Error::Stop(format!("{:?}", e)))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        Err(Error::Stop(format!("{:?}", e)))
-                    }
+                return match InErrorPacket::new(
+                    net_packet.transport_protocol(),
+                    net_packet.payload(),
+                ) {
+                    Ok(e) => match e {
+                        InErrorPacket::TokenError => Err(Error::Stop("token错误".to_string())),
+                        InErrorPacket::Disconnect => Err(Error::Stop("断开连接".to_string())),
+                        InErrorPacket::AddressExhausted => Err(Error::Stop("地址用尽".to_string())),
+                        InErrorPacket::OtherError(e) => match e.message() {
+                            Ok(str) => Err(Error::Stop(str)),
+                            Err(e) => Err(Error::Stop(format!("{:?}", e))),
+                        },
+                    },
+                    Err(e) => Err(Error::Stop(format!("{:?}", e))),
                 };
             }
             _ => {
@@ -101,7 +92,12 @@ pub fn registration(
     }
 }
 
-fn registration_request_packet(token: String, mac_address: String, name: String, is_fast: bool) -> Result<NetPacket<Vec<u8>>> {
+fn registration_request_packet(
+    token: String,
+    mac_address: String,
+    name: String,
+    is_fast: bool,
+) -> Result<NetPacket<Vec<u8>>> {
     let mut request = RegistrationRequest::new();
     request.token = token;
     request.mac_address = mac_address;
@@ -123,8 +119,8 @@ pub fn fast_registration(udp: &UdpSocket, server_address: SocketAddr) -> Result<
     let new = Local::now().timestamp_millis();
     if new - last < 2000
         || REGISTRATION_TIME
-        .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
-        .is_err()
+            .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
     {
         //短时间不重复注册
         return Ok(());

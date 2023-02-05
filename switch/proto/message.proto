@@ -33,15 +33,8 @@ message Punch{
   uint32 public_port_range = 4;
   NatType nat_type = 5;
   bool reply = 6;
-  Step step = 7;
 }
 enum NatType{
   Symmetric = 0;
   Cone = 1;
-}
-enum Step{
-  Step1 = 0;
-  Step2 = 1;
-  Step3 = 2;
-  Step4 = 3;
 }

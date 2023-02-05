@@ -1,10 +1,9 @@
+use std::{io, thread};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
-use std::thread;
 use std::time::Duration;
 
-use dashmap::DashMap;
-use lazy_static::lazy_static;
 use protobuf::Message;
+use rand::prelude::SliceRandom;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::watch;
@@ -12,14 +11,11 @@ use tokio::sync::watch;
 use crate::{CurrentDeviceInfo, DEVICE_LIST, handle::NAT_INFO, handle::NatInfo};
 use crate::error::*;
 use crate::handle::{ApplicationStatus, DIRECT_ROUTE_TABLE};
-use crate::proto::message::{NatType, Punch, Step};
+use crate::proto::message::{NatType, Punch};
 use crate::protocol::{control_packet, NetPacket, Protocol, turn_packet, Version};
 use crate::protocol::control_packet::PunchRequestPacket;
 use crate::protocol::turn_packet::TurnPacket;
 
-lazy_static! {
-    pub static ref STEP_MAP: DashMap<Ipv4Addr, Step> = DashMap::new();
-}
 /// 每一种类型一个通道，减少相互干扰
 pub fn bounded() -> (
     PunchSender,
@@ -94,7 +90,7 @@ impl PunchSender {
 }
 
 fn handle(
-    status_watch: &watch::Receiver<ApplicationStatus>,
+    _status_watch: &watch::Receiver<ApplicationStatus>,
     udp: &UdpSocket,
     punch_list: Vec<Punch>,
     buf: &[u8],
@@ -108,58 +104,43 @@ fn handle(
         // println!("punch {:?}", punch);
         match punch.nat_type.enum_value_or_default() {
             NatType::Symmetric => {
-                match punch.step.enum_value_or_default() {
-                    Step::Step1 | Step::Step2 | Step::Step3 => {
-                        //预测范围发送
-                        for pub_ip in punch.public_ip_list {
-                            let pub_ip = Ipv4Addr::from(pub_ip);
-                            for range in 0..punch.public_port_range + 1 {
-                                if counter & 10 == 10 {
-                                    if status_watch.has_changed()? {
-                                        return Ok(());
-                                    }
-                                }
-                                let right_port = ((punch.public_port + range) & 0xFFFF) as u16;
-                                let left_port =
-                                    ((0xFFFF + punch.public_port - range) & 0xFFFF) as u16;
-                                if right_port != 0 {
-                                    // println!("{:?}", SocketAddr::V4(SocketAddrV4::new(pub_ip, right_port)));
-                                    udp.send_to(
-                                        buf,
-                                        SocketAddr::V4(SocketAddrV4::new(pub_ip, right_port)),
-                                    )?;
-                                    select_sleep(&mut counter);
-                                }
-                                if left_port != 0 && range != 0 {
-                                    // println!("{:?}", SocketAddr::V4(SocketAddrV4::new(pub_ip, right_port)));
-                                    if left_port == right_port {
-                                        break;
-                                    }
-                                    udp.send_to(
-                                        buf,
-                                        SocketAddr::V4(SocketAddrV4::new(pub_ip, left_port)),
-                                    )?;
-                                    select_sleep(&mut counter);
-                                }
-                            }
+                // 碰撞概率 p = 1 - e^(-(k^2+k)/(2n))    n = max_port-min_port 关键词：生日攻击
+                let mut send_f = |min_port: u16, max_port: u16, k: usize| -> io::Result<()> {
+                    let mut nums: Vec<u16> = (min_port..max_port).collect();
+                    let mut rng = rand::thread_rng();
+                    nums.shuffle(&mut rng);
+                    for pub_ip in &punch.public_ip_list {
+                        let pub_ip = Ipv4Addr::from(*pub_ip);
+                        for port in &nums[..k] {
+                            udp.send_to(buf, SocketAddr::V4(SocketAddrV4::new(pub_ip, *port)))?;
+                            select_sleep(&mut counter);
                         }
                     }
-                    Step::Step4 => {
-                        //全范围发送
-                        for pub_ip in punch.public_ip_list {
-                            let pub_ip = Ipv4Addr::from(pub_ip);
-                            for port in 1..0xFFFF {
-                                if counter & 10 == 10 {
-                                    if status_watch.has_changed()? {
-                                        return Ok(());
-                                    }
-                                }
-                                udp.send_to(buf, SocketAddr::V4(SocketAddrV4::new(pub_ip, port)))?;
-                                select_sleep(&mut counter);
-                            }
-                        }
-                    }
+                    Ok(())
+                };
+                if punch.public_port_range < 600 {
+                    //端口变化不大时，在预测的范围内随机发送
+                    //如果公网端口在这个范围的话，碰撞的概率最低为70%;
+                    let min_port = if punch.public_port > punch.public_port_range {
+                        punch.public_port - punch.public_port_range
+                    } else {
+                        1
+                    };
+                    let max_port = if punch.public_port + punch.public_port_range > 65535 {
+                        65535
+                    } else {
+                        punch.public_port + punch.public_port_range
+                    };
+                    let k = if max_port - min_port > 60 {
+                        60
+                    } else {
+                        max_port - min_port
+                    };
+                    send_f(min_port as u16, max_port as u16, k as usize)?;
                 }
+                // 全端口范围，随机取600个端口发送
+                // 取600个端口碰撞的概率为 93.6%，理论上成功的概率还是很高的
+                send_f(1, 65535, 600)?;
             }
             NatType::Cone => {
                 for pub_ip in punch.public_ip_list {
@@ -269,23 +250,6 @@ async fn res_symmetric_handle_loop(
                                     }
                                 }
                             }
-                            for punch in &list {
-                                let dest = Ipv4Addr::from(punch.virtual_ip);
-                                match punch.step.enum_value_or_default() {
-                                    Step::Step1 => {
-                                        STEP_MAP.insert(dest, Step::Step2);
-                                    }
-                                    Step::Step2 => {
-                                        STEP_MAP.insert(dest, Step::Step3);
-                                    }
-                                    Step::Step3 => {
-                                        STEP_MAP.insert(dest, Step::Step4);
-                                    }
-                                    Step::Step4 => {
-                                        STEP_MAP.insert(dest, Step::Step1);
-                                    }
-                                }
-                            }
                             if let Err(e) = handle(&status_watch,&udp, list, packet.buffer()) {
                                 log::warn!("{:?}",e)
                             }
@@ -381,7 +345,11 @@ async fn handle_loop(
 
 fn select_sleep(counter: &mut u64) {
     *counter += 1;
-    thread::sleep(Duration::from_millis(1));
+    if *counter & 10 == 10 {
+        thread::sleep(Duration::from_millis(2));
+    } else {
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn punch_request_handle(udp: &UdpSocket, cur_info: &CurrentDeviceInfo) -> Result<()> {
@@ -406,12 +374,7 @@ fn send_punch(udp: &UdpSocket, cur_info: &CurrentDeviceInfo, nat_info: NatInfo) 
         let ip = peer_info.virtual_ip;
         //只向ip比自己大的发起打洞，避免双方同时发起打洞浪费流量
         if ip > cur_info.virtual_ip && !DIRECT_ROUTE_TABLE.contains_key(&ip) {
-            let step = if let Some(step) = STEP_MAP.get(&ip) {
-                *step
-            } else {
-                Step::Step1
-            };
-            let bytes = punch_packet(cur_info.virtual_ip, nat_info.clone(), ip, step)?;
+            let bytes = punch_packet(cur_info.virtual_ip, nat_info.clone(), ip)?;
             udp.send_to(&bytes, cur_info.connect_server)?;
         }
     }
@@ -422,12 +385,10 @@ fn punch_packet(
     virtual_ip: Ipv4Addr,
     nat_info: NatInfo,
     dest: Ipv4Addr,
-    step: Step,
 ) -> Result<Vec<u8>> {
     let mut punch_reply = Punch::new();
     punch_reply.reply = false;
     punch_reply.virtual_ip = u32::from_be_bytes(virtual_ip.octets());
-    punch_reply.step = protobuf::EnumOrUnknown::new(step);
     punch_reply.public_ip_list = nat_info.public_ips;
     punch_reply.public_port = nat_info.public_port as u32;
     punch_reply.public_port_range = nat_info.public_port_range as u32;

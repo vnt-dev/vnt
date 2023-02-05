@@ -176,7 +176,9 @@ pub async fn udp_other_recv_start<F>(
 {
     tokio::spawn(async move {
         match other_loop(status_watch, udp, receiver, current_device, sender).await {
-            Ok(_) => {}
+            Ok(_) => {
+                log::info!("udp子处理线程停止");
+            }
             Err(e) => {
                 log::warn!("{:?}", e);
             }
@@ -237,14 +239,20 @@ fn other_handle(
                     let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
                     crate::handle::init_nat_info(response.public_ip, response.public_port as u16);
                     CONNECTION_STATUS.store(ConnectStatus::Connected);
-                    //todo 重连之后ip可能会发生改变(目前2分钟内未重连则会释放ip)，需要更新本地ip(或者保证重连ip不变)
+                    //需要保证重连ip不变
                 }
                 service_packet::Protocol::UpdateDeviceList => {
                     let device_list = DeviceList::parse_from_bytes(net_packet.payload())?;
                     let ip_list = device_list
                         .device_info_list
                         .into_iter()
-                        .map(|info| PeerDeviceInfo::new(Ipv4Addr::from(info.virtual_ip), info.name, info.device_status as u8))
+                        .map(|info| {
+                            PeerDeviceInfo::new(
+                                Ipv4Addr::from(info.virtual_ip),
+                                info.name,
+                                info.device_status as u8,
+                            )
+                        })
                         .collect();
                     let mut dev = DEVICE_LIST.lock();
                     if dev.0 < device_list.epoch || device_list.epoch - dev.0 > u32::MAX >> 2 {
@@ -337,7 +345,6 @@ fn other_handle(
                                 punch_reply.reply = true;
                                 punch_reply.virtual_ip =
                                     u32::from_be_bytes(current_device.virtual_ip.octets());
-                                punch_reply.step = punch.step;
                                 if let Err(_) = sender.try_send(punch) {
                                     return Ok(());
                                 }

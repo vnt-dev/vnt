@@ -747,8 +747,6 @@ pub struct Punch {
     pub nat_type: ::protobuf::EnumOrUnknown<NatType>,
     // @@protoc_insertion_point(field:Punch.reply)
     pub reply: bool,
-    // @@protoc_insertion_point(field:Punch.step)
-    pub step: ::protobuf::EnumOrUnknown<Step>,
     // special fields
     // @@protoc_insertion_point(special_field:Punch.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -766,7 +764,7 @@ impl Punch {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(7);
+        let mut fields = ::std::vec::Vec::with_capacity(6);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "virtual_ip",
@@ -797,11 +795,6 @@ impl Punch {
             "reply",
             |m: &Punch| { &m.reply },
             |m: &mut Punch| { &mut m.reply },
-        ));
-        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
-            "step",
-            |m: &Punch| { &m.step },
-            |m: &mut Punch| { &mut m.step },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<Punch>(
             "Punch",
@@ -842,9 +835,6 @@ impl ::protobuf::Message for Punch {
                 48 => {
                     self.reply = is.read_bool()?;
                 },
-                56 => {
-                    self.step = is.read_enum_or_unknown()?;
-                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -873,9 +863,6 @@ impl ::protobuf::Message for Punch {
         if self.reply != false {
             my_size += 1 + 1;
         }
-        if self.step != ::protobuf::EnumOrUnknown::new(Step::Step1) {
-            my_size += ::protobuf::rt::int32_size(7, self.step.value());
-        }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -900,9 +887,6 @@ impl ::protobuf::Message for Punch {
         if self.reply != false {
             os.write_bool(6, self.reply)?;
         }
-        if self.step != ::protobuf::EnumOrUnknown::new(Step::Step1) {
-            os.write_enum(7, ::protobuf::EnumOrUnknown::value(&self.step))?;
-        }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
     }
@@ -926,7 +910,6 @@ impl ::protobuf::Message for Punch {
         self.public_port_range = 0;
         self.nat_type = ::protobuf::EnumOrUnknown::new(NatType::Symmetric);
         self.reply = false;
-        self.step = ::protobuf::EnumOrUnknown::new(Step::Step1);
         self.special_fields.clear();
     }
 
@@ -938,7 +921,6 @@ impl ::protobuf::Message for Punch {
             public_port_range: 0,
             nat_type: ::protobuf::EnumOrUnknown::from_i32(0),
             reply: false,
-            step: ::protobuf::EnumOrUnknown::from_i32(0),
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -1016,68 +998,6 @@ impl NatType {
     }
 }
 
-#[derive(Clone,Copy,PartialEq,Eq,Debug,Hash)]
-// @@protoc_insertion_point(enum:Step)
-pub enum Step {
-    // @@protoc_insertion_point(enum_value:Step.Step1)
-    Step1 = 0,
-    // @@protoc_insertion_point(enum_value:Step.Step2)
-    Step2 = 1,
-    // @@protoc_insertion_point(enum_value:Step.Step3)
-    Step3 = 2,
-    // @@protoc_insertion_point(enum_value:Step.Step4)
-    Step4 = 3,
-}
-
-impl ::protobuf::Enum for Step {
-    const NAME: &'static str = "Step";
-
-    fn value(&self) -> i32 {
-        *self as i32
-    }
-
-    fn from_i32(value: i32) -> ::std::option::Option<Step> {
-        match value {
-            0 => ::std::option::Option::Some(Step::Step1),
-            1 => ::std::option::Option::Some(Step::Step2),
-            2 => ::std::option::Option::Some(Step::Step3),
-            3 => ::std::option::Option::Some(Step::Step4),
-            _ => ::std::option::Option::None
-        }
-    }
-
-    const VALUES: &'static [Step] = &[
-        Step::Step1,
-        Step::Step2,
-        Step::Step3,
-        Step::Step4,
-    ];
-}
-
-impl ::protobuf::EnumFull for Step {
-    fn enum_descriptor() -> ::protobuf::reflect::EnumDescriptor {
-        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::EnumDescriptor> = ::protobuf::rt::Lazy::new();
-        descriptor.get(|| file_descriptor().enum_by_package_relative_name("Step").unwrap()).clone()
-    }
-
-    fn descriptor(&self) -> ::protobuf::reflect::EnumValueDescriptor {
-        let index = *self as usize;
-        Self::enum_descriptor().value_by_index(index)
-    }
-}
-
-impl ::std::default::Default for Step {
-    fn default() -> Self {
-        Step::Step1
-    }
-}
-
-impl Step {
-    fn generated_enum_descriptor_data() -> ::protobuf::reflect::GeneratedEnumDescriptorData {
-        ::protobuf::reflect::GeneratedEnumDescriptorData::new::<Step>("Step")
-    }
-}
-
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\rmessage.proto\"y\n\x13RegistrationRequest\x12\x14\n\x05token\x18\x01\
     \x20\x01(\tR\x05token\x12\x1f\n\x0bmac_address\x18\x02\x20\x01(\tR\nmacA\
@@ -1093,16 +1013,14 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x1d\n\nvirtual_ip\x18\x02\x20\x01(\x07R\tvirtualIp\x12#\n\rdevice_statu\
     s\x18\x03\x20\x01(\rR\x0cdeviceStatus\"Y\n\nDeviceList\x12\x14\n\x05epoc\
     h\x18\x01\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x02\x20\
-    \x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xef\x01\n\x05Punch\x12\
+    \x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xd4\x01\n\x05Punch\x12\
     \x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12$\n\x0epublic_ip_\
     list\x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\n\x0bpublic_port\x18\
     \x03\x20\x01(\rR\npublicPort\x12*\n\x11public_port_range\x18\x04\x20\x01\
     (\rR\x0fpublicPortRange\x12#\n\x08nat_type\x18\x05\x20\x01(\x0e2\x08.Nat\
-    TypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\x01(\x08R\x05reply\x12\
-    \x19\n\x04step\x18\x07\x20\x01(\x0e2\x05.StepR\x04step*\"\n\x07NatType\
-    \x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01*2\n\x04Step\x12\t\n\
-    \x05Step1\x10\0\x12\t\n\x05Step2\x10\x01\x12\t\n\x05Step3\x10\x02\x12\t\
-    \n\x05Step4\x10\x03b\x06proto3\
+    TypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\x01(\x08R\x05reply*\"\n\
+    \x07NatType\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01b\x06proto\
+    3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
@@ -1126,9 +1044,8 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
             messages.push(DeviceInfo::generated_message_descriptor_data());
             messages.push(DeviceList::generated_message_descriptor_data());
             messages.push(Punch::generated_message_descriptor_data());
-            let mut enums = ::std::vec::Vec::with_capacity(2);
+            let mut enums = ::std::vec::Vec::with_capacity(1);
             enums.push(NatType::generated_enum_descriptor_data());
-            enums.push(Step::generated_enum_descriptor_data());
             ::protobuf::reflect::GeneratedFileDescriptor::new_generated(
                 file_descriptor_proto(),
                 deps,

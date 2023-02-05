@@ -40,9 +40,7 @@ pub struct PeerDeviceInfo {
 }
 
 impl PeerDeviceInfo {
-    pub fn new(virtual_ip: Ipv4Addr,
-               name: String,
-               status: u8, ) -> Self {
+    pub fn new(virtual_ip: Ipv4Addr, name: String, status: u8) -> Self {
         Self {
             virtual_ip,
             name,
@@ -70,7 +68,7 @@ impl From<u8> for PeerDeviceStatus {
     fn from(value: u8) -> Self {
         match value {
             0 => PeerDeviceStatus::Online,
-            _ => PeerDeviceStatus::Offline
+            _ => PeerDeviceStatus::Offline,
         }
     }
 }
