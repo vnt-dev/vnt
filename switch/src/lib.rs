@@ -1,8 +1,8 @@
-
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
-use std::sync::atomic::{Ordering};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use crossbeam::atomic::AtomicCell;
 use crossbeam::sync::WaitGroup;
@@ -11,11 +11,11 @@ use tokio::sync::watch;
 
 use error::*;
 
-use crate::handle::registration_handler::CONNECTION_STATUS;
 use crate::handle::{
-    ApplicationStatus, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, Route, RouteType,
-    DEVICE_LIST, DIRECT_ROUTE_TABLE, SERVER_RT,
+    ApplicationStatus, ConnectStatus, CurrentDeviceInfo, DEVICE_LIST, DIRECT_ROUTE_TABLE, PeerDeviceInfo,
+    Route, RouteType, SERVER_RT,
 };
+use crate::handle::registration_handler::CONNECTION_STATUS;
 
 pub mod error;
 pub mod handle;
@@ -39,8 +39,8 @@ impl<F> Config<F> {
         name: Option<String>,
         abnormal_call: F,
     ) -> Result<Self>
-    where
-        F: FnOnce() + Send + 'static,
+        where
+            F: FnOnce() + Send + 'static,
     {
         if token.is_empty() || token.len() > 64 {
             return Err(Error::Stop("token invalid".to_string()));
@@ -84,8 +84,8 @@ pub struct Switch {
 
 impl Switch {
     pub fn start<F>(config: Config<F>) -> Result<Self>
-    where
-        F: FnOnce() + Send + 'static,
+        where
+            F: FnOnce() + Send + 'static,
     {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -141,8 +141,8 @@ impl Switch {
         return status == ApplicationStatus::Starting;
     }
     pub async fn start_<F>(config: Config<F>) -> Result<Self>
-    where
-        F: FnOnce() + Send + 'static,
+        where
+            F: FnOnce() + Send + 'static,
     {
         // let server_address = "nat1.wherewego.top:29876"
         let server_address = "127.0.0.1:29876".to_socket_addrs().unwrap().next().unwrap();
@@ -162,6 +162,7 @@ impl Switch {
                 }
             }
         };
+        udp.set_write_timeout(Some(Duration::from_millis(2000)))?;
         //注册
         let response = handle::registration_handler::registration(
             &udp,
@@ -214,7 +215,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
         }
         //初始化nat数据
         handle::init_nat_info(response.public_ip, response.public_port as u16);
@@ -248,7 +249,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
             let status_sender1 = status_sender.clone();
@@ -268,7 +269,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
         }
         //打洞处理
         {
@@ -290,7 +291,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
             let status_sender1 = status_sender.clone();
@@ -309,7 +310,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
             let udp1 = udp.try_clone()?;
             let wait_group1 = wait_group.clone();
             let status_sender1 = status_sender.clone();
@@ -328,7 +329,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
         }
         //tun数据处理
         {
@@ -349,7 +350,7 @@ impl Switch {
                     drop(wait_group1);
                 },
             )
-            .await;
+                .await;
         }
         Ok(Switch {
             current_device,

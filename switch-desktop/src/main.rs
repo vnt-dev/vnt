@@ -4,20 +4,21 @@ use std::path::PathBuf;
 use clap::Parser;
 use console::style;
 
-
-use switch::handle::{PeerDeviceStatus, RouteType};
 use switch::*;
+use switch::handle::{PeerDeviceStatus, RouteType};
 
+#[cfg(windows)]
 mod command;
+#[cfg(windows)]
 mod config;
 #[cfg(windows)]
 mod windows;
 
 #[derive(Parser, Debug)]
 #[command(
-    author = "Lu Beilin",
-    version,
-    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+author = "Lu Beilin",
+version,
+about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 struct Args {
     /// 32位字符
@@ -33,6 +34,7 @@ struct Args {
     name: Option<String>,
 }
 
+#[cfg(windows)]
 fn log_init_service(home: PathBuf) -> io::Result<()> {
     if !home.exists() {
         std::fs::create_dir(&home)?;
@@ -115,7 +117,7 @@ fn main() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn main() {
-    log_init();
+    let _ = log_init();
     let args = Args::parse();
     if sudo::RunningAs::Root != sudo::check() {
         println!("{}", style("需要使用root权限执行...").red());

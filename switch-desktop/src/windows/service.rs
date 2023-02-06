@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
 };

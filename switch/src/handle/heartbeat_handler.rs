@@ -52,7 +52,8 @@ async fn handle_loop(
             ping.set_epoch(epoch);
         }
         let _ = udp.send_to(net_packet.buffer(), server_addr);
-        for x in DIRECT_ROUTE_TABLE.iter() {
+        // 不clone会死锁？
+        for x in DIRECT_ROUTE_TABLE.clone().iter() {
             let virtual_ip = x.key().clone();
             let route = x.value().clone();
             drop(x);

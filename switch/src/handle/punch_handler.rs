@@ -1,20 +1,20 @@
-use std::{io, thread};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
+use std::{io, thread};
 
 use protobuf::Message;
 use rand::prelude::SliceRandom;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::watch;
 
-use crate::{CurrentDeviceInfo, DEVICE_LIST, handle::NAT_INFO, handle::NatInfo};
 use crate::error::*;
 use crate::handle::{ApplicationStatus, DIRECT_ROUTE_TABLE};
 use crate::proto::message::{NatType, Punch};
-use crate::protocol::{control_packet, NetPacket, Protocol, turn_packet, Version};
 use crate::protocol::control_packet::PunchRequestPacket;
 use crate::protocol::turn_packet::TurnPacket;
+use crate::protocol::{control_packet, turn_packet, NetPacket, Protocol, Version};
+use crate::{handle::NatInfo, handle::NAT_INFO, CurrentDeviceInfo, DEVICE_LIST};
 
 /// 每一种类型一个通道，减少相互干扰
 pub fn bounded() -> (
@@ -381,11 +381,7 @@ fn send_punch(udp: &UdpSocket, cur_info: &CurrentDeviceInfo, nat_info: NatInfo) 
     Ok(())
 }
 
-fn punch_packet(
-    virtual_ip: Ipv4Addr,
-    nat_info: NatInfo,
-    dest: Ipv4Addr,
-) -> Result<Vec<u8>> {
+fn punch_packet(virtual_ip: Ipv4Addr, nat_info: NatInfo, dest: Ipv4Addr) -> Result<Vec<u8>> {
     let mut punch_reply = Punch::new();
     punch_reply.reply = false;
     punch_reply.virtual_ip = u32::from_be_bytes(virtual_ip.octets());

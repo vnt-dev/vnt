@@ -2,16 +2,16 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use jni::errors::Error;
 use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::{jbyte, jint, jintArray, jlong, jobject, jobjectArray, jsize};
+use jni::sys::{jbyte, jint, jlong, jobject, jobjectArray, jsize};
 use jni::JNIEnv;
 
 use switch::handle::{CurrentDeviceInfo, PeerDeviceInfo, Route};
 use switch::{Config, Switch};
 
-fn to_string_not_null(env: &JNIEnv, config: JObject, name: &str) -> Result<String, Error> {
+fn to_string_not_null(env: &JNIEnv, config: JObject, name: &'static str) -> Result<String, Error> {
     let value = env.get_field(config, name, "Ljava/lang/String;")?.l()?;
     if value.is_null() {
-        env.throw_new("Ljava/lang/NullPointerException", &name)
+        env.throw_new("Ljava/lang/NullPointerException", name)
             .expect("throw");
         return Err(Error::NullPtr(name));
     }
@@ -187,7 +187,7 @@ fn device_list(env: &JNIEnv, device_list: Vec<PeerDeviceInfo>) -> Result<jobject
     for peer_info in device_list {
         let virtual_ip: u32 = peer_info.virtual_ip.into();
         let name = peer_info.name;
-        let status = peer_info.status.into();
+        let status:u8 = peer_info.status.into();
         let info = env.new_object(
             "org/switches/jni/PeerDeviceInfo",
             "(BLjava/lang/String;J)V",

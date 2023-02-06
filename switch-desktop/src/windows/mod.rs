@@ -1,15 +1,15 @@
-use std::{io, thread};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::{io, thread};
 
 use clap::Parser;
 use console::style;
-use windows_service::Error;
 use windows_service::service::{
     ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+use windows_service::Error;
 
 use crate::config;
 
@@ -18,9 +18,9 @@ mod windows_admin_check;
 
 #[derive(Parser, Debug)]
 #[command(
-author = "Lu Beilin",
-version,
-about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+    author = "Lu Beilin",
+    version,
+    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 struct Args {
     /// 32位字符
@@ -120,7 +120,7 @@ pub fn main0() {
                             token.clone(),
                             args.name.clone(),
                         ))
-                            .unwrap();
+                        .unwrap();
                         match start() {
                             Ok(_) => {
                                 //需要检查启动状态
