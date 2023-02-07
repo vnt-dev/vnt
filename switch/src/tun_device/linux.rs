@@ -1,13 +1,4 @@
-use std::io;
-use std::io::{Error, Read, Write};
 use std::net::Ipv4Addr;
-use std::os::unix::process::CommandExt;
-use std::process::Command;
-
-use bytes::BufMut;
-use tun::platform::posix::{Reader, Writer};
-use tun::Device;
-
 use crate::tun_device::{TunReader, TunWriter};
 
 pub fn create_tun(
