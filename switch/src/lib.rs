@@ -145,7 +145,7 @@ impl Switch {
             F: FnOnce() + Send + 'static,
     {
         // let server_address = "nat1.wherewego.top:29876"
-        let server_address = "127.0.0.1:29876".to_socket_addrs().unwrap().next().unwrap();
+        let server_address = "nat1.wherewego.top:29875".to_socket_addrs().unwrap().next().unwrap();
         let mut port = 101 as u16;
         let udp = loop {
             match UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(0), port))) {
