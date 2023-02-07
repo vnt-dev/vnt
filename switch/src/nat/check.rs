@@ -21,7 +21,7 @@ use crate::proto::message::NatType;
 // }
 
 /// 返回所有公网ip和端口变化范围
-pub fn public_ip_list() -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
+pub fn public_ip_list(addrs: &Vec<SocketAddr>) -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
     let mut hash_set = HashSet::new();
     let mut max_port_range = 0;
     let mut nat_type = NatType::Cone;
@@ -41,7 +41,7 @@ pub fn public_ip_list() -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
                 }
             }
         };
-        let (set, min_port, max_port) = public_ip_list_(&udp)?;
+        let (set, min_port, max_port) = public_ip_list_(&udp, addrs)?;
         drop(udp);
         let port_range = max_port - min_port;
         //有多个ip或者端口有变化，说明是对称nat
@@ -69,19 +69,24 @@ pub fn public_ip_list() -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
 /// - 电信4g：对称网络只有一个ip 公网端口比较连续
 /// - 综上：客户端使用小端口，针对对称网络 尝试所有ip 公网端口+-变化量的范围
 /// - 打通概率 移动宽带=电信宽带>联调宽带>电信4g>移动4g>>联调4g
-pub fn public_ip_list_(udp: &UdpSocket) -> io::Result<(HashSet<Ipv4Addr>, u16, u16)> {
+pub fn public_ip_list_(
+    udp: &UdpSocket,
+    addrs: &Vec<SocketAddr>,
+) -> io::Result<(HashSet<Ipv4Addr>, u16, u16)> {
     // println!("local port {:?}", udp.local_addr().unwrap().port());
     udp.set_read_timeout(Some(Duration::from_millis(300)))?;
     let mut buf = [0u8; 128];
-    let _ = udp.send_to(b"NatTest", "nat1.wherewego.top:35061")?;
-    let _ = udp.send_to(b"NatTest", "nat1.wherewego.top:35062")?;
-    let _ = udp.send_to(b"NatTest", "nat2.wherewego.top:35061")?;
-    let _ = udp.send_to(b"NatTest", "nat2.wherewego.top:35062")?;
+    for addr in addrs {
+        let _ = udp.send_to(b"NatTest", addr)?;
+    }
+    // let _ = udp.send_to(b"NatTest", "nat1.wherewego.top:35062")?;
+    // let _ = udp.send_to(b"NatTest", "nat2.wherewego.top:35061")?;
+    // let _ = udp.send_to(b"NatTest", "nat2.wherewego.top:35062")?;
     let mut hash_set = HashSet::new();
     let mut count = 0;
     let mut min_port = 65535;
     let mut max_port = 0;
-    for _ in 0..4 {
+    for _ in 0..addrs.len() {
         if let Ok(len) = udp.recv(&mut buf) {
             if len != 16 || &buf[..10] != &b"NatType213"[..] {
                 continue;
@@ -152,6 +157,19 @@ pub fn nat_test_() -> io::Result<NatType> {
 #[test]
 fn nat_test_run() {
     let udp = UdpSocket::bind("0.0.0.0:101").unwrap();
-    let print = public_ip_list_(&udp).unwrap();
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
+    let addrs = vec![
+        "nat1.wherewego.top:35062"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+        "nat2.wherewego.top:35062"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+    ];
+    let print = public_ip_list_(&udp, &addrs).unwrap();
     println!("{:?}", print);
 }

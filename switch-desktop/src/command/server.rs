@@ -1,6 +1,5 @@
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
-
 use std::sync::Arc;
 
 use console::style;
@@ -54,6 +53,7 @@ impl CommandServer {
         }
     }
 }
+
 fn command(cmd: &str, switch: &Switch) -> io::Result<String> {
     let mut out_str = String::new();
     match cmd {
@@ -127,6 +127,13 @@ fn command(cmd: &str, switch: &Switch) -> io::Result<String> {
             out_str.push_str(&str);
             if server_rt >= 0 {
                 let str = format!("Delay of relay server :{}ms\n", style(server_rt).green());
+                out_str.push_str(&str);
+            }
+            if let Some(nat_info) = switch.nat_info() {
+                let str = format!(
+                    "NAT type :{}",
+                    style(format!("{:?}", nat_info.nat_type)).green()
+                );
                 out_str.push_str(&str);
             }
         }

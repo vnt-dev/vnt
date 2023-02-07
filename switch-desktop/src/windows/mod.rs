@@ -1,15 +1,16 @@
-use std::{io, thread};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::{io, thread};
 
 use clap::Parser;
 use console::style;
-use windows_service::Error;
+
 use windows_service::service::{
     ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+use windows_service::Error;
 
 use crate::config;
 
@@ -18,9 +19,9 @@ mod windows_admin_check;
 
 #[derive(Parser, Debug)]
 #[command(
-author = "Lu Beilin",
-version,
-about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+    author = "Lu Beilin",
+    version,
+    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 struct Args {
     /// 32位字符
@@ -32,25 +33,32 @@ struct Args {
     #[arg(long)]
     token: Option<String>,
     /// 给设备一个名称，为空时默认用系统版本信息
+    /// Give the device a name. If it is blank, the system version information will be used by default
     #[arg(long)]
     name: Option<String>,
     /// 安装服务，安装后可以后台运行，需要指定安装路径
+    /// The installation service can run in the background after installation, and the installation path needs to be specified
     #[arg(long)]
     install: Option<String>,
     /// 卸载服务
+    /// Uninstall service
     #[arg(long)]
     uninstall: bool,
     /// 启动，启动时可以附加参数 --token，如果没有token，则会读取配置文件中上一次使用的token
     /// 安装服务后，会以服务的方式在后台启动，此时可以关闭命令行窗口
+    /// When starting, you can attach the parameter -- token. If there is no token, the last token used in the configuration file will be read. After installing the service, it will be started in the background as a service. At this time, you can close the command line window
     #[arg(long)]
     start: bool,
     #[arg(long)]
     /// 停止，安装服务后，使用 --stop停止服务
+    /// Stop. After installing the service, use -- stop to stop the service
     stop: bool,
     /// 启动服务后，使用 --list 查看设备列表
+    /// After starting the service, use -- list to view the device list
     #[arg(long)]
     list: bool,
     /// 启动服务后，使用 --status 查看设备状态
+    /// After starting the service, use -- status to view the device status
     #[arg(long)]
     status: bool,
 }
@@ -85,7 +93,10 @@ pub fn main0() {
         return;
     }
     if !windows_admin_check::is_app_elevated() {
-        println!("{}", style("请使用管理员权限运行").red());
+        println!(
+            "{}",
+            style("请使用管理员权限运行(Please run with administrator privileges)").red()
+        );
         return;
     }
     if let Some(path) = args.install {
@@ -94,23 +105,23 @@ pub fn main0() {
             std::fs::create_dir_all(&path).unwrap();
         }
         if !path.is_dir() {
-            println!("参数必须为文件目录");
+            println!("参数必须为文件目录(Parameter must be a file directory)");
         } else {
             if let Err(e) = install(path) {
                 log::error!("{:?}", e);
             } else {
-                println!("{}", style("安装成功").green())
+                println!("{}", style("安装成功(Installation succeeded)").green())
             }
         }
     } else if args.uninstall {
         if let Err(e) = uninstall() {
             log::error!("{:?}", e);
         } else {
-            println!("{}", style("卸载成功").green())
+            println!("{}", style("卸载成功(Uninstall succeeded)").green())
         }
     } else if args.start {
         if args.token.is_none() {
-            println!("{}", style("需要参数 --token").red());
+            println!("{}", style("需要参数(require parameters) --token").red());
         } else {
             let token = args.token.clone().unwrap();
             match service_state() {
@@ -120,18 +131,18 @@ pub fn main0() {
                             token.clone(),
                             args.name.clone(),
                         ))
-                            .unwrap();
+                        .unwrap();
                         match start() {
                             Ok(_) => {
                                 //需要检查启动状态
-                                println!("{}", style("启动成功").green())
+                                println!("{}", style("启动成功(Start successfully)").green())
                             }
                             Err(e) => {
                                 log::error!("{:?}", e);
                             }
                         }
                     } else {
-                        println!("服务未停止");
+                        println!("服务未停止(Service not stopped)");
                     }
                 }
                 Err(e) => {
@@ -142,7 +153,7 @@ pub fn main0() {
                                     //指定的服务未安装。
                                     println!(
                                         "{}",
-                                        style("服务未安装，在当前进程启动").red()
+                                        style("服务未安装，在当前进程启动(The service is not installed and started in the current process)").red()
                                     );
                                     crate::start(token, args.name);
                                     return;
@@ -158,20 +169,23 @@ pub fn main0() {
     } else if args.stop {
         match stop() {
             Ok(_) => {
-                println!("{}", style("停止成功").green())
+                println!("{}", style("停止成功(Stopped successfully)").green())
             }
             Err(e) => {
                 log::error!("{:?}", e);
             }
         }
     } else {
-        println!("使用参数 -h 查看帮助")
+        println!("使用参数 -h 查看帮助(Use the parameter - h to view help)")
     }
     pause();
 }
 
 fn pause() {
-    println!("{}", style("按任意键退出...").green());
+    println!(
+        "{}",
+        style("按任意键退出(Press any key to exit)...").green()
+    );
     use console::Term;
     let term = Term::stdout();
     let _ = term.read_char().unwrap();

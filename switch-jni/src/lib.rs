@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 
 use jni::errors::Error;
 use jni::objects::{JClass, JObject, JString, JValue};
@@ -46,7 +46,41 @@ fn start(env: &JNIEnv, config: JObject) -> Result<Option<Switch>, Error> {
     let token = to_string_not_null(&env, config, "token")?;
     let mac_address = to_string_not_null(&env, config, "macAddress")?;
     let name = to_string(&env, config, "name")?;
-    let config = match Config::new(token, mac_address, name, || {}) {
+    let server_address = "nat1.wherewego.top:29875"
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    let nat_test_server = vec![
+        "nat1.wherewego.top:35061"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+        "nat1.wherewego.top:35062"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+        "nat2.wherewego.top:35061"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+        "nat2.wherewego.top:35062"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+    ];
+    let config = match Config::new(
+        token,
+        mac_address,
+        name,
+        server_address,
+        nat_test_server,
+        || {},
+    ) {
         Ok(config) => config,
         Err(e) => {
             env.throw_new(
@@ -187,7 +221,7 @@ fn device_list(env: &JNIEnv, device_list: Vec<PeerDeviceInfo>) -> Result<jobject
     for peer_info in device_list {
         let virtual_ip: u32 = peer_info.virtual_ip.into();
         let name = peer_info.name;
-        let status:u8 = peer_info.status.into();
+        let status: u8 = peer_info.status.into();
         let info = env.new_object(
             "org/switches/jni/PeerDeviceInfo",
             "(BLjava/lang/String;J)V",

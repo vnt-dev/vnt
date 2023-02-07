@@ -31,6 +31,7 @@ lazy_static! {
         .time_to_idle(Duration::from_secs(60*5)).build();
     /// 当前设备的nat信息
     pub static ref NAT_INFO:Mutex<Option<NatInfo>> = const_mutex(None);
+    static ref NAT_TEST_ADDRESS:Mutex<Vec<SocketAddr>> = const_mutex(Vec::new());
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeerDeviceInfo {
@@ -96,10 +97,10 @@ impl Into<u8> for ConnectStatus {
 
 #[derive(Clone, Debug)]
 pub struct NatInfo {
-    public_ips: Vec<u32>,
-    public_port: u16,
-    public_port_range: u16,
-    nat_type: NatType,
+    pub public_ips: Vec<u32>,
+    pub public_port: u16,
+    pub public_port_range: u16,
+    pub nat_type: NatType,
 }
 
 impl NatInfo {
@@ -118,9 +119,14 @@ impl NatInfo {
     }
 }
 
+pub fn init_nat_test_addr(addrs: Vec<SocketAddr>) {
+    NAT_TEST_ADDRESS.lock().extend_from_slice(&addrs);
+}
+
 /// 初始化nat信息
 pub fn init_nat_info(public_ip: u32, public_port: u16) {
-    match crate::nat::check::public_ip_list() {
+    let addrs = NAT_TEST_ADDRESS.lock().clone();
+    match crate::nat::check::public_ip_list(&addrs) {
         Ok((nat_type, ips, port_range)) => {
             let mut public_ips = Vec::new();
             public_ips.push(public_ip);

@@ -6,13 +6,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use switch::{Config, Switch};
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
 };
 use windows_service::service_control_handler::ServiceControlHandlerResult;
 use windows_service::{define_windows_service, service_control_handler, service_dispatcher};
-
-use switch::{Config, Switch};
 
 use crate::windows::config::read_config;
 
@@ -63,9 +62,43 @@ fn service_main() -> windows_service::Result<()> {
     if let Some(config) = read_config() {
         let mac_address = mac_address::get_mac_address().unwrap().unwrap().to_string();
         let un_parker = parker.unparker().clone();
-        match Config::new(config.token, mac_address, config.name, move || {
-            un_parker.unpark();
-        }) {
+        let server_address = "nat1.wherewego.top:29875"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap();
+        let nat_test_server = vec![
+            "nat1.wherewego.top:35061"
+                .to_socket_addrs()
+                .unwrap()
+                .next()
+                .unwrap(),
+            "nat1.wherewego.top:35062"
+                .to_socket_addrs()
+                .unwrap()
+                .next()
+                .unwrap(),
+            "nat2.wherewego.top:35061"
+                .to_socket_addrs()
+                .unwrap()
+                .next()
+                .unwrap(),
+            "nat2.wherewego.top:35062"
+                .to_socket_addrs()
+                .unwrap()
+                .next()
+                .unwrap(),
+        ];
+        match Config::new(
+            config.token,
+            mac_address,
+            config.name,
+            server_address,
+            nat_test_server,
+            move || {
+                un_parker.unpark();
+            },
+        ) {
             Ok(config) => match Switch::start(config) {
                 Ok(switch) => {
                     log::info!("switch-service服务启动");

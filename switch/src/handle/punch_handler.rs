@@ -132,10 +132,10 @@ fn handle(
                     } else {
                         punch.public_port + punch.public_port_range
                     };
-                    let k = if max_port - min_port +1 > 60 {
+                    let k = if max_port - min_port + 1 > 60 {
                         60
                     } else {
-                        max_port - min_port +1
+                        max_port - min_port + 1
                     };
                     send_f(min_port as u16, max_port as u16, k as usize)?;
                 }
@@ -371,7 +371,7 @@ fn send_punch(udp: &UdpSocket, cur_info: &CurrentDeviceInfo, nat_info: NatInfo) 
         let ip = peer_info.virtual_ip;
         //只向ip比自己大的发起打洞，避免双方同时发起打洞浪费流量
         if ip > cur_info.virtual_ip && !DIRECT_ROUTE_TABLE.contains_key(&ip) {
-            log::info!("发起打洞  {:?}, peer_info:{:?}",nat_info,peer_info);
+            log::info!("发起打洞  {:?}, peer_info:{:?}", nat_info, peer_info);
             let bytes = punch_packet(cur_info.virtual_ip, nat_info.clone(), ip)?;
             udp.send_to(&bytes, cur_info.connect_server)?;
         }

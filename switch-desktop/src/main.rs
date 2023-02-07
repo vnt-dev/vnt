@@ -1,11 +1,12 @@
 use std::io;
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 
 use clap::Parser;
 use console::style;
 
-use switch::*;
 use switch::handle::{PeerDeviceStatus, RouteType};
+use switch::*;
 
 #[cfg(windows)]
 mod command;
@@ -16,9 +17,9 @@ mod windows;
 
 #[derive(Parser, Debug)]
 #[command(
-author = "Lu Beilin",
-version,
-about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+    author = "Lu Beilin",
+    version,
+    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 struct Args {
     /// 32位字符
@@ -30,6 +31,7 @@ struct Args {
     #[arg(long)]
     token: String,
     /// 给设备一个名称，为空时默认用系统版本信息
+    /// Give the device a name. If it is blank, the system version information will be used by default
     #[arg(long)]
     name: Option<String>,
 }
@@ -120,7 +122,10 @@ fn main() {
     let _ = log_init();
     let args = Args::parse();
     if sudo::RunningAs::Root != sudo::check() {
-        println!("{}", style("需要使用root权限执行...").red());
+        println!(
+            "{}",
+            style("需要使用root权限执行(Need to execute with root permission)...").red()
+        );
         sudo::escalate_if_needed().unwrap();
     }
     println!("{}", style("starting...").green());
@@ -129,7 +134,41 @@ fn main() {
 
 pub fn start(token: String, name: Option<String>) {
     let mac_address = mac_address::get_mac_address().unwrap().unwrap().to_string();
-    let switch = match Config::new(token, mac_address, name, || {}) {
+    let server_address = "nat1.wherewego.top:29875"
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    let nat_test_server = vec![
+        "nat1.wherewego.top:35061"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+        "nat1.wherewego.top:35062"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+        "nat2.wherewego.top:35061"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+        "nat2.wherewego.top:35062"
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap(),
+    ];
+    let switch = match Config::new(
+        token,
+        mac_address,
+        name,
+        server_address,
+        nat_test_server,
+        || {},
+    ) {
         Ok(config) => match Switch::start(config) {
             Ok(switch) => switch,
             Err(e) => {
@@ -247,6 +286,12 @@ fn command(cmd: &str, switch: &Switch) -> Result<(), ()> {
             );
             if server_rt >= 0 {
                 println!("Delay of relay server :{}ms", style(server_rt).green());
+            }
+            if let Some(nat_info) = switch.nat_info() {
+                println!(
+                    "NAT type :{}",
+                    style(format!("{:?}", nat_info.nat_type)).green()
+                );
             }
         }
         "help" | "h" => {

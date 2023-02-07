@@ -1,5 +1,5 @@
-use std::net::Ipv4Addr;
 use crate::tun_device::{TunReader, TunWriter};
+use std::net::Ipv4Addr;
 
 pub fn create_tun(
     address: Ipv4Addr,
