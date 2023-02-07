@@ -1,15 +1,15 @@
+use std::{io, thread};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::{io, thread};
 
 use clap::Parser;
 use console::style;
+use windows_service::Error;
 use windows_service::service::{
     ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
-use windows_service::Error;
 
 use crate::config;
 
@@ -18,9 +18,9 @@ mod windows_admin_check;
 
 #[derive(Parser, Debug)]
 #[command(
-    author = "Lu Beilin",
-    version,
-    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+author = "Lu Beilin",
+version,
+about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 struct Args {
     /// 32位字符
@@ -109,50 +109,50 @@ pub fn main0() {
             println!("{}", style("卸载成功").green())
         }
     } else if args.start {
-        match service_state() {
-            Ok(state) => {
-                if state == ServiceState::Stopped {
-                    if args.token.is_none() {
-                        println!("{}", style("需要参数 --token").red());
-                    } else {
-                        let token = args.token.clone().unwrap();
+        if args.token.is_none() {
+            println!("{}", style("需要参数 --token").red());
+        } else {
+            let token = args.token.clone().unwrap();
+            match service_state() {
+                Ok(state) => {
+                    if state == ServiceState::Stopped {
                         config::save_config(config::ArgsConfig::new(
                             token.clone(),
                             args.name.clone(),
                         ))
-                        .unwrap();
+                            .unwrap();
                         match start() {
                             Ok(_) => {
                                 //需要检查启动状态
                                 println!("{}", style("启动成功").green())
                             }
                             Err(e) => {
-                                match e {
-                                    Error::Winapi(ref e) => {
-                                        if let Some(code) = e.raw_os_error() {
-                                            if code == 1060 {
-                                                //指定的服务未安装。
-                                                println!(
-                                                    "{}",
-                                                    style("服务未安装，在当前进程启动").red()
-                                                );
-                                                crate::start(token, args.name);
-                                                return;
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
                                 log::error!("{:?}", e);
                             }
                         }
+                    } else {
+                        println!("服务未停止");
                     }
-                } else {
-                    println!("服务未停止");
                 }
-            }
-            Err(e) => {
-                println!("{:?}", e);
+                Err(e) => {
+                    match e {
+                        Error::Winapi(ref e) => {
+                            if let Some(code) = e.raw_os_error() {
+                                if code == 1060 {
+                                    //指定的服务未安装。
+                                    println!(
+                                        "{}",
+                                        style("服务未安装，在当前进程启动").red()
+                                    );
+                                    crate::start(token, args.name);
+                                    return;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    println!("{:?}", e);
+                }
             }
         }
     } else if args.stop {
