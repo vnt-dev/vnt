@@ -104,9 +104,10 @@ fn handle(
         // println!("punch {:?}", punch);
         match punch.nat_type.enum_value_or_default() {
             NatType::Symmetric => {
-                // 碰撞概率 p = 1 - e^(-(k^2+k)/(2n))    n = max_port-min_port 关键词：生日攻击
+                // 碰撞概率 p = 1 - e^(-(k^2+k)/(2n))    n = max_port-min_port+1 关键词：生日攻击
                 let mut send_f = |min_port: u16, max_port: u16, k: usize| -> io::Result<()> {
                     let mut nums: Vec<u16> = (min_port..max_port).collect();
+                    nums.push(max_port);
                     let mut rng = rand::thread_rng();
                     nums.shuffle(&mut rng);
                     for pub_ip in &punch.public_ip_list {
@@ -131,10 +132,10 @@ fn handle(
                     } else {
                         punch.public_port + punch.public_port_range
                     };
-                    let k = if max_port - min_port > 60 {
+                    let k = if max_port - min_port +1 > 60 {
                         60
                     } else {
-                        max_port - min_port
+                        max_port - min_port +1
                     };
                     send_f(min_port as u16, max_port as u16, k as usize)?;
                 }
@@ -228,13 +229,9 @@ async fn res_symmetric_handle_loop(
         let mut punch_packet = PunchRequestPacket::new(packet.payload_mut())?;
         punch_packet.set_source(cur_info.virtual_ip);
     }
-    match tokio::time::timeout(Duration::from_secs(30), receiver.recv()).await {
-        Ok(_) => {}
-        Err(_e) => {}
-    }
     loop {
         tokio::select! {
-            rs = tokio::time::timeout(Duration::from_secs(30), receiver.recv()) =>{
+            rs = tokio::time::timeout(Duration::from_secs(20), receiver.recv()) =>{
                 match rs {
                     Ok(punch) => {
                         if let Some(punch) = punch{
@@ -374,6 +371,7 @@ fn send_punch(udp: &UdpSocket, cur_info: &CurrentDeviceInfo, nat_info: NatInfo) 
         let ip = peer_info.virtual_ip;
         //只向ip比自己大的发起打洞，避免双方同时发起打洞浪费流量
         if ip > cur_info.virtual_ip && !DIRECT_ROUTE_TABLE.contains_key(&ip) {
+            log::info!("发起打洞  {:?}, peer_info:{:?}",nat_info,peer_info);
             let bytes = punch_packet(cur_info.virtual_ip, nat_info.clone(), ip)?;
             udp.send_to(&bytes, cur_info.connect_server)?;
         }
