@@ -148,7 +148,9 @@ pub async fn handler_start<F>(
 ) where
     F: FnOnce() + Send + 'static,
 {
-    use std::os::fd::AsRawFd;
+     #[cfg(target_os = "linux")]
+     use std::os::unix::io::AsRawFd;
+     #[cfg(target_os = "macos")]
     let raw_fd = tun_reader.0.as_raw_fd();
     tokio::spawn(async move {
         let _ = status_watch.changed().await;
