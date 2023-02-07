@@ -20,9 +20,7 @@
 
 - 输入"list"查看其他已连接的设备(p2p表示NAT打洞成功，relay表示使用服务器中继转发),"status"查看当前设备状态
 
-  <img width="502" alt="图片" src="https://user-images.githubusercontent.com/49143209/217266733-731be641-a471-4485-a3f3-9c513b8b9613.png">
-
-
+  <img width="461" alt="图片" src="https://user-images.githubusercontent.com/49143209/217267931-5f134337-6259-40fd-ab2c-882bed19c0cb.png">
 
 - token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
 - 公共服务器目前的配置是2核4G 4Mbps，有需要再扩展~
