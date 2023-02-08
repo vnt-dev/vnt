@@ -104,7 +104,9 @@ fn handle(
         // println!("punch {:?}", punch);
         match punch.nat_type.enum_value_or_default() {
             NatType::Symmetric => {
-                // 碰撞概率 p = 1 - e^(-(k^2+k)/(2n))    n = max_port-min_port+1 关键词：生日攻击
+                // 假设绑定n个端口，通过NAT对外映射出n个 公网ip:公网端口，随机尝试k次的情况下
+                // 猜中的概率 p = 1-((65535-n)/65535)*((65535-n-1)/(65535-1))*...*((65535-n-k+1)/(65535-k+1))
+                // n取76，k取600，猜中的概率就超过50%了
                 let mut send_f = |min_port: u16, max_port: u16, k: usize| -> io::Result<()> {
                     let mut nums: Vec<u16> = (min_port..max_port).collect();
                     nums.push(max_port);
@@ -121,7 +123,6 @@ fn handle(
                 };
                 if punch.public_port_range < 600 {
                     //端口变化不大时，在预测的范围内随机发送
-                    //如果公网端口在这个范围的话，碰撞的概率最低为70%;
                     let min_port = if punch.public_port > punch.public_port_range {
                         punch.public_port - punch.public_port_range
                     } else {
@@ -140,7 +141,6 @@ fn handle(
                     send_f(min_port as u16, max_port as u16, k as usize)?;
                 }
                 // 全端口范围，随机取600个端口发送
-                // 取600个端口碰撞的概率为 93.6%，理论上成功的概率还是很高的
                 send_f(1, 65535, 600)?;
             }
             NatType::Cone => {
