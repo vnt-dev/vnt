@@ -107,6 +107,7 @@ fn handle(
                 // 假设绑定n个端口，通过NAT对外映射出n个 公网ip:公网端口，随机尝试k次的情况下
                 // 猜中的概率 p = 1-((65535-n)/65535)*((65535-n-1)/(65535-1))*...*((65535-n-k+1)/(65535-k+1))
                 // n取76，k取600，猜中的概率就超过50%了
+                // 前提 自己是锥形网络，否则猜中了也通信不了
                 let mut send_f = |min_port: u16, max_port: u16, k: usize| -> io::Result<()> {
                     let mut nums: Vec<u16> = (min_port..max_port).collect();
                     nums.push(max_port);
