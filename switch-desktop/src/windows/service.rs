@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-
+use std::net::ToSocketAddrs;
 use switch::{Config, Switch};
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
