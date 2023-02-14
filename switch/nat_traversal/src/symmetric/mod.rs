@@ -12,6 +12,8 @@ use tokio::net::UdpSocket;
 /// 如果对称网络一方绑定n个端口，通过NAT对外映射出n个 公网ip:公网端口，随机尝试k次的情况下
 /// 猜中的概率 p = 1-((65535-n)/65535)*((65535-n-1)/(65535-1))*...*((65535-n-k+1)/(65535-k+1))
 /// n取76，k取600，猜中的概率就超过50%了
+/// 
+/// 如果两方都是对称网络则不可取，因为尝试k次需要发送 k*n个包，数据量太大
 pub struct Channel {
     udp_list: Vec<Arc<UdpSocket>>,
     addr_map: SkipMap<SocketAddr, usize>,
