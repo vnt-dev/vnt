@@ -4,8 +4,10 @@ pub enum Protocol {
     RegistrationRequest,
     /// 注册响应
     RegistrationResponse,
-    /// 更新设备列表
-    UpdateDeviceList,
+    /// 拉取设备列表
+    PollDeviceList,
+    /// 推送设备列表
+    PushDeviceList,
     UnKnow(u8),
 }
 
@@ -14,7 +16,8 @@ impl From<u8> for Protocol {
         match value {
             1 => Self::RegistrationRequest,
             2 => Self::RegistrationResponse,
-            3 => Self::UpdateDeviceList,
+            3 => Self::PollDeviceList,
+            4 => Self::PushDeviceList,
             val => Self::UnKnow(val),
         }
     }
@@ -25,7 +28,8 @@ impl Into<u8> for Protocol {
         match self {
             Self::RegistrationRequest => 1,
             Self::RegistrationResponse => 2,
-            Self::UpdateDeviceList => 3,
+            Self::PollDeviceList => 3,
+            Self::PushDeviceList => 4,
             Self::UnKnow(val) => val,
         }
     }

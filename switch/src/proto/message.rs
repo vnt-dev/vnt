@@ -31,8 +31,8 @@ pub struct RegistrationRequest {
     // message fields
     // @@protoc_insertion_point(field:RegistrationRequest.token)
     pub token: ::std::string::String,
-    // @@protoc_insertion_point(field:RegistrationRequest.mac_address)
-    pub mac_address: ::std::string::String,
+    // @@protoc_insertion_point(field:RegistrationRequest.device_id)
+    pub device_id: ::std::string::String,
     // @@protoc_insertion_point(field:RegistrationRequest.name)
     pub name: ::std::string::String,
     // @@protoc_insertion_point(field:RegistrationRequest.is_fast)
@@ -62,9 +62,9 @@ impl RegistrationRequest {
             |m: &mut RegistrationRequest| { &mut m.token },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
-            "mac_address",
-            |m: &RegistrationRequest| { &m.mac_address },
-            |m: &mut RegistrationRequest| { &mut m.mac_address },
+            "device_id",
+            |m: &RegistrationRequest| { &m.device_id },
+            |m: &mut RegistrationRequest| { &mut m.device_id },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "name",
@@ -98,7 +98,7 @@ impl ::protobuf::Message for RegistrationRequest {
                     self.token = is.read_string()?;
                 },
                 18 => {
-                    self.mac_address = is.read_string()?;
+                    self.device_id = is.read_string()?;
                 },
                 26 => {
                     self.name = is.read_string()?;
@@ -121,8 +121,8 @@ impl ::protobuf::Message for RegistrationRequest {
         if !self.token.is_empty() {
             my_size += ::protobuf::rt::string_size(1, &self.token);
         }
-        if !self.mac_address.is_empty() {
-            my_size += ::protobuf::rt::string_size(2, &self.mac_address);
+        if !self.device_id.is_empty() {
+            my_size += ::protobuf::rt::string_size(2, &self.device_id);
         }
         if !self.name.is_empty() {
             my_size += ::protobuf::rt::string_size(3, &self.name);
@@ -139,8 +139,8 @@ impl ::protobuf::Message for RegistrationRequest {
         if !self.token.is_empty() {
             os.write_string(1, &self.token)?;
         }
-        if !self.mac_address.is_empty() {
-            os.write_string(2, &self.mac_address)?;
+        if !self.device_id.is_empty() {
+            os.write_string(2, &self.device_id)?;
         }
         if !self.name.is_empty() {
             os.write_string(3, &self.name)?;
@@ -166,7 +166,7 @@ impl ::protobuf::Message for RegistrationRequest {
 
     fn clear(&mut self) {
         self.token.clear();
-        self.mac_address.clear();
+        self.device_id.clear();
         self.name.clear();
         self.is_fast = false;
         self.special_fields.clear();
@@ -175,7 +175,7 @@ impl ::protobuf::Message for RegistrationRequest {
     fn default_instance() -> &'static RegistrationRequest {
         static instance: RegistrationRequest = RegistrationRequest {
             token: ::std::string::String::new(),
-            mac_address: ::std::string::String::new(),
+            device_id: ::std::string::String::new(),
             name: ::std::string::String::new(),
             is_fast: false,
             special_fields: ::protobuf::SpecialFields::new(),
@@ -732,80 +732,87 @@ impl ::protobuf::reflect::ProtobufValue for DeviceList {
 }
 
 #[derive(PartialEq,Clone,Default,Debug)]
-// @@protoc_insertion_point(message:Punch)
-pub struct Punch {
+// @@protoc_insertion_point(message:PunchInfo)
+pub struct PunchInfo {
     // message fields
-    // @@protoc_insertion_point(field:Punch.virtual_ip)
-    pub virtual_ip: u32,
-    // @@protoc_insertion_point(field:Punch.public_ip_list)
+    // @@protoc_insertion_point(field:PunchInfo.public_ip_list)
     pub public_ip_list: ::std::vec::Vec<u32>,
-    // @@protoc_insertion_point(field:Punch.public_port)
+    // @@protoc_insertion_point(field:PunchInfo.public_port)
     pub public_port: u32,
-    // @@protoc_insertion_point(field:Punch.public_port_range)
+    // @@protoc_insertion_point(field:PunchInfo.public_port_range)
     pub public_port_range: u32,
-    // @@protoc_insertion_point(field:Punch.nat_type)
-    pub nat_type: ::protobuf::EnumOrUnknown<NatType>,
-    // @@protoc_insertion_point(field:Punch.reply)
+    // @@protoc_insertion_point(field:PunchInfo.nat_type)
+    pub nat_type: ::protobuf::EnumOrUnknown<PunchNatType>,
+    // @@protoc_insertion_point(field:PunchInfo.reply)
     pub reply: bool,
+    // @@protoc_insertion_point(field:PunchInfo.local_ip)
+    pub local_ip: u32,
+    // @@protoc_insertion_point(field:PunchInfo.local_port)
+    pub local_port: u32,
     // special fields
-    // @@protoc_insertion_point(special_field:Punch.special_fields)
+    // @@protoc_insertion_point(special_field:PunchInfo.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
 }
 
-impl<'a> ::std::default::Default for &'a Punch {
-    fn default() -> &'a Punch {
-        <Punch as ::protobuf::Message>::default_instance()
+impl<'a> ::std::default::Default for &'a PunchInfo {
+    fn default() -> &'a PunchInfo {
+        <PunchInfo as ::protobuf::Message>::default_instance()
     }
 }
 
-impl Punch {
-    pub fn new() -> Punch {
+impl PunchInfo {
+    pub fn new() -> PunchInfo {
         ::std::default::Default::default()
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(6);
+        let mut fields = ::std::vec::Vec::with_capacity(7);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
-        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
-            "virtual_ip",
-            |m: &Punch| { &m.virtual_ip },
-            |m: &mut Punch| { &mut m.virtual_ip },
-        ));
         fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
             "public_ip_list",
-            |m: &Punch| { &m.public_ip_list },
-            |m: &mut Punch| { &mut m.public_ip_list },
+            |m: &PunchInfo| { &m.public_ip_list },
+            |m: &mut PunchInfo| { &mut m.public_ip_list },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "public_port",
-            |m: &Punch| { &m.public_port },
-            |m: &mut Punch| { &mut m.public_port },
+            |m: &PunchInfo| { &m.public_port },
+            |m: &mut PunchInfo| { &mut m.public_port },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "public_port_range",
-            |m: &Punch| { &m.public_port_range },
-            |m: &mut Punch| { &mut m.public_port_range },
+            |m: &PunchInfo| { &m.public_port_range },
+            |m: &mut PunchInfo| { &mut m.public_port_range },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "nat_type",
-            |m: &Punch| { &m.nat_type },
-            |m: &mut Punch| { &mut m.nat_type },
+            |m: &PunchInfo| { &m.nat_type },
+            |m: &mut PunchInfo| { &mut m.nat_type },
         ));
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "reply",
-            |m: &Punch| { &m.reply },
-            |m: &mut Punch| { &mut m.reply },
+            |m: &PunchInfo| { &m.reply },
+            |m: &mut PunchInfo| { &mut m.reply },
         ));
-        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<Punch>(
-            "Punch",
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "local_ip",
+            |m: &PunchInfo| { &m.local_ip },
+            |m: &mut PunchInfo| { &mut m.local_ip },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "local_port",
+            |m: &PunchInfo| { &m.local_port },
+            |m: &mut PunchInfo| { &mut m.local_port },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<PunchInfo>(
+            "PunchInfo",
             fields,
             oneofs,
         )
     }
 }
 
-impl ::protobuf::Message for Punch {
-    const NAME: &'static str = "Punch";
+impl ::protobuf::Message for PunchInfo {
+    const NAME: &'static str = "PunchInfo";
 
     fn is_initialized(&self) -> bool {
         true
@@ -814,9 +821,6 @@ impl ::protobuf::Message for Punch {
     fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
         while let Some(tag) = is.read_raw_tag_or_eof()? {
             match tag {
-                13 => {
-                    self.virtual_ip = is.read_fixed32()?;
-                },
                 18 => {
                     is.read_repeated_packed_fixed32_into(&mut self.public_ip_list)?;
                 },
@@ -835,6 +839,12 @@ impl ::protobuf::Message for Punch {
                 48 => {
                     self.reply = is.read_bool()?;
                 },
+                61 => {
+                    self.local_ip = is.read_fixed32()?;
+                },
+                64 => {
+                    self.local_port = is.read_uint32()?;
+                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -847,9 +857,6 @@ impl ::protobuf::Message for Punch {
     #[allow(unused_variables)]
     fn compute_size(&self) -> u64 {
         let mut my_size = 0;
-        if self.virtual_ip != 0 {
-            my_size += 1 + 4;
-        }
         my_size += 5 * self.public_ip_list.len() as u64;
         if self.public_port != 0 {
             my_size += ::protobuf::rt::uint32_size(3, self.public_port);
@@ -857,11 +864,17 @@ impl ::protobuf::Message for Punch {
         if self.public_port_range != 0 {
             my_size += ::protobuf::rt::uint32_size(4, self.public_port_range);
         }
-        if self.nat_type != ::protobuf::EnumOrUnknown::new(NatType::Symmetric) {
+        if self.nat_type != ::protobuf::EnumOrUnknown::new(PunchNatType::Symmetric) {
             my_size += ::protobuf::rt::int32_size(5, self.nat_type.value());
         }
         if self.reply != false {
             my_size += 1 + 1;
+        }
+        if self.local_ip != 0 {
+            my_size += 1 + 4;
+        }
+        if self.local_port != 0 {
+            my_size += ::protobuf::rt::uint32_size(8, self.local_port);
         }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
@@ -869,9 +882,6 @@ impl ::protobuf::Message for Punch {
     }
 
     fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
-        if self.virtual_ip != 0 {
-            os.write_fixed32(1, self.virtual_ip)?;
-        }
         for v in &self.public_ip_list {
             os.write_fixed32(2, *v)?;
         };
@@ -881,11 +891,17 @@ impl ::protobuf::Message for Punch {
         if self.public_port_range != 0 {
             os.write_uint32(4, self.public_port_range)?;
         }
-        if self.nat_type != ::protobuf::EnumOrUnknown::new(NatType::Symmetric) {
+        if self.nat_type != ::protobuf::EnumOrUnknown::new(PunchNatType::Symmetric) {
             os.write_enum(5, ::protobuf::EnumOrUnknown::value(&self.nat_type))?;
         }
         if self.reply != false {
             os.write_bool(6, self.reply)?;
+        }
+        if self.local_ip != 0 {
+            os.write_fixed32(7, self.local_ip)?;
+        }
+        if self.local_port != 0 {
+            os.write_uint32(8, self.local_port)?;
         }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -899,85 +915,87 @@ impl ::protobuf::Message for Punch {
         &mut self.special_fields
     }
 
-    fn new() -> Punch {
-        Punch::new()
+    fn new() -> PunchInfo {
+        PunchInfo::new()
     }
 
     fn clear(&mut self) {
-        self.virtual_ip = 0;
         self.public_ip_list.clear();
         self.public_port = 0;
         self.public_port_range = 0;
-        self.nat_type = ::protobuf::EnumOrUnknown::new(NatType::Symmetric);
+        self.nat_type = ::protobuf::EnumOrUnknown::new(PunchNatType::Symmetric);
         self.reply = false;
+        self.local_ip = 0;
+        self.local_port = 0;
         self.special_fields.clear();
     }
 
-    fn default_instance() -> &'static Punch {
-        static instance: Punch = Punch {
-            virtual_ip: 0,
+    fn default_instance() -> &'static PunchInfo {
+        static instance: PunchInfo = PunchInfo {
             public_ip_list: ::std::vec::Vec::new(),
             public_port: 0,
             public_port_range: 0,
             nat_type: ::protobuf::EnumOrUnknown::from_i32(0),
             reply: false,
+            local_ip: 0,
+            local_port: 0,
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
     }
 }
 
-impl ::protobuf::MessageFull for Punch {
+impl ::protobuf::MessageFull for PunchInfo {
     fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
         static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
-        descriptor.get(|| file_descriptor().message_by_package_relative_name("Punch").unwrap()).clone()
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("PunchInfo").unwrap()).clone()
     }
 }
 
-impl ::std::fmt::Display for Punch {
+impl ::std::fmt::Display for PunchInfo {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         ::protobuf::text_format::fmt(self, f)
     }
 }
 
-impl ::protobuf::reflect::ProtobufValue for Punch {
+impl ::protobuf::reflect::ProtobufValue for PunchInfo {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
 #[derive(Clone,Copy,PartialEq,Eq,Debug,Hash)]
-// @@protoc_insertion_point(enum:NatType)
-pub enum NatType {
-    // @@protoc_insertion_point(enum_value:NatType.Symmetric)
+// @@protoc_insertion_point(enum:PunchNatType)
+pub enum PunchNatType {
+    // @@protoc_insertion_point(enum_value:PunchNatType.Symmetric)
     Symmetric = 0,
-    // @@protoc_insertion_point(enum_value:NatType.Cone)
+    // @@protoc_insertion_point(enum_value:PunchNatType.Cone)
     Cone = 1,
 }
 
-impl ::protobuf::Enum for NatType {
-    const NAME: &'static str = "NatType";
+impl ::protobuf::Enum for PunchNatType {
+    const NAME: &'static str = "PunchNatType";
 
     fn value(&self) -> i32 {
         *self as i32
     }
 
-    fn from_i32(value: i32) -> ::std::option::Option<NatType> {
+    fn from_i32(value: i32) -> ::std::option::Option<PunchNatType> {
         match value {
-            0 => ::std::option::Option::Some(NatType::Symmetric),
-            1 => ::std::option::Option::Some(NatType::Cone),
+            0 => ::std::option::Option::Some(PunchNatType::Symmetric),
+            1 => ::std::option::Option::Some(PunchNatType::Cone),
             _ => ::std::option::Option::None
         }
     }
 
-    const VALUES: &'static [NatType] = &[
-        NatType::Symmetric,
-        NatType::Cone,
+    const VALUES: &'static [PunchNatType] = &[
+        PunchNatType::Symmetric,
+        PunchNatType::Cone,
     ];
 }
 
-impl ::protobuf::EnumFull for NatType {
+impl ::protobuf::EnumFull for PunchNatType {
     fn enum_descriptor() -> ::protobuf::reflect::EnumDescriptor {
         static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::EnumDescriptor> = ::protobuf::rt::Lazy::new();
-        descriptor.get(|| file_descriptor().enum_by_package_relative_name("NatType").unwrap()).clone()
+        descriptor.get(|| file_descriptor().enum_by_package_relative_name("PunchNatType").unwrap()).clone()
     }
 
     fn descriptor(&self) -> ::protobuf::reflect::EnumValueDescriptor {
@@ -986,41 +1004,41 @@ impl ::protobuf::EnumFull for NatType {
     }
 }
 
-impl ::std::default::Default for NatType {
+impl ::std::default::Default for PunchNatType {
     fn default() -> Self {
-        NatType::Symmetric
+        PunchNatType::Symmetric
     }
 }
 
-impl NatType {
+impl PunchNatType {
     fn generated_enum_descriptor_data() -> ::protobuf::reflect::GeneratedEnumDescriptorData {
-        ::protobuf::reflect::GeneratedEnumDescriptorData::new::<NatType>("NatType")
+        ::protobuf::reflect::GeneratedEnumDescriptorData::new::<PunchNatType>("PunchNatType")
     }
 }
 
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\rmessage.proto\"y\n\x13RegistrationRequest\x12\x14\n\x05token\x18\x01\
-    \x20\x01(\tR\x05token\x12\x1f\n\x0bmac_address\x18\x02\x20\x01(\tR\nmacA\
-    ddress\x12\x12\n\x04name\x18\x03\x20\x01(\tR\x04name\x12\x17\n\x07is_fas\
-    t\x18\x04\x20\x01(\x08R\x06isFast\"\x92\x02\n\x14RegistrationResponse\
-    \x12\x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12'\n\x0fvirtua\
-    l_gateway\x18\x02\x20\x01(\x07R\x0evirtualGateway\x12'\n\x0fvirtual_netm\
-    ask\x18\x03\x20\x01(\x07R\x0evirtualNetmask\x12\x14\n\x05epoch\x18\x04\
-    \x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x05\x20\x03(\x0b2\
-    \x0b.DeviceInfoR\x0edeviceInfoList\x12\x1b\n\tpublic_ip\x18\x06\x20\x01(\
-    \x07R\x08publicIp\x12\x1f\n\x0bpublic_port\x18\x07\x20\x01(\rR\npublicPo\
-    rt\"d\n\nDeviceInfo\x12\x12\n\x04name\x18\x01\x20\x01(\tR\x04name\x12\
-    \x1d\n\nvirtual_ip\x18\x02\x20\x01(\x07R\tvirtualIp\x12#\n\rdevice_statu\
-    s\x18\x03\x20\x01(\rR\x0cdeviceStatus\"Y\n\nDeviceList\x12\x14\n\x05epoc\
-    h\x18\x01\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x02\x20\
-    \x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xd4\x01\n\x05Punch\x12\
-    \x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12$\n\x0epublic_ip_\
-    list\x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\n\x0bpublic_port\x18\
-    \x03\x20\x01(\rR\npublicPort\x12*\n\x11public_port_range\x18\x04\x20\x01\
-    (\rR\x0fpublicPortRange\x12#\n\x08nat_type\x18\x05\x20\x01(\x0e2\x08.Nat\
-    TypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\x01(\x08R\x05reply*\"\n\
-    \x07NatType\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01b\x06proto\
-    3\
+    \n\rmessage.proto\"u\n\x13RegistrationRequest\x12\x14\n\x05token\x18\x01\
+    \x20\x01(\tR\x05token\x12\x1b\n\tdevice_id\x18\x02\x20\x01(\tR\x08device\
+    Id\x12\x12\n\x04name\x18\x03\x20\x01(\tR\x04name\x12\x17\n\x07is_fast\
+    \x18\x04\x20\x01(\x08R\x06isFast\"\x92\x02\n\x14RegistrationResponse\x12\
+    \x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12'\n\x0fvirtual_ga\
+    teway\x18\x02\x20\x01(\x07R\x0evirtualGateway\x12'\n\x0fvirtual_netmask\
+    \x18\x03\x20\x01(\x07R\x0evirtualNetmask\x12\x14\n\x05epoch\x18\x04\x20\
+    \x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x05\x20\x03(\x0b2\x0b.D\
+    eviceInfoR\x0edeviceInfoList\x12\x1b\n\tpublic_ip\x18\x06\x20\x01(\x07R\
+    \x08publicIp\x12\x1f\n\x0bpublic_port\x18\x07\x20\x01(\rR\npublicPort\"d\
+    \n\nDeviceInfo\x12\x12\n\x04name\x18\x01\x20\x01(\tR\x04name\x12\x1d\n\n\
+    virtual_ip\x18\x02\x20\x01(\x07R\tvirtualIp\x12#\n\rdevice_status\x18\
+    \x03\x20\x01(\rR\x0cdeviceStatus\"Y\n\nDeviceList\x12\x14\n\x05epoch\x18\
+    \x01\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x02\x20\x03(\
+    \x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xf8\x01\n\tPunchInfo\x12$\n\
+    \x0epublic_ip_list\x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\n\x0bpu\
+    blic_port\x18\x03\x20\x01(\rR\npublicPort\x12*\n\x11public_port_range\
+    \x18\x04\x20\x01(\rR\x0fpublicPortRange\x12(\n\x08nat_type\x18\x05\x20\
+    \x01(\x0e2\r.PunchNatTypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\x01\
+    (\x08R\x05reply\x12\x19\n\x08local_ip\x18\x07\x20\x01(\x07R\x07localIp\
+    \x12\x1d\n\nlocal_port\x18\x08\x20\x01(\rR\tlocalPort*'\n\x0cPunchNatTyp\
+    e\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01b\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
@@ -1043,9 +1061,9 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
             messages.push(RegistrationResponse::generated_message_descriptor_data());
             messages.push(DeviceInfo::generated_message_descriptor_data());
             messages.push(DeviceList::generated_message_descriptor_data());
-            messages.push(Punch::generated_message_descriptor_data());
+            messages.push(PunchInfo::generated_message_descriptor_data());
             let mut enums = ::std::vec::Vec::with_capacity(1);
-            enums.push(NatType::generated_enum_descriptor_data());
+            enums.push(PunchNatType::generated_enum_descriptor_data());
             ::protobuf::reflect::GeneratedFileDescriptor::new_generated(
                 file_descriptor_proto(),
                 deps,

@@ -7,8 +7,6 @@ use thiserror::Error;
 pub enum Error {
     #[error("packet error")]
     PacketError(#[from] packet::error::Error),
-    #[error("TokioWatchRecvError")]
-    TokioWatchRecvError(#[from] tokio::sync::watch::error::RecvError),
     #[error("Io error")]
     Io(#[from] io::Error),
     #[error("Channel error")]
@@ -21,6 +19,8 @@ pub enum Error {
     NotSupport,
     #[error("Stop")]
     Stop(String),
+    #[error("Warn")]
+    Warn(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

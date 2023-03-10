@@ -1,103 +1,182 @@
 use std::io;
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use console::style;
+use switch::core::{Config, Switch};
+use switch::handle::PeerDeviceStatus;
+use crate::config::log_config::{log_init, log_init_service};
 
-use switch::handle::{PeerDeviceStatus, RouteType};
-use switch::*;
 
-#[cfg(windows)]
 mod command;
-#[cfg(windows)]
 mod config;
 #[cfg(windows)]
 mod windows;
 
+mod unix;
+mod console_out;
+
 #[derive(Parser, Debug)]
 #[command(
-    author = "Lu Beilin",
-    version,
-    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
+author = "Lu Beilin",
+version,
+about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
-struct Args {
-    /// 32位字符
+pub struct BaseArgs {
+    // /// 不超过64个字符
+    // /// 相同token的设备之间才能通信。
+    // /// 建议使用uuid保证唯一性。
+    // /// No more than 64 characters
+    // /// Only devices with the same token can communicate with each other.
+    // /// It is recommended to use uuid to ensure uniqueness
+    // #[arg(long)]
+    // token: Option<String>,
+    // /// 给设备一个名称，为空时默认用系统版本信息
+    // /// Give the device a name. If it is blank, the system version information will be used by default
+    // #[arg(long)]
+    // name: Option<String>,
+    // /// 设备唯一标识，为空时默认使用MAC地址，不超过64个字符
+    // /// Unique identification of the device. If it is blank, the MAC address is used by default. No more than 64 characters
+    // #[arg(long)]
+    // device_id: Option<String>,
+    // /// 注册和中继服务器地址
+    // /// Register and relay server address
+    // #[arg(long)]
+    // server: Option<String>,
+    // /// NAT检测服务地址，使用逗号分隔
+    // /// NAT detection service address. Use comma to separate
+    // #[arg(long)]
+    // nat_test_server: Option<String>,
+    // /// 开机自启动
+    // /// Software automatically start up at boot.
+    // #[cfg(windows)]
+    // #[arg(long)]
+    // auto: bool,
+    // #[arg(long)]
+    // start: bool,
+    //
+    // // /// 启动，启动时可以附加参数 --token，如果没有token，则会读取配置文件中上一次使用的token
+    // // /// 安装服务后，会以服务的方式在后台启动，此时可以关闭命令行窗口
+    // // /// When starting, you can attach the parameter -- token. If there is no token, the last token used in the configuration file will be read. After installing the service, it will be started in the background as a service. At this time, you can close the command line window
+    // // #[arg(subcommand)]
+    // // start111: Option<StartArgs>,
+    // #[arg(long)]
+    // /// 停止，启动服务后，使用 --stop停止服务
+    // /// Stop. After starting the service, use -- stop to stop the service
+    // stop: bool,
+    // /// 启动服务后，使用 --list 查看设备列表
+    // /// After starting the service, use -- list to view the device list
+    // #[arg(long)]
+    // list: bool,
+    // /// 启动服务后，使用 --status 查看设备状态
+    // /// After starting the service, use -- status to view the device status
+    // #[arg(long)]
+    // status: bool,
+    // /// 启动服务后，使用 --route 查看所有路由
+    // /// After starting the service, use -- route to View all routes
+    // #[arg(long)]
+    // route: bool,
+    //
+    // /// 安装服务，安装后可以后台运行，需要指定安装路径
+    // /// The installation service can run in the background after installation, and the installation path needs to be specified
+    // #[cfg(windows)]
+    // #[arg(long)]
+    // install: Option<String>,
+    // /// 卸载服务
+    // /// Uninstall service
+    // #[cfg(windows)]
+    // #[arg(long)]
+    // uninstall: bool,
+    #[clap(subcommand)]
+    command: Commands,
+
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// 启动
+    Start(StartArgs),
+    /// 停止后台服务
+    Stop,
+    /// 安装服务
+    /// Install service
+    #[cfg(windows)]
+    Install(InstallArgs),
+    /// 卸载服务
+    /// Uninstall service
+    #[cfg(windows)]
+    Uninstall,
+    /// 配置
+    #[cfg(windows)]
+    Config(ConfigArgs),
+    /// 查看路由
+    /// View route
+    Route,
+    /// 查看设备列表
+    ///  View device list
+    List {
+        /// 查看所有
+        #[arg(short, long)]
+        all: bool
+    },
+    /// 查看设备当前状态
+    /// View the current status of the device
+    Status,
+}
+
+#[derive(Parser, Debug)]
+pub struct StartArgs {
+    /// 不超过64个字符
     /// 相同token的设备之间才能通信。
     /// 建议使用uuid保证唯一性。
-    /// 32-bit characters.
+    /// No more than 64 characters
     /// Only devices with the same token can communicate with each other.
     /// It is recommended to use uuid to ensure uniqueness
     #[arg(long)]
-    token: String,
+    token: Option<String>,
     /// 给设备一个名称，为空时默认用系统版本信息
     /// Give the device a name. If it is blank, the system version information will be used by default
-    #[arg(long)]
+    #[arg(long, action)]
     name: Option<String>,
+    /// 设备唯一标识，为空时默认使用MAC地址，不超过64个字符
+    /// Unique identification of the device. If it is blank, the MAC address is used by default. No more than 64 characters
+    #[arg(long)]
+    device_id: Option<String>,
+    /// 注册和中继服务器地址
+    /// Register and relay server address
+    #[arg(long)]
+    server: Option<String>,
+    /// NAT检测服务地址，使用逗号分隔
+    /// NAT detection service address. Use comma to separate
+    #[arg(long)]
+    nat_test_server: Option<String>,
 }
 
-#[cfg(windows)]
-fn log_init_service(home: PathBuf) -> io::Result<()> {
-    if !home.exists() {
-        std::fs::create_dir(&home)?;
-    }
-    let logfile = log4rs::append::file::FileAppender::builder()
-        // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
-        .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
-            "{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n",
-        )))
-        .build(home.join("switch-service.log"))?;
-    match log4rs::Config::builder()
-        .appender(log4rs::config::Appender::builder().build("logfile", Box::new(logfile)))
-        .build(
-            log4rs::config::Root::builder()
-                .appender("logfile")
-                .build(log::LevelFilter::Info),
-        ) {
-        Ok(config) => {
-            let _ = log4rs::init_config(config);
-        }
-        Err(_) => {}
-    }
-    Ok(())
+#[derive(Parser, Debug)]
+pub struct InstallArgs {
+    /// 安装路径
+    /// Service installation path
+    #[arg(long)]
+    path: String,
+    /// 服务开机自启动
+    /// Autostart on system startup
+    #[arg(long)]
+    auto: bool,
 }
 
-fn log_init() -> io::Result<()> {
-    let home = dirs::home_dir().unwrap().join(".switch");
-    if !home.exists() {
-        std::fs::create_dir(&home)?;
-    }
-    let stderr = log4rs::append::console::ConsoleAppender::builder()
-        .target(log4rs::append::console::Target::Stderr)
-        .build();
-    let logfile = log4rs::append::file::FileAppender::builder()
-        // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
-        .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
-            "{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n",
-        )))
-        .build(home.join("switch.log"))?;
-    match log4rs::Config::builder()
-        .appender(log4rs::config::Appender::builder().build("logfile", Box::new(logfile)))
-        .appender(
-            log4rs::config::Appender::builder()
-                .filter(Box::new(log4rs::filter::threshold::ThresholdFilter::new(
-                    log::LevelFilter::Error,
-                )))
-                .build("stderr", Box::new(stderr)),
-        )
-        .build(
-            log4rs::config::Root::builder()
-                .appender("logfile")
-                .appender("stderr")
-                .build(log::LevelFilter::Info),
-        ) {
-        Ok(config) => {
-            let _ = log4rs::init_config(config);
-        }
-        Err(_) => {}
-    }
-    Ok(())
+#[derive(Parser, Debug)]
+pub struct ConfigArgs {
+    /// 服务开机自启动
+    /// Autostart on system startup
+    #[arg(long)]
+    auto: bool,
+    /// 取消服务开机自启动
+    /// started manually
+    #[arg(long)]
+    not_auto: bool,
 }
+
 
 #[cfg(windows)]
 fn main() {
@@ -111,10 +190,12 @@ fn main() {
         windows::service::start();
         return;
     } else {
+        let home = dirs::home_dir().unwrap().join(".switch");
+        config::set_home(home);
         let _ = log_init();
-        windows::main0();
+        let args = BaseArgs::parse();
+        windows::main0(args);
     }
-    // println!("{}", style("starting...").green());
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -132,50 +213,16 @@ fn main() {
     start(args.token, args.name);
 }
 
-pub fn start(token: String, name: Option<String>) {
-    let mac_address = mac_address::get_mac_address().unwrap().unwrap().to_string();
-    let server_address = "nat1.wherewego.top:29875"
-        .to_socket_addrs()
-        .unwrap()
-        .next()
-        .unwrap();
-    let nat_test_server = vec![
-        "nat1.wherewego.top:35061"
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap(),
-        "nat1.wherewego.top:35062"
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap(),
-        "nat2.wherewego.top:35061"
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap(),
-        "nat2.wherewego.top:35062"
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap(),
-    ];
-    let switch = match Config::new(
+pub fn start(token: String, name: String, server_address: SocketAddr, nat_test_server: Vec<SocketAddr>, device_id: String) {
+    let config = Config::new(
         token,
-        mac_address,
+        device_id,
         name,
         server_address,
         nat_test_server,
-        || {},
-    ) {
-        Ok(config) => match Switch::start(config) {
-            Ok(switch) => switch,
-            Err(e) => {
-                log::error!("{:?}", e);
-                return;
-            }
-        },
+    );
+    let switch = match Switch::start(config) {
+        Ok(switch) => switch,
         Err(e) => {
             log::error!("{:?}", e);
             return;
@@ -187,11 +234,11 @@ pub fn start(token: String, name: Option<String>) {
     let current_device = switch.current_device();
     println!(
         "当前虚拟ip(virtual ip): {:?}",
-        style(current_device.virtual_ip).green()
+        style(current_device.virtual_ip()).green()
     );
     println!(
         "虚拟网关(virtual gateway): {:?}",
-        style(current_device.virtual_gateway).green()
+        style(current_device.virtual_gateway()).green()
     );
     loop {
         println!(
@@ -202,14 +249,18 @@ pub fn start(token: String, name: Option<String>) {
             Ok(cmd) => {
                 if command(cmd.trim(), &switch).is_err() {
                     println!("{}", style("stopping").red());
-                    switch.stop();
+                    if let Err(e) = switch.stop() {
+                        println!("stop:{:?}", e);
+                    }
                     break;
                 }
             }
             Err(e) => {
                 println!("read_line:{:?}", e);
                 println!("{}", style("stopping...").red());
-                switch.stop();
+                if let Err(e) = switch.stop() {
+                    println!("stop:{:?}", e);
+                }
                 break;
             }
         }
@@ -218,81 +269,20 @@ pub fn start(token: String, name: Option<String>) {
     std::process::exit(1);
 }
 
+
 fn command(cmd: &str, switch: &Switch) -> Result<(), ()> {
     match cmd {
+        "route" => {
+            let list = command::server::command_route(switch);
+            console_out::console_route_table(list);
+        }
         "list" => {
-            let server_rt = switch.server_rt();
-            let device_list = switch.device_list();
-            if device_list.is_empty() {
-                println!("No other devices found");
-                return Ok(());
-            }
-            for peer_device_info in device_list {
-                let route = switch.route(&peer_device_info.virtual_ip);
-                if peer_device_info.status == PeerDeviceStatus::Online {
-                    if route.route_type == RouteType::P2P {
-                        let str = if route.rt >= 0 {
-                            format!(
-                                "[{}] {}(p2p delay:{}ms)",
-                                peer_device_info.name, peer_device_info.virtual_ip, route.rt
-                            )
-                        } else {
-                            format!(
-                                "[{}] {}(p2p)",
-                                peer_device_info.name, peer_device_info.virtual_ip
-                            )
-                        };
-                        println!("{}", style(str).green());
-                    } else {
-                        let str = if server_rt >= 0 {
-                            format!(
-                                "[{}] {}(relay delay:{}ms)",
-                                peer_device_info.name,
-                                peer_device_info.virtual_ip,
-                                server_rt * 2
-                            )
-                        } else {
-                            format!(
-                                "[{}] {}(relay)",
-                                peer_device_info.name, peer_device_info.virtual_ip
-                            )
-                        };
-                        println!("{}", style(str).blue());
-                    }
-                } else {
-                    let str = format!(
-                        "[{}] {}(Offline)",
-                        peer_device_info.name, peer_device_info.virtual_ip
-                    );
-                    println!("{}", style(str).red());
-                }
-            }
+            let list = command::server::command_list(switch);
+            console_out::console_device_list(list);
         }
         "status" => {
-            let server_rt = switch.server_rt();
-            let current_device = switch.current_device();
-            println!("Virtual ip:{}", style(current_device.virtual_ip).green());
-            println!(
-                "Virtual gateway:{}",
-                style(current_device.virtual_gateway).green()
-            );
-            println!(
-                "Connection status :{}",
-                style(format!("{:?}", switch.connection_status())).green()
-            );
-            println!(
-                "Relay server :{}",
-                style(current_device.connect_server).green()
-            );
-            if server_rt >= 0 {
-                println!("Delay of relay server :{}ms", style(server_rt).green());
-            }
-            if let Some(nat_info) = switch.nat_info() {
-                println!(
-                    "NAT type :{}",
-                    style(format!("{:?}", nat_info.nat_type)).green()
-                );
-            }
+            let status = command::server::command_status(switch);
+            console_out::console_status(status);
         }
         "help" | "h" => {
             println!("Options: ");

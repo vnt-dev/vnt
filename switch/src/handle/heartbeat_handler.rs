@@ -1,80 +1,104 @@
-use std::net::{SocketAddr, UdpSocket};
+use std::{io, thread};
+use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Local;
-use tokio::sync::watch::Receiver;
-use tokio::time::sleep;
+use crossbeam::atomic::AtomicCell;
+use parking_lot::Mutex;
+use rand::prelude::SliceRandom;
+use nat_traversal::channel::Route;
 
-use crate::error::*;
-use crate::handle::{ApplicationStatus, DIRECT_ROUTE_TABLE};
+use nat_traversal::channel::sender::Sender;
+use nat_traversal::idle::Idle;
+
+use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
+use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
 use crate::protocol::control_packet::PingPacket;
-use crate::protocol::{control_packet, NetPacket, Protocol, Version};
-use crate::{CurrentDeviceInfo, DEVICE_LIST};
 
-pub async fn start<F>(
-    status_watch: Receiver<ApplicationStatus>,
-    udp: UdpSocket,
-    cur_info: CurrentDeviceInfo,
-    stop_fn: F,
-) where
-    F: FnOnce() + Send + 'static,
-{
-    tokio::spawn(async move {
-        match handle_loop(status_watch, udp, cur_info.connect_server).await {
-            Ok(_) => {}
-            Err(e) => {
-                log::warn!("{:?}", e)
-            }
+pub fn start_idle(idle: Idle<Ipv4Addr>, sender: Sender<Ipv4Addr>) {
+    thread::spawn(move || {
+        if let Err(e) = start_idle_(idle, sender) {
+            log::info!("空闲检测线程停止:{:?}",e);
         }
-        stop_fn();
     });
 }
 
-async fn handle_loop(
-    mut status_watch: Receiver<ApplicationStatus>,
-    udp: UdpSocket,
-    server_addr: SocketAddr,
-) -> Result<()> {
-    const INTERVAL: u64 = 3000;
-    const MAX_INTERVAL: i64 = 3000 * 3;
-    let mut buf = [0u8; (4 + 8 + 4)];
-    let mut net_packet = NetPacket::new(&mut buf)?;
+fn start_idle_(idle: Idle<Ipv4Addr>, sender: Sender<Ipv4Addr>) -> io::Result<()> {
+    loop {
+        let (idle_status, peer_ip, route) = idle.next_idle()?;
+        log::warn!("peer_ip:{:?},route:{:?},idle_status:{:?}",peer_ip,route,idle_status);
+        sender.remove_route(&peer_ip);
+    }
+}
+
+pub fn start_heartbeat(sender: Sender<Ipv4Addr>, device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
+    thread::spawn(move || {
+        if let Err(e) = start_heartbeat_(sender, device_list, current_device) {
+            log::info!("空闲检测线程停止:{:?}",e);
+        }
+    });
+}
+
+fn start_heartbeat_(sender: Sender<Ipv4Addr>, device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<()> {
+    let mut net_packet = NetPacket::new([0u8; 16])?;
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::Control);
     net_packet.set_transport_protocol(control_packet::Protocol::Ping.into());
-    net_packet.set_ttl(255);
+    net_packet.first_set_ttl(MAX_TTL);
+    let mut count = 0;
     loop {
-        let current_time = Local::now().timestamp_millis();
+        let current_device = current_device.load();
+        net_packet.set_source(current_device.virtual_ip());
         {
+            let current_time = Local::now().timestamp_millis() as u16;
             let mut ping = PingPacket::new(net_packet.payload_mut())?;
             ping.set_time(current_time);
-            let epoch = { DEVICE_LIST.lock().0 };
+            let epoch = { device_list.lock().0 };
             ping.set_epoch(epoch);
         }
-        let _ = udp.send_to(net_packet.buffer(), server_addr);
-        // 不clone会死锁？
-        for x in DIRECT_ROUTE_TABLE.clone().iter() {
-            let virtual_ip = x.key().clone();
-            let route = x.value().clone();
-            drop(x);
-            if current_time - route.recv_time <= MAX_INTERVAL {
-                let _ = udp.send_to(net_packet.buffer(), route.address);
-            } else {
-                DIRECT_ROUTE_TABLE.remove_if(&virtual_ip, |_, route| {
-                    current_time - route.recv_time > MAX_INTERVAL
-                });
+        if count % 7 == 0 {
+            let mut route_list: Option<Vec<(Ipv4Addr, Route)>> = None;
+            let peer_list = device_list.lock().1.clone();
+            for peer in peer_list {
+                net_packet.first_set_ttl(MAX_TTL);
+                net_packet.set_destination(peer.virtual_ip);
+                if sender.send_to_id(net_packet.buffer(), &peer.virtual_ip).is_err() {
+                    //没有路由则发送到网关
+                    let _ = sender.send_to_addr(net_packet.buffer(), current_device.connect_server);
+                    //再随机发送到其他地址，看有没有客户端符合转发条件
+                    let route_list = route_list.get_or_insert_with(|| {
+                        let mut l = sender.route_list();
+                        l.shuffle(&mut rand::thread_rng());
+                        l
+                    });
+                    let mut num = 0;
+                    net_packet.first_set_ttl(2);
+                    for (peer_ip, route) in route_list.iter() {
+                        if peer_ip != &peer.virtual_ip && route.metric == 1 {
+                            let _ = sender.send_to_route(net_packet.buffer(), &route.route_key());
+                            num += 1;
+                        }
+                        if num >= 3 {
+                            break;
+                        }
+                    }
+                }
             }
-        }
-        tokio::select! {
-             _ = sleep(Duration::from_millis(INTERVAL))=>{
-
+            net_packet.set_destination(current_device.virtual_gateway());
+            if let Err(e) = sender.send_to_addr(net_packet.buffer(), current_device.connect_server) {
+                log::warn!("connect_server:{:?},e:{:?}",current_device.connect_server,e);
             }
-            status = status_watch.changed() =>{
-                status?;
-                if *status_watch.borrow() != ApplicationStatus::Starting{
-                    return Ok(())
+        } else {
+            for (peer_ip, route) in sender.route_list().iter() {
+                net_packet.set_destination(*peer_ip);
+                if let Err(e) = sender.send_to_route(net_packet.buffer(), &route.route_key()) {
+                    log::warn!("peer_ip:{:?},route:{:?},e:{:?}",peer_ip,route,e);
                 }
             }
         }
+
+        count += 1;
+        thread::sleep(Duration::from_secs(5));
     }
 }

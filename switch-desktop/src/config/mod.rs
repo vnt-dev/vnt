@@ -1,11 +1,104 @@
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use crate::{BaseArgs, StartArgs};
+
+pub mod log_config;
+
+pub struct BaseConfig {
+    pub name: String,
+    pub token: String,
+    pub server: SocketAddr,
+    pub nat_test_server: Vec<SocketAddr>,
+    pub device_id: String,
+}
+
+pub fn default_config(start_args: StartArgs) -> Result<BaseConfig, String> {
+    let args_config = read_config();
+    if args_config.is_none() && start_args.token.is_none() {
+        return Err("找不到token(Token not found)".to_string());
+    }
+    let token = start_args.token.unwrap_or_else(|| args_config.as_ref().unwrap().token.clone()).trim().to_string();
+    if token.is_empty() {
+        return Err("token不能为空(Token cannot be empty)".to_string());
+    }
+    if token.len() > 64 {
+        return Err("token不能超过64字符(Token cannot exceed 64 characters)".to_string());
+    }
+    let name = start_args.name.unwrap_or_else(|| {
+        if let Some(c) = &args_config {
+            c.name.clone()
+        } else {
+            os_info::get().to_string()
+        }
+    });
+    let name = name.trim();
+    let name = if name.len() > 64 {
+        name[..64].to_string()
+    } else {
+        name.to_string()
+    };
+    let device_id = start_args.device_id.unwrap_or_else(|| {
+        if let Some(c) = &args_config {
+            if !c.device_id.is_empty() {
+                return c.device_id.clone();
+            }
+        }
+        if let Ok(Some(mac_address)) = mac_address::get_mac_address() {
+            mac_address.to_string()
+        } else {
+            "".to_string()
+        }
+    });
+    if device_id.is_empty() || device_id.len() > 64 {
+        return Err("设备id不能为空并且长度不能大于64字符(The device id cannot be empty and the length cannot be greater than 64 characters)".to_string());
+    }
+    let server = match start_args.server.unwrap_or_else(|| {
+        if let Some(c) = &args_config {
+            if !c.server.is_empty() {
+                return c.server.clone();
+            }
+        }
+        "nat1.wherewego.top:29875".to_string()
+    }).to_socket_addrs() {
+        Ok(mut server) => {
+            if let Some(addr) = server.next() {
+                addr
+            } else {
+                return Err("中继服务器地址错误( Relay server address error)".to_string());
+            }
+        }
+        Err(e) => {
+            return Err(format!("中继服务器地址错误( Relay server address error) :{:?}", e));
+        }
+    };
+    let nat_test_server = start_args.nat_test_server.unwrap_or_else(|| {
+        if let Some(c) = &args_config {
+            if !c.nat_test_server.is_empty() {
+                return c.nat_test_server.join(",");
+            }
+        }
+        "nat1.wherewego.top:35061,nat1.wherewego.top:35062,nat2.wherewego.top:35061,nat2.wherewego.top:35062".to_string()
+    }).split(",").flat_map(|a| a.to_socket_addrs()).flatten()
+        .collect::<Vec<_>>();
+    if nat_test_server.is_empty() {
+        return Err("NAT检测服务地址错误(NAT detection service address error)".to_string());
+    }
+    let base_config = BaseConfig {
+        name,
+        token,
+        server,
+        nat_test_server,
+        device_id,
+    };
+    Ok(base_config)
+}
 
 lazy_static! {
     static ref CONFIG: Mutex<Option<ArgsConfig>> = Mutex::new(None);
@@ -14,17 +107,43 @@ lazy_static! {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArgsConfig {
+    #[serde(default = "default_version")]
+    pub version: String,
+    #[serde(default = "default_str")]
     pub token: String,
-    pub name: Option<String>,
+    #[serde(default = "default_str")]
+    pub name: String,
     pub command_port: Option<u16>,
+    #[serde(default = "default_str")]
+    pub server: String,
+    #[serde(default = "default_resource_vec")]
+    pub nat_test_server: Vec<String>,
+    #[serde(default = "default_str")]
+    pub device_id: String,
+}
+
+fn default_version() -> String {
+    "1.0".to_string()
+}
+
+fn default_str() -> String {
+    "".to_string()
+}
+
+fn default_resource_vec() -> Vec<String> {
+    vec![]
 }
 
 impl ArgsConfig {
-    pub fn new(token: String, name: Option<String>) -> Self {
+    pub fn new(token: String, name: String, server: String, nat_test_server: Vec<String>, device_id: String) -> Self {
         Self {
+            version: "1.0".to_string(),
             token,
             name,
             command_port: None,
+            server,
+            nat_test_server,
+            device_id,
         }
     }
 }
@@ -66,13 +185,13 @@ pub fn read_config() -> Option<ArgsConfig> {
         return c;
     }
     if let Some(home) = SWITCH_HOME_PATH.lock().clone() {
-        match read_config_(home) {
+        match read_config_(home.to_path_buf()) {
             Ok(config) => {
                 lock.replace(config.clone());
                 Some(config)
             }
             Err(e) => {
-                log::error!("{:?}", e);
+                log::error!("{:?},path:{:?}", e,home);
                 None
             }
         }
