@@ -6,32 +6,58 @@
 
 ### 示例：
 
-- 在一台mac设备上运行，获取到ip 10.13.0.2：
+1. 指定一个token，在多台设备上运行该程序，例如：
+    ```shell
+      # linux上
+      root@DESKTOP-0BCHNIO:/opt# ./switch-desktop start --token 123456
+      # 在另一台linux上使用nohup后台运行
+      [root@izj6cemne76ykdzkataftfz switch]# nohup ./switch-desktop start  --command-server &
+      # windows上
+      D:\switch\bin_v1>switch-desktop.exe start --token 123456
+    ```
+2. 可以执行status命令查看当前设备的虚拟ip
+   ```shell
+    root@DESKTOP-0BCHNIO:/opt# ./switch-desktop status
+    Name: Ubuntu 18.04 (bionic) [64-bit]
+    Virtual ip: 10.26.0.2
+    Virtual gateway: 10.26.0.1
+    Virtual netmask: 255.255.255.0
+    Connection status: Connected
+    NAT type: Cone
+    Relay server: 43.139.56.10:29871
+    Public ips: 120.228.76.75
+    Local ip: 172.25.165.58
+    ```
+3. 也可以执行list命令查看其他设备的虚拟ip
+   ```shell
+    root@DESKTOP-0BCHNIO:/opt# ./switch-desktop list
+    Name                                                       Virtual Ip      P2P/Relay      Rt      Status
+    Windows 10.0.22621 (Windows 11 Professional) [64-bit]      10.26.0.3       p2p            2       Online
+    CentOS 7.9.2009 (Core) [64-bit]                            10.26.0.4       p2p            35      Online
+    ```
+4. 最后可以用虚拟ip实现设备间相互访问
+   1. ping
 
-  <img width="506" alt="图片" src="https://user-images.githubusercontent.com/49143209/210379090-a3f21007-5a12-44d3-81d6-a69495209ea7.png">
+      <img width="506" alt="ping" src="documents/img/ping.jpg">
+   2. ssh
+   
+      <img width="506" alt="ssh" src="documents/img/ssh.jpg">
 
-- 在另一台windows上运行，获取到ip 10.13.0.3：
+### 更多玩法
 
-  ![图片](https://user-images.githubusercontent.com/49143209/210380063-d02c5b46-8fef-4e21-aa9b-6c2defcb1412.png)
+1. 和远程桌面(如mstsc)搭配，超低延迟的体验
+2. 安装samba服务，共享磁盘
+3. 搭配nginx，在公网访问本地文件
 
-- 此时这两个设备之间就能用ip相互访问了
-
-  <img width="437" alt="图片" src="https://user-images.githubusercontent.com/49143209/210380969-4a7c0f23-1e88-4ab6-9cc2-0c0f086848ac.png">
-
-- 输入"list"查看其他已连接的设备(p2p表示NAT打洞成功，relay表示使用服务器中继转发),"status"查看当前设备状态
-
-  ![图片](https://user-images.githubusercontent.com/49143209/210685314-6e0d674f-b481-4150-bc84-275155c565fc.png)
-
-
-- token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
-- 公共服务器目前的配置是2核4G 4Mbps，有需要再扩展~
 
 ### 使用须知
+- token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
+- 公共服务器目前的配置是2核4G 4Mbps，有需要再扩展~
 - 需要root/管理员权限
 - 使用命令行运行
 - Mac和Linux下需要加可执行权限(例如:chmod +x ./switch-macos)
-- 暂时固定使用的10.13.0.1/24网段，需要避免和已有的路由冲突
-## 编译
+
+### 编译
  前提条件:安装rust编译环境(https://www.rust-lang.org/zh-CN/tools/install)
  
  到项目根目录下执行 cargo build -p switch-desktop
@@ -48,8 +74,9 @@
 - NAT穿透
   - 点对点穿透
   - 服务端中继转发
+  - 客户端中继转发
 
 ### Todo
 - 支持安卓
 - 数据加密
-- 客户端中继转发
+
