@@ -2,16 +2,20 @@
 // extern crate windows_service;
 
 use std::ffi::OsString;
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::net::ToSocketAddrs;
+
+use windows_service::{define_windows_service, service_control_handler, service_dispatcher};
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
 };
 use windows_service::service_control_handler::ServiceControlHandlerResult;
-use windows_service::{define_windows_service, service_control_handler, service_dispatcher};
+
 use switch::core::{Config, Switch};
+
+use crate::config;
 use crate::windows::config::read_config;
 
 define_windows_service!(ffi_service_main, switch_service_main);
@@ -19,7 +23,7 @@ pub fn switch_service_main(_arguments: Vec<OsString>) {
     thread::spawn(|| match service_main() {
         Ok(_) => {}
         Err(e) => {
-            log::warn!("{:?}", e);
+            log::error!("{:?}", e);
         }
     });
 }
@@ -58,10 +62,15 @@ fn service_main() -> windows_service::Result<()> {
         wait_hint: Duration::default(),
         process_id: None,
     })?;
-    if let Ok(switch) = start_switch() {
-        parker.park();
-        if let Err(e) = switch.stop() {
-            log::warn!("switch stop:{:?}",e)
+    match start_switch() {
+        Ok(switch) => {
+            parker.park();
+            if let Err(e) = switch.stop() {
+                log::warn!("switch stop:{:?}",e)
+            }
+        }
+        Err(e) => {
+            log::error!("{:?}",e);
         }
     }
     status_handle.set_service_status(ServiceStatus {
@@ -79,7 +88,7 @@ fn start_switch() -> switch::Result<Arc<Switch>> {
     if let Some(config) = read_config() {
         let device_id = config.device_id;
         if device_id.trim().is_empty() {
-            return Err(switch::error::Error::Stop("MAC address error".to_string()));
+            return Err(switch::error::Error::Stop("Device id error".to_string()));
         }
         let server_address = if let Some(server_address) = config.server
             .to_socket_addrs()?
@@ -88,11 +97,10 @@ fn start_switch() -> switch::Result<Arc<Switch>> {
         } else {
             return Err(switch::error::Error::Stop("server address error".to_string()));
         };
-        let mut nat_test_server = config.nat_test_server.iter()
+        let nat_test_server = config.nat_test_server.iter()
             .flat_map(|a| a.to_socket_addrs())
             .flatten()
             .collect::<Vec<_>>();
-        ;
         if nat_test_server.is_empty() {
             return Err(switch::error::Error::Stop("nat test server address error".to_string()));
         }
@@ -108,8 +116,11 @@ fn start_switch() -> switch::Result<Arc<Switch>> {
         let command_server = crate::command::server::CommandServer::new();
         let switch1 = switch.clone();
         thread::spawn(move || {
+            if let Err(e) = config::update_pid(std::process::id()) {
+                log::error!("{:?}", e);
+            }
             if let Err(e) = command_server.start(switch1) {
-                log::warn!("{:?}", e);
+                log::error!("{:?}", e);
             }
         });
         Ok(switch)

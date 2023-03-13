@@ -86,6 +86,7 @@ impl Into<u8> for Protocol {
 }
 
 pub const MAX_TTL: u8 = 0b1111;
+pub const MAX_SOURCE: u8 = 0b11110000;
 
 #[derive(Copy, Clone)]
 pub struct NetPacket<B> {
@@ -152,10 +153,10 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
         self.buffer.as_mut()[3] = ttl << 4 | ttl;
     }
     pub fn set_ttl(&mut self, ttl: u8) {
-        self.buffer.as_mut()[3] = MAX_TTL & ttl;
+        self.buffer.as_mut()[3] = (self.buffer.as_mut()[3] & MAX_SOURCE) | (MAX_TTL & ttl);
     }
     pub fn set_source_ttl(&mut self, source_ttl: u8) {
-        self.buffer.as_mut()[3] = (source_ttl << 4) | self.buffer.as_ref()[3];
+        self.buffer.as_mut()[3] = (source_ttl << 4) | (MAX_TTL & self.buffer.as_ref()[3]);
     }
     pub fn set_source(&mut self, source: Ipv4Addr) {
         self.buffer.as_mut()[4..8].copy_from_slice(&source.octets());

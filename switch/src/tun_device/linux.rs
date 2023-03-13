@@ -1,5 +1,8 @@
 use crate::tun_device::{TunReader, TunWriter};
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+use tun::Device;
+use parking_lot::Mutex;
 
 pub fn create_tun(
     address: Ipv4Addr,
@@ -13,17 +16,20 @@ pub fn create_tun(
         .address(address)
         .netmask(netmask)
         .mtu(1420)
+        // .queues(2)
         .up();
+    //
+    // config.platform(|config| {
+    //     config.packet_information(true);
+    // });
 
-    config.platform(|config| {
-        config.packet_information(true);
-    });
-
-    let mut dev = tun::create(&config).unwrap();
+    let dev = tun::create(&config).unwrap();
     let packet_information = dev.has_packet_information();
-    let (reader, writer) = dev.split();
+    let queue = dev.queue(0).unwrap();
+    let reader = queue.reader();
+    let writer = queue.writer();
     Ok((
-        TunWriter(writer, packet_information),
+        TunWriter(writer, packet_information, Arc::new(Mutex::new(dev))),
         TunReader(reader, packet_information),
     ))
 }

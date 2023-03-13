@@ -3,10 +3,11 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use libloading::Library;
+use parking_lot::Mutex;
 use wintun::{Adapter, Packet, Session};
 
 #[derive(Clone)]
-pub struct TunWriter(Arc<Session>, u32);
+pub struct TunWriter(Arc<Session>, Arc<Mutex<u32>>);
 
 impl TunWriter {
     pub fn write(&self, buf: &[u8]) -> io::Result<()> {
@@ -22,10 +23,11 @@ impl TunWriter {
     }
     pub fn change_ip(&self, address: Ipv4Addr, netmask: Ipv4Addr,
                      gateway: Ipv4Addr, old_netmask: Ipv4Addr, old_gateway: Ipv4Addr) -> io::Result<()> {
-        if let Err(e) = delete_route(self.1, old_netmask, old_gateway) {
+        let index = self.1.lock();
+        if let Err(e) = delete_route(*index, old_netmask, old_gateway) {
             log::warn!("{:?}",e);
         }
-        config_ip(self.1, address, netmask, gateway)
+        config_ip(*index, address, netmask, gateway)
     }
 }
 
@@ -79,7 +81,7 @@ pub fn create_tun(
     config_ip(index, address, netmask, gateway)?;
     let session = Arc::new(adapter.start_session(wintun::MAX_RING_CAPACITY).unwrap());
     let reader_session = session.clone();
-    Ok((TunWriter(session.clone(), index), TunReader(reader_session)))
+    Ok((TunWriter(session.clone(), Arc::new(Mutex::new(index))), TunReader(reader_session)))
 }
 
 fn config_ip(index: u32, address: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {

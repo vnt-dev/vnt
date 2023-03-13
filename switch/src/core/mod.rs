@@ -4,9 +4,9 @@ use std::sync::Arc;
 use crossbeam::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
-use nat_traversal::boot::Boot;
-use nat_traversal::channel::{Channel, Route, RouteKey};
-use nat_traversal::punch::NatInfo;
+use p2p_channel::boot::Boot;
+use p2p_channel::channel::{Channel, Route, RouteKey};
+use p2p_channel::punch::NatInfo;
 use crate::handle::{ConnectStatus, CurrentDeviceInfo, heartbeat_handler, PeerDeviceInfo, punch_handler, recv_handler, registration_handler, tun_handler};
 use crate::nat::NatTest;
 use crate::tun_device;
@@ -28,7 +28,7 @@ pub struct Switch {
 
 impl Switch {
     pub fn start(config: Config) -> crate::Result<Switch> {
-        let (mut channel, punch, idle) = Boot::new::<Ipv4Addr>(100, 9000, 0)?;
+        let (mut channel, punch, idle) = Boot::new::<Ipv4Addr>(80, 15000, 0)?;
         let response = registration_handler::registration(&mut channel, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone())?;
         let register = Arc::new(registration_handler::Register::new(channel.sender()?, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> = Arc::new(Mutex::new((0, Vec::new())));
@@ -109,7 +109,7 @@ impl Switch {
         self.nat_channel.route_to_id(route_key)
     }
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Route)> {
-        self.nat_channel.route_list()
+        self.nat_channel.route_table()
     }
     pub fn stop(&self) -> io::Result<()> {
         self.tun_reader.close();

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use chrono::Local;
 use protobuf::Message;
-use nat_traversal::channel::Channel;
-use nat_traversal::channel::sender::Sender;
+use p2p_channel::channel::Channel;
+use p2p_channel::channel::sender::Sender;
 
 use crate::error::*;
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};

@@ -7,10 +7,10 @@ use chrono::Local;
 use crossbeam::atomic::AtomicCell;
 use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
-use nat_traversal::channel::Route;
 
-use nat_traversal::channel::sender::Sender;
-use nat_traversal::idle::Idle;
+use p2p_channel::channel::Route;
+use p2p_channel::channel::sender::Sender;
+use p2p_channel::idle::Idle;
 
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
@@ -26,9 +26,11 @@ pub fn start_idle(idle: Idle<Ipv4Addr>, sender: Sender<Ipv4Addr>) {
 
 fn start_idle_(idle: Idle<Ipv4Addr>, sender: Sender<Ipv4Addr>) -> io::Result<()> {
     loop {
-        let (idle_status, peer_ip, route) = idle.next_idle()?;
-        log::warn!("peer_ip:{:?},route:{:?},idle_status:{:?}",peer_ip,route,idle_status);
-        sender.remove_route(&peer_ip);
+        let (idle_status, peer_ips, route) = idle.next_idle()?;
+        log::warn!("peer_ip:{:?},route:{:?},idle_status:{:?}",peer_ips,route,idle_status);
+        for peer_ip in peer_ips {
+            sender.remove_route(&peer_ip);
+        }
     }
 }
 
@@ -68,7 +70,7 @@ fn start_heartbeat_(sender: Sender<Ipv4Addr>, device_list: Arc<Mutex<(u16, Vec<P
                     let _ = sender.send_to_addr(net_packet.buffer(), current_device.connect_server);
                     //再随机发送到其他地址，看有没有客户端符合转发条件
                     let route_list = route_list.get_or_insert_with(|| {
-                        let mut l = sender.route_list();
+                        let mut l = sender.route_table();
                         l.shuffle(&mut rand::thread_rng());
                         l
                     });
@@ -84,21 +86,23 @@ fn start_heartbeat_(sender: Sender<Ipv4Addr>, device_list: Arc<Mutex<(u16, Vec<P
                         }
                     }
                 }
+                thread::sleep(Duration::from_millis(1));
             }
             net_packet.set_destination(current_device.virtual_gateway());
             if let Err(e) = sender.send_to_addr(net_packet.buffer(), current_device.connect_server) {
                 log::warn!("connect_server:{:?},e:{:?}",current_device.connect_server,e);
             }
         } else {
-            for (peer_ip, route) in sender.route_list().iter() {
+            for (peer_ip, route) in sender.route_table().iter() {
                 net_packet.set_destination(*peer_ip);
                 if let Err(e) = sender.send_to_route(net_packet.buffer(), &route.route_key()) {
                     log::warn!("peer_ip:{:?},route:{:?},e:{:?}",peer_ip,route,e);
                 }
+                thread::sleep(Duration::from_millis(1));
             }
         }
 
         count += 1;
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(5000));
     }
 }

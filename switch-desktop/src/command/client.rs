@@ -64,6 +64,7 @@ impl CommandClient {
             }
         }
     }
+    #[cfg(any(unix))]
     pub fn stop(&self) -> io::Result<String> {
         self.udp.send(b"stop")?;
         let mut buf = [0; 10240];

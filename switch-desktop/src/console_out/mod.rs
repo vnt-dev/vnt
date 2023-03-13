@@ -1,7 +1,4 @@
-use std::net::Ipv4Addr;
 use console::style;
-
-use switch::Route;
 
 use crate::command::entity::{DeviceItem, RouteItem, Status};
 

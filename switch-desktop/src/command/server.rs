@@ -2,7 +2,6 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::Arc;
 
-use console::style;
 use switch::core::Switch;
 use crate::command::entity::{DeviceItem, RouteItem, Status};
 

@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -7,11 +7,12 @@ use std::path::PathBuf;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use crate::{BaseArgs, StartArgs};
+
+use crate::StartArgs;
 
 pub mod log_config;
 
-pub struct BaseConfig {
+pub struct StartConfig {
     pub name: String,
     pub token: String,
     pub server: SocketAddr,
@@ -19,7 +20,7 @@ pub struct BaseConfig {
     pub device_id: String,
 }
 
-pub fn default_config(start_args: StartArgs) -> Result<BaseConfig, String> {
+pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     let args_config = read_config();
     if args_config.is_none() && start_args.token.is_none() {
         return Err("找不到token(Token not found)".to_string());
@@ -33,10 +34,11 @@ pub fn default_config(start_args: StartArgs) -> Result<BaseConfig, String> {
     }
     let name = start_args.name.unwrap_or_else(|| {
         if let Some(c) = &args_config {
-            c.name.clone()
-        } else {
-            os_info::get().to_string()
+            if !c.name.is_empty() {
+                return c.name.clone();
+            }
         }
+        os_info::get().to_string()
     });
     let name = name.trim();
     let name = if name.len() > 64 {
@@ -65,7 +67,7 @@ pub fn default_config(start_args: StartArgs) -> Result<BaseConfig, String> {
                 return c.server.clone();
             }
         }
-        "nat1.wherewego.top:29875".to_string()
+        "nat1.wherewego.top:29871".to_string()
     }).to_socket_addrs() {
         Ok(mut server) => {
             if let Some(addr) = server.next() {
@@ -90,7 +92,7 @@ pub fn default_config(start_args: StartArgs) -> Result<BaseConfig, String> {
     if nat_test_server.is_empty() {
         return Err("NAT检测服务地址错误(NAT detection service address error)".to_string());
     }
-    let base_config = BaseConfig {
+    let base_config = StartConfig {
         name,
         token,
         server,
@@ -102,7 +104,7 @@ pub fn default_config(start_args: StartArgs) -> Result<BaseConfig, String> {
 
 lazy_static! {
     static ref CONFIG: Mutex<Option<ArgsConfig>> = Mutex::new(None);
-    static ref SWITCH_HOME_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+    pub static ref SWITCH_HOME_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -120,6 +122,8 @@ pub struct ArgsConfig {
     pub nat_test_server: Vec<String>,
     #[serde(default = "default_str")]
     pub device_id: String,
+    #[serde(default = "default_pid")]
+    pub pid: u32,
 }
 
 fn default_version() -> String {
@@ -134,6 +138,10 @@ fn default_resource_vec() -> Vec<String> {
     vec![]
 }
 
+fn default_pid() -> u32 {
+    0
+}
+
 impl ArgsConfig {
     pub fn new(token: String, name: String, server: String, nat_test_server: Vec<String>, device_id: String) -> Self {
         Self {
@@ -144,19 +152,47 @@ impl ArgsConfig {
             server,
             nat_test_server,
             device_id,
+            pid: 0,
         }
     }
 }
+use fd_lock::RwLock;
+pub fn lock_config() -> io::Result<RwLock<File>> {
+    let config_path = SWITCH_HOME_PATH.lock().clone().unwrap().join("config");
+    Ok(RwLock::new(File::open(config_path)?))
+}
 
 pub fn save_config(config: ArgsConfig) -> io::Result<()> {
-    let config_path = dirs::home_dir().unwrap().join(".switch").join("config");
+    let config_path = SWITCH_HOME_PATH.lock().clone().unwrap().join("config");
     save_config_(config, config_path)
 }
 
 fn save_config_(config: ArgsConfig, config_path: PathBuf) -> io::Result<()> {
+    let mut config_lock = CONFIG.lock();
+    config_lock.take();
     let str = serde_yaml::to_string(&config).unwrap();
     let mut file = File::create(config_path)?;
     file.write_all(str.as_bytes())
+}
+
+pub fn update_pid(pid: u32) -> io::Result<()> {
+    let home_lock = SWITCH_HOME_PATH.lock();
+    if let Some(home) = home_lock.clone() {
+        drop(home_lock);
+        let config_path = home.join("config");
+        if let Some(mut config) = read_config() {
+            config.pid = pid;
+            return save_config_(config, config_path);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::Other, "not found"))
+}
+
+#[cfg(any(unix))]
+pub fn read_pid() -> io::Result<u32> {
+    let home = SWITCH_HOME_PATH.lock().clone().unwrap();
+    let config = read_config_(home)?;
+    Ok(config.pid)
 }
 
 pub fn update_command_port(port: u16) -> io::Result<()> {
@@ -173,9 +209,13 @@ pub fn update_command_port(port: u16) -> io::Result<()> {
 }
 
 pub fn read_command_port() -> io::Result<u16> {
-    let home = dirs::home_dir().unwrap().join(".switch");
+    let home = SWITCH_HOME_PATH.lock().clone().unwrap();
     let config = read_config_(home)?;
-    Ok(config.command_port.unwrap())
+    if let Some(p) = config.command_port {
+        Ok(p)
+    } else {
+        Err(io::Error::new(io::ErrorKind::Other, "not fount config"))
+    }
 }
 
 pub fn read_config() -> Option<ArgsConfig> {
@@ -206,7 +246,11 @@ pub fn set_home(home: PathBuf) {
 
 fn read_config_(home: PathBuf) -> io::Result<ArgsConfig> {
     let config_path = home.join("config");
-    let mut file = File::open(config_path)?;
+    let mut file = if config_path.exists() {
+        File::open(config_path)?
+    } else {
+        OpenOptions::new().read(true).write(true).truncate(false).create(true).open(config_path)?
+    };
     let mut str = String::new();
     file.read_to_string(&mut str)?;
     match serde_yaml::from_str::<ArgsConfig>(&str) {

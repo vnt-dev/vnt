@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 use std::{io, thread};
-use nat_traversal::punch::NatType;
+use p2p_channel::punch::NatType;
 
 
 // #[derive(Debug, Copy, Clone, PartialEq)]

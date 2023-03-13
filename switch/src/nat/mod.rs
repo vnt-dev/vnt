@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use parking_lot::Mutex;
-use nat_traversal::punch::{NatInfo, NatType};
+use p2p_channel::punch::{NatInfo, NatType};
 use crate::proto::message::PunchNatType;
 
 pub mod check;

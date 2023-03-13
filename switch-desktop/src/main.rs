@@ -1,19 +1,18 @@
-use std::io;
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::path::PathBuf;
-
 use clap::{Parser, Subcommand};
 use console::style;
-use switch::core::{Config, Switch};
-use switch::handle::PeerDeviceStatus;
-use crate::config::log_config::{log_init, log_init_service};
 
+use switch::core::Switch;
+
+use crate::config::log_config::log_init;
+#[cfg(target_os = "windows")]
+use crate::config::log_config::log_service_init;
 
 mod command;
 mod config;
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(any(unix))]
 mod unix;
 mod console_out;
 
@@ -24,70 +23,6 @@ version,
 about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
 )]
 pub struct BaseArgs {
-    // /// 不超过64个字符
-    // /// 相同token的设备之间才能通信。
-    // /// 建议使用uuid保证唯一性。
-    // /// No more than 64 characters
-    // /// Only devices with the same token can communicate with each other.
-    // /// It is recommended to use uuid to ensure uniqueness
-    // #[arg(long)]
-    // token: Option<String>,
-    // /// 给设备一个名称，为空时默认用系统版本信息
-    // /// Give the device a name. If it is blank, the system version information will be used by default
-    // #[arg(long)]
-    // name: Option<String>,
-    // /// 设备唯一标识，为空时默认使用MAC地址，不超过64个字符
-    // /// Unique identification of the device. If it is blank, the MAC address is used by default. No more than 64 characters
-    // #[arg(long)]
-    // device_id: Option<String>,
-    // /// 注册和中继服务器地址
-    // /// Register and relay server address
-    // #[arg(long)]
-    // server: Option<String>,
-    // /// NAT检测服务地址，使用逗号分隔
-    // /// NAT detection service address. Use comma to separate
-    // #[arg(long)]
-    // nat_test_server: Option<String>,
-    // /// 开机自启动
-    // /// Software automatically start up at boot.
-    // #[cfg(windows)]
-    // #[arg(long)]
-    // auto: bool,
-    // #[arg(long)]
-    // start: bool,
-    //
-    // // /// 启动，启动时可以附加参数 --token，如果没有token，则会读取配置文件中上一次使用的token
-    // // /// 安装服务后，会以服务的方式在后台启动，此时可以关闭命令行窗口
-    // // /// When starting, you can attach the parameter -- token. If there is no token, the last token used in the configuration file will be read. After installing the service, it will be started in the background as a service. At this time, you can close the command line window
-    // // #[arg(subcommand)]
-    // // start111: Option<StartArgs>,
-    // #[arg(long)]
-    // /// 停止，启动服务后，使用 --stop停止服务
-    // /// Stop. After starting the service, use -- stop to stop the service
-    // stop: bool,
-    // /// 启动服务后，使用 --list 查看设备列表
-    // /// After starting the service, use -- list to view the device list
-    // #[arg(long)]
-    // list: bool,
-    // /// 启动服务后，使用 --status 查看设备状态
-    // /// After starting the service, use -- status to view the device status
-    // #[arg(long)]
-    // status: bool,
-    // /// 启动服务后，使用 --route 查看所有路由
-    // /// After starting the service, use -- route to View all routes
-    // #[arg(long)]
-    // route: bool,
-    //
-    // /// 安装服务，安装后可以后台运行，需要指定安装路径
-    // /// The installation service can run in the background after installation, and the installation path needs to be specified
-    // #[cfg(windows)]
-    // #[arg(long)]
-    // install: Option<String>,
-    // /// 卸载服务
-    // /// Uninstall service
-    // #[cfg(windows)]
-    // #[arg(long)]
-    // uninstall: bool,
     #[clap(subcommand)]
     command: Commands,
 
@@ -101,14 +36,14 @@ enum Commands {
     Stop,
     /// 安装服务
     /// Install service
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     Install(InstallArgs),
     /// 卸载服务
     /// Uninstall service
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     Uninstall,
     /// 配置
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     Config(ConfigArgs),
     /// 查看路由
     /// View route
@@ -151,8 +86,16 @@ pub struct StartArgs {
     /// NAT detection service address. Use comma to separate
     #[arg(long)]
     nat_test_server: Option<String>,
+    /// 命令服务，开启后可以在其他进程使用 route、list等命令查看信息
+    /// 程序使用后台运行时需要增加此参数
+    /// Command service. After it is enabled, you can use route, list and other commands in other processes to view information.
+    /// This parameter needs to be added when the program is running in the background
+    #[cfg(any(unix))]
+    #[arg(long)]
+    command_server: bool,
 }
 
+#[cfg(target_os = "windows")]
 #[derive(Parser, Debug)]
 pub struct InstallArgs {
     /// 安装路径
@@ -165,16 +108,13 @@ pub struct InstallArgs {
     auto: bool,
 }
 
+#[cfg(target_os = "windows")]
 #[derive(Parser, Debug)]
 pub struct ConfigArgs {
     /// 服务开机自启动
     /// Autostart on system startup
     #[arg(long)]
     auto: bool,
-    /// 取消服务开机自启动
-    /// started manually
-    #[arg(long)]
-    not_auto: bool,
 }
 
 
@@ -183,9 +123,9 @@ fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.len() == 3 && args[1] == windows::SERVICE_FLAG {
         //以服务的方式启动
-        let _ = log_init_service(PathBuf::from(&args[2]));
-        config::set_home(PathBuf::from(&args[2]));
-        log::info!("config  {:?}", PathBuf::from(&args[2]));
+        config::set_home(std::path::PathBuf::from(&args[2]));
+        let _ = log_service_init();
+        log::info!("config  {:?}", std::path::PathBuf::from(&args[2]));
         log::info!("config  {:?}", config::read_config());
         windows::service::start();
         return;
@@ -200,34 +140,14 @@ fn main() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn main() {
+    let home = dirs::home_dir().unwrap().join(".switch");
+    config::set_home(home);
     let _ = log_init();
-    let args = Args::parse();
-    if sudo::RunningAs::Root != sudo::check() {
-        println!(
-            "{}",
-            style("需要使用root权限执行(Need to execute with root permission)...").red()
-        );
-        sudo::escalate_if_needed().unwrap();
-    }
-    println!("{}", style("starting...").green());
-    start(args.token, args.name);
+    let args = BaseArgs::parse();
+    unix::main0(args);
 }
 
-pub fn start(token: String, name: String, server_address: SocketAddr, nat_test_server: Vec<SocketAddr>, device_id: String) {
-    let config = Config::new(
-        token,
-        device_id,
-        name,
-        server_address,
-        nat_test_server,
-    );
-    let switch = match Switch::start(config) {
-        Ok(switch) => switch,
-        Err(e) => {
-            log::error!("{:?}", e);
-            return;
-        }
-    };
+pub fn console_listen(switch: &Switch) {
     use console::Term;
     let term = Term::stdout();
     println!("{}", style("started").green());
@@ -247,6 +167,10 @@ pub fn start(token: String, name: String, server_address: SocketAddr, nat_test_s
         );
         match term.read_line() {
             Ok(cmd) => {
+                if cmd.is_empty() {
+                    log::warn!("非正常返回");
+                    return;
+                }
                 if command(cmd.trim(), &switch).is_err() {
                     println!("{}", style("stopping").red());
                     if let Err(e) = switch.stop() {
@@ -256,17 +180,17 @@ pub fn start(token: String, name: String, server_address: SocketAddr, nat_test_s
                 }
             }
             Err(e) => {
-                println!("read_line:{:?}", e);
+                log::error!("read_line:{:?}", e);
                 println!("{}", style("stopping...").red());
                 if let Err(e) = switch.stop() {
-                    println!("stop:{:?}", e);
+                    log::error!("stop:{:?}", e);
                 }
+                std::thread::sleep(std::time::Duration::from_secs(1));
                 break;
             }
         }
     }
     println!("{}", style("stopped").red());
-    std::process::exit(1);
 }
 
 

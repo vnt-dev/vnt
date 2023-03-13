@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use crossbeam::atomic::AtomicCell;
 
-use nat_traversal::channel::sender::Sender;
+use p2p_channel::channel::sender::Sender;
 use packet::icmp::icmp::IcmpPacket;
 use packet::icmp::Kind;
 use packet::ip::ipv4;
@@ -59,8 +59,8 @@ fn handle(sender: &Sender<Ipv4Addr>, data: &mut [u8], tun_writer: &TunWriter, cu
     net_packet.set_destination(dest_ip);
     net_packet.set_payload(ipv4_packet.buffer);
     //优先发到直连到地址
-    if sender.send_to_id(&net_packet.buffer()[..(4 + 8 + data_len)], &dest_ip).is_err() {
-        sender.send_to_addr(&net_packet.buffer()[..(4 + 8 + data_len)], current_device.connect_server)?;
+    if sender.send_to_id(&net_packet.buffer()[..(12 + data_len)], &dest_ip).is_err() {
+        sender.send_to_addr(&net_packet.buffer()[..(12 + data_len)], current_device.connect_server)?;
     }
     return Ok(());
 }
@@ -76,6 +76,7 @@ pub fn start(sender: Sender<Ipv4Addr>,
     });
 }
 
+#[cfg(target_os = "windows")]
 fn start_(sender: Sender<Ipv4Addr>,
           tun_reader: TunReader,
           tun_writer: TunWriter,
@@ -88,6 +89,28 @@ fn start_(sender: Sender<Ipv4Addr>,
     loop {
         let mut data = tun_reader.next()?;
         match handle(&sender, data.bytes_mut(), &tun_writer, current_device.load(), &mut net_packet) {
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("{:?}", e)
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux",target_os = "macos"))]
+fn start_(sender: Sender<Ipv4Addr>,
+          tun_reader: TunReader,
+          tun_writer: TunWriter,
+          current_device: Arc<AtomicCell<CurrentDeviceInfo>>, ) -> io::Result<()> {
+    let mut net_packet = NetPacket::new(vec![0u8; 4 + 8 + 1500])?;
+    net_packet.set_version(Version::V1);
+    net_packet.set_protocol(Protocol::Ipv4Turn);
+    net_packet.set_transport_protocol(ipv4::protocol::Protocol::Ipv4.into());
+    net_packet.set_ttl(MAX_TTL);
+    let mut buf = [0; 4096];
+    loop {
+        let data = tun_reader.read(&mut buf)?;
+        match handle(&sender, data, &tun_writer, current_device.load(), &mut net_packet) {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("{:?}", e)

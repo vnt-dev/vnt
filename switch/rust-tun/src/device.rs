@@ -12,15 +12,14 @@
 //
 //  0. You just DO WHAT THE FUCK YOU WANT TO.
 
-use std::io::{Read, Write};
 use std::net::Ipv4Addr;
 
 use crate::configuration::Configuration;
 use crate::error::*;
 
 /// A TUN device.
-pub trait Device: Read + Write {
-    type Queue: Read + Write;
+pub trait Device {
+    type Queue ;
 
     /// Reconfigure the device.
     fn configure(&mut self, config: &Configuration) -> Result<()> {
@@ -91,5 +90,5 @@ pub trait Device: Read + Write {
     fn set_mtu(&mut self, value: i32) -> Result<()>;
 
     /// Get a device queue.
-    fn queue(&mut self, index: usize) -> Option<&mut Self::Queue>;
+    fn queue(&self, index: usize) -> Option<&Self::Queue>;
 }

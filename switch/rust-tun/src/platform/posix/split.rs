@@ -12,22 +12,24 @@
 //
 //  0. You just DO WHAT THE FUCK YOU WANT TO.
 
-use std::io::{self, Read, Write};
+use std::io;
 use std::mem;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::{AsRawFd,RawFd};
 use std::sync::Arc;
 
 use crate::platform::posix::Fd;
 use libc;
 
 /// Read-only end for a file descriptor.
+#[derive(Clone)]
 pub struct Reader(pub(crate) Arc<Fd>);
 
 /// Write-only end for a file descriptor.
+#[derive(Clone)]
 pub struct Writer(pub(crate) Arc<Fd>);
 
-impl Read for Reader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+impl Reader {
+    pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
         unsafe {
             let amount = libc::read(self.0.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len());
 
@@ -39,7 +41,7 @@ impl Read for Reader {
         }
     }
 
-    fn read_vectored(&mut self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
+    pub fn read_vectored(&self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
         unsafe {
             let mut msg: libc::msghdr = mem::zeroed();
             // msg.msg_name: NULL
@@ -57,8 +59,8 @@ impl Read for Reader {
     }
 }
 
-impl Write for Writer {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+impl Writer {
+    pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
         unsafe {
             let amount = libc::write(self.0.as_raw_fd(), buf.as_ptr() as *const _, buf.len());
 
@@ -70,11 +72,8 @@ impl Write for Writer {
         }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 
-    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+    pub fn write_vectored(&self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
         unsafe {
             let mut msg: libc::msghdr = mem::zeroed();
             // msg.msg_name = NULL
@@ -90,6 +89,22 @@ impl Write for Writer {
             Ok(n as usize)
         }
     }
+    pub fn write_all(&self, mut buf: &[u8]) -> io::Result<()> {
+        while !buf.is_empty() {
+            match self.write(buf) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write whole buffer",
+                    ));
+                }
+                Ok(n) => buf = &buf[n..],
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
 }
 
 impl AsRawFd for Reader {
@@ -97,9 +112,9 @@ impl AsRawFd for Reader {
         self.0.as_raw_fd()
     }
 }
-
-impl AsRawFd for Writer {
-    fn as_raw_fd(&self) -> RawFd {
-        self.0.as_raw_fd()
-    }
-}
+//
+// impl AsRawFd for Writer {
+//     fn as_raw_fd(&self) -> RawFd {
+//         self.0.as_raw_fd()
+//     }
+// }

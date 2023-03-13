@@ -8,8 +8,8 @@ use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 use protobuf::Message;
 
-use nat_traversal::channel::{Channel, Route, RouteKey};
-use nat_traversal::punch::NatInfo;
+use p2p_channel::channel::{Channel, Route, RouteKey};
+use p2p_channel::punch::NatInfo;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
@@ -221,7 +221,7 @@ impl RecvHandler {
                     })
                     .collect();
                 let mut dev = self.device_list.lock();
-                if dev.0 < device_list_t.epoch as u16 || device_list_t.epoch as u16 - dev.0 > u16::MAX >> 2 {
+                if dev.0 != device_list_t.epoch as u16 {
                     dev.0 = device_list_t.epoch as u16;
                     dev.1 = ip_list;
                 }
@@ -357,7 +357,7 @@ impl RecvHandler {
                     net_packet.set_source(current_device.virtual_ip());
                     net_packet.set_destination(source);
                     net_packet.set_payload(&bytes);
-                    if !peer_nat_info.local_ip.is_unspecified() {
+                    if !peer_nat_info.local_ip.is_unspecified() && peer_nat_info.local_port != 0 {
                         let mut packet = NetPacket::new([0u8; 12])?;
                         packet.set_version(Version::V1);
                         packet.first_set_ttl(1);
