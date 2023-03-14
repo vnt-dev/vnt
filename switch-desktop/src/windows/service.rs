@@ -17,6 +17,7 @@ use switch::core::{Config, Switch};
 
 use crate::config;
 use crate::windows::config::read_config;
+use crate::windows::SERVICE_NAME;
 
 define_windows_service!(ffi_service_main, switch_service_main);
 pub fn switch_service_main(_arguments: Vec<OsString>) {
@@ -50,7 +51,7 @@ fn service_main() -> windows_service::Result<()> {
     // Register system service event handler.
     // The returned status handle should be used to report service status changes to the system.
     let status_handle =
-        service_control_handler::register(crate::windows::SERVICE_NAME, event_handler)?;
+        service_control_handler::register(SERVICE_NAME, event_handler)?;
 
     // Tell the system that service is running
     status_handle.set_service_status(ServiceStatus {
@@ -131,5 +132,5 @@ fn start_switch() -> switch::Result<Arc<Switch>> {
 
 pub fn start() {
     log::info!("以服务的方式启动");
-    service_dispatcher::start("switch-service", ffi_service_main).unwrap();
+    service_dispatcher::start(SERVICE_NAME, ffi_service_main).unwrap();
 }

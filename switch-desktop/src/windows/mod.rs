@@ -1,15 +1,16 @@
+use std::{io, thread};
 use std::ffi::OsString;
+use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::{io, thread};
 
 use console::style;
-
+use windows_service::Error;
 use windows_service::service::{
     ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
-use windows_service::Error;
+
 use switch::core::{Config, Switch};
 
 use crate::{BaseArgs, Commands, config};
@@ -55,6 +56,10 @@ pub fn main0(base_args: BaseArgs) {
         Commands::Start(args) => {
             if admin_check() {
                 return;
+            }
+            {
+                // 允许应用通过防火墙
+                let _udp = UdpSocket::bind("0.0.0.0:0").unwrap();
             }
             match config::default_config(args) {
                 Ok(start_config) => {
@@ -260,7 +265,7 @@ fn install(path: PathBuf, auto: bool) -> Result<(), Error> {
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: OsString::from("switch service v1"),
-        service_type: ServiceType::OWN_PROCESS,
+        service_type: SERVICE_TYPE,
         start_type,
         error_control: ServiceErrorControl::Normal,
         executable_path: service_path.into(),
@@ -294,7 +299,7 @@ fn change(auto: bool) -> Result<(), Error> {
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: config.display_name,
-        service_type: ServiceType::OWN_PROCESS,
+        service_type: SERVICE_TYPE,
         start_type,
         error_control: config.error_control,
         executable_path: config.executable_path,

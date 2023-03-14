@@ -16,7 +16,7 @@ pub fn create_tun(
         .address(address)
         .netmask(netmask)
         .mtu(1420)
-        // .queues(2)
+        // .queues(2) 用多个队列有兼容性问题
         .up();
     //
     // config.platform(|config| {
