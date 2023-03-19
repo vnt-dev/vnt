@@ -11,7 +11,7 @@
       # linux上
       root@DESKTOP-0BCHNIO:/opt# ./switch-desktop start --token 123456
       # 在另一台linux上使用nohup后台运行
-      [root@izj6cemne76ykdzkataftfz switch]# nohup ./switch-desktop start  --command-server &
+      [root@izj6cemne76ykdzkataftfz switch]# nohup ./switch-desktop start  &
       # windows上
       D:\switch\bin_v1>switch-desktop.exe start --token 123456
     ```
