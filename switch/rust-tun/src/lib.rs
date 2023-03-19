@@ -27,27 +27,6 @@ pub use crate::configuration::{Configuration, Layer};
 pub mod platform;
 pub use crate::platform::create;
 
-#[cfg(all(
-    feature = "async",
-    any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "android"
-    )
-))]
-pub mod r#async;
-#[cfg(all(
-    feature = "async",
-    any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "android"
-    )
-))]
-pub use r#async::*;
-
 pub fn configure() -> Configuration {
     Configuration::default()
 }

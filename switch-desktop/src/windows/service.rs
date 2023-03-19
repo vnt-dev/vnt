@@ -2,25 +2,36 @@
 // extern crate windows_service;
 
 use std::ffi::OsString;
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::net::ToSocketAddrs;
-use switch::{Config, Switch};
+
+use windows_service::{define_windows_service, service_control_handler, service_dispatcher};
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
 };
 use windows_service::service_control_handler::ServiceControlHandlerResult;
-use windows_service::{define_windows_service, service_control_handler, service_dispatcher};
 
+use switch::core::{Config, Switch};
+
+use crate::config;
 use crate::windows::config::read_config;
+use crate::windows::SERVICE_NAME;
 
 define_windows_service!(ffi_service_main, switch_service_main);
-pub fn switch_service_main(_arguments: Vec<OsString>) {
+pub fn switch_service_main(arguments: Vec<OsString>) {
+    if !arguments.is_empty() {
+        if let Some(str) = arguments[0].to_str() {
+            if str == "log" {
+                let _ = config::log_config::log_service_init();
+            }
+        }
+    }
     thread::spawn(|| match service_main() {
         Ok(_) => {}
         Err(e) => {
-            log::warn!("{:?}", e);
+            log::error!("{:?}", e);
         }
     });
 }
@@ -36,8 +47,8 @@ fn service_main() -> windows_service::Result<()> {
 
             // Handle stop
             ServiceControl::Stop => {
-                log::info!("handler 服务停止");
                 un_parker.unpark();
+                log::info!("handler 服务停止");
                 ServiceControlHandlerResult::NoError
             }
             _ => ServiceControlHandlerResult::NotImplemented,
@@ -47,7 +58,7 @@ fn service_main() -> windows_service::Result<()> {
     // Register system service event handler.
     // The returned status handle should be used to report service status changes to the system.
     let status_handle =
-        service_control_handler::register(crate::windows::SERVICE_NAME, event_handler)?;
+        service_control_handler::register(SERVICE_NAME, event_handler)?;
 
     // Tell the system that service is running
     status_handle.set_service_status(ServiceStatus {
@@ -59,72 +70,16 @@ fn service_main() -> windows_service::Result<()> {
         wait_hint: Duration::default(),
         process_id: None,
     })?;
-    if let Some(config) = read_config() {
-        let mac_address = mac_address::get_mac_address().unwrap().unwrap().to_string();
-        let un_parker = parker.unparker().clone();
-        let server_address = "nat1.wherewego.top:29875"
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap();
-        let nat_test_server = vec![
-            "nat1.wherewego.top:35061"
-                .to_socket_addrs()
-                .unwrap()
-                .next()
-                .unwrap(),
-            "nat1.wherewego.top:35062"
-                .to_socket_addrs()
-                .unwrap()
-                .next()
-                .unwrap(),
-            "nat2.wherewego.top:35061"
-                .to_socket_addrs()
-                .unwrap()
-                .next()
-                .unwrap(),
-            "nat2.wherewego.top:35062"
-                .to_socket_addrs()
-                .unwrap()
-                .next()
-                .unwrap(),
-        ];
-        match Config::new(
-            config.token,
-            mac_address,
-            config.name,
-            server_address,
-            nat_test_server,
-            move || {
-                un_parker.unpark();
-            },
-        ) {
-            Ok(config) => match Switch::start(config) {
-                Ok(switch) => {
-                    log::info!("switch-service服务启动");
-                    let switch = Arc::new(switch);
-                    let command_server = crate::command::server::CommandServer::new();
-                    let switch1 = switch.clone();
-                    thread::spawn(move || {
-                        if let Err(e) = command_server.start(switch1) {
-                            log::warn!("{:?}", e);
-                        }
-                    });
-                    parker.park();
-                    switch.stop_async();
-                    thread::sleep(Duration::from_secs(1));
-                    log::info!("switch-service服务停止");
-                }
-                Err(e) => {
-                    log::error!("{:?}", e);
-                }
-            },
-            Err(e) => {
-                log::error!("{:?}", e);
+    match start_switch() {
+        Ok(switch) => {
+            parker.park();
+            if let Err(e) = switch.stop() {
+                log::warn!("switch stop:{:?}",e)
             }
-        };
-    } else {
-        log::info!("配置文件为空");
+        }
+        Err(e) => {
+            log::error!("{:?}",e);
+        }
     }
     status_handle.set_service_status(ServiceStatus {
         service_type: crate::windows::SERVICE_TYPE,
@@ -137,7 +92,52 @@ fn service_main() -> windows_service::Result<()> {
     })
 }
 
+fn start_switch() -> switch::Result<Arc<Switch>> {
+    if let Some(config) = read_config() {
+        let device_id = config.device_id;
+        if device_id.trim().is_empty() {
+            return Err(switch::error::Error::Stop("Device id error".to_string()));
+        }
+        let server_address = if let Some(server_address) = config.server
+            .to_socket_addrs()?
+            .next() {
+            server_address
+        } else {
+            return Err(switch::error::Error::Stop("server address error".to_string()));
+        };
+        let nat_test_server = config.nat_test_server.iter()
+            .flat_map(|a| a.to_socket_addrs())
+            .flatten()
+            .collect::<Vec<_>>();
+        if nat_test_server.is_empty() {
+            return Err(switch::error::Error::Stop("nat test server address error".to_string()));
+        }
+        let config = Config::new(
+            config.token,
+            device_id,
+            config.name,
+            server_address,
+            nat_test_server);
+        let switch = Switch::start(config)?;
+        log::info!("switch-service服务启动");
+        let switch = Arc::new(switch);
+        let command_server = crate::command::server::CommandServer::new();
+        let switch1 = switch.clone();
+        thread::spawn(move || {
+            if let Err(e) = config::update_pid(std::process::id()) {
+                log::error!("{:?}", e);
+            }
+            if let Err(e) = command_server.start(switch1) {
+                log::error!("{:?}", e);
+            }
+        });
+        Ok(switch)
+    } else {
+        Err(switch::error::Error::Stop("配置文件为空".to_string()))
+    }
+}
+
 pub fn start() {
     log::info!("以服务的方式启动");
-    service_dispatcher::start("switch-service", ffi_service_main).unwrap();
+    service_dispatcher::start(SERVICE_NAME, ffi_service_main).unwrap();
 }

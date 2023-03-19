@@ -13,10 +13,10 @@
 //  0. You just DO WHAT THE FUCK YOU WANT TO.
 
 use std::ffi::{CStr, CString};
-use std::io::{self, Read, Write};
+use std::io;
 use std::mem;
 use std::net::Ipv4Addr;
-use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
+use std::os::unix::io::AsRawFd;
 use std::ptr;
 use std::sync::Arc;
 use std::vec::Vec;
@@ -77,10 +77,10 @@ impl Device {
 
             req.ifru.flags = device_type
                 | if config.platform.packet_information {
-                    0
-                } else {
-                    IFF_NO_PI
-                }
+                0
+            } else {
+                IFF_NO_PI
+            }
                 | if queues_num > 1 { IFF_MULTI_QUEUE } else { 0 };
 
             for _ in 0..queues_num {
@@ -92,7 +92,7 @@ impl Device {
                 }
 
                 queues.push(Queue {
-                    tun,
+                    tun: Arc::new(tun),
                     pi_enabled: config.platform.packet_information,
                 });
             }
@@ -126,75 +126,46 @@ impl Device {
         req
     }
 
-    /// Make the device persistent.
-    pub fn persist(&mut self) -> Result<()> {
-        unsafe {
-            if tunsetpersist(self.as_raw_fd(), &1) < 0 {
-                Err(io::Error::last_os_error().into())
-            } else {
-                Ok(())
-            }
-        }
-    }
+    // /// Make the device persistent.
+    // pub fn persist(&mut self) -> Result<()> {
+    //     unsafe {
+    //         if tunsetpersist(self.as_raw_fd(), &1) < 0 {
+    //             Err(io::Error::last_os_error().into())
+    //         } else {
+    //             Ok(())
+    //         }
+    //     }
+    // }
 
-    /// Set the owner of the device.
-    pub fn user(&mut self, value: i32) -> Result<()> {
-        unsafe {
-            if tunsetowner(self.as_raw_fd(), &value) < 0 {
-                Err(io::Error::last_os_error().into())
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    /// Set the group of the device.
-    pub fn group(&mut self, value: i32) -> Result<()> {
-        unsafe {
-            if tunsetgroup(self.as_raw_fd(), &value) < 0 {
-                Err(io::Error::last_os_error().into())
-            } else {
-                Ok(())
-            }
-        }
-    }
-    pub fn split(mut self) -> (posix::Reader, posix::Writer) {
-        let queue = self.queues.swap_remove(0);
-        let fd = Arc::new(queue.tun);
-        (posix::Reader(fd.clone()), posix::Writer(fd.clone()))
-    }
+    // /// Set the owner of the device.
+    // pub fn user(&mut self, value: i32) -> Result<()> {
+    //     unsafe {
+    //         if tunsetowner(self.as_raw_fd(), &value) < 0 {
+    //             Err(io::Error::last_os_error().into())
+    //         } else {
+    //             Ok(())
+    //         }
+    //     }
+    // }
+    //
+    // /// Set the group of the device.
+    // pub fn group(&mut self, value: i32) -> Result<()> {
+    //     unsafe {
+    //         if tunsetgroup(self.as_raw_fd(), &value) < 0 {
+    //             Err(io::Error::last_os_error().into())
+    //         } else {
+    //             Ok(())
+    //         }
+    //     }
+    // }
     /// Return whether the device has packet information
-    pub fn has_packet_information(&mut self) -> bool {
+    pub fn has_packet_information(&self) -> bool {
         self.queues[0].has_packet_information()
     }
 
     /// Set non-blocking mode
     pub fn set_nonblock(&self) -> io::Result<()> {
         self.queues[0].set_nonblock()
-    }
-}
-
-impl Read for Device {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.queues[0].read(buf)
-    }
-
-    fn read_vectored(&mut self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
-        self.queues[0].read_vectored(bufs)
-    }
-}
-
-impl Write for Device {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.queues[0].write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.queues[0].flush()
-    }
-
-    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
-        self.queues[0].write_vectored(bufs)
     }
 }
 
@@ -377,73 +348,29 @@ impl D for Device {
         }
     }
 
-    fn queue(&mut self, index: usize) -> Option<&mut Self::Queue> {
-        self.queues.get_mut(index)
-    }
-}
-
-impl AsRawFd for Device {
-    fn as_raw_fd(&self) -> RawFd {
-        self.queues[0].as_raw_fd()
-    }
-}
-
-impl IntoRawFd for Device {
-    fn into_raw_fd(mut self) -> RawFd {
-        // It is Ok to swap the first queue with the last one, because the self will be dropped afterwards
-        let queue = self.queues.swap_remove(0);
-        queue.into_raw_fd()
+    fn queue(&self, index: usize) -> Option<&Self::Queue> {
+        self.queues.get(index)
     }
 }
 
 pub struct Queue {
-    tun: Fd,
+    tun: Arc<Fd>,
     pi_enabled: bool,
 }
 
 impl Queue {
-    pub fn has_packet_information(&mut self) -> bool {
+    pub fn has_packet_information(&self) -> bool {
         self.pi_enabled
     }
 
     pub fn set_nonblock(&self) -> io::Result<()> {
         self.tun.set_nonblock()
     }
-}
-
-impl Read for Queue {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.tun.read(buf)
+    pub fn reader(&self) -> posix::Reader {
+        posix::Reader(self.tun.clone())
     }
-
-    fn read_vectored(&mut self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
-        self.tun.read_vectored(bufs)
-    }
-}
-
-impl Write for Queue {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.tun.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.tun.flush()
-    }
-
-    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
-        self.tun.write_vectored(bufs)
-    }
-}
-
-impl AsRawFd for Queue {
-    fn as_raw_fd(&self) -> RawFd {
-        self.tun.as_raw_fd()
-    }
-}
-
-impl IntoRawFd for Queue {
-    fn into_raw_fd(self) -> RawFd {
-        self.tun.into_raw_fd()
+    pub fn writer(&self) -> posix::Writer {
+        posix::Writer(self.tun.clone())
     }
 }
 

@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 use std::{io, thread};
+use p2p_channel::punch::NatType;
 
-use crate::proto::message::NatType;
 
 // #[derive(Debug, Copy, Clone, PartialEq)]
 // pub enum NatType {
@@ -79,9 +79,6 @@ pub fn public_ip_list_(
     for addr in addrs {
         let _ = udp.send_to(b"NatTest", addr)?;
     }
-    // let _ = udp.send_to(b"NatTest", "nat1.wherewego.top:35062")?;
-    // let _ = udp.send_to(b"NatTest", "nat2.wherewego.top:35061")?;
-    // let _ = udp.send_to(b"NatTest", "nat2.wherewego.top:35062")?;
     let mut hash_set = HashSet::new();
     let mut count = 0;
     let mut min_port = 65535;
@@ -99,7 +96,6 @@ pub fn public_ip_list_(
                 max_port = port;
             }
             let ip = Ipv4Addr::new(buf[10], buf[11], buf[12], buf[13]);
-            // println!("pub  {:?}:{}", ip, port);
             hash_set.insert(ip);
             count += 1;
         }

@@ -1,7 +1,7 @@
 syntax = "proto3";
 message RegistrationRequest{
   string token = 1;
-  string mac_address = 2;
+  string device_id = 2;
   string name = 3;
   bool is_fast = 4;
 }
@@ -26,15 +26,16 @@ message DeviceList{
   repeated DeviceInfo device_info_list = 2;
 }
 
-message Punch{
-  fixed32 virtual_ip = 1;
+message PunchInfo{
   repeated fixed32 public_ip_list = 2;
   uint32 public_port = 3;
   uint32 public_port_range = 4;
-  NatType nat_type = 5;
+  PunchNatType nat_type = 5;
   bool reply = 6;
+  fixed32 local_ip = 7;
+  uint32 local_port = 8;
 }
-enum NatType{
+enum PunchNatType{
   Symmetric = 0;
   Cone = 1;
 }

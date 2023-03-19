@@ -1,184 +1,230 @@
+use std::{io, thread};
 use std::ffi::OsString;
+use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::{io, thread};
 
-use clap::Parser;
 use console::style;
-
+use fs2::FileExt;
+use windows_service::Error;
 use windows_service::service::{
     ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
-use windows_service::Error;
 
-use crate::config;
+use switch::core::{Config, Switch};
+
+use crate::{BaseArgs, Commands, config};
+use crate::command::{command, CommandEnum};
 
 pub mod service;
 mod windows_admin_check;
 
-#[derive(Parser, Debug)]
-#[command(
-    author = "Lu Beilin",
-    version,
-    about = "一个虚拟网络工具,启动后会获取一个ip,相同token下的设备之间可以用ip直接通信"
-)]
-struct Args {
-    /// 32位字符
-    /// 相同token的设备之间才能通信。
-    /// 建议使用uuid保证唯一性。
-    /// 32-bit characters.
-    /// Only devices with the same token can communicate with each other.
-    /// It is recommended to use uuid to ensure uniqueness
-    #[arg(long)]
-    token: Option<String>,
-    /// 给设备一个名称，为空时默认用系统版本信息
-    /// Give the device a name. If it is blank, the system version information will be used by default
-    #[arg(long)]
-    name: Option<String>,
-    /// 安装服务，安装后可以后台运行，需要指定安装路径
-    /// The installation service can run in the background after installation, and the installation path needs to be specified
-    #[arg(long)]
-    install: Option<String>,
-    /// 卸载服务
-    /// Uninstall service
-    #[arg(long)]
-    uninstall: bool,
-    /// 启动，启动时可以附加参数 --token，如果没有token，则会读取配置文件中上一次使用的token
-    /// 安装服务后，会以服务的方式在后台启动，此时可以关闭命令行窗口
-    /// When starting, you can attach the parameter -- token. If there is no token, the last token used in the configuration file will be read. After installing the service, it will be started in the background as a service. At this time, you can close the command line window
-    #[arg(long)]
-    start: bool,
-    #[arg(long)]
-    /// 停止，安装服务后，使用 --stop停止服务
-    /// Stop. After installing the service, use -- stop to stop the service
-    stop: bool,
-    /// 启动服务后，使用 --list 查看设备列表
-    /// After starting the service, use -- list to view the device list
-    #[arg(long)]
-    list: bool,
-    /// 启动服务后，使用 --status 查看设备状态
-    /// After starting the service, use -- status to view the device status
-    #[arg(long)]
-    status: bool,
-}
-
-pub const SERVICE_FLAG: &'static str = "start_switch_service_";
-pub const SERVICE_NAME: &'static str = "switch-service";
+pub const SERVICE_FLAG: &'static str = "start_switch_service_v1_";
+pub const SERVICE_NAME: &'static str = "switch-service-v1";
 pub const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
-pub fn main0() {
-    let args = Args::parse();
-    if args.list || args.status {
-        match service_state() {
-            Ok(state) => {
-                if state == ServiceState::Running {
-                    let command_client = crate::command::client::CommandClient::new().unwrap();
-                    let out = if args.list {
-                        command_client.list().unwrap()
-                    } else if args.status {
-                        command_client.status().unwrap()
-                    } else {
-                        "".to_string()
-                    };
-                    println!("{}", out);
-                } else {
-                    println!("服务未启动")
-                }
-            }
-            Err(e) => {
-                println!("{:?}", e);
-            }
-        }
-        return;
-    }
+fn admin_check() -> bool {
     if !windows_admin_check::is_app_elevated() {
         println!(
             "{}",
             style("请使用管理员权限运行(Please run with administrator privileges)").red()
         );
-        return;
+        true
+    } else {
+        false
     }
-    if let Some(path) = args.install {
-        let path: PathBuf = path.into();
-        if !path.exists() {
-            std::fs::create_dir_all(&path).unwrap();
-        }
-        if !path.is_dir() {
-            println!("参数必须为文件目录(Parameter must be a file directory)");
-        } else {
-            if let Err(e) = install(path) {
-                log::error!("{:?}", e);
+}
+
+fn not_started() -> bool {
+    match service_state() {
+        Ok(state) => {
+            if state == ServiceState::Running {
+                return false;
             } else {
-                println!("{}", style("安装成功(Installation succeeded)").green())
+                println!("服务未启动")
             }
         }
-    } else if args.uninstall {
-        if let Err(e) = uninstall() {
-            log::error!("{:?}", e);
-        } else {
-            println!("{}", style("卸载成功(Uninstall succeeded)").green())
+        Err(e) => {
+            println!("{:?}", e);
         }
-    } else if args.start {
-        if args.token.is_none() {
-            println!("{}", style("需要参数(require parameters) --token").red());
-        } else {
-            let token = args.token.clone().unwrap();
-            match service_state() {
-                Ok(state) => {
-                    if state == ServiceState::Stopped {
-                        config::save_config(config::ArgsConfig::new(
-                            token.clone(),
-                            args.name.clone(),
-                        ))
-                        .unwrap();
-                        match start() {
-                            Ok(_) => {
-                                //需要检查启动状态
-                                println!("{}", style("启动成功(Start successfully)").green())
-                            }
-                            Err(e) => {
-                                log::error!("{:?}", e);
+    }
+    return true;
+}
+
+pub fn main0(base_args: BaseArgs) {
+    match base_args.command {
+        Commands::Start(args) => {
+            if admin_check() {
+                return;
+            }
+            {
+                // 允许应用通过防火墙
+                let _udp = UdpSocket::bind("0.0.0.0:0").unwrap();
+            }
+            let out_log = args.log;
+            match config::default_config(args) {
+                Ok(start_config) => {
+                    match service_state() {
+                        Ok(state) => {
+                            if state == ServiceState::Stopped {
+                                if let Err(e) = config::save_config(config::ArgsConfig::new(
+                                    start_config.token.clone(),
+                                    start_config.name.clone(),
+                                    start_config.server.to_string(),
+                                    start_config.nat_test_server.iter().map(|v| v.to_string()).collect::<Vec<String>>(),
+                                    start_config.device_id.clone(),
+                                )) {
+                                    log::error!("{:?}",e);
+                                    return;
+                                }
+                                match start(out_log) {
+                                    Ok(_) => {
+                                        //需要检查启动状态
+                                        thread::sleep(Duration::from_secs(2));
+                                        println!("{}", style("启动成功(Start successfully)").green())
+                                    }
+                                    Err(e) => {
+                                        log::error!("{:?}", e);
+                                    }
+                                }
+                            } else {
+                                println!("服务未停止(Service not stopped)");
                             }
                         }
-                    } else {
-                        println!("服务未停止(Service not stopped)");
+                        Err(e) => {
+                            match e {
+                                Error::Winapi(ref e) => {
+                                    if let Some(code) = e.raw_os_error() {
+                                        if code == 1060 {
+                                            //指定的服务未安装。
+                                            println!(
+                                                "{}",
+                                                style("服务未安装，在当前进程启动(The service is not installed and started in the current process)").red()
+                                            );
+                                            let config = Config::new(
+                                                start_config.token,
+                                                start_config.device_id,
+                                                start_config.name,
+                                                start_config.server,
+                                                start_config.nat_test_server,
+                                            );
+                                            let lock = match config::lock_file() {
+                                                Ok(lock) => {
+                                                    lock
+                                                }
+                                                Err(e) => {
+                                                    log::error!("{:?}",e);
+                                                    return;
+                                                }
+                                            };
+                                            if lock.try_lock_exclusive().is_err() {
+                                                println!("{}", style("文件被重复打开").red());
+                                                return;
+                                            }
+                                            match Switch::start(config) {
+                                                Ok(switch) => {
+                                                    crate::console_listen(&switch);
+                                                }
+                                                Err(e) => {
+                                                    log::error!("{:?}", e);
+                                                }
+                                            }
+                                            lock.unlock().unwrap();
+                                            return;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            println!("{:?}", e);
+                        }
                     }
                 }
                 Err(e) => {
-                    match e {
-                        Error::Winapi(ref e) => {
-                            if let Some(code) = e.raw_os_error() {
-                                if code == 1060 {
-                                    //指定的服务未安装。
-                                    println!(
-                                        "{}",
-                                        style("服务未安装，在当前进程启动(The service is not installed and started in the current process)").red()
-                                    );
-                                    crate::start(token, args.name);
-                                    return;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                    println!("{:?}", e);
+                    println!("{}", style(e).red());
+                }
+            };
+            pause();
+        }
+        Commands::Stop => {
+            if not_started() {
+                return;
+            }
+            if admin_check() {
+                return;
+            }
+            match stop() {
+                Ok(_) => {
+                    println!("{}", style("停止成功(Stopped successfully)").green())
+                }
+                Err(e) => {
+                    log::error!("{:?}", e);
                 }
             }
+            pause();
         }
-    } else if args.stop {
-        match stop() {
-            Ok(_) => {
-                println!("{}", style("停止成功(Stopped successfully)").green())
+        Commands::Install(args) => {
+            if admin_check() {
+                return;
             }
-            Err(e) => {
+            let path: PathBuf = args.path.into();
+            if !path.exists() {
+                std::fs::create_dir_all(&path).unwrap();
+            }
+            if !path.is_dir() {
+                println!("参数必须为文件目录(Parameter must be a file directory)");
+            } else {
+                if let Err(e) = install(path, args.auto) {
+                    log::error!("{:?}", e);
+                } else {
+                    println!("{}", style("安装成功(Installation succeeded)").green())
+                }
+            }
+            pause();
+        }
+        Commands::Uninstall => {
+            if admin_check() {
+                return;
+            }
+            if let Err(e) = uninstall() {
                 log::error!("{:?}", e);
+            } else {
+                println!("{}", style("卸载成功(Uninstall succeeded)").green())
+            }
+            pause();
+        }
+        Commands::Config(args) => {
+            if let Err(e) = change(args.auto) {
+                log::error!("{:?}", e);
+            } else {
+                println!("{}", style("配置成功(Config succeeded)").green())
+            }
+            pause();
+        }
+        Commands::Route => {
+            if not_started() {
+                return;
+            }
+            command(CommandEnum::Route);
+        }
+        Commands::List { all } => {
+            if not_started() {
+                return;
+            }
+            if all {
+                command(CommandEnum::ListAll);
+            } else {
+                command(CommandEnum::List);
             }
         }
-    } else {
-        println!("使用参数 -h 查看帮助(Use the parameter - h to view help)")
+        Commands::Status => {
+            if not_started() {
+                return;
+            }
+            command(CommandEnum::Status);
+        }
     }
-    pause();
 }
 
 fn pause() {
@@ -191,11 +237,11 @@ fn pause() {
     let _ = term.read_char().unwrap();
 }
 
-fn install(path: PathBuf) -> Result<(), Error> {
+fn install(path: PathBuf, auto: bool) -> Result<(), Error> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
     let current_exe_path = std::env::current_exe().unwrap();
-    let service_path = path.join("switch-service.exe");
+    let service_path = path.join("switch-service-v1.exe");
     std::fs::copy(current_exe_path, service_path.as_path()).unwrap();
     if let Err(e) = std::fs::copy("wintun.dll", path.join("wintun.dll").as_path()) {
         if e.kind() == io::ErrorKind::NotFound {
@@ -210,11 +256,16 @@ fn install(path: PathBuf) -> Result<(), Error> {
     launch_arguments.push(OsString::from(
         dirs::home_dir().unwrap().join(".switch").to_str().unwrap(),
     ));
+    let start_type = if auto {
+        ServiceStartType::AutoStart
+    } else {
+        ServiceStartType::OnDemand
+    };
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
-        display_name: OsString::from("switch service"),
-        service_type: ServiceType::OWN_PROCESS,
-        start_type: ServiceStartType::OnDemand,
+        display_name: OsString::from("switch service v1"),
+        service_type: SERVICE_TYPE,
+        start_type,
         error_control: ServiceErrorControl::Normal,
         executable_path: service_path.into(),
         launch_arguments,
@@ -224,6 +275,39 @@ fn install(path: PathBuf) -> Result<(), Error> {
     };
     let service = service_manager.create_service(&service_info, ServiceAccess::CHANGE_CONFIG)?;
     service.set_description("A VPN")?;
+    Ok(())
+}
+
+fn change(auto: bool) -> Result<(), Error> {
+    let manager_access = ServiceManagerAccess::CONNECT;
+    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
+
+    let service_access = ServiceAccess::QUERY_CONFIG | ServiceAccess::CHANGE_CONFIG;
+    let service = service_manager.open_service(SERVICE_NAME, service_access)?;
+    let config = service.query_config()?;
+    let start_type = if auto {
+        ServiceStartType::AutoStart
+    } else {
+        ServiceStartType::OnDemand
+    };
+    let mut launch_arguments = Vec::new();
+    launch_arguments.push(OsString::from(SERVICE_FLAG));
+    launch_arguments.push(OsString::from(
+        dirs::home_dir().unwrap().join(".switch").to_str().unwrap(),
+    ));
+    let service_info = ServiceInfo {
+        name: OsString::from(SERVICE_NAME),
+        display_name: config.display_name,
+        service_type: SERVICE_TYPE,
+        start_type,
+        error_control: config.error_control,
+        executable_path: config.executable_path,
+        launch_arguments,
+        dependencies: config.dependencies,
+        account_name: None, // run as System
+        account_password: None,
+    };
+    service.change_config(&service_info)?;
     Ok(())
 }
 
@@ -240,16 +324,19 @@ fn uninstall() -> Result<(), Error> {
         // Wait for service to stop
         thread::sleep(Duration::from_secs(1));
     }
-
     service.delete()?;
     Ok(())
 }
 
-fn start() -> Result<(), Error> {
+fn start(out_log: bool) -> Result<(), Error> {
     let manager_access = ServiceManagerAccess::CONNECT;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
     let service = service_manager.open_service(SERVICE_NAME, ServiceAccess::START)?;
-    service.start(&[""])
+    if out_log {
+        service.start(&["log"])
+    } else {
+        service.start(&[""])
+    }
 }
 
 fn service_state() -> Result<ServiceState, Error> {
