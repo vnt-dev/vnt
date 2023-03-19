@@ -38,10 +38,10 @@
 4. 最后可以用虚拟ip实现设备间相互访问
    1. ping
 
-      <img width="506" alt="ping" src="documents/img/ping.jpg">
+      <img width="506" alt="ping" src="https://raw.githubusercontent.com/lbl8603/switch/dev/documents/img/ping.jpg">
    2. ssh
    
-      <img width="506" alt="ssh" src="documents/img/ssh.jpg">
+      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/switch/dev/documents/img/ssh.jpg">
 
 ### 更多玩法
 
