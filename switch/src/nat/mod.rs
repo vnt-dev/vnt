@@ -1,3 +1,4 @@
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use parking_lot::Mutex;
@@ -6,6 +7,14 @@ use crate::proto::message::PunchNatType;
 
 pub mod check;
 
+use std::net::UdpSocket;
+
+pub fn local_ip() -> io::Result<IpAddr> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect("8.8.8.8:80")?;
+    let addr = socket.local_addr()?;
+    Ok(addr.ip())
+}
 
 #[derive(Clone)]
 pub struct NatTest {

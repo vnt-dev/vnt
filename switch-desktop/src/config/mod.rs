@@ -156,10 +156,9 @@ impl ArgsConfig {
         }
     }
 }
-use fd_lock::RwLock;
-pub fn lock_config() -> io::Result<RwLock<File>> {
-    let config_path = SWITCH_HOME_PATH.lock().clone().unwrap().join("config");
-    Ok(RwLock::new(File::open(config_path)?))
+pub fn lock_file() -> io::Result<File> {
+    let path = SWITCH_HOME_PATH.lock().clone().unwrap().join(".lock");
+    Ok(File::create(path)?)
 }
 
 pub fn save_config(config: ArgsConfig) -> io::Result<()> {

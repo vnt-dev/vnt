@@ -17,6 +17,7 @@ use packet::ip::ipv4::packet::IpV4Packet;
 use crate::error::Error;
 use crate::handle::{check_dest, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
 use crate::handle::registration_handler::Register;
+use crate::nat;
 use crate::nat::NatTest;
 use crate::proto::message::{DeviceList, PunchInfo, PunchNatType, RegistrationResponse};
 use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, service_packet, turn_packet, Version};
@@ -179,13 +180,9 @@ impl RecvHandler {
             service_packet::Protocol::RegistrationRequest => {}
             service_packet::Protocol::RegistrationResponse => {
                 let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
-                let local_addr = self.channel.local_addr()?;
-                let local_ip = if local_addr.ip().is_unspecified() {
-                    local_ip_address::local_ip().unwrap_or(local_addr.ip())
-                } else {
-                    local_addr.ip()
-                };
-                let nat_info = self.nat_test.re_test(Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_addr.port());
+                let local_port = self.channel.local_addr()?.port();
+                let local_ip = nat::local_ip()?;
+                let nat_info = self.nat_test.re_test(Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_port);
                 self.channel.set_nat_type(nat_info.nat_type)?;
                 let new_ip = Ipv4Addr::from(response.virtual_ip);
                 let current_ip = current_device.virtual_ip();
@@ -296,7 +293,7 @@ impl RecvHandler {
                 }
             }
             ControlPacket::PunchRequest => {
-                log::info!("PunchRequest route_key:{:?}",route_key);
+                // log::info!("PunchRequest route_key:{:?}",route_key);
                 //回应
                 net_packet.set_transport_protocol(control_packet::Protocol::PunchResponse.into());
                 net_packet.set_source(current_device.virtual_ip());
@@ -307,7 +304,7 @@ impl RecvHandler {
                 self.channel.add_route(source, route);
             }
             ControlPacket::PunchResponse => {
-                log::info!("PunchResponse route_key:{:?}",route_key);
+                // log::info!("PunchResponse route_key:{:?}",route_key);
                 let route = Route::from(*route_key, 1, -1);
                 self.channel.add_route(net_packet.source(), route);
             }

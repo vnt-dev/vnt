@@ -23,7 +23,7 @@ crossbeam = "0.8.2"
 lazy_static = "1.4.0"
 parking_lot = "0.12.1"
 
-fd-lock = "3.0.10"
+fs2 = "0.4.3"
 
 os_info = "3.5.1"
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]

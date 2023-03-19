@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use console::style;
+use fs2::FileExt;
 
 use switch::core::{Config, Switch};
 
@@ -11,7 +12,7 @@ use crate::command::{command, CommandEnum};
 pub fn main0(base_args: BaseArgs) {
     match base_args.command {
         Commands::Start(args) => {
-            let open_command_server = args.command_server;
+            let off_command_server = args.off_command_server;
             match config::default_config(args) {
                 Ok(start_config) => {
                     if sudo::RunningAs::Root != sudo::check() {
@@ -37,7 +38,7 @@ pub fn main0(base_args: BaseArgs) {
                         nat_test_server,
                         start_config.device_id.clone(),
                     );
-                    let mut lock = match config::lock_config() {
+                    let lock = match config::lock_file() {
                         Ok(lock) => {
                             lock
                         }
@@ -46,17 +47,13 @@ pub fn main0(base_args: BaseArgs) {
                             return;
                         }
                     };
-                    let lock_guard = match lock.try_write() {
-                        Ok(lock) => {
-                            lock
-                        }
-                        Err(_) => {
-                            println!("{}", style("文件被重复打开").red());
-                            return;
-                        }
-                    };
+                    if lock.try_lock_exclusive().is_err() {
+                        println!("{}", style("文件被重复打开").red());
+                        return;
+                    }
                     if let Err(e) = config::save_config(args_config) {
                         log::error!("{:?}",e);
+                        lock.unlock().unwrap();
                         return;
                     }
                     let switch = match Switch::start(config) {
@@ -65,12 +62,16 @@ pub fn main0(base_args: BaseArgs) {
                         }
                         Err(e) => {
                             log::error!("{:?}", e);
+                            lock.unlock().unwrap();
                             return;
                         }
                     };
                     let switch = Arc::new(switch);
                     let command_server = crate::command::server::CommandServer::new();
-                    if open_command_server {
+                    if off_command_server {
+                        crate::console_listen(&switch);
+                        log::info!("前台任务结束");
+                    } else {
                         if let Err(e) = config::update_pid(std::process::id()) {
                             log::error!("{:?}", e);
                         }
@@ -86,11 +87,8 @@ pub fn main0(base_args: BaseArgs) {
                         } else {
                             log::info!("后台任务结束");
                         }
-                    } else {
-                        crate::console_listen(&switch);
-                        log::info!("前台任务结束");
                     }
-                    drop(lock_guard)
+                    lock.unlock().unwrap();
                 }
                 Err(e) => {
                     log::error!("{:?}", e);

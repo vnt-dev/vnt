@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use console::style;
+use fs2::FileExt;
 use windows_service::Error;
 use windows_service::service::{
     ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState, ServiceType,
@@ -61,6 +62,7 @@ pub fn main0(base_args: BaseArgs) {
                 // 允许应用通过防火墙
                 let _udp = UdpSocket::bind("0.0.0.0:0").unwrap();
             }
+            let out_log = args.log;
             match config::default_config(args) {
                 Ok(start_config) => {
                     match service_state() {
@@ -76,7 +78,7 @@ pub fn main0(base_args: BaseArgs) {
                                     log::error!("{:?}",e);
                                     return;
                                 }
-                                match start() {
+                                match start(out_log) {
                                     Ok(_) => {
                                         //需要检查启动状态
                                         thread::sleep(Duration::from_secs(2));
@@ -107,22 +109,19 @@ pub fn main0(base_args: BaseArgs) {
                                                 start_config.server,
                                                 start_config.nat_test_server,
                                             );
-                                            let mut lock = match config::lock_config() {
-                                                Ok(lock) => lock,
+                                            let lock = match config::lock_file() {
+                                                Ok(lock) => {
+                                                    lock
+                                                }
                                                 Err(e) => {
                                                     log::error!("{:?}",e);
                                                     return;
                                                 }
                                             };
-                                            let lock_guard = match lock.try_write() {
-                                                Ok(lock) => {
-                                                    lock
-                                                }
-                                                Err(_) => {
-                                                    println!("{}", style("程序文件被重复打开").red());
-                                                    return;
-                                                }
-                                            };
+                                            if lock.try_lock_exclusive().is_err() {
+                                                println!("{}", style("文件被重复打开").red());
+                                                return;
+                                            }
                                             match Switch::start(config) {
                                                 Ok(switch) => {
                                                     crate::console_listen(&switch);
@@ -131,7 +130,7 @@ pub fn main0(base_args: BaseArgs) {
                                                     log::error!("{:?}", e);
                                                 }
                                             }
-                                            drop(lock_guard);
+                                            lock.unlock().unwrap();
                                             return;
                                         }
                                     }
@@ -329,11 +328,15 @@ fn uninstall() -> Result<(), Error> {
     Ok(())
 }
 
-fn start() -> Result<(), Error> {
+fn start(out_log: bool) -> Result<(), Error> {
     let manager_access = ServiceManagerAccess::CONNECT;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
     let service = service_manager.open_service(SERVICE_NAME, ServiceAccess::START)?;
-    service.start(&[""])
+    if out_log {
+        service.start(&["log"])
+    } else {
+        service.start(&[""])
+    }
 }
 
 fn service_state() -> Result<ServiceState, Error> {

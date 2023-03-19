@@ -4,8 +4,6 @@ use console::style;
 use switch::core::Switch;
 
 use crate::config::log_config::log_init;
-#[cfg(target_os = "windows")]
-use crate::config::log_config::log_service_init;
 
 mod command;
 mod config;
@@ -86,13 +84,14 @@ pub struct StartArgs {
     /// NAT detection service address. Use comma to separate
     #[arg(long)]
     nat_test_server: Option<String>,
-    /// 命令服务，开启后可以在其他进程使用 route、list等命令查看信息
-    /// 程序使用后台运行时需要增加此参数
-    /// Command service. After it is enabled, you can use route, list and other commands in other processes to view information.
-    /// This parameter needs to be added when the program is running in the background
+    /// 关闭命令服务，关闭后不能在其他进程直接使用route、list等命令查看信息
+    /// Turn off the command service. After turning off, you cannot directly use the route, list and other commands to view information in other processes
     #[cfg(any(unix))]
     #[arg(long)]
-    command_server: bool,
+    off_command_server: bool,
+    /// 记录日志，输出在 home/.switch 目录下，长时间使用时不建议开启
+    /// Output the log in the "home/.switch" directory
+    log: bool,
 }
 
 #[cfg(target_os = "windows")]
@@ -124,16 +123,17 @@ fn main() {
     if args.len() == 3 && args[1] == windows::SERVICE_FLAG {
         //以服务的方式启动
         config::set_home(std::path::PathBuf::from(&args[2]));
-        let _ = log_service_init();
-        log::info!("config  {:?}", std::path::PathBuf::from(&args[2]));
-        log::info!("config  {:?}", config::read_config());
         windows::service::start();
         return;
     } else {
         let home = dirs::home_dir().unwrap().join(".switch");
         config::set_home(home);
-        let _ = log_init();
         let args = BaseArgs::parse();
+        if let Commands::Start(start_args) = &args.command {
+            if start_args.log {
+                let _ = log_init();
+            }
+        }
         windows::main0(args);
     }
 }
@@ -142,8 +142,12 @@ fn main() {
 fn main() {
     let home = dirs::home_dir().unwrap().join(".switch");
     config::set_home(home);
-    let _ = log_init();
     let args = BaseArgs::parse();
+    if let Commands::Start(start_args) = &args.command {
+        if start_args.log {
+            let _ = log_init();
+        }
+    }
     unix::main0(args);
 }
 

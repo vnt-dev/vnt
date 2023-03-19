@@ -59,7 +59,7 @@ fn start_heartbeat_(sender: Sender<Ipv4Addr>, device_list: Arc<Mutex<(u16, Vec<P
             let epoch = { device_list.lock().0 };
             ping.set_epoch(epoch);
         }
-        if count % 7 == 0 {
+        if count < 7 || count % 7 == 0 {
             let mut route_list: Option<Vec<(Ipv4Addr, Route)>> = None;
             let peer_list = device_list.lock().1.clone();
             for peer in peer_list {

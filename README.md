@@ -47,16 +47,17 @@
 
 1. 和远程桌面(如mstsc)搭配，超低延迟的体验
 2. 安装samba服务，共享磁盘
-3. 搭配nginx，在公网访问本地文件
+3. 搭配公网服务器nginx反向代理，在公网访问本地文件
 
 
 ### 使用须知
 - token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
+- 建议指定deviceId，默认使用MAC地址，在某些环境下可能发生变化
 - 公共服务器目前的配置是2核4G 4Mbps，有需要再扩展~
 - 需要root/管理员权限
 - 使用命令行运行
 - Mac和Linux下需要加可执行权限(例如:chmod +x ./switch-macos)
-
+- 自己搭注册和中继服务器(https://github.com/lbl8603/switch-server)
 ### 编译
  前提条件:安装rust编译环境(https://www.rust-lang.org/zh-CN/tools/install)
  

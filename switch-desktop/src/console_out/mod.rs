@@ -1,4 +1,4 @@
-use console::style;
+use console::{style, Style};
 
 use crate::command::entity::{DeviceItem, RouteItem, Status};
 
@@ -16,51 +16,118 @@ pub fn console_status(status: Status) {
     println!("Local ip: {}", style(status.local_ip).green());
 }
 
-pub fn console_route_table(list: Vec<RouteItem>) {
+pub fn console_route_table(mut list: Vec<RouteItem>) {
     if list.is_empty() {
         println!("No route found");
         return;
     }
+    list.sort_by(|t1, t2| t1.destination.cmp(&t2.destination));
     let mut out_list = Vec::with_capacity(list.len());
-    //表头
-    out_list.push(vec!["Destination".to_string(), "Next Hop".to_string(), "Metric".to_string(),
-                       "Rt".to_string(), "Interface".to_string()]);
+
+    out_list.push(vec![("Destination".to_string(), Style::new()),
+                       ("Next Hop".to_string(), Style::new()),
+                       ("Metric".to_string(), Style::new()),
+                       ("Rt".to_string(), Style::new()),
+                       ("Interface".to_string(), Style::new()), ]);
     for item in list {
-        out_list.push(vec![item.destination, item.next_hop, item.metric,
-                           item.rt, item.interface]);
+        out_list.push(vec![(item.destination, Style::new().green()),
+                           (item.next_hop, Style::new().green()),
+                           (item.metric, Style::new().green()),
+                           (item.rt, Style::new().green()),
+                           (item.interface, Style::new().green())]);
     }
+
     table::println_table(out_list)
 }
 
-pub fn console_device_list(list: Vec<DeviceItem>) {
+pub fn console_device_list(mut list: Vec<DeviceItem>) {
     if list.is_empty() {
         println!("No other devices found");
         return;
     }
+    list.sort_by(|t1, t2| t1.virtual_ip.cmp(&t2.virtual_ip));
+    list.sort_by(|t1, t2| t1.status.cmp(&t2.status));
     let mut out_list = Vec::with_capacity(list.len());
     //表头
-    out_list.push(vec!["Name".to_string(), "Virtual Ip".to_string(), "P2P/Relay".to_string(), "Rt".to_string(), "Status".to_string()]);
+    out_list.push(vec![("Name".to_string(), Style::new()),
+                       ("Virtual Ip".to_string(), Style::new()),
+                       ("Status".to_string(), Style::new()),
+                       ("P2P/Relay".to_string(), Style::new()),
+                       ("Rt".to_string(), Style::new())]);
     for item in list {
-        out_list.push(vec![item.name, item.virtual_ip, item.nat_traversal_type,
-                           item.rt, item.status]);
+        if &item.status == "Online" {
+            if &item.nat_traversal_type == "p2p" {
+                out_list.push(vec![(item.name, Style::new().green()),
+                                   (item.virtual_ip, Style::new().green()),
+                                   (item.status, Style::new().green()),
+                                   (item.nat_traversal_type, Style::new().green()),
+                                   (item.rt, Style::new().green())]);
+            } else {
+                out_list.push(vec![(item.name, Style::new().yellow()),
+                                   (item.virtual_ip, Style::new().yellow()),
+                                   (item.status, Style::new().yellow()),
+                                   (item.nat_traversal_type, Style::new().yellow()),
+                                   (item.rt, Style::new().yellow())]);
+            }
+        } else {
+            out_list.push(vec![(item.name, Style::new().color256(102)),
+                               (item.virtual_ip, Style::new().color256(102)),
+                               (item.status, Style::new().color256(102)),
+                               ("".to_string(), Style::new().color256(102)),
+                               ("".to_string(), Style::new().color256(102))]);
+        }
     }
     table::println_table(out_list)
 }
 
-pub fn console_device_list_all(list: Vec<DeviceItem>) {
+pub fn console_device_list_all(mut list: Vec<DeviceItem>) {
     if list.is_empty() {
         println!("No other devices found");
         return;
     }
+    list.sort_by(|t1, t2| t1.virtual_ip.cmp(&t2.virtual_ip));
+    list.sort_by(|t1, t2| t1.status.cmp(&t2.status));
     let mut out_list = Vec::with_capacity(list.len());
     //表头
-    out_list.push(vec!["Name".to_string(), "Virtual Ip".to_string(), "NAT Type".to_string(),
-                       "Public Ips".to_string(), "Local Ip".to_string(), "P2P/Relay".to_string(),
-                       "Rt".to_string(), "Status".to_string()]);
+    out_list.push(vec![("Name".to_string(), Style::new()),
+                       ("Virtual Ip".to_string(), Style::new()),
+                       ("Status".to_string(), Style::new()),
+                       ("NAT Type".to_string(), Style::new()),
+                       ("Public Ips".to_string(), Style::new()),
+                       ("Local Ip".to_string(), Style::new()),
+                       ("P2P/Relay".to_string(), Style::new()),
+                       ("Rt".to_string(), Style::new())]);
     for item in list {
-        out_list.push(vec![item.name, item.virtual_ip, item.nat_type,
-                           item.public_ips, item.local_ip, item.nat_traversal_type,
-                           item.rt, item.status]);
+        if &item.status == "Online" {
+            if &item.nat_traversal_type == "p2p" {
+                out_list.push(vec![(item.name, Style::new().green()),
+                                   (item.virtual_ip, Style::new().green()),
+                                   (item.status, Style::new().green()),
+                                   (item.nat_traversal_type, Style::new().green()),
+                                   (item.rt, Style::new().green()),
+                                   (item.nat_type, Style::new().green()),
+                                   (item.public_ips, Style::new().green()),
+                                   (item.local_ip, Style::new().green())]);
+            } else {
+                out_list.push(vec![(item.name, Style::new().yellow()),
+                                   (item.virtual_ip, Style::new().yellow()),
+                                   (item.status, Style::new().yellow()),
+                                   (item.nat_traversal_type, Style::new().yellow()),
+                                   (item.rt, Style::new().yellow()),
+                                   (item.nat_type, Style::new().yellow()),
+                                   (item.public_ips, Style::new().yellow()),
+                                   (item.local_ip, Style::new().yellow()), ]);
+            }
+        } else {
+            out_list.push(vec![(item.name, Style::new().color256(102)),
+                               (item.virtual_ip, Style::new().color256(102)),
+                               (item.status, Style::new().color256(102)),
+                               ("".to_string(), Style::new().color256(102)),
+                               ("".to_string(), Style::new().color256(102)),
+                               ("".to_string(), Style::new().color256(102)),
+                               ("".to_string(), Style::new().color256(102)),
+                               ("".to_string(), Style::new().color256(102)), ]);
+        }
     }
     table::println_table(out_list)
 }

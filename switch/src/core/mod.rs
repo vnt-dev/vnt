@@ -38,14 +38,10 @@ impl Switch {
         let virtual_gateway = Ipv4Addr::from(response.virtual_gateway);
         let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
         let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, config.server_address)));
-        let local_addr = channel.local_addr()?;
-        let local_ip = if local_addr.ip().is_unspecified() {
-            local_ip_address::local_ip().unwrap_or(local_addr.ip())
-        } else {
-            local_addr.ip()
-        };
+        let local_ip = crate::nat::local_ip()?;
+        let local_port = channel.local_addr()?.port();
         // NAT检测
-        let nat_test = NatTest::new(config.nat_test_server.clone(), Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_addr.port());
+        let nat_test = NatTest::new(config.nat_test_server.clone(), Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_port);
         // tun通道
         let (tun_writer, tun_reader) = tun_device::create_tun(virtual_ip, virtual_netmask, virtual_gateway)?;
 

@@ -20,7 +20,14 @@ use crate::windows::config::read_config;
 use crate::windows::SERVICE_NAME;
 
 define_windows_service!(ffi_service_main, switch_service_main);
-pub fn switch_service_main(_arguments: Vec<OsString>) {
+pub fn switch_service_main(arguments: Vec<OsString>) {
+    if !arguments.is_empty() {
+        if let Some(str) = arguments[0].to_str() {
+            if str == "log" {
+                let _ = config::log_config::log_service_init();
+            }
+        }
+    }
     thread::spawn(|| match service_main() {
         Ok(_) => {}
         Err(e) => {
