@@ -68,7 +68,9 @@ impl TunWriter {
             return Err(io::Error::new(io::ErrorKind::Other, format!("{:?}", e)));
         }
         #[cfg(target_os = "macos")]
-        crate::tun_device::mac::config_ip(dev.name(), address, netmask, gateway);
+        if let Err(e) = crate::tun_device::mac::config_ip(dev.name(), address, netmask, gateway){
+            log::error!("{}",e);
+        }
         return Ok(());
     }
 }

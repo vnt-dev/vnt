@@ -91,6 +91,7 @@ pub struct StartArgs {
     off_command_server: bool,
     /// 记录日志，输出在 home/.switch 目录下，长时间使用时不建议开启
     /// Output the log in the "home/.switch" directory
+    #[arg(long)]
     log: bool,
 }
 
