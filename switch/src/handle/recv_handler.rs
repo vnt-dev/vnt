@@ -26,7 +26,7 @@ use crate::protocol::error_packet::InErrorPacket;
 use crate::tun_device::TunWriter;
 
 pub fn start(mut handler: RecvHandler) {
-    thread::spawn(move || {
+    thread::Builder::new().name("udp-recv-handler".into()).spawn(move || {
         let mut buf = [0; 4096];
         loop {
             match handler.channel.recv_from(&mut buf, None) {
@@ -48,7 +48,7 @@ pub fn start(mut handler: RecvHandler) {
                 }
             }
         }
-    });
+    }).unwrap();
 }
 
 pub struct RecvHandler {

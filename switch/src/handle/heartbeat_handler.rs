@@ -17,11 +17,11 @@ use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
 use crate::protocol::control_packet::PingPacket;
 
 pub fn start_idle(idle: Idle<Ipv4Addr>, sender: Sender<Ipv4Addr>) {
-    thread::spawn(move || {
+    thread::Builder::new().name("idle".into()).spawn(move || {
         if let Err(e) = start_idle_(idle, sender) {
             log::info!("空闲检测线程停止:{:?}",e);
         }
-    });
+    }).unwrap();
 }
 
 fn start_idle_(idle: Idle<Ipv4Addr>, sender: Sender<Ipv4Addr>) -> io::Result<()> {
@@ -35,11 +35,11 @@ fn start_idle_(idle: Idle<Ipv4Addr>, sender: Sender<Ipv4Addr>) -> io::Result<()>
 }
 
 pub fn start_heartbeat(sender: Sender<Ipv4Addr>, device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
-    thread::spawn(move || {
+    thread::Builder::new().name("heartbeat".into()).spawn(move || {
         if let Err(e) = start_heartbeat_(sender, device_list, current_device) {
             log::info!("空闲检测线程停止:{:?}",e);
         }
-    });
+    }).unwrap();
 }
 
 fn set_now_time(packet: &mut NetPacket<[u8; 16]>) -> io::Result<()> {

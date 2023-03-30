@@ -69,11 +69,11 @@ pub fn start(sender: Sender<Ipv4Addr>,
              tun_reader: TunReader,
              tun_writer: TunWriter,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>, ) {
-    thread::spawn(move || {
+    thread::Builder::new().name("tun-handler".into()).spawn(move || {
         if let Err(e) = start_(sender, tun_reader, tun_writer, current_device) {
             log::warn!("{:?}",e);
         }
-    });
+    }).unwrap();
 }
 
 #[cfg(target_os = "windows")]
