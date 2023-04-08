@@ -109,7 +109,8 @@ impl RecvHandler {
             return Ok(());
         }
         let destination = net_packet.destination();
-        if current_device.virtual_ip() != destination && self.connect_status.load() == ConnectStatus::Connected {
+        if !destination.is_broadcast() && destination != current_device.broadcast_address
+            && current_device.virtual_ip() != destination && self.connect_status.load() == ConnectStatus::Connected {
             if !check_dest(source, current_device.virtual_netmask, current_device.virtual_network) {
                 log::warn!("转发数据，源地址错误:{:?},当前网络:{:?},route_key:{:?}",source,current_device.virtual_network,route_key);
                 return Ok(());
