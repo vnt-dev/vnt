@@ -60,7 +60,7 @@ jobs:
     needs: test
     runs-on: ${{ matrix.OS }}
     env:
-      NAME: switch # change with the name of your project
+      NAME: switch-desktop # change with the name of your project
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
@@ -124,7 +124,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v2
         with:
-          name: switch
+          name: switch-desktop
           path: |
             ./artifacts
 
@@ -137,7 +137,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v2
         with:
-          name: switch
+          name: switch-desktop
           path: ./artifacts
       - name: List
         run: find ./artifacts

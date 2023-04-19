@@ -1,2 +1,2 @@
 [workspace]
-members = ["switch","switch-desktop","switch-jni"]
+members = ["switch","switch-desktop"]
