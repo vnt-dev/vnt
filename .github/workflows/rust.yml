@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - name: Init submodules
         uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
         uses: actions/cache@v2
@@ -64,6 +65,7 @@ jobs:
       OS: ${{ matrix.OS }}
     steps:
       - uses: actions/checkout@v2
+      - name: Init submodules
         uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
         uses: actions/cache@v2
