@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+        uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
         uses: actions/cache@v2
         with:
@@ -63,6 +64,7 @@ jobs:
       OS: ${{ matrix.OS }}
     steps:
       - uses: actions/checkout@v2
+        uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
         uses: actions/cache@v2
         with:
@@ -120,7 +122,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v2
         with:
-          name: result
+          name: switch
           path: |
             ./artifacts
 
@@ -133,7 +135,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v2
         with:
-          name: result
+          name: switch
           path: ./artifacts
       - name: List
         run: find ./artifacts
