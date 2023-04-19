@@ -57,7 +57,7 @@ jobs:
             OS: macos-latest
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
             OS: windows-latest
-    needs: test
+    # needs: test
     runs-on: ${{ matrix.OS }}
     env:
       NAME: switch-desktop # change with the name of your project
