@@ -14,19 +14,19 @@ use crate::proto::message::{PunchInfo, PunchNatType};
 use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, turn_packet, Version};
 
 pub fn start_cone(punch: Punch<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
-    thread::spawn(move || {
+    thread::Builder::new().name("punch-cone".into()).spawn(move || {
         if let Err(e) = start_(true, punch, current_device) {
             log::warn!("锥形网络打洞处理线程停止 {:?}",e);
         }
-    });
+    }).unwrap();
 }
 
 pub fn start_symmetric(punch: Punch<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
-    thread::spawn(move || {
+    thread::Builder::new().name("punch-symmetric".into()).spawn(move || {
         if let Err(e) = start_(false, punch, current_device) {
             log::warn!("对称网络打洞处理线程停止 {:?}",e);
         }
-    });
+    }).unwrap();
 }
 
 fn start_(is_cone: bool, mut punch: Punch<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<()> {
@@ -57,11 +57,11 @@ fn start_(is_cone: bool, mut punch: Punch<Ipv4Addr>, current_device: Arc<AtomicC
 }
 
 pub fn start_punch(nat_test: NatTest, device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>, sender: Sender<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
-    thread::spawn(move || {
+    thread::Builder::new().name("punch-send-request".into()).spawn(move || {
         if let Err(e) = start_punch_(nat_test, device_list, sender, current_device) {
             log::warn!("对称网络打洞处理线程停止 {:?}",e);
         }
-    });
+    }).unwrap();
 }
 
 fn start_punch_(nat_test: NatTest, device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>, sender: Sender<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> crate::Result<()> {

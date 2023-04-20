@@ -76,11 +76,11 @@ pub fn main0(base_args: BaseArgs) {
                             log::error!("{:?}", e);
                         }
                         let switch1 = switch.clone();
-                        let handle = std::thread::spawn(move || {
+                        let handle = std::thread::Builder::new().name("cmd-server".into()).spawn(move || {
                             if let Err(e) = command_server.start(switch1) {
                                 log::error!("{:?}", e);
                             }
-                        });
+                        }).unwrap();
                         crate::console_listen(&switch);
                         if let Err(e) = handle.join() {
                             log::error!("后台任务异常{:?}",e);
