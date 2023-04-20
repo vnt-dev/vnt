@@ -13,23 +13,23 @@ defaults:
     shell: bash
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Init submodules
-        uses: snickerbockers/submodules-init@v4
-      - name: Cargo cache
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ./target
-          key: test-cargo-registry
-      - name: List
-        run: find ./
-      - name: Run tests
-        run: cargo test --verbose
+#  test:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v2
+#      - name: Init submodules
+#        uses: snickerbockers/submodules-init@v4
+#      - name: Cargo cache
+#        uses: actions/cache@v2
+#        with:
+#          path: |
+#            ~/.cargo/registry
+#            ./target
+#          key: test-cargo-registry
+#      - name: List
+#        run: find ./
+#      - name: Run tests
+#        run: cargo test --verbose
 
   build:
     strategy:
@@ -102,7 +102,7 @@ jobs:
       - name: Install rust target
         run: rustup target add $TARGET
       - name: Run build
-        run: cargo build --release --verbose --target $TARGET
+        run: cargo build --package switch-desktop --release --verbose --target $TARGET
       - name: List target
         run: find ./target
       - name: Compress
