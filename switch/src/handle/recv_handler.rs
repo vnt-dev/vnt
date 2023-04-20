@@ -26,7 +26,7 @@ use crate::protocol::error_packet::InErrorPacket;
 use crate::tun_device::TunWriter;
 
 pub fn start(mut handler: RecvHandler) {
-    thread::spawn(move || {
+    thread::Builder::new().name("udp-recv-handler".into()).spawn(move || {
         let mut buf = [0; 4096];
         loop {
             match handler.channel.recv_from(&mut buf, None) {
@@ -48,7 +48,7 @@ pub fn start(mut handler: RecvHandler) {
                 }
             }
         }
-    });
+    }).unwrap();
 }
 
 pub struct RecvHandler {
@@ -109,7 +109,8 @@ impl RecvHandler {
             return Ok(());
         }
         let destination = net_packet.destination();
-        if current_device.virtual_ip() != destination && self.connect_status.load() == ConnectStatus::Connected {
+        if !destination.is_broadcast() && destination != current_device.broadcast_address
+            && current_device.virtual_ip() != destination && self.connect_status.load() == ConnectStatus::Connected {
             if !check_dest(source, current_device.virtual_netmask, current_device.virtual_network) {
                 log::warn!("转发数据，源地址错误:{:?},当前网络:{:?},route_key:{:?}",source,current_device.virtual_network,route_key);
                 return Ok(());
@@ -254,11 +255,20 @@ impl RecvHandler {
     fn control(&self, current_device: CurrentDeviceInfo, source: Ipv4Addr, mut net_packet: NetPacket<&mut [u8]>, route_key: &RouteKey) -> crate::Result<()> {
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PingPacket(_) => {
+                let metric = net_packet.source_ttl() - net_packet.ttl() + 1;
                 net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
                 net_packet.set_source(current_device.virtual_ip());
                 net_packet.set_destination(source);
                 net_packet.first_set_ttl(MAX_TTL);
                 self.channel.send_to_route(net_packet.buffer(), route_key)?;
+                if metric == 1 {
+                    if let Some(current_route) = self.channel.route(&source) {
+                        if current_route.metric > 1 {
+                            let route = Route::from(*route_key, 1, -1);
+                            self.channel.add_route(source, route);
+                        }
+                    }
+                }
             }
             ControlPacket::PongPacket(pong_packet) => {
                 let current_time = Local::now().timestamp_millis() as u16;
@@ -330,18 +340,19 @@ impl RecvHandler {
                     let nat_info = self.nat_test.nat_info();
                     punch_reply.public_ip_list = nat_info.public_ips.iter().map(|i| {
                         match i {
-                            IpAddr::V4(ip) => {
-                                u32::from_be_bytes(ip.octets())
-                            }
-                            IpAddr::V6(_) => {
-                                panic!()
-                            }
+                            IpAddr::V4(ip) => u32::from_be_bytes(ip.octets()),
+                            IpAddr::V6(_) => 0
                         }
                     }).collect();
                     punch_reply.public_port = nat_info.public_port as u32;
                     punch_reply.public_port_range = nat_info.public_port_range as u32;
                     punch_reply.nat_type =
                         protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
+                    punch_reply.local_ip = match nat_info.local_ip {
+                        IpAddr::V4(ip) => u32::from_be_bytes(ip.octets()),
+                        IpAddr::V6(_) => 0
+                    };
+                    punch_reply.local_port = nat_info.local_port as u32;
                     let bytes = punch_reply.write_to_bytes()?;
                     let mut net_packet =
                         NetPacket::new(vec![0u8; 12 + bytes.len()])?;
