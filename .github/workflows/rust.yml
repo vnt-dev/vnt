@@ -57,6 +57,8 @@ jobs:
             OS: macos-latest
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
             OS: windows-latest
+          - TARGET: i686-pc-windows-msvc # tested on a windows machine
+            OS: windows-latest
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:
