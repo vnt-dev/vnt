@@ -28,6 +28,7 @@ pub struct Switch {
 
 impl Switch {
     pub fn start(config: Config) -> crate::Result<Switch> {
+        log::info!("config:{:?}",config);
         let (mut channel, punch, idle) = Boot::new::<Ipv4Addr>(80, 15000, 0)?;
         let response = registration_handler::registration(&mut channel, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone())?;
         let register = Arc::new(registration_handler::Register::new(channel.sender()?, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()));
@@ -63,6 +64,7 @@ impl Switch {
         for _ in 0..2 {
             recv_handler::start(channel_recv_handler.try_clone()?);
         }
+        log::info!("switch启动成功");
         Ok(Switch {
             name: config.name,
             current_device,
