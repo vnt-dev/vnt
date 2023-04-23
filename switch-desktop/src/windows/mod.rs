@@ -114,7 +114,8 @@ pub fn main0(base_args: BaseArgs) {
                                                     lock
                                                 }
                                                 Err(e) => {
-                                                    log::error!("{:?}",e);
+                                                    log::error!("文件锁定失败:{:?}",e);
+                                                    println!("文件锁定失败:{:?}", e);
                                                     return;
                                                 }
                                             };
@@ -128,6 +129,7 @@ pub fn main0(base_args: BaseArgs) {
                                                 }
                                                 Err(e) => {
                                                     log::error!("{:?}", e);
+                                                    println!("启动switch失败:{:?}", e);
                                                 }
                                             }
                                             lock.unlock().unwrap();
