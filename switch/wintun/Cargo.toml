@@ -1,0 +1,35 @@
+[package]
+name = "wintun"
+version = "0.2.1"
+edition = "2021"
+authors = ["null.black Inc. <opensource@null.black>", "Troy Neubauer <troy@null.black>"]
+repository = "https://github.com/nulldotblack/wintun"
+readme = "README.md"
+documentation = "https://docs.rs/wintun/"
+description = "Safe idiomatic bindings to the WinTun C library"
+license = "MIT"
+keywords = ["wintun", "tap", "tun", "vpn", "wireguard"]
+categories = ["api-bindings"]
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["aarch64-pc-windows-msvc", "i686-pc-windows-msvc", "x86_64-pc-windows-msvc"]
+
+[features]
+panic_on_unsent_packets = []
+
+[dependencies]
+winapi = { version = "0.3", features = ["synchapi", "winbase", "winerror", "ipexport", "iphlpapi", "handleapi"] }
+widestring = "0.4"
+libloading = "0.7"
+once_cell = "1.8"
+log = "0.4"
+rand = "0.8.3"
+itertools = "0.10.1"
+
+[dev-dependencies]
+env_logger = "0.8"
+winapi = { version = "0.3", features = ["netioapi", "iptypes", "iphlpapi", "nldef"] }
+packet = "0.1.4"
+pcap-file = "1.1.1"
+subprocess = "0.2.7"

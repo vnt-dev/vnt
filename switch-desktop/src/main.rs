@@ -1,3 +1,5 @@
+use std::thread;
+use std::time::Duration;
 use clap::{Parser, Subcommand};
 use console::style;
 
@@ -155,7 +157,7 @@ fn main() {
 pub fn console_listen(switch: &Switch) {
     use console::Term;
     let term = Term::stdout();
-    println!("{}", style("started").green());
+    println!("{}", style("启动成功 started").green());
     let current_device = switch.current_device();
     println!(
         "当前虚拟ip(virtual ip): {:?}",
@@ -181,6 +183,7 @@ pub fn console_listen(switch: &Switch) {
                     if let Err(e) = switch.stop() {
                         println!("stop:{:?}", e);
                     }
+                    thread::sleep(Duration::from_secs(2));
                     break;
                 }
             }

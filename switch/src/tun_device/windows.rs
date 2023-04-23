@@ -6,6 +6,9 @@ use libloading::Library;
 use parking_lot::Mutex;
 use wintun::{Adapter, Packet, Session};
 
+pub const INTERFACE_NAME: &str = "Switch-V1";
+pub const POOL_NAME: &str = "Switch-V1";
+
 #[derive(Clone)]
 pub struct TunWriter(Arc<Session>, Arc<Mutex<u32>>);
 
@@ -69,22 +72,58 @@ pub fn create_tun(
             }
         }
     };
-    let adapter = match Adapter::open(&win_tun, "Switch-V1") {
-        Ok(a) => a,
-        Err(_) => match Adapter::create(&win_tun, "Switch-V1", "Switch-V1", None) {
-            Ok(adapter) => adapter,
-
-            Err(e) => return Err(io::Error::new(io::ErrorKind::Other, format!("{:?}", e))),
-        },
+    if let Ok(adapter) = Adapter::open(&win_tun, INTERFACE_NAME) {
+        log::warn!("Switch-V1 未正常退出");
+        drop(adapter);
+        std::thread::sleep(std::time::Duration::from_secs(1));
     };
-    let index = adapter.get_adapter_index().unwrap();
-    config_ip(index, address, netmask, gateway)?;
+    let adapter = match Adapter::create(&win_tun, POOL_NAME, INTERFACE_NAME, None) {
+        Ok(adapter) => adapter,
+        Err(e) => return Err(io::Error::new(io::ErrorKind::Other, format!("{:?}", e))),
+    };
     let session = Arc::new(adapter.start_session(wintun::MAX_RING_CAPACITY).unwrap());
+    let index = match adapter.get_adapter_index() {
+        Ok(index) => {
+            index
+        }
+        Err(e) => {
+            log::error!("get_adapter_index err {:?}",e);
+            get_if_index()
+        }
+    };
+    config_ip(index, address, netmask, gateway)?;
     let reader_session = session.clone();
     Ok((TunWriter(session.clone(), Arc::new(Mutex::new(index))), TunReader(reader_session)))
 }
 
+fn get_if_index() -> u32 {
+    let cmd = format!("netsh int ipv4 show interfaces  {} |findstr IfIndex", INTERFACE_NAME);
+    let out = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg(&cmd)
+        .output()
+        .unwrap();
+    if !out.status.success() {
+        log::warn!("1获取网络接口索引失败：cmd={:?},out={:?}",cmd,out);
+        return 0;
+    }
+    if let Ok(stdout) = String::from_utf8(out.stdout) {
+        if let Some(start) = stdout.find(":") {
+            if let Some(end) = stdout.find("\r\n") {
+                if let Ok(index) = stdout[start + 1..end].trim().parse::<u32>() {
+                    return index;
+                }
+            }
+        }
+    }
+    log::warn!("2获取网络接口索引失败：cmd={:?}",cmd);
+    0
+}
+
 fn config_ip(index: u32, address: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {
+    if index == 0 {
+        return Err(io::Error::new(io::ErrorKind::Other, format!("网络接口索引错误: {:?}", index)));
+    }
     let set_mtu = format!(
         "netsh interface ipv4 set subinterface {}  mtu=1420 store=persistent",
         index
@@ -113,10 +152,11 @@ fn config_ip(index: u32, address: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr
     }
     let out = std::process::Command::new("cmd")
         .arg("/C")
-        .arg(set_address)
+        .arg(&set_address)
         .output()
         .unwrap();
     if !out.status.success() {
+        log::error!("cmd={:?},out={:?}",set_address,out);
         return Err(io::Error::new(io::ErrorKind::Other, format!("设置网络地址失败: {:?}", out)));
     }
     let dest = {
@@ -136,16 +176,20 @@ fn config_ip(index: u32, address: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr
     // 执行添加路由命令
     let out = std::process::Command::new("cmd")
         .arg("/C")
-        .arg(set_route)
+        .arg(&set_route)
         .output()
         .unwrap();
     if !out.status.success() {
+        log::error!("cmd={:?},out={:?}",set_route,out);
         return Err(io::Error::new(io::ErrorKind::Other, format!("添加路由失败: {:?}", out)));
     }
     Ok(())
 }
 
 fn delete_route(index: u32, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {
+    if index == 0 {
+        return Err(io::Error::new(io::ErrorKind::Other, format!("网络接口索引错误: {:?}", index)));
+    }
     let mask = netmask.octets();
     let ip = gateway.octets();
     let dest = Ipv4Addr::from([
