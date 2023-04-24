@@ -55,9 +55,7 @@ impl Switch {
         punch_handler::start_symmetric(punch, current_device.clone());
         punch_handler::start_punch(nat_test.clone(), device_list.clone(), channel.sender()?, current_device.clone());
         //tun数据接收处理
-        for _ in 0..2 {
-            tun_handler::start(channel.sender()?, tun_reader.clone(), tun_writer.clone(), current_device.clone());
-        }
+        tun_handler::start(channel.sender()?, tun_reader.clone(), tun_writer.clone(), current_device.clone());
         //外部数据接收处理
         let channel_recv_handler = recv_handler::RecvHandler::new(channel.try_clone()?, current_device.clone(), device_list.clone(), register.clone(),
                                                                   nat_test.clone(), tun_writer.clone(), connect_status.clone(), peer_nat_info_map.clone());

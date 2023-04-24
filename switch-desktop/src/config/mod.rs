@@ -32,6 +32,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     if token.len() > 64 {
         return Err("token不能超过64字符(Token cannot exceed 64 characters)".to_string());
     }
+    println!("token:{:?}",token);
     let name = start_args.name.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.name.is_empty() {
@@ -46,6 +47,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     } else {
         name.to_string()
     };
+    println!("name:{:?}",name);
     let device_id = start_args.device_id.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.device_id.is_empty() {
@@ -61,6 +63,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     if device_id.is_empty() || device_id.len() > 64 {
         return Err("设备id不能为空并且长度不能大于64字符(The device id cannot be empty and the length cannot be greater than 64 characters)".to_string());
     }
+    println!("device_id:{:?}",device_id);
     let server = match start_args.server.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.server.is_empty() {
@@ -80,6 +83,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
             return Err(format!("中继服务器地址错误( Relay server address error) :{:?}", e));
         }
     };
+    println!("中继服务器:{:?}",server);
     let nat_test_server = start_args.nat_test_server.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.nat_test_server.is_empty() {
@@ -92,6 +96,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     if nat_test_server.is_empty() {
         return Err("NAT检测服务地址错误(NAT detection service address error)".to_string());
     }
+    println!("NAT探测服务器:{:?}",nat_test_server);
     let base_config = StartConfig {
         name,
         token,
