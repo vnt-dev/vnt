@@ -245,6 +245,9 @@ pub fn read_config() -> Option<ArgsConfig> {
 }
 
 pub fn set_home(home: PathBuf) {
+    if !home.exists() {
+        std::fs::create_dir(&home).unwrap();
+    }
     SWITCH_HOME_PATH.lock().replace(home);
 }
 

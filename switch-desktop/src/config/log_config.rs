@@ -14,9 +14,6 @@ pub fn log_init_(file_name:&str) -> io::Result<()> {
     } else {
         return Err(io::Error::new(io::ErrorKind::Other, "not found"));
     };
-    if !home.exists() {
-        std::fs::create_dir(&home)?;
-    }
     let stderr = log4rs::append::console::ConsoleAppender::builder()
         .target(log4rs::append::console::Target::Stderr)
         .build();
