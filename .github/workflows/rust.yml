@@ -47,10 +47,6 @@ jobs:
             OS: ubuntu-latest
           - TARGET: arm-unknown-linux-musleabihf # raspberry pi 0-1, not tested
             OS: ubuntu-latest
-          - TARGET: mips-unknown-linux-musl # raspberry pi 0-1, not tested
-            OS: ubuntu-latest
-          - TARGET: mipsel-unknown-linux-musl # raspberry pi 0-1, not tested
-            OS: ubuntu-latest
           - TARGET: x86_64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
@@ -92,10 +88,6 @@ jobs:
           linker = "arm-linux-gnueabihf-gcc"
           [target.arm-unknown-linux-musleabihf]
           linker = "arm-linux-gnueabihf-gcc"
-          [target.mips-unknown-linux-musl]
-          linker = "mips-openwrt-linux-gcc"
-          [target.mipsel-unknown-linux-musl]
-          linker = "mipsel-openwrt-linux-gcc"
           EOF
       - name: Install rust target
         run: rustup target add $TARGET
