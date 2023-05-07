@@ -65,19 +65,20 @@ pub fn main0(base_args: BaseArgs) {
             let out_log = args.log;
             match config::default_config(args) {
                 Ok(start_config) => {
+                    if let Err(e) = config::save_config(config::ArgsConfig::new(start_config.tap,
+                                                                                start_config.token.clone(),
+                                                                                start_config.name.clone(),
+                                                                                start_config.server,
+                                                                                &start_config.nat_test_server,
+                                                                                start_config.device_id.clone(),
+                    )) {
+                        println!("{}", style(&e).red());
+                        log::error!("{:?}",e);
+                        return;
+                    }
                     match service_state() {
                         Ok(state) => {
                             if state == ServiceState::Stopped {
-                                if let Err(e) = config::save_config(config::ArgsConfig::new(start_config.tap,
-                                                                                            start_config.token.clone(),
-                                                                                            start_config.name.clone(),
-                                                                                            start_config.server,
-                                                                                            &start_config.nat_test_server,
-                                                                                            start_config.device_id.clone(),
-                                )) {
-                                    log::error!("{:?}",e);
-                                    return;
-                                }
                                 match start(out_log) {
                                     Ok(_) => {
                                         //需要检查启动状态
