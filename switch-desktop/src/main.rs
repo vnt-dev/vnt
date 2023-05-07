@@ -91,8 +91,8 @@ pub struct StartArgs {
     #[cfg(any(unix))]
     #[arg(long)]
     off_command_server: bool,
-    /// 记录日志，输出在 home/.switch 目录下，长时间使用时不建议开启
-    /// Output the log in the "home/.switch" directory
+    /// 记录日志，输出在 home/.switch_desktop 目录下，长时间使用时不建议开启
+    /// Output the log in the "home/.switch_desktop" directory
     #[arg(long)]
     log: bool,
 }
@@ -129,7 +129,7 @@ fn main() {
         windows::service::start();
         return;
     } else {
-        let home = dirs::home_dir().unwrap().join(".switch");
+        let home = dirs::home_dir().unwrap().join(".switch_desktop");
         config::set_home(home);
         let args = BaseArgs::parse();
         if let Commands::Start(start_args) = &args.command {
@@ -143,7 +143,7 @@ fn main() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn main() {
-    let home = dirs::home_dir().unwrap().join(".switch");
+    let home = dirs::home_dir().unwrap().join(".switch_desktop");
     config::set_home(home);
     let args = BaseArgs::parse();
     if let Commands::Start(start_args) = &args.command {

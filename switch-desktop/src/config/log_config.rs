@@ -5,7 +5,7 @@ pub fn log_service_init() -> io::Result<()> {
     log_init_("switch-service.log")
 }
 pub fn log_init() -> io::Result<()> {
-    log_init_("switch.log")
+    log_init_("switch-desktop.log")
 }
 pub fn log_init_(file_name:&str) -> io::Result<()> {
     let home = SWITCH_HOME_PATH.lock().clone();
