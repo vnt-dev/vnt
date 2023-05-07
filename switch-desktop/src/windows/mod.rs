@@ -68,12 +68,12 @@ pub fn main0(base_args: BaseArgs) {
                     match service_state() {
                         Ok(state) => {
                             if state == ServiceState::Stopped {
-                                if let Err(e) = config::save_config(config::ArgsConfig::new(
-                                    start_config.token.clone(),
-                                    start_config.name.clone(),
-                                    start_config.server.to_string(),
-                                    start_config.nat_test_server.iter().map(|v| v.to_string()).collect::<Vec<String>>(),
-                                    start_config.device_id.clone(),
+                                if let Err(e) = config::save_config(config::ArgsConfig::new(start_config.tap,
+                                                                                            start_config.token.clone(),
+                                                                                            start_config.name.clone(),
+                                                                                            start_config.server,
+                                                                                            &start_config.nat_test_server,
+                                                                                            start_config.device_id.clone(),
                                 )) {
                                     log::error!("{:?}",e);
                                     return;
@@ -103,6 +103,7 @@ pub fn main0(base_args: BaseArgs) {
                                                 style("服务未安装，在当前进程启动(The service is not installed and started in the current process)").red()
                                             );
                                             let config = Config::new(
+                                                start_config.tap,
                                                 start_config.token,
                                                 start_config.device_id,
                                                 start_config.name,
@@ -144,7 +145,8 @@ pub fn main0(base_args: BaseArgs) {
                     }
                 }
                 Err(e) => {
-                    println!("{}", style(e).red());
+                    println!("{}", style(&e).red());
+                    log::error!("{:?}", e);
                 }
             };
             pause();

@@ -2,7 +2,6 @@
 // extern crate windows_service;
 
 use std::ffi::OsString;
-use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -15,8 +14,7 @@ use windows_service::service_control_handler::ServiceControlHandlerResult;
 
 use switch::core::{Config, Switch};
 
-use crate::config;
-use crate::windows::config::read_config;
+use crate::{config, StartArgs};
 use crate::windows::SERVICE_NAME;
 
 define_windows_service!(ffi_service_main, switch_service_main);
@@ -93,47 +91,34 @@ fn service_main() -> windows_service::Result<()> {
 }
 
 fn start_switch() -> switch::Result<Arc<Switch>> {
-    if let Some(config) = read_config() {
-        let device_id = config.device_id;
-        if device_id.trim().is_empty() {
-            return Err(switch::error::Error::Stop("Device id error".to_string()));
+    match config::default_config(StartArgs::default()) {
+        Ok(start_config) => {
+            let config = Config::new(
+                start_config.tap,
+                start_config.token,
+                start_config.device_id,
+                start_config.name,
+                start_config.server,
+                start_config.nat_test_server,
+            );
+            let switch = Switch::start(config)?;
+            log::info!("switch-service服务启动");
+            let switch = Arc::new(switch);
+            let command_server = crate::command::server::CommandServer::new();
+            let switch1 = switch.clone();
+            thread::spawn(move || {
+                if let Err(e) = config::update_pid(std::process::id()) {
+                    log::error!("{:?}", e);
+                }
+                if let Err(e) = command_server.start(switch1) {
+                    log::error!("{:?}", e);
+                }
+            });
+            Ok(switch)
         }
-        let server_address = if let Some(server_address) = config.server
-            .to_socket_addrs()?
-            .next() {
-            server_address
-        } else {
-            return Err(switch::error::Error::Stop("server address error".to_string()));
-        };
-        let nat_test_server = config.nat_test_server.iter()
-            .flat_map(|a| a.to_socket_addrs())
-            .flatten()
-            .collect::<Vec<_>>();
-        if nat_test_server.is_empty() {
-            return Err(switch::error::Error::Stop("nat test server address error".to_string()));
+        Err(e) => {
+            return Err(switch::error::Error::Stop(e));
         }
-        let config = Config::new(
-            config.token,
-            device_id,
-            config.name,
-            server_address,
-            nat_test_server);
-        let switch = Switch::start(config)?;
-        log::info!("switch-service服务启动");
-        let switch = Arc::new(switch);
-        let command_server = crate::command::server::CommandServer::new();
-        let switch1 = switch.clone();
-        thread::spawn(move || {
-            if let Err(e) = config::update_pid(std::process::id()) {
-                log::error!("{:?}", e);
-            }
-            if let Err(e) = command_server.start(switch1) {
-                log::error!("{:?}", e);
-            }
-        });
-        Ok(switch)
-    } else {
-        Err(switch::error::Error::Stop("配置文件为空".to_string()))
     }
 }
 

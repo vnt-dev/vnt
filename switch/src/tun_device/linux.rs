@@ -9,6 +9,7 @@ pub fn create_tun(
     netmask: Ipv4Addr,
     gateway: Ipv4Addr,
 ) -> crate::error::Result<(TunWriter, TunReader)> {
+    println!("========TUN网卡配置========");
     let mut config = tun::Configuration::default();
 
     config
@@ -28,6 +29,8 @@ pub fn create_tun(
     let queue = dev.queue(0).unwrap();
     let reader = queue.reader();
     let writer = queue.writer();
+    println!("name:{:?}", dev.name());
+    println!("========TUN网卡配置========");
     Ok((
         TunWriter(writer, packet_information, Arc::new(Mutex::new(dev))),
         TunReader(reader, packet_information),

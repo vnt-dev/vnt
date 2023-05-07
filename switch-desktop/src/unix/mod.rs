@@ -24,18 +24,19 @@ pub fn main0(base_args: BaseArgs) {
                     }
 
                     let config = Config::new(
+                        start_config.tap,
                         start_config.token.clone(),
                         start_config.device_id.clone(),
                         start_config.name.clone(),
                         start_config.server,
                         start_config.nat_test_server.clone(),
                     );
-                    let nat_test_server = start_config.nat_test_server.iter().map(|v| v.to_string()).collect::<Vec<String>>();
                     let args_config = config::ArgsConfig::new(
+                        start_config.tap,
                         start_config.token.clone(),
                         start_config.name.clone(),
-                        start_config.server.to_string(),
-                        nat_test_server,
+                        start_config.server,
+                        &start_config.nat_test_server,
                         start_config.device_id.clone(),
                     );
                     let lock = match config::lock_file() {
@@ -93,6 +94,7 @@ pub fn main0(base_args: BaseArgs) {
                     lock.unlock().unwrap();
                 }
                 Err(e) => {
+                    println!("{}", style(&e).red());
                     log::error!("{:?}", e);
                 }
             }

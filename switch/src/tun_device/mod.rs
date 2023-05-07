@@ -7,6 +7,8 @@ pub use unix::{TunReader, TunWriter};
 #[cfg(target_os = "windows")]
 pub use windows::create_tun;
 #[cfg(target_os = "windows")]
+pub use windows::delete_tun;
+#[cfg(target_os = "windows")]
 pub use windows::{TunReader, TunWriter};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]

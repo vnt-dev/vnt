@@ -12,6 +12,7 @@ pub fn create_tun(
     netmask: Ipv4Addr,
     gateway: Ipv4Addr,
 ) -> crate::error::Result<(TunWriter, TunReader)> {
+    println!("========TUN网卡配置========");
     let mut config = tun::Configuration::default();
 
     config
@@ -23,22 +24,13 @@ pub fn create_tun(
 
     let dev = tun::create(&config).unwrap();
     config_ip(dev.name(), address, netmask, gateway)?;
-    // println!("{:?}", if_config_out);
-    // let cmd_str: String = " ifconfig|grep  flags=8051|awk -F ':' '{print $1}'|tail -1".to_string();
-    //
-    // let cmd_str_out = Command::new("sh")
-    //     .arg("-c")
-    //     .arg(cmd_str)
-    //     .output()
-    //     .expect("sh exec error!");
-    // if !cmd_str_out.status.success(){
-    //     return Err(Error::Stop(format!("设置路由失败:{:?}", cmd_str_out)));
-    // }
-    // println!("{:?}", cmd_str_out);
+
     let packet_information = dev.has_packet_information();
     let queue = dev.queue(0).unwrap();
     let reader = queue.reader();
     let writer = queue.writer();
+    println!("name:{:?}", dev.name());
+    println!("========TUN网卡配置========");
     Ok((
         TunWriter(writer, packet_information, Arc::new(Mutex::new(dev))),
         TunReader(reader, packet_information),

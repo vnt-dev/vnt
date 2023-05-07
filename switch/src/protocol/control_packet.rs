@@ -1,6 +1,5 @@
 use std::{fmt, io};
 
-
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Protocol {
     /// ping请求

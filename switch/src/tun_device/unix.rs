@@ -15,21 +15,8 @@ use parking_lot::Mutex;
 pub struct TunReader(pub(crate) Reader, pub(crate) bool);
 
 impl TunReader {
-    pub fn read<'a>(&'a self, buf: &'a mut [u8]) -> io::Result<&mut [u8]> {
-        let len = self.0.read(buf)?;
-        if self.1 {
-            Ok(&mut buf[4..len])
-        } else {
-            Ok(&mut buf[..len])
-        }
-    }
-    pub fn close(&self) {
-        unsafe {
-            let raw = self.0.as_raw_fd();
-            if raw >= 0 {
-                libc::close(raw);
-            }
-        }
+    pub fn read(&self, buf: & mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
     }
 }
 
@@ -51,6 +38,15 @@ impl TunWriter {
         } else {
             self.0.write_all(packet)
         }
+    }
+    pub fn close(&self) -> io::Result<()>{
+        unsafe {
+            let raw = self.0.as_raw_fd();
+            if raw >= 0 {
+                libc::close(raw);
+            }
+        }
+        Ok(())
     }
     pub fn change_ip(&self, address: Ipv4Addr, netmask: Ipv4Addr,
                      gateway: Ipv4Addr, _old_netmask: Ipv4Addr, _old_gateway: Ipv4Addr) -> io::Result<()> {

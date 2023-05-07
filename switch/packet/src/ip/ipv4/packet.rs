@@ -1,7 +1,6 @@
 use std::fmt;
 use std::net::Ipv4Addr;
 
-use byteorder::{BigEndian, ReadBytesExt};
 
 use crate::cal_checksum;
 use crate::error::*;
@@ -141,16 +140,12 @@ impl<B: AsRef<[u8]>> IpV4Packet<B> {
 
     /// ip报总字节数
     pub fn length(&self) -> u16 {
-        (&self.buffer.as_ref()[2..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[2..4].try_into().unwrap())
     }
 
     /// 标识. ip报文在数据链路层可能会被拆分，同一报文的不同分组标识字段相同
     pub fn id(&self) -> u16 {
-        (&self.buffer.as_ref()[4..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[4..6].try_into().unwrap())
     }
 
     /// 标志 3位.
@@ -170,10 +165,7 @@ impl<B: AsRef<[u8]>> IpV4Packet<B> {
     /// 以字节为单位,用于指明分段起始点相对于包头起始点的偏移量
     /// 由于分段到达时可能错序，所以分段的偏移字段可以使接收者按照正确的顺序重组数据包
     pub fn offset(&self) -> u16 {
-        (&self.buffer.as_ref()[6..])
-            .read_u16::<BigEndian>()
-            .unwrap()
-            & 0x1fff
+        u16::from_be_bytes(self.buffer.as_ref()[6..8].try_into().unwrap()) & 0x1fff
     }
 
     /// 生存时间.
@@ -189,9 +181,7 @@ impl<B: AsRef<[u8]>> IpV4Packet<B> {
 
     /// 首部校验和
     pub fn checksum(&self) -> u16 {
-        (&self.buffer.as_ref()[10..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[10..12].try_into().unwrap())
     }
     /// 验证校验和
     ///

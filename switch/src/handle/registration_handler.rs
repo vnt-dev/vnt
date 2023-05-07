@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use chrono::Local;
-use protobuf::Message;
-use p2p_channel::channel::Channel;
 use p2p_channel::channel::sender::Sender;
+use p2p_channel::channel::Channel;
+use protobuf::Message;
 
 use crate::error::*;
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
@@ -35,20 +35,14 @@ pub fn registration(
         Protocol::Service => {
             match service_packet::Protocol::from(net_packet.transport_protocol()) {
                 service_packet::Protocol::RegistrationResponse => {
-                    let response =
-                        RegistrationResponse::parse_from_bytes(net_packet.payload())?;
+                    let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
                     Ok(response)
                 }
-                _ => {
-                    Err(Error::Warn(format!("数据错误：{:?}", net_packet)))
-                }
+                _ => Err(Error::Warn(format!("数据错误：{:?}", net_packet))),
             }
         }
         Protocol::Error => {
-            match InErrorPacket::new(
-                net_packet.transport_protocol(),
-                net_packet.payload(),
-            ) {
+            match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
                 Ok(e) => match e {
                     InErrorPacket::TokenError => Err(Error::Stop("token错误".to_string())),
                     InErrorPacket::Disconnect => Err(Error::Warn("断开连接".to_string())),
@@ -61,9 +55,7 @@ pub fn registration(
                 Err(e) => Err(Error::Warn(format!("{:?}", e))),
             }
         }
-        _ => {
-            Err(Error::Warn(format!("数据错误：{:?}", net_packet)))
-        }
+        _ => Err(Error::Warn(format!("数据错误：{:?}", net_packet))),
     };
 }
 
@@ -99,11 +91,13 @@ pub struct Register {
 }
 
 impl Register {
-    pub fn new(sender: Sender<Ipv4Addr>,
-               server_address: SocketAddr,
-               token: String,
-               device_id: String,
-               name: String, ) -> Self {
+    pub fn new(
+        sender: Sender<Ipv4Addr>,
+        server_address: SocketAddr,
+        token: String,
+        device_id: String,
+        name: String,
+    ) -> Self {
         Self {
             sender,
             server_address,
@@ -117,18 +111,22 @@ impl Register {
         let last = self.time.load(Ordering::Relaxed);
         let new = Local::now().timestamp_millis();
         if new - last < 1000
-            || self.time
-            .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
-            .is_err()
+            || self
+                .time
+                .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
         {
             //短时间不重复注册
             return Ok(());
         }
         log::info!("重新连接");
-        let request_packet =
-            registration_request_packet(self.token.clone(),
-                                        self.device_id.clone(),
-                                        self.name.clone(), false).unwrap();
+        let request_packet = registration_request_packet(
+            self.token.clone(),
+            self.device_id.clone(),
+            self.name.clone(),
+            false,
+        )
+        .unwrap();
         let buf = request_packet.buffer();
         self.sender.send_to_addr(buf, self.server_address)?;
         Ok(())

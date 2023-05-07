@@ -1,7 +1,7 @@
 use std::{io, thread};
-/// 接收tun数据，并且转发到udp上
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+
 use crossbeam::atomic::AtomicCell;
 
 use p2p_channel::channel::sender::Sender;
@@ -14,7 +14,6 @@ use crate::error::*;
 use crate::handle::{check_dest, CurrentDeviceInfo};
 use crate::protocol::{MAX_TTL, NetPacket, Protocol, Version};
 use crate::tun_device::{TunReader, TunWriter};
-
 
 fn icmp(tun_writer: &TunWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> Result<()> {
     if ipv4_packet.protocol() == ipv4::protocol::Protocol::Icmp {
@@ -32,6 +31,7 @@ fn icmp(tun_writer: &TunWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> Resul
     Ok(())
 }
 
+/// 接收tun数据，并且转发到udp上
 #[inline]
 fn handle(sender: &Sender<Ipv4Addr>, data: &mut [u8], tun_writer: &TunWriter, current_device: CurrentDeviceInfo, net_packet: &mut NetPacket<Vec<u8>>) -> Result<()> {
     let data_len = data.len();
@@ -68,7 +68,7 @@ fn handle(sender: &Sender<Ipv4Addr>, data: &mut [u8], tun_writer: &TunWriter, cu
 pub fn start(sender: Sender<Ipv4Addr>,
              tun_reader: TunReader,
              tun_writer: TunWriter,
-             current_device: Arc<AtomicCell<CurrentDeviceInfo>>, ) {
+             current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
     thread::Builder::new().name("tun-handler".into()).spawn(move || {
         if let Err(e) = start_(sender, tun_reader, tun_writer, current_device) {
             log::warn!("{:?}",e);
@@ -80,7 +80,7 @@ pub fn start(sender: Sender<Ipv4Addr>,
 fn start_(sender: Sender<Ipv4Addr>,
           tun_reader: TunReader,
           tun_writer: TunWriter,
-          current_device: Arc<AtomicCell<CurrentDeviceInfo>>, ) -> io::Result<()> {
+          current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<()> {
     let mut net_packet = NetPacket::new(vec![0u8; 4 + 8 + 1500])?;
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::Ipv4Turn);
@@ -109,8 +109,8 @@ fn start_(sender: Sender<Ipv4Addr>,
     net_packet.set_ttl(MAX_TTL);
     let mut buf = [0; 4096];
     loop {
-        let data = tun_reader.read(&mut buf)?;
-        match handle(&sender, data, &tun_writer, current_device.load(), &mut net_packet) {
+        let len = tun_reader.read(&mut buf)?;
+        match handle(&sender, &mut buf[..len], &tun_writer, current_device.load(), &mut net_packet) {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("{:?}", e)

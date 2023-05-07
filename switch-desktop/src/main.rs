@@ -60,7 +60,7 @@ enum Commands {
     Status,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug,Default)]
 pub struct StartArgs {
     /// 不超过64个字符
     /// 相同token的设备之间才能通信。
@@ -95,6 +95,9 @@ pub struct StartArgs {
     /// Output the log in the "home/.switch_desktop" directory
     #[arg(long)]
     log: bool,
+    /// 使用tap网卡
+    #[arg(long)]
+    tap: Option<bool>,
 }
 
 #[cfg(target_os = "windows")]

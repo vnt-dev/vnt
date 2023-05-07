@@ -10,6 +10,7 @@ use protobuf::Message;
 
 use p2p_channel::channel::{Channel, Route, RouteKey};
 use p2p_channel::punch::NatInfo;
+use packet::ethernet;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
@@ -23,6 +24,7 @@ use crate::proto::message::{DeviceList, PunchInfo, PunchNatType, RegistrationRes
 use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, service_packet, turn_packet, Version};
 use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::error_packet::InErrorPacket;
+use crate::tap_device::TapWriter;
 use crate::tun_device::TunWriter;
 
 pub fn start(mut handler: RecvHandler) {
@@ -57,7 +59,8 @@ pub struct RecvHandler {
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     register: Arc<Register>,
     nat_test: NatTest,
-    tun_writer: TunWriter,
+    tun_writer: Option<TunWriter>,
+    tap_writer: Option<TapWriter>,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
     peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
 }
@@ -68,7 +71,8 @@ impl RecvHandler {
                device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
                register: Arc<Register>,
                nat_test: NatTest,
-               tun_writer: TunWriter,
+               tun_writer: Option<TunWriter>,
+               tap_writer: Option<TapWriter>,
                connect_status: Arc<AtomicCell<ConnectStatus>>,
                peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
     ) -> Self {
@@ -79,6 +83,7 @@ impl RecvHandler {
             register,
             nat_test,
             tun_writer,
+            tap_writer,
             connect_status,
             peer_nat_info_map,
         }
@@ -91,6 +96,7 @@ impl RecvHandler {
             register: self.register.clone(),
             nat_test: self.nat_test.clone(),
             tun_writer: self.tun_writer.clone(),
+            tap_writer: self.tap_writer.clone(),
             connect_status: self.connect_status.clone(),
             peer_nat_info_map: self.peer_nat_info_map.clone(),
         })
@@ -103,6 +109,7 @@ impl RecvHandler {
         if net_packet.ttl() == 0 {
             return Ok(());
         }
+        net_packet.set_ttl(net_packet.ttl() - 1);
         let source = net_packet.source();
         let current_device = self.current_device.load();
         if source == current_device.virtual_ip() {
@@ -122,7 +129,6 @@ impl RecvHandler {
             let ttl = net_packet.ttl();
             if ttl > 1 {
                 // 转发
-                net_packet.set_ttl(ttl - 1);
                 if let Some(route) = self.channel.route(&destination) {
                     if route.metric <= net_packet.ttl() {
                         self.channel.send_to_route(net_packet.buffer(), &route.route_key())?;
@@ -138,22 +144,38 @@ impl RecvHandler {
         match net_packet.protocol() {
             Protocol::Ipv4Turn => {
                 let mut ipv4 = IpV4Packet::new(net_packet.payload_mut())?;
-                if ipv4.protocol() == ipv4::protocol::Protocol::Icmp {
-                    let mut icmp_packet = icmp::IcmpPacket::new(ipv4.payload_mut())?;
-                    if icmp_packet.kind() == Kind::EchoRequest {
-                        //开启ping
-                        icmp_packet.set_kind(Kind::EchoReply);
-                        icmp_packet.update_checksum();
-                        ipv4.set_source_ip(destination);
-                        ipv4.set_destination_ip(source);
-                        ipv4.update_checksum();
-                        net_packet.set_source(destination);
-                        net_packet.set_destination(source);
-                        self.channel.send_to_route(net_packet.buffer(), route_key)?;
-                        return Ok(());
+                if ipv4.destination_ip() != destination {
+                    //todo 外部数据转发
+                } else {
+                    if ipv4.protocol() == ipv4::protocol::Protocol::Icmp {
+                        let mut icmp_packet = icmp::IcmpPacket::new(ipv4.payload_mut())?;
+                        if icmp_packet.kind() == Kind::EchoRequest {
+                            //开启ping
+                            icmp_packet.set_kind(Kind::EchoReply);
+                            icmp_packet.update_checksum();
+                            ipv4.set_source_ip(destination);
+                            ipv4.set_destination_ip(source);
+                            ipv4.update_checksum();
+                            net_packet.set_source(destination);
+                            net_packet.set_destination(source);
+                            self.channel.send_to_route(net_packet.buffer(), route_key)?;
+                            return Ok(());
+                        }
+                    }
+                    if let Some(tun_writer) = &self.tun_writer {
+                        tun_writer.write(net_packet.payload())?;
+                    } else {
+                        if let Some(tap_writer) = &self.tap_writer {
+                            let mut ethernet_packet = ethernet::packet::EthernetPacket::unchecked(vec![0; 14 + ipv4.buffer.len()]);
+                            let source = source.octets();
+                            ethernet_packet.set_source(&[source[0], source[1], source[2], source[3], 123, 234]);
+                            ethernet_packet.set_destination(&current_device.mac);
+                            ethernet_packet.set_protocol(ethernet::protocol::Protocol::Ipv4);
+                            ethernet_packet.payload_mut().copy_from_slice(ipv4.buffer);
+                            tap_writer.write(&ethernet_packet.buffer)?;
+                        }
                     }
                 }
-                self.tun_writer.write(net_packet.payload())?;
             }
             Protocol::Service => {
                 self.service(current_device, source, net_packet, route_key)?;
@@ -195,9 +217,15 @@ impl RecvHandler {
                     let virtual_ip = Ipv4Addr::from(response.virtual_ip);
                     let virtual_gateway = Ipv4Addr::from(response.virtual_gateway);
                     let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
-                    self.tun_writer.change_ip(virtual_ip, virtual_netmask, virtual_gateway, old_netmask, old_gateway)?;
+                    if let Some(tun_writer) = &self.tun_writer {
+                        tun_writer.change_ip(virtual_ip, virtual_netmask, virtual_gateway, old_netmask, old_gateway)?;
+                    } else {
+                        if let Some(tap_writer) = &self.tap_writer {
+                            tap_writer.change_ip(virtual_ip, virtual_netmask, virtual_gateway, old_netmask, old_gateway)?;
+                        }
+                    }
                     let new_current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway,
-                                                                    virtual_netmask, current_device.connect_server);
+                                                                    virtual_netmask, current_device.connect_server, current_device.mac);
                     if let Err(e) = self.current_device.compare_exchange(current_device, new_current_device) {
                         log::warn!("替换失败:{:?}",e);
                     }

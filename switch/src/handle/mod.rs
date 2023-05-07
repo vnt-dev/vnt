@@ -1,10 +1,11 @@
 use std::net::{Ipv4Addr, SocketAddr};
 
 pub mod heartbeat_handler;
-pub mod punch_handler;
-pub mod registration_handler;
 pub mod tun_handler;
+pub mod tap_handler;
+pub mod punch_handler;
 pub mod recv_handler;
+pub mod registration_handler;
 
 /// 是否在一个网段
 fn check_dest(dest: Ipv4Addr, virtual_netmask: Ipv4Addr, virtual_network: Ipv4Addr) -> bool {
@@ -70,6 +71,7 @@ pub struct CurrentDeviceInfo {
     pub broadcast_address: Ipv4Addr,
     //链接的服务器地址
     pub connect_server: SocketAddr,
+    pub mac:[u8;6]
 }
 
 impl CurrentDeviceInfo {
@@ -78,6 +80,7 @@ impl CurrentDeviceInfo {
         virtual_gateway: Ipv4Addr,
         virtual_netmask: Ipv4Addr,
         connect_server: SocketAddr,
+        mac:[u8;6],
     ) -> Self {
         let broadcast_address = (!u32::from_be_bytes(virtual_netmask.octets()))
             | u32::from_be_bytes(virtual_gateway.octets());
@@ -92,6 +95,7 @@ impl CurrentDeviceInfo {
             virtual_network,
             broadcast_address,
             connect_server,
+            mac
         }
     }
     #[inline]
@@ -103,7 +107,3 @@ impl CurrentDeviceInfo {
         self.virtual_gateway
     }
 }
-
-
-
-

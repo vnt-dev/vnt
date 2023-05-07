@@ -1,17 +1,16 @@
-use crate::wintun_raw;
-use crate::Wintun;
 use log::*;
-use widestring::U16CStr;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use widestring::U16CStr;
+use crate::tun::wintun_raw;
 
 /// Sets the logger wintun will use when logging. Maps to the WintunSetLogger C function
-pub fn set_logger(wintun: &Wintun, f: wintun_raw::WINTUN_LOGGER_CALLBACK) {
-    unsafe { wintun.WintunSetLogger(f) };
+pub fn set_logger(win_tun: &wintun_raw::wintun, f: wintun_raw::WINTUN_LOGGER_CALLBACK) {
+    unsafe { win_tun.WintunSetLogger(f) };
 }
 
-pub fn reset_logger(wintun: &Wintun) {
-    set_logger(wintun, None);
+pub fn reset_logger(win_tun: &wintun_raw::wintun) {
+    set_logger(win_tun, None);
 }
 
 static SET_LOGGER: AtomicBool = AtomicBool::new(false);
@@ -38,11 +37,11 @@ pub unsafe extern "C" fn default_logger(
     }
 }
 
-pub(crate) fn set_default_logger_if_unset(wintun: &Wintun) {
+pub(crate) fn set_default_logger_if_unset(win_tun: &wintun_raw::wintun) {
     if SET_LOGGER
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
         .is_ok()
     {
-        set_logger(wintun, Some(default_logger));
+        set_logger(win_tun, Some(default_logger));
     }
 }

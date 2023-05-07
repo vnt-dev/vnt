@@ -1,2 +1,14 @@
 [workspace]
 members = ["switch","switch-desktop"]
+
+[profile.release]
+opt-level = 'z'
+debug = 0
+debug-assertions = false
+strip= "debuginfo"
+overflow-checks = true
+lto = true
+panic = 'abort'
+incremental = false
+codegen-units = 1
+rpath = false

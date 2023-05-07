@@ -76,6 +76,17 @@ impl<B: AsRef<[u8]>> TcpPacket<B> {
     }
 }
 
+impl<B: AsRef<[u8]> + AsMut<[u8]>> TcpPacket<B> {
+    fn set_checksum(&mut self, value: u16) {
+        self.buffer.as_mut()[16..18].copy_from_slice(&value.to_be_bytes())
+    }
+    /// 更新校验和
+    pub fn update_checksum(&mut self) {
+        //先将校验和置0
+        self.set_checksum(0);
+        self.set_checksum(self.cal_checksum())
+    }
+}
 impl<B: AsRef<[u8]>> TcpPacket<B> {
     /// 源端口
     pub fn source_port(&self) -> u16 {

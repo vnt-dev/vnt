@@ -7,15 +7,17 @@ use parking_lot::Mutex;
 use p2p_channel::boot::Boot;
 use p2p_channel::channel::{Channel, Route, RouteKey};
 use p2p_channel::punch::NatInfo;
-use crate::handle::{ConnectStatus, CurrentDeviceInfo, heartbeat_handler, PeerDeviceInfo, punch_handler, recv_handler, registration_handler, tun_handler};
+use crate::handle::{ConnectStatus, CurrentDeviceInfo, heartbeat_handler, PeerDeviceInfo, punch_handler, recv_handler, registration_handler, tap_handler, tun_handler};
 use crate::nat::NatTest;
-use crate::tun_device;
-use crate::tun_device::TunReader;
+use crate::{tap_device, tun_device};
+use crate::tap_device::TapWriter;
+use crate::tun_device::TunWriter;
 
 pub struct Switch {
     name: String,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-    tun_reader: TunReader,
+    tun_writer: Option<TunWriter>,
+    tap_writer: Option<TapWriter>,
     nat_channel: Channel<Ipv4Addr>,
     /// 0. 机器纪元，每一次上线或者下线都会增1，用于感知网络中机器变化
     /// 服务端和客户端的不一致，则服务端会推送新的设备列表
@@ -38,14 +40,40 @@ impl Switch {
         let virtual_ip = Ipv4Addr::from(response.virtual_ip);
         let virtual_gateway = Ipv4Addr::from(response.virtual_gateway);
         let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
-        let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, config.server_address)));
+
         let local_ip = crate::nat::local_ip()?;
         let local_port = channel.local_addr()?.port();
         // NAT检测
         let nat_test = NatTest::new(config.nat_test_server.clone(), Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_port);
-        // tun通道
-        let (tun_writer, tun_reader) = tun_device::create_tun(virtual_ip, virtual_netmask, virtual_gateway)?;
-
+        let (current_device, tun_writer, tap_writer) = if config.tap {
+            #[cfg(windows)]
+            {
+                //删除switch的tun网卡避免ip冲突，因为非正常退出会保留网卡
+                tun_device::delete_tun();
+            }
+            let (tap_writer, tap_reader, mac) = tap_device::create_tap(virtual_ip, virtual_netmask, virtual_gateway)?;
+            let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask,
+                                                                                 config.server_address, mac)));
+            //tap数据处理
+            tap_handler::start(channel.sender()?, tap_reader.clone(), tap_writer.clone(), current_device.clone());
+            (current_device, None, Some(tap_writer))
+        } else {
+            #[cfg(windows)]
+            {
+                //删除switch的tap网卡避免ip冲突，非正常退出会保留网卡
+                tap_device::delete_tap();
+            }
+            // tun通道
+            let (tun_writer, tun_reader) = tun_device::create_tun(virtual_ip, virtual_netmask, virtual_gateway)?;
+            let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, config.server_address, [0, 0, 0, 0, 0, 0])));
+            //tun数据接收处理
+            tun_handler::start(channel.sender()?, tun_reader.clone(), tun_writer.clone(), current_device.clone());
+            (current_device, Some(tun_writer), None)
+        };
+        //外部数据接收处理
+        let channel_recv_handler = recv_handler::RecvHandler::new(channel.try_clone()?, current_device.clone(), device_list.clone(), register.clone(),
+                                                                  nat_test.clone(), tun_writer.clone(), tap_writer.clone(), connect_status.clone(), peer_nat_info_map.clone());
+        recv_handler::start(channel_recv_handler);
         // 定时心跳
         heartbeat_handler::start_heartbeat(channel.sender()?, device_list.clone(), current_device.clone());
         // 空闲检查
@@ -54,19 +82,12 @@ impl Switch {
         punch_handler::start_cone(punch.try_clone()?, current_device.clone());
         punch_handler::start_symmetric(punch, current_device.clone());
         punch_handler::start_punch(nat_test.clone(), device_list.clone(), channel.sender()?, current_device.clone());
-        //tun数据接收处理
-        tun_handler::start(channel.sender()?, tun_reader.clone(), tun_writer.clone(), current_device.clone());
-        //外部数据接收处理
-        let channel_recv_handler = recv_handler::RecvHandler::new(channel.try_clone()?, current_device.clone(), device_list.clone(), register.clone(),
-                                                                  nat_test.clone(), tun_writer.clone(), connect_status.clone(), peer_nat_info_map.clone());
-        for _ in 0..2 {
-            recv_handler::start(channel_recv_handler.try_clone()?);
-        }
         log::info!("switch启动成功");
         Ok(Switch {
             name: config.name,
             current_device,
-            tun_reader,
+            tun_writer,
+            tap_writer,
             nat_channel: channel,
             nat_test,
             device_list,
@@ -108,7 +129,12 @@ impl Switch {
         self.nat_channel.route_table()
     }
     pub fn stop(&self) -> io::Result<()> {
-        self.tun_reader.close();
+        if let Some(tap) = &self.tap_writer {
+            tap.close()?;
+        }
+        if let Some(tun) = &self.tun_writer {
+            tun.close()?;
+        }
         self.nat_channel.close()?;
         Ok(())
     }
@@ -116,6 +142,7 @@ impl Switch {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub tap: bool,
     pub token: String,
     pub device_id: String,
     pub name: String,
@@ -124,12 +151,13 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(token: String,
+    pub fn new(tap: bool, token: String,
                device_id: String,
                name: String,
                server_address: SocketAddr,
                nat_test_server: Vec<SocketAddr>, ) -> Self {
         Self {
+            tap,
             token,
             device_id,
             name,

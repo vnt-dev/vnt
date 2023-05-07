@@ -42,6 +42,7 @@
    2. ssh
    
       <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/switch/dev/documents/img/ssh.jpg">
+5. 帮助，使用-h命令查看
 
 ### 更多玩法
 
@@ -72,6 +73,7 @@
 ### 特性
 - IP层数据转发
   - tun虚拟网卡
+  - tap虚拟网卡
 - NAT穿透
   - 点对点穿透
   - 服务端中继转发

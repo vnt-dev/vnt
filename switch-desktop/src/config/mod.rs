@@ -13,6 +13,7 @@ use crate::StartArgs;
 pub mod log_config;
 
 pub struct StartConfig {
+    pub tap: bool,
     pub name: String,
     pub token: String,
     pub server: SocketAddr,
@@ -21,7 +22,20 @@ pub struct StartConfig {
 }
 
 pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
+    println!("========参数配置========");
     let args_config = read_config();
+    let tap = start_args.tap.unwrap_or_else(|| {
+        if let Some(c) = &args_config {
+            c.tap
+        } else {
+            false
+        }
+    });
+    if tap {
+        println!("use tap");
+    } else {
+        println!("use tun");
+    }
     if args_config.is_none() && start_args.token.is_none() {
         return Err("找不到token(Token not found)".to_string());
     }
@@ -32,7 +46,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     if token.len() > 64 {
         return Err("token不能超过64字符(Token cannot exceed 64 characters)".to_string());
     }
-    println!("token:{:?}",token);
+    println!("token:{:?}", token);
     let name = start_args.name.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.name.is_empty() {
@@ -47,7 +61,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     } else {
         name.to_string()
     };
-    println!("name:{:?}",name);
+    println!("name:{:?}", name);
     let device_id = start_args.device_id.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.device_id.is_empty() {
@@ -63,7 +77,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     if device_id.is_empty() || device_id.len() > 64 {
         return Err("设备id不能为空并且长度不能大于64字符(The device id cannot be empty and the length cannot be greater than 64 characters)".to_string());
     }
-    println!("device_id:{:?}",device_id);
+    println!("device_id:{:?}", device_id);
     let server = match start_args.server.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.server.is_empty() {
@@ -83,7 +97,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
             return Err(format!("中继服务器地址错误( Relay server address error) :{:?}", e));
         }
     };
-    println!("中继服务器:{:?}",server);
+    println!("中继服务器:{:?}", server);
     let nat_test_server = start_args.nat_test_server.unwrap_or_else(|| {
         if let Some(c) = &args_config {
             if !c.nat_test_server.is_empty() {
@@ -96,14 +110,16 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     if nat_test_server.is_empty() {
         return Err("NAT检测服务地址错误(NAT detection service address error)".to_string());
     }
-    println!("NAT探测服务器:{:?}",nat_test_server);
+    println!("NAT探测服务器:{:?}", nat_test_server);
     let base_config = StartConfig {
+        tap,
         name,
         token,
         server,
         nat_test_server,
         device_id,
     };
+    println!("========参数配置========");
     Ok(base_config)
 }
 
@@ -114,6 +130,8 @@ lazy_static! {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArgsConfig {
+    #[serde(default = "default_tap")]
+    pub tap: bool,
     #[serde(default = "default_version")]
     pub version: String,
     #[serde(default = "default_str")]
@@ -123,12 +141,16 @@ pub struct ArgsConfig {
     pub command_port: Option<u16>,
     #[serde(default = "default_str")]
     pub server: String,
-    #[serde(default = "default_resource_vec")]
+    #[serde(default = "default_vec")]
     pub nat_test_server: Vec<String>,
     #[serde(default = "default_str")]
     pub device_id: String,
     #[serde(default = "default_pid")]
     pub pid: u32,
+}
+
+fn default_tap() -> bool {
+    false
 }
 
 fn default_version() -> String {
@@ -139,7 +161,7 @@ fn default_str() -> String {
     "".to_string()
 }
 
-fn default_resource_vec() -> Vec<String> {
+fn default_vec() -> Vec<String> {
     vec![]
 }
 
@@ -148,19 +170,22 @@ fn default_pid() -> u32 {
 }
 
 impl ArgsConfig {
-    pub fn new(token: String, name: String, server: String, nat_test_server: Vec<String>, device_id: String) -> Self {
+    pub fn new(tap: bool, token: String, name: String, server: SocketAddr,
+               nat_test_server: &Vec<SocketAddr>, device_id: String, ) -> Self {
         Self {
+            tap,
             version: "1.0".to_string(),
             token,
             name,
             command_port: None,
-            server,
-            nat_test_server,
+            server: server.to_string(),
+            nat_test_server: nat_test_server.iter().map(|v| v.to_string()).collect::<Vec<String>>(),
             device_id,
             pid: 0,
         }
     }
 }
+
 pub fn lock_file() -> io::Result<File> {
     let path = SWITCH_HOME_PATH.lock().clone().unwrap().join(".lock");
     Ok(File::create(path)?)
