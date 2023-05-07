@@ -68,7 +68,8 @@
 - Mac
 - Linux
 - Windows
-  - 依赖 wintun.dll(https://www.wintun.net/)
+  - 使用tun网卡 依赖wintun.dll(https://www.wintun.net/)
+  - 使用tap网卡 依赖tap-windows(https://build.openvpn.net/downloads/releases/)
 
 ### 特性
 - IP层数据转发
