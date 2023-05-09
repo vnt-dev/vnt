@@ -188,7 +188,9 @@ impl ArgsConfig {
 
 pub fn lock_file() -> io::Result<File> {
     let path = SWITCH_HOME_PATH.lock().clone().unwrap().join(".lock");
-    Ok(File::create(path)?)
+    let file = File::create(path)?;
+    file.sync_all()?;
+    Ok(file)
 }
 
 pub fn save_config(config: ArgsConfig) -> io::Result<()> {
@@ -198,10 +200,11 @@ pub fn save_config(config: ArgsConfig) -> io::Result<()> {
 
 fn save_config_(config: ArgsConfig, config_path: PathBuf) -> io::Result<()> {
     let mut config_lock = CONFIG.lock();
-    config_lock.take();
+    config_lock.replace(config.clone());
     let str = serde_yaml::to_string(&config).unwrap();
     let mut file = File::create(config_path)?;
-    file.write_all(str.as_bytes())
+    file.write_all(str.as_bytes())?;
+    file.sync_all()
 }
 
 pub fn update_pid(pid: u32) -> io::Result<()> {
