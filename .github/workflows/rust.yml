@@ -132,6 +132,9 @@ jobs:
       - name: List
         run: find ./artifacts
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: svenstaro/upload-release-action@v2
         with:
+          repo_token: ${{ secrets.YOURTOKEN }}
           files: ./artifacts/*.tar.gz
+          tag: ${{ github.ref }}
+          overwrite: true
