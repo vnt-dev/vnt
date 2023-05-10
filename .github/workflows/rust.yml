@@ -2,7 +2,8 @@ name: Rust
 
 on:
   push:
-  pull_request:
+    tags:
+    - '*'
 
 env:
   CARGO_TERM_COLOR: always
