@@ -3,7 +3,7 @@ name: Rust
 on:
   push:
     tags:
-    - '*'
+      - '*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -139,3 +139,4 @@ jobs:
           files: ./artifacts/*.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
+          file_glob: true
