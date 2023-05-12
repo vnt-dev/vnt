@@ -15,14 +15,6 @@ pub fn main0(base_args: BaseArgs) {
             let off_command_server = args.off_command_server;
             match config::default_config(args) {
                 Ok(start_config) => {
-                    if sudo::RunningAs::Root != sudo::check() {
-                        println!(
-                            "{}",
-                            style("需要使用root权限执行(Need to execute with root permission)...").red()
-                        );
-                        sudo::escalate_if_needed().unwrap();
-                    }
-
                     let config = Config::new(
                         start_config.tap,
                         start_config.token.clone(),
@@ -100,13 +92,6 @@ pub fn main0(base_args: BaseArgs) {
             }
         }
         Commands::Stop => {
-            if sudo::RunningAs::Root != sudo::check() {
-                println!(
-                    "{}",
-                    style("需要使用root权限执行(Need to execute with root permission)...").red()
-                );
-                sudo::escalate_if_needed().unwrap();
-            }
             command(CommandEnum::Stop);
             if let Ok(pid) = config::read_pid() {
                 if pid != 0 {

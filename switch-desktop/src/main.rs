@@ -146,9 +146,16 @@ fn main() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn main() {
+    if sudo::RunningAs::Root != sudo::check() {
+        println!(
+            "{}",
+            style("需要使用root权限执行(Need to execute with root permission)...").red()
+        );
+        sudo::escalate_if_needed().unwrap();
+    }
+    let args = BaseArgs::parse();
     let home = dirs::home_dir().unwrap().join(".switch_desktop");
     config::set_home(home);
-    let args = BaseArgs::parse();
     if let Commands::Start(start_args) = &args.command {
         if start_args.log {
             let _ = log_init();
