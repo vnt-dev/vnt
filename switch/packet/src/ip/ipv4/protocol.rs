@@ -1,4 +1,4 @@
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(Eq, PartialEq,Ord, PartialOrd, Copy, Clone, Debug)]
 pub enum Protocol {
     ///
     Hopopt,

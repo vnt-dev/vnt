@@ -67,6 +67,7 @@ pub fn create_tun(
     address: Ipv4Addr,
     netmask: Ipv4Addr,
     gateway: Ipv4Addr,
+    in_ips:Vec<(Ipv4Addr,Ipv4Addr)>
 ) -> io::Result<(TunWriter, TunReader)> {
     unsafe {
         println!("========TUN网卡配置========");
@@ -103,6 +104,9 @@ pub fn create_tun(
         log::error!("创建tun成功 {:?}",tun_device.get_name()?);
         tun_device.set_ip(address, netmask)?;
         tun_device.set_mtu(1420)?;
+        for (address, netmask) in in_ips {
+            tun_device.add_route(address, netmask, gateway)?;
+        }
         tun_device.add_route(address, netmask, gateway)?;
         let device = Arc::new(tun_device);
         println!("========TUN网卡配置========");

@@ -1,19 +1,17 @@
 use std::io;
-use crate::config::SWITCH_HOME_PATH;
+use std::path::PathBuf;
+use crate::config::get_home;
+
 #[cfg(target_os = "windows")]
 pub fn log_service_init() -> io::Result<()> {
-    log_init_("switch-service.log")
+    log_init_(crate::config::get_win_server_home().join("switch-service.log"))
 }
+
 pub fn log_init() -> io::Result<()> {
-    log_init_("switch-desktop.log")
+    log_init_(get_home().join("switch-desktop.log"))
 }
-pub fn log_init_(file_name:&str) -> io::Result<()> {
-    let home = SWITCH_HOME_PATH.lock().clone();
-    let home = if let Some(home) = home {
-        home
-    } else {
-        return Err(io::Error::new(io::ErrorKind::Other, "not found"));
-    };
+
+fn log_init_(file_name: PathBuf) -> io::Result<()> {
     let stderr = log4rs::append::console::ConsoleAppender::builder()
         .target(log4rs::append::console::Target::Stderr)
         .build();
@@ -22,7 +20,7 @@ pub fn log_init_(file_name:&str) -> io::Result<()> {
         .encoder(Box::new(log4rs::encode::pattern::PatternEncoder::new(
             "{d(%+)(utc)} [{f}:{L}] {h({l})} {M}:{m}{n}\n",
         )))
-        .build(home.join(file_name))?;
+        .build(file_name)?;
     match log4rs::Config::builder()
         .appender(log4rs::config::Appender::builder().build("logfile", Box::new(logfile)))
         .appender(

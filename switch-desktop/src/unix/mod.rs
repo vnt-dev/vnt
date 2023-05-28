@@ -9,87 +9,91 @@ use crate::{BaseArgs, Commands, config};
 use crate::command::{command, CommandEnum};
 
 
-pub fn main0(base_args: BaseArgs) {
+pub async fn main0(base_args: BaseArgs) {
     match base_args.command {
         Commands::Start(args) => {
-            let off_command_server = args.off_command_server;
-            match config::default_config(args) {
-                Ok(start_config) => {
-                    let config = Config::new(
-                        start_config.tap,
-                        start_config.token.clone(),
-                        start_config.device_id.clone(),
-                        start_config.name.clone(),
-                        start_config.server,
-                        start_config.nat_test_server.clone(),
-                    );
-                    let args_config = config::ArgsConfig::new(
-                        start_config.tap,
-                        start_config.token.clone(),
-                        start_config.name.clone(),
-                        start_config.server,
-                        &start_config.nat_test_server,
-                        start_config.device_id.clone(),
-                    );
-                    let lock = match config::lock_file() {
-                        Ok(lock) => {
-                            lock
-                        }
-                        Err(e) => {
-                            log::error!("{:?}",e);
-                            println!("文件锁定失败:{:?}", e);
-                            return;
-                        }
-                    };
-                    if lock.try_lock_exclusive().is_err() {
-                        println!("{}", style("文件被重复打开").red());
+            let start_config = if let Some(config_path) = &args.config {
+                match config::read_config_file(config_path.into()) {
+                    Ok(start_config) => {
+                        start_config
+                    }
+                    Err(e) => {
+                        println!("{}", style(&e).red());
+                        log::error!("{:?}", e);
                         return;
                     }
-                    if let Err(e) = config::save_config(args_config) {
-                        log::error!("{:?}",e);
-                        lock.unlock().unwrap();
+                }
+            } else {
+                match config::default_config(args) {
+                    Ok(start_config) => {
+                        start_config
+                    }
+                    Err(e) => {
+                        println!("{}", style(&e).red());
+                        log::error!("{:?}", e);
                         return;
                     }
-                    let switch = match Switch::start(config) {
-                        Ok(switch) => {
-                            switch
-                        }
-                        Err(e) => {
-                            log::error!("{:?}", e);
-                            println!("启动switch失败:{:?}", e);
-                            lock.unlock().unwrap();
-                            return;
-                        }
-                    };
-                    let switch = Arc::new(switch);
-                    let command_server = crate::command::server::CommandServer::new();
-                    if off_command_server {
-                        crate::console_listen(&switch);
-                        log::info!("前台任务结束");
-                    } else {
-                        if let Err(e) = config::update_pid(std::process::id()) {
-                            log::error!("{:?}", e);
-                        }
-                        let switch1 = switch.clone();
-                        let handle = std::thread::Builder::new().name("cmd-server".into()).spawn(move || {
-                            if let Err(e) = command_server.start(switch1) {
-                                log::error!("{:?}", e);
-                            }
-                        }).unwrap();
-                        crate::console_listen(&switch);
-                        if let Err(e) = handle.join() {
-                            log::error!("后台任务异常{:?}",e);
-                        } else {
-                            log::info!("后台任务结束");
-                        }
-                    }
-                    lock.unlock().unwrap();
+                }
+            };
+            let off_command_server = start_config.off_command_server;
+            let config = Config::new(
+                start_config.tap,
+                start_config.token.clone(),
+                start_config.device_id.clone(),
+                start_config.name.clone(),
+                start_config.server,
+                start_config.nat_test_server.clone(),
+                start_config.in_ips.clone(),
+                start_config.out_ips.clone(),
+            );
+            let lock = match config::lock_file() {
+                Ok(lock) => {
+                    lock
                 }
                 Err(e) => {
-                    println!("{}", style(&e).red());
+                    log::error!("{:?}",e);
+                    println!("文件锁定失败:{:?}", e);
+                    return;
+                }
+            };
+            if lock.try_lock_exclusive().is_err() {
+                println!("{}", style("文件被重复打开").red());
+                return;
+            }
+            let switch = match Switch::start(config).await {
+                Ok(switch) => {
+                    switch
+                }
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    println!("启动switch失败:{:?}", e);
+                    lock.unlock().unwrap();
+                    return;
+                }
+            };
+            let switch = Arc::new(switch);
+            let command_server = crate::command::server::CommandServer::new();
+            if off_command_server {
+                crate::console_listen(&switch);
+                log::info!("前台任务结束");
+            } else {
+                if let Err(e) = config::update_pid(std::process::id()) {
                     log::error!("{:?}", e);
                 }
+                let switch1 = switch.clone();
+                let handle = std::thread::Builder::new().name("cmd-server".into()).spawn(move || {
+                    if let Err(e) = command_server.start(switch1) {
+                        log::error!("{:?}", e);
+                    }
+                }).unwrap();
+                crate::console_listen(&switch);
+                if let Err(e) = handle.join() {
+                    log::error!("后台任务异常{:?}",e);
+                } else {
+                    log::info!("后台任务结束");
+                }
             }
+            lock.unlock().unwrap();
         }
         Commands::Stop => {
             command(CommandEnum::Stop);

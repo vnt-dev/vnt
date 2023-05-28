@@ -1,15 +1,19 @@
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+
 use crossbeam::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
+
 use p2p_channel::boot::Boot;
 use p2p_channel::channel::{Channel, Route, RouteKey};
 use p2p_channel::punch::NatInfo;
-use crate::handle::{ConnectStatus, CurrentDeviceInfo, heartbeat_handler, PeerDeviceInfo, punch_handler, recv_handler, registration_handler, tap_handler, tun_handler};
-use crate::nat::NatTest;
+
 use crate::{tap_device, tun_device};
+use crate::external_route::ExternalRoute;
+use crate::handle::{ConnectStatus, CurrentDeviceInfo, CurrentDeviceInfoExt, heartbeat_handler, PeerDeviceInfo, punch_handler, recv_handler, registration_handler, tap_handler, tun_handler};
+use crate::nat::NatTest;
 use crate::tap_device::TapWriter;
 use crate::tun_device::TunWriter;
 
@@ -29,8 +33,9 @@ pub struct Switch {
 }
 
 impl Switch {
-    pub fn start(config: Config) -> crate::Result<Switch> {
+    pub async fn start(config: Config) -> crate::Result<Switch> {
         log::info!("config:{:?}",config);
+
         let (mut channel, punch, idle) = Boot::new::<Ipv4Addr>(80, 15000, 0)?;
         let response = registration_handler::registration(&mut channel, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone())?;
         let register = Arc::new(registration_handler::Register::new(channel.sender()?, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()));
@@ -45,18 +50,24 @@ impl Switch {
         let local_port = channel.local_addr()?.port();
         // NAT检测
         let nat_test = NatTest::new(config.nat_test_server.clone(), Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_port);
-        let (current_device, tun_writer, tap_writer) = if config.tap {
+        let in_ips = config.in_ips.iter().map(|(dest, mask, _)| { (Ipv4Addr::from(*dest), Ipv4Addr::from(*mask)) }).collect::<Vec<(Ipv4Addr, Ipv4Addr)>>();
+
+        let out_ips = config.out_ips.iter().map(|(_, _, ip)| *ip).collect::<Vec<Ipv4Addr>>();
+        let out_external_route = ExternalRoute::new(config.out_ips);
+        let in_external_route = ExternalRoute::new(config.in_ips);
+        let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, config.server_address)));
+        let ip_proxy_map = crate::ip_proxy::init_proxy(channel.sender()?,out_ips,current_device.clone()).await?;
+        let ( current_device_ext,tun_writer, tap_writer) = if config.tap {
             #[cfg(windows)]
             {
                 //删除switch的tun网卡避免ip冲突，因为非正常退出会保留网卡
                 tun_device::delete_tun();
             }
             let (tap_writer, tap_reader, mac) = tap_device::create_tap(virtual_ip, virtual_netmask, virtual_gateway)?;
-            let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask,
-                                                                                 config.server_address, mac)));
+            let current_device_ext = Arc::new(AtomicCell::new(CurrentDeviceInfoExt::new( mac)));
             //tap数据处理
-            tap_handler::start(channel.sender()?, tap_reader.clone(), tap_writer.clone(), current_device.clone());
-            (current_device, None, Some(tap_writer))
+            tap_handler::start(channel.sender()?, tap_reader.clone(), tap_writer.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
+            (current_device_ext, None, Some(tap_writer))
         } else {
             #[cfg(windows)]
             {
@@ -64,15 +75,16 @@ impl Switch {
                 tap_device::delete_tap();
             }
             // tun通道
-            let (tun_writer, tun_reader) = tun_device::create_tun(virtual_ip, virtual_netmask, virtual_gateway)?;
-            let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, config.server_address, [0, 0, 0, 0, 0, 0])));
+            let (tun_writer, tun_reader) = tun_device::create_tun(virtual_ip, virtual_netmask, virtual_gateway,in_ips)?;
+            let current_device_ext = Arc::new(AtomicCell::new(CurrentDeviceInfoExt::new( [0, 0, 0, 0, 0, 0])));
             //tun数据接收处理
-            tun_handler::start(channel.sender()?, tun_reader.clone(), tun_writer.clone(), current_device.clone());
-            (current_device, Some(tun_writer), None)
+            tun_handler::start(channel.sender()?, tun_reader.clone(), tun_writer.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
+            (current_device_ext,Some(tun_writer), None)
         };
         //外部数据接收处理
-        let channel_recv_handler = recv_handler::RecvHandler::new(channel.try_clone()?, current_device.clone(), device_list.clone(), register.clone(),
-                                                                  nat_test.clone(), tun_writer.clone(), tap_writer.clone(), connect_status.clone(), peer_nat_info_map.clone());
+        let channel_recv_handler = recv_handler::RecvHandler::new(channel.try_clone()?, current_device.clone(), current_device_ext,device_list.clone(), register.clone(),
+                                                                  nat_test.clone(), tun_writer.clone(), tap_writer.clone(),
+                                                                  connect_status.clone(), peer_nat_info_map.clone(), ip_proxy_map, out_external_route);
         recv_handler::start(channel_recv_handler);
         // 定时心跳
         heartbeat_handler::start_heartbeat(channel.sender()?, device_list.clone(), current_device.clone());
@@ -148,6 +160,8 @@ pub struct Config {
     pub name: String,
     pub server_address: SocketAddr,
     pub nat_test_server: Vec<SocketAddr>,
+    pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
+    pub out_ips: Vec<(u32, u32, Ipv4Addr)>,
 }
 
 impl Config {
@@ -155,7 +169,8 @@ impl Config {
                device_id: String,
                name: String,
                server_address: SocketAddr,
-               nat_test_server: Vec<SocketAddr>, ) -> Self {
+               nat_test_server: Vec<SocketAddr>,
+               in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32, Ipv4Addr)>, ) -> Self {
         Self {
             tap,
             token,
@@ -163,6 +178,8 @@ impl Config {
             name,
             server_address,
             nat_test_server,
+            in_ips,
+            out_ips,
         }
     }
 }

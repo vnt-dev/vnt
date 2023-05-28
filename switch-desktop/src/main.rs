@@ -97,7 +97,18 @@ pub struct StartArgs {
     log: bool,
     /// 使用tap网卡
     #[arg(long)]
-    tap: Option<bool>,
+    tap: bool,
+    /// 配置点对网时使用，--in-ip 192.168.10.0/24,10.26.0.3，表示允许接收网段192.168.10.0/24的数据并转发到10.26.0.3
+    /// Use when configuring peer-to-peer networks
+    #[arg(long)]
+    in_ip:Option<Vec<String>>,
+    /// 配置点对网时使用，--out-ip 192.168.10.0/24,192.168.1.10，表示允许目标为192.168.10.0/24的数据从网卡192.168.1.10转发出去
+    /// Use when configuring peer-to-peer networks
+    #[arg(long)]
+    out_ip:Option<Vec<String>>,
+    /// 读取配置文件 --config config_file_path
+    /// Read configuration file
+    config:Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -124,28 +135,27 @@ pub struct ConfigArgs {
 
 
 #[cfg(windows)]
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.len() == 3 && args[1] == windows::SERVICE_FLAG {
         //以服务的方式启动
-        config::set_home(std::path::PathBuf::from(&args[2]));
         windows::service::start();
         return;
     } else {
-        let home = dirs::home_dir().unwrap().join(".switch_desktop");
-        config::set_home(home);
         let args = BaseArgs::parse();
         if let Commands::Start(start_args) = &args.command {
             if start_args.log {
                 let _ = log_init();
             }
         }
-        windows::main0(args);
+        windows::main0(args).await;
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn main() {
+#[tokio::main]
+async fn main() {
     if sudo::RunningAs::Root != sudo::check() {
         println!(
             "{}",
@@ -154,14 +164,12 @@ fn main() {
         sudo::escalate_if_needed().unwrap();
     }
     let args = BaseArgs::parse();
-    let home = dirs::home_dir().unwrap().join(".switch_desktop");
-    config::set_home(home);
     if let Commands::Start(start_args) = &args.command {
         if start_args.log {
             let _ = log_init();
         }
     }
-    unix::main0(args);
+    unix::main0(args).await;
 }
 
 pub fn console_listen(switch: &Switch) {

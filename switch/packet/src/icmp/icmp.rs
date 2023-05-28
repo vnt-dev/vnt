@@ -21,7 +21,7 @@ use crate::icmp::{Code, Kind};
 use crate::ip::ipv4::packet::IpV4Packet;
 
 pub struct IcmpPacket<B> {
-    buffer: B,
+    pub buffer: B,
 }
 
 impl<B: AsRef<[u8]>> IcmpPacket<B> {

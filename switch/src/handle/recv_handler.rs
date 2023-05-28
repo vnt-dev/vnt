@@ -1,5 +1,5 @@
-use std::{io, thread};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::thread;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 
 use chrono::Local;
@@ -12,12 +12,15 @@ use p2p_channel::channel::{Channel, Route, RouteKey};
 use p2p_channel::punch::NatInfo;
 use packet::ethernet;
 use packet::icmp::{icmp, Kind};
+use packet::icmp::icmp::HeaderOther;
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 
 use crate::error::Error;
-use crate::handle::{check_dest, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
+use crate::external_route::ExternalRoute;
+use crate::handle::{check_dest, ConnectStatus, CurrentDeviceInfo, CurrentDeviceInfoExt, PeerDeviceInfo};
 use crate::handle::registration_handler::Register;
+use crate::ip_proxy::IpProxyMap;
 use crate::nat;
 use crate::nat::NatTest;
 use crate::proto::message::{DeviceList, PunchInfo, PunchNatType, RegistrationResponse};
@@ -56,6 +59,7 @@ pub fn start(mut handler: RecvHandler) {
 pub struct RecvHandler {
     channel: Channel<Ipv4Addr>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    current_device_ext: Arc<AtomicCell<CurrentDeviceInfoExt>>,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     register: Arc<Register>,
     nat_test: NatTest,
@@ -63,11 +67,14 @@ pub struct RecvHandler {
     tap_writer: Option<TapWriter>,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
     peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
+    ip_proxy_map: IpProxyMap,
+    out_external_route: ExternalRoute,
 }
 
 impl RecvHandler {
     pub fn new(channel: Channel<Ipv4Addr>,
                current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+               current_device_ext: Arc<AtomicCell<CurrentDeviceInfoExt>>,
                device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
                register: Arc<Register>,
                nat_test: NatTest,
@@ -75,10 +82,13 @@ impl RecvHandler {
                tap_writer: Option<TapWriter>,
                connect_status: Arc<AtomicCell<ConnectStatus>>,
                peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
+               ip_proxy_map: IpProxyMap,
+               out_external_route: ExternalRoute,
     ) -> Self {
         Self {
             channel,
             current_device,
+            current_device_ext,
             device_list,
             register,
             nat_test,
@@ -86,21 +96,23 @@ impl RecvHandler {
             tap_writer,
             connect_status,
             peer_nat_info_map,
+            ip_proxy_map,
+            out_external_route,
         }
     }
-    pub fn try_clone(&self) -> io::Result<Self> {
-        Ok(Self {
-            channel: self.channel.try_clone()?,
-            current_device: self.current_device.clone(),
-            device_list: self.device_list.clone(),
-            register: self.register.clone(),
-            nat_test: self.nat_test.clone(),
-            tun_writer: self.tun_writer.clone(),
-            tap_writer: self.tap_writer.clone(),
-            connect_status: self.connect_status.clone(),
-            peer_nat_info_map: self.peer_nat_info_map.clone(),
-        })
-    }
+    // pub fn try_clone(&self) -> io::Result<Self> {
+    //     Ok(Self {
+    //         channel: self.channel.try_clone()?,
+    //         current_device: self.current_device.clone(),
+    //         device_list: self.device_list.clone(),
+    //         register: self.register.clone(),
+    //         nat_test: self.nat_test.clone(),
+    //         tun_writer: self.tun_writer.clone(),
+    //         tap_writer: self.tap_writer.clone(),
+    //         connect_status: self.connect_status.clone(),
+    //         peer_nat_info_map: self.peer_nat_info_map.clone(),
+    //     })
+    // }
 }
 
 impl RecvHandler {
@@ -144,36 +156,82 @@ impl RecvHandler {
         match net_packet.protocol() {
             Protocol::Ipv4Turn => {
                 let mut ipv4 = IpV4Packet::new(net_packet.payload_mut())?;
+                if ipv4.destination_ip() == destination && ipv4.protocol() == ipv4::protocol::Protocol::Icmp {
+                    let mut icmp_packet = icmp::IcmpPacket::new(ipv4.payload_mut())?;
+                    if icmp_packet.kind() == Kind::EchoRequest {
+                        //开启ping
+                        icmp_packet.set_kind(Kind::EchoReply);
+                        icmp_packet.update_checksum();
+                        ipv4.set_source_ip(destination);
+                        ipv4.set_destination_ip(source);
+                        ipv4.update_checksum();
+                        net_packet.set_source(destination);
+                        net_packet.set_destination(source);
+                        self.channel.send_to_route(net_packet.buffer(), route_key)?;
+                        return Ok(());
+                    }
+                }
                 if ipv4.destination_ip() != destination {
-                    //todo 外部数据转发
-                } else {
-                    if ipv4.protocol() == ipv4::protocol::Protocol::Icmp {
-                        let mut icmp_packet = icmp::IcmpPacket::new(ipv4.payload_mut())?;
-                        if icmp_packet.kind() == Kind::EchoRequest {
-                            //开启ping
-                            icmp_packet.set_kind(Kind::EchoReply);
-                            icmp_packet.update_checksum();
-                            ipv4.set_source_ip(destination);
-                            ipv4.set_destination_ip(source);
-                            ipv4.update_checksum();
-                            net_packet.set_source(destination);
-                            net_packet.set_destination(source);
-                            self.channel.send_to_route(net_packet.buffer(), route_key)?;
-                            return Ok(());
+                    if let Some(gate_way) = self.out_external_route.route(&ipv4.destination_ip()) {
+                        match ipv4.protocol() {
+                            ipv4::protocol::Protocol::Tcp => {
+                                let dest_ip = ipv4.destination_ip();
+                                //转发到代理目标地址
+                                let mut tcp_packet = packet::tcp::tcp::TcpPacket::new(source, destination, ipv4.payload_mut())?;
+                                let source_port = tcp_packet.source_port();
+                                let dest_port = tcp_packet.destination_port();
+                                tcp_packet.set_destination_port(self.ip_proxy_map.tcp_proxy_port);
+                                tcp_packet.update_checksum();
+                                ipv4.set_destination_ip(destination);
+                                ipv4.update_checksum();
+                                self.ip_proxy_map.tcp_proxy_map.insert(SocketAddrV4::new(source, source_port),
+                                                                       (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                            }
+                            ipv4::protocol::Protocol::Udp => {
+                                let dest_ip = ipv4.destination_ip();
+                                //转发到代理目标地址
+                                let mut udp_packet = packet::udp::udp::UdpPacket::new(source, destination, ipv4.payload_mut())?;
+                                let source_port = udp_packet.source_port();
+                                let dest_port = udp_packet.destination_port();
+                                udp_packet.set_destination_port(self.ip_proxy_map.udp_proxy_port);
+                                udp_packet.update_checksum();
+                                ipv4.set_destination_ip(destination);
+                                ipv4.update_checksum();
+                                println!("{:?}",ipv4);
+                                self.ip_proxy_map.udp_proxy_map.insert(SocketAddrV4::new(source, source_port),
+                                                                       (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                            }
+                            ipv4::protocol::Protocol::Icmp => {
+                                let dest_ip = ipv4.destination_ip();
+                                //转发到代理目标地址
+                                let icmp_packet = icmp::IcmpPacket::new(ipv4.payload())?;
+                                match icmp_packet.header_other() {
+                                    HeaderOther::Identifier(id, seq) => {
+                                        self.ip_proxy_map.icmp_proxy_map.insert((dest_ip, id, seq), source);
+                                        self.ip_proxy_map.send_icmp(ipv4.payload(), &gate_way, &dest_ip)?;
+                                    }
+                                    _ => {
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                            _ => {
+                                return Ok(());
+                            }
                         }
                     }
-                    if let Some(tun_writer) = &self.tun_writer {
-                        tun_writer.write(net_packet.payload())?;
-                    } else {
-                        if let Some(tap_writer) = &self.tap_writer {
-                            let mut ethernet_packet = ethernet::packet::EthernetPacket::unchecked(vec![0; 14 + ipv4.buffer.len()]);
-                            let source = source.octets();
-                            ethernet_packet.set_source(&[source[0], source[1], source[2], source[3], 123, 234]);
-                            ethernet_packet.set_destination(&current_device.mac);
-                            ethernet_packet.set_protocol(ethernet::protocol::Protocol::Ipv4);
-                            ethernet_packet.payload_mut().copy_from_slice(ipv4.buffer);
-                            tap_writer.write(&ethernet_packet.buffer)?;
-                        }
+                }
+                if let Some(tun_writer) = &self.tun_writer {
+                    tun_writer.write(net_packet.payload())?;
+                } else {
+                    if let Some(tap_writer) = &self.tap_writer {
+                        let mut ethernet_packet = ethernet::packet::EthernetPacket::unchecked(vec![0; 14 + ipv4.buffer.len()]);
+                        let source = source.octets();
+                        ethernet_packet.set_source(&[source[0], source[1], source[2], source[3], 123, 234]);
+                        ethernet_packet.set_destination(&self.current_device_ext.load().mac);
+                        ethernet_packet.set_protocol(ethernet::protocol::Protocol::Ipv4);
+                        ethernet_packet.payload_mut().copy_from_slice(ipv4.buffer);
+                        tap_writer.write(&ethernet_packet.buffer)?;
                     }
                 }
             }
@@ -225,7 +283,7 @@ impl RecvHandler {
                         }
                     }
                     let new_current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway,
-                                                                    virtual_netmask, current_device.connect_server, current_device.mac);
+                                                                    virtual_netmask, current_device.connect_server);
                     if let Err(e) = self.current_device.compare_exchange(current_device, new_current_device) {
                         log::warn!("替换失败:{:?}",e);
                     }

@@ -11,4 +11,6 @@ pub mod proto;
 pub mod protocol;
 pub mod tun_device;
 pub mod tap_device;
+pub mod ip_proxy;
+pub mod external_route;
 pub mod core;

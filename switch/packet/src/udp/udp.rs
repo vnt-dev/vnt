@@ -1,9 +1,5 @@
 use std::fmt;
-use std::io::Cursor;
-use std::net::IpAddr;
-
-use byteorder::WriteBytesExt;
-use byteorder::{BigEndian, ReadBytesExt};
+use std::net::Ipv4Addr;
 
 use crate::error::*;
 
@@ -53,20 +49,20 @@ RFC 768   https://www.ietf.org/rfc/rfc768.txt
 */
 
 pub struct UdpPacket<B> {
-    source_ip: IpAddr,
-    destination_ip: IpAddr,
+    source_ip: Ipv4Addr,
+    destination_ip: Ipv4Addr,
     buffer: B,
 }
 
 impl<B: AsRef<[u8]>> UdpPacket<B> {
-    pub fn unchecked(source_ip: IpAddr, destination_ip: IpAddr, buffer: B) -> UdpPacket<B> {
+    pub fn unchecked(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> UdpPacket<B> {
         UdpPacket {
             source_ip,
             destination_ip,
             buffer,
         }
     }
-    pub fn new(source_ip: IpAddr, destination_ip: IpAddr, buffer: B) -> Result<UdpPacket<B>> {
+    pub fn new(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> Result<UdpPacket<B>> {
         if buffer.as_ref().len() < 8 {
             Err(Error::SmallBuffer)?
         }
@@ -78,30 +74,22 @@ impl<B: AsRef<[u8]>> UdpPacket<B> {
 impl<B: AsRef<[u8]>> UdpPacket<B> {
     /// 源端口
     pub fn source_port(&self) -> u16 {
-        (&self.buffer.as_ref()[0..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[0..2].try_into().unwrap())
     }
 
     /// 目标端口
     pub fn destination_port(&self) -> u16 {
-        (&self.buffer.as_ref()[2..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[2..4].try_into().unwrap())
     }
 
     /// 总字节数
     pub fn length(&self) -> u16 {
-        (&self.buffer.as_ref()[4..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[4..6].try_into().unwrap())
     }
 
     /// Checksum of the packet.
     pub fn checksum(&self) -> u16 {
-        (&self.buffer.as_ref()[6..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[6..8].try_into().unwrap())
     }
     /// 验证校验和,ipv4中为0表示不使用校验和，ipv6校验和不能为0
     pub fn is_valid(&self) -> bool {
@@ -111,21 +99,13 @@ impl<B: AsRef<[u8]>> UdpPacket<B> {
         &self.buffer.as_ref()[8..]
     }
     fn cal_checksum(&self) -> u16 {
-        match self.source_ip {
-            IpAddr::V4(src) => {
-                if let IpAddr::V4(dest) = self.destination_ip {
-                    return crate::ipv4_cal_checksum(
-                        self.buffer.as_ref(),
-                        &src,
-                        &dest,
-                        17,
-                        self.length(),
-                    );
-                }
-            }
-            IpAddr::V6(_src) => {}
-        }
-        unimplemented!()
+        crate::ipv4_cal_checksum(
+            self.buffer.as_ref(),
+            &self.source_ip,
+            &self.destination_ip,
+            17,
+            self.length(),
+        )
     }
 }
 
@@ -137,29 +117,21 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> UdpPacket<B> {
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> UdpPacket<B> {
     /// 设置源端口
-    pub fn set_source_port(&mut self, value: u16) -> &mut Self {
-        Cursor::new(&mut self.header_mut()[0..])
-            .write_u16::<BigEndian>(value)
-            .unwrap();
-        self
+    pub fn set_source_port(&mut self, value: u16) {
+        self.buffer.as_mut()[0..2].copy_from_slice(&value.to_be_bytes())
     }
 
     /// 设置目的端口
-    pub fn set_destination_port(&mut self, value: u16) -> &mut Self {
-        Cursor::new(&mut self.header_mut()[2..])
-            .write_u16::<BigEndian>(value)
-            .unwrap();
-        self
+    pub fn set_destination_port(&mut self, value: u16) {
+        self.buffer.as_mut()[2..4].copy_from_slice(&value.to_be_bytes())
     }
-    fn set_checknum(&mut self, value: u16) {
-        Cursor::new(&mut self.header_mut()[6..])
-            .write_u16::<BigEndian>(value)
-            .unwrap();
+    fn set_checksum(&mut self, value: u16) {
+        self.buffer.as_mut()[6..8].copy_from_slice(&value.to_be_bytes())
     }
-    pub fn update_checknum(&mut self) {
+    pub fn update_checksum(&mut self) {
         //先写0
-        self.set_checknum(0);
-        self.set_checknum(self.cal_checksum());
+        self.set_checksum(0);
+        self.set_checksum(self.cal_checksum());
     }
 }
 

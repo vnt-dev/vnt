@@ -61,6 +61,19 @@ pub enum ConnectStatus {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CurrentDeviceInfoExt {
+    pub mac: [u8; 6],
+}
+
+impl CurrentDeviceInfoExt {
+    pub fn new(mac: [u8; 6]) -> Self {
+        Self {
+            mac,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CurrentDeviceInfo {
     virtual_ip: Ipv4Addr,
     pub virtual_gateway: Ipv4Addr,
@@ -71,7 +84,7 @@ pub struct CurrentDeviceInfo {
     pub broadcast_address: Ipv4Addr,
     //链接的服务器地址
     pub connect_server: SocketAddr,
-    pub mac:[u8;6]
+
 }
 
 impl CurrentDeviceInfo {
@@ -80,7 +93,6 @@ impl CurrentDeviceInfo {
         virtual_gateway: Ipv4Addr,
         virtual_netmask: Ipv4Addr,
         connect_server: SocketAddr,
-        mac:[u8;6],
     ) -> Self {
         let broadcast_address = (!u32::from_be_bytes(virtual_netmask.octets()))
             | u32::from_be_bytes(virtual_gateway.octets());
@@ -95,7 +107,6 @@ impl CurrentDeviceInfo {
             virtual_network,
             broadcast_address,
             connect_server,
-            mac
         }
     }
     #[inline]

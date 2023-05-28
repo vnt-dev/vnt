@@ -28,13 +28,12 @@ chrono = "0.4.23"
 protobuf = "3.2.0"
 #local-ip-address = "0.4.9"
 socket2 ={ version = "0.5.2", features = ["all"] }
-
-#mio = {version = "0.8.6",features = ["os-poll", "net"]}
-#tokio = { version = "1.24.1", features = ["full"] }
+tokio = { version = "1.28.1", features = ["full"] }
 [target.'cfg(any(unix))'.dependencies]
 tun = { path = "./rust-tun" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+
 win-tun-tap = {path = "./win-tun-tap"}
 libloading = "0.7.4"
 

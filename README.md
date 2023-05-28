@@ -4,13 +4,13 @@
 将不同网络下的多个设备虚拟到一个局域网下
 
 
-### 示例：
+### 快速使用：
 
 1. 指定一个token，在多台设备上运行该程序，例如：
     ```shell
       # linux上
       root@DESKTOP-0BCHNIO:/opt# ./switch-desktop start --token 123456
-      # 在另一台linux上使用nohup后台运行，不在命令行指定配置时，将在home/.switch/config文件中读取配置
+      # 在另一台linux上使用nohup后台运行，不在命令行指定配置时，将在home/.switch_desktop/config文件中读取配置
       [root@izj6cemne76ykdzkataftfz switch]# nohup ./switch-desktop start  &
       # windows上
       D:\switch\bin_v1>switch-desktop.exe start --token 123456
@@ -49,6 +49,7 @@
 1. 和远程桌面(如mstsc)搭配，超低延迟的体验
 2. 安装samba服务，共享磁盘
 3. 搭配公网服务器nginx反向代理，在公网访问本地文件
+4. 点对网(结合启动参数'--in-ip'和'--out-ip')
 
 
 ### 使用须知
@@ -79,6 +80,7 @@
   - 点对点穿透
   - 服务端中继转发
   - 客户端中继转发
+- IP代理
 
 ### Todo
 - 支持安卓

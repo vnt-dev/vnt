@@ -1,7 +1,5 @@
 use std::fmt;
-use std::net::IpAddr;
-
-use byteorder::{BigEndian, ReadBytesExt};
+use std::net::Ipv4Addr;
 
 use crate::error::*;
 use crate::tcp::Flags;
@@ -48,20 +46,20 @@ use crate::tcp::Flags;
   Options+Padding:32位整数倍，最多40个字节
 */
 pub struct TcpPacket<B> {
-    source_ip: IpAddr,
-    destination_ip: IpAddr,
+    source_ip: Ipv4Addr,
+    destination_ip: Ipv4Addr,
     buffer: B,
 }
 
 impl<B: AsRef<[u8]>> TcpPacket<B> {
-    pub fn unchecked(source_ip: IpAddr, destination_ip: IpAddr, buffer: B) -> TcpPacket<B> {
+    pub fn unchecked(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> TcpPacket<B> {
         TcpPacket {
             source_ip,
             destination_ip,
             buffer,
         }
     }
-    pub fn new(source_ip: IpAddr, destination_ip: IpAddr, buffer: B) -> Result<TcpPacket<B>> {
+    pub fn new(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> Result<TcpPacket<B>> {
         let packet = TcpPacket::unchecked(source_ip, destination_ip, buffer);
 
         if packet.buffer.as_ref().len() < 20 {
@@ -80,6 +78,12 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> TcpPacket<B> {
     fn set_checksum(&mut self, value: u16) {
         self.buffer.as_mut()[16..18].copy_from_slice(&value.to_be_bytes())
     }
+    pub fn set_source_port(&mut self, value: u16) {
+        self.buffer.as_mut()[0..2].copy_from_slice(&value.to_be_bytes())
+    }
+    pub fn set_destination_port(&mut self, value: u16) {
+        self.buffer.as_mut()[2..4].copy_from_slice(&value.to_be_bytes())
+    }
     /// 更新校验和
     pub fn update_checksum(&mut self) {
         //先将校验和置0
@@ -87,31 +91,24 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> TcpPacket<B> {
         self.set_checksum(self.cal_checksum())
     }
 }
+
 impl<B: AsRef<[u8]>> TcpPacket<B> {
     /// 源端口
     pub fn source_port(&self) -> u16 {
-        (&self.buffer.as_ref()[0..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[0..2].try_into().unwrap())
     }
 
     /// 目标端口
     pub fn destination_port(&self) -> u16 {
-        (&self.buffer.as_ref()[2..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[2..4].try_into().unwrap())
     }
     /// 序列号
     pub fn sequence(&self) -> u32 {
-        (&self.buffer.as_ref()[4..])
-            .read_u32::<BigEndian>()
-            .unwrap()
+        u32::from_be_bytes(self.buffer.as_ref()[4..8].try_into().unwrap())
     }
     /// 确认号
     pub fn acknowledgment(&self) -> u32 {
-        (&self.buffer.as_ref()[8..])
-            .read_u32::<BigEndian>()
-            .unwrap()
+        u32::from_be_bytes(self.buffer.as_ref()[8..12].try_into().unwrap())
     }
     /// 数据偏移 4字节为单位
     pub fn data_offset(&self) -> u8 {
@@ -121,14 +118,10 @@ impl<B: AsRef<[u8]>> TcpPacket<B> {
         Flags(self.buffer.as_ref()[13])
     }
     pub fn window(&self) -> u16 {
-        (&self.buffer.as_ref()[14..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[14..16].try_into().unwrap())
     }
     pub fn checksum(&self) -> u16 {
-        (&self.buffer.as_ref()[16..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[16..18].try_into().unwrap())
     }
     /// 验证校验和,ipv4中为0表示不使用校验和，ipv6校验和不能为0
     /// TCP/IP协议栈不会自己计算校验和，而是简单地将一个空的校验和字段(零或随机填充)交给网卡硬件。
@@ -137,26 +130,16 @@ impl<B: AsRef<[u8]>> TcpPacket<B> {
         self.checksum() == 0 || self.cal_checksum() == 0
     }
     fn cal_checksum(&self) -> u16 {
-        match self.source_ip {
-            IpAddr::V4(src) => {
-                if let IpAddr::V4(dest) = self.destination_ip {
-                    return crate::ipv4_cal_checksum(
-                        self.buffer.as_ref(),
-                        &src,
-                        &dest,
-                        6,
-                        self.buffer.as_ref().len() as u16,
-                    );
-                }
-            }
-            IpAddr::V6(_src) => {}
-        }
-        unimplemented!()
+        crate::ipv4_cal_checksum(
+            self.buffer.as_ref(),
+            &self.source_ip,
+            &self.destination_ip,
+            6,
+            self.buffer.as_ref().len() as u16,
+        )
     }
     pub fn urgent_pointer(&self) -> u16 {
-        (&self.buffer.as_ref()[18..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[18..20].try_into().unwrap())
     }
     pub fn options(&self) -> &[u8] {
         &self.buffer.as_ref()[20..(self.data_offset() as usize * 4)]
