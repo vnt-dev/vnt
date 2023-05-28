@@ -21,7 +21,7 @@ pub fn get_win_server_home() -> PathBuf {
 }
 
 #[cfg(windows)]
-pub fn set_win_server_home(home:PathBuf) {
+pub fn set_win_server_home(home: PathBuf) {
     let _ = SWITCH_HOME_PATH.lock().insert(home);
 }
 
@@ -405,6 +405,12 @@ pub fn read_command_port() -> io::Result<u16> {
 
 
 pub fn get_home() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(path) = SWITCH_HOME_PATH.lock().as_ref() {
+            return path.clone();
+        }
+    }
     let home = dirs::home_dir().unwrap().join(".switch_desktop");
     if !home.exists() {
         std::fs::create_dir(&home).unwrap();
