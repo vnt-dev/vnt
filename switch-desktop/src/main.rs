@@ -141,6 +141,7 @@ async fn main() {
     let args: Vec<_> = std::env::args().collect();
     if args.len() == 3 && args[1] == windows::SERVICE_FLAG {
         //以服务的方式启动
+        config::set_win_server_home(std::path::PathBuf::from(&args[2]));
         windows::service::start();
         return;
     } else {

@@ -17,7 +17,12 @@ lazy_static! {
 
 #[cfg(windows)]
 pub fn get_win_server_home() -> PathBuf {
-    "./".into()
+    SWITCH_HOME_PATH.lock().as_ref().unwrap().clone()
+}
+
+#[cfg(windows)]
+pub fn set_win_server_home(home:PathBuf) {
+    let _ = SWITCH_HOME_PATH.lock().insert(home);
 }
 
 pub struct StartConfig {

@@ -44,7 +44,7 @@ pub fn switch_service_main(arguments: Vec<OsString>) {
 }
 
 async fn service_main(args: StartArgs) -> windows_service::Result<()> {
-    log::error!("service_main：{:?}",args);
+    log::info!("service_main：{:?}",args);
     let parker = crossbeam::sync::Parker::new();
     let un_parker = parker.unparker().clone();
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
