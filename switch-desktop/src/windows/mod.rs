@@ -92,10 +92,11 @@ pub async fn main0(base_args: BaseArgs) {
                             Ok(_) => {
                                 //需要检查启动状态
                                 thread::sleep(Duration::from_secs(2));
-                                println!("{}", style("启动成功(Start successfully)").green())
+                                println!("{}", style("启动成功(Start successfully)").green());
                             }
                             Err(e) => {
                                 log::error!("{:?}", e);
+                                println!("{}:{}", style("启动失败").red(),e);
                             }
                         }
                     } else {
@@ -187,6 +188,7 @@ pub async fn main0(base_args: BaseArgs) {
             } else {
                 if let Err(e) = install(path, args.auto) {
                     log::error!("{:?}", e);
+                    println!("安装失败:{}",e);
                 } else {
                     println!("{}", style("安装成功(Installation succeeded)").green())
                 }
@@ -199,6 +201,7 @@ pub async fn main0(base_args: BaseArgs) {
             }
             if let Err(e) = uninstall() {
                 log::error!("{:?}", e);
+                println!("卸载失败:{}",e);
             } else {
                 println!("{}", style("卸载成功(Uninstall succeeded)").green())
             }
@@ -207,6 +210,7 @@ pub async fn main0(base_args: BaseArgs) {
         Commands::Config(args) => {
             if let Err(e) = change(args.auto) {
                 log::error!("{:?}", e);
+                println!("配置失败:{}",e);
             } else {
                 println!("{}", style("配置成功(Config succeeded)").green())
             }
