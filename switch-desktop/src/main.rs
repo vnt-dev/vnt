@@ -108,6 +108,7 @@ pub struct StartArgs {
     out_ip:Option<Vec<String>>,
     /// 读取配置文件 --config config_file_path
     /// Read configuration file
+    #[arg(long)]
     config:Option<String>,
 }
 
@@ -211,7 +212,7 @@ pub fn console_listen(switch: &Switch) {
                 if let Err(e) = switch.stop() {
                     log::error!("stop:{:?}", e);
                 }
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                thread::sleep(Duration::from_secs(1));
                 break;
             }
         }
