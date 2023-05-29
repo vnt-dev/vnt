@@ -14,23 +14,23 @@ defaults:
     shell: bash
 
 jobs:
-#  test:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v2
-#      - name: Init submodules
-#        uses: snickerbockers/submodules-init@v4
-#      - name: Cargo cache
-#        uses: actions/cache@v2
-#        with:
-#          path: |
-#            ~/.cargo/registry
-#            ./target
-#          key: test-cargo-registry
-#      - name: List
-#        run: find ./
-#      - name: Run tests
-#        run: cargo test --verbose
+  #  test:
+  #    runs-on: ubuntu-latest
+  #    steps:
+  #      - uses: actions/checkout@v2
+  #      - name: Init submodules
+  #        uses: snickerbockers/submodules-init@v4
+  #      - name: Cargo cache
+  #        uses: actions/cache@v2
+  #        with:
+  #          path: |
+  #            ~/.cargo/registry
+  #            ./target
+  #          key: test-cargo-registry
+  #      - name: List
+  #        run: find ./
+  #      - name: Run tests
+  #        run: cargo test --verbose
 
   build:
     strategy:
@@ -86,9 +86,8 @@ jobs:
           # dependencies are only needed on ubuntu as that's the only place where
           # we make cross-compilation
           if [[ $OS =~ ^ubuntu.*$ ]]; then
-            sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf
+            sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf
           fi
-
           # some additional configuration for cross-compilation on linux
           cat >>~/.cargo/config <<EOF
           [target.aarch64-unknown-linux-gnu]
@@ -132,7 +131,6 @@ jobs:
           name: switch-desktop
           path: |
             ./artifacts
-
   # deploys to github releases on tag
   deploy:
     if: startsWith(github.ref, 'refs/tags/')
