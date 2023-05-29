@@ -171,6 +171,7 @@ pub async fn main0(base_args: BaseArgs) {
                 }
                 Err(e) => {
                     log::error!("{:?}", e);
+                    println!("停止失败:{}",e);
                 }
             }
             pause();

@@ -420,7 +420,7 @@ pub fn get_home() -> PathBuf {
 
 pub fn get_runtime_data_path() -> PathBuf {
     let home = get_home();
-    home.join("config")
+    home.join(".data")
 }
 
 fn read_runtime_data() -> io::Result<RuntimeData> {
