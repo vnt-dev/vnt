@@ -1,6 +1,7 @@
-use std::io;
+use std::{io, thread};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use libloading::Library;
 use parking_lot::Mutex;
@@ -75,6 +76,7 @@ pub fn create_tun(
             Ok(lib) => match TunDevice::open(lib, TUN_INTERFACE_NAME) {
                 Ok(tun_device) => {
                     let _ = tun_device.delete();
+                    thread::sleep(Duration::from_millis(5));
                 }
                 Err(_) => {}
             },
@@ -92,11 +94,21 @@ pub fn create_tun(
             TUN_INTERFACE_NAME,
         ) {
             Ok(tun_device) => tun_device,
-            Err(e) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("{:?}", e),
-                ));
+            Err(_) => {
+                thread::sleep(Duration::from_millis(200));
+                match TunDevice::create(
+                    Library::new("wintun.dll").unwrap(),
+                    TUN_POOL_NAME,
+                    TUN_INTERFACE_NAME,
+                ) {
+                    Ok(tun_device) => tun_device,
+                    Err(e) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("{:?}", e),
+                        ));
+                    }
+                }
             }
         };
         println!("name:{:?}", tun_device.get_name()?);
