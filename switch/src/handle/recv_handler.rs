@@ -121,7 +121,6 @@ impl RecvHandler {
         if net_packet.ttl() == 0 {
             return Ok(());
         }
-        net_packet.set_ttl(net_packet.ttl() - 1);
         let source = net_packet.source();
         let current_device = self.current_device.load();
         if source == current_device.virtual_ip() {
@@ -138,14 +137,15 @@ impl RecvHandler {
                 log::warn!("转发数据，目的地址错误:{:?},当前网络:{:?},route_key:{:?}",destination,current_device.virtual_network,route_key);
                 return Ok(());
             }
+            net_packet.set_ttl(net_packet.ttl() - 1);
             let ttl = net_packet.ttl();
-            if ttl > 1 {
+            if ttl > 0 {
                 // 转发
                 if let Some(route) = self.channel.route(&destination) {
                     if route.metric <= net_packet.ttl() {
                         self.channel.send_to_route(net_packet.buffer(), &route.route_key())?;
                     }
-                } else if (ttl > 2 || destination == current_device.virtual_gateway())
+                } else if (ttl > 1 || destination == current_device.virtual_gateway())
                     && source != current_device.virtual_gateway() {
                     //网关默认要转发一次，生存时间不够的发到网关也会被丢弃
                     self.channel.send_to_addr(net_packet.buffer(), current_device.connect_server)?;
