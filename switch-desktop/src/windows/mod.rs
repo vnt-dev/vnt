@@ -109,10 +109,6 @@ pub async fn main0(base_args: BaseArgs) {
                             if let Some(code) = e.raw_os_error() {
                                 if code == 1060 {
                                     //指定的服务未安装。
-                                    println!(
-                                        "{}",
-                                        style("服务未安装，在当前进程启动(The service is not installed and started in the current process)").red()
-                                    );
                                     let config = Config::new(
                                         start_config.tap,
                                         start_config.token,
@@ -252,7 +248,10 @@ fn pause() {
     let _ = term.read_char().unwrap();
 }
 
-fn install(path: PathBuf, auto: bool) -> Result<(), Error> {
+fn install(mut path: PathBuf, auto: bool) -> Result<(), Error> {
+    if !path.is_absolute(){
+        path = path.canonicalize().unwrap();
+    }
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
     let current_exe_path = std::env::current_exe().unwrap();
@@ -305,18 +304,28 @@ fn change(auto: bool) -> Result<(), Error> {
     } else {
         ServiceStartType::OnDemand
     };
-    let mut launch_arguments = Vec::new();
-    launch_arguments.push(OsString::from(SERVICE_FLAG));
-    launch_arguments.push(OsString::from(
-        config::get_home().to_str().unwrap(),
-    ));
+    let executable_path = config.executable_path.to_string_lossy().to_string();
+    let executable_path = if executable_path.starts_with('"') && executable_path.ends_with('"') {
+        &executable_path[1..executable_path.len() - 1]
+    } else {
+        &executable_path
+    };
+    let mut split = executable_path.split(SERVICE_FLAG);
+    let executable_path = split.next().unwrap().trim();
+    let executable_path = if executable_path.starts_with('"') && executable_path.ends_with('"') {
+        PathBuf::from(&executable_path[1..executable_path.len() - 1])
+    } else {
+        PathBuf::from(executable_path)
+    };
+    let home_path = split.next().unwrap().trim();
+    let launch_arguments = vec![OsString::from(SERVICE_FLAG),OsString::from(home_path)];
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: config.display_name,
         service_type: SERVICE_TYPE,
         start_type,
         error_control: config.error_control,
-        executable_path: config.executable_path,
+        executable_path,
         launch_arguments,
         dependencies: config.dependencies,
         account_name: None, // run as System

@@ -25,6 +25,7 @@ pub fn set_win_server_home(home: PathBuf) {
     let _ = SWITCH_HOME_PATH.lock().insert(home);
 }
 
+#[derive(Clone,Debug)]
 pub struct StartConfig {
     pub tap: bool,
     pub name: String,
@@ -36,6 +37,7 @@ pub struct StartConfig {
     pub out_ips: Vec<(u32, u32, Ipv4Addr)>,
     #[cfg(any(unix))]
     pub off_command_server: bool,
+    pub log: bool,
 }
 
 fn ips_parse(ips: &Vec<String>) -> Result<Vec<(u32, u32, Ipv4Addr)>, String> {
@@ -89,6 +91,9 @@ fn ips_parse(ips: &Vec<String>) -> Result<Vec<(u32, u32, Ipv4Addr)>, String> {
 
 pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     println!("========参数配置========");
+    if start_args.log {
+        println!("print log");
+    }
     let tap = start_args.tap;
     if tap {
         println!("use tap");
@@ -181,6 +186,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
         out_ips: out_ips_c,
         #[cfg(any(unix))]
         off_command_server: start_args.off_command_server,
+        log: start_args.log,
     };
     println!("========参数配置========");
     Ok(base_config)
@@ -193,7 +199,10 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
     } else {
         return Err("读取配置文件失败".to_string());
     };
-
+    let log = args_config.log;
+    if log {
+        println!("print log");
+    }
     let tap = args_config.tap;
     if tap {
         println!("use tap");
@@ -284,6 +293,7 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
         out_ips: out_ips_c,
         #[cfg(any(unix))]
         off_command_server: args_config.off_command_server,
+        log,
     };
     println!("========参数配置========");
     Ok(base_config)
@@ -319,6 +329,43 @@ pub struct ArgsConfig {
     #[cfg(any(unix))]
     #[serde(default = "default_false")]
     pub off_command_server: bool,
+    #[serde(default = "default_false")]
+    pub log: bool,
+}
+#[cfg(windows)]
+impl ArgsConfig {
+    pub fn new(start_config: StartConfig) -> ArgsConfig {
+        let in_ips = start_config.in_ips.iter().map(|(ip, mask, dest)| {
+            format!("{}/{},{}", Ipv4Addr::from(*ip), subnet_mask_to_integer(*mask), dest)
+        }).collect::<Vec<String>>();
+        let out_ips = start_config.out_ips.iter().map(|(ip, mask, dest)| {
+            format!("{}/{},{}", Ipv4Addr::from(*ip), subnet_mask_to_integer(*mask), dest)
+        }).collect::<Vec<String>>();
+        ArgsConfig {
+            tap: start_config.tap,
+            version: "1.0.5".to_string(),
+            token: start_config.token.to_string(),
+            name: start_config.name.to_string(),
+            server: start_config.server.to_string(),
+            nat_test_server: start_config.nat_test_server.iter().map(|v| v.to_string()).collect(),
+            device_id: start_config.device_id,
+            in_ips,
+            out_ips,
+            log: start_config.log,
+            #[cfg(any(unix))]
+            off_command_server: start_config.off_command_server,
+        }
+    }
+}
+#[cfg(windows)]
+fn subnet_mask_to_integer(subnet_mask: u32) -> u8 {
+    let mut mask_bits = subnet_mask;
+    let mut num_bits = 0;
+    while mask_bits != 0 {
+        num_bits += 1;
+        mask_bits <<= 1;
+    }
+    num_bits as u8
 }
 
 fn default_false() -> bool {

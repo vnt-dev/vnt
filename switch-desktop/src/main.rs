@@ -194,9 +194,12 @@ pub fn console_listen(switch: &Switch) {
         );
         match term.read_line() {
             Ok(cmd) => {
+                #[cfg(unix)]
                 if cmd.is_empty() {
-                    log::warn!("非正常返回");
-                    return;
+                    use libc::{STDIN_FILENO, isatty};
+                    if !unsafe { isatty(STDIN_FILENO) != 0 }{
+                        return;
+                    }
                 }
                 if command(cmd.trim(), &switch).is_err() {
                     println!("{}", style("stopping").red());
