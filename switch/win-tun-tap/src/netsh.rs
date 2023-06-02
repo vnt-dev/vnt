@@ -46,3 +46,15 @@ pub fn set_interface_mtu(index: u32, mtu: u16) -> io::Result<()> {
     }
     Ok(())
 }
+pub fn set_interface_metric(index: u32, metric: u16) -> io::Result<()> {
+    let set_metric = format!("netsh interface ip set interface {} metric={}", index,metric);
+    let out = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg(&set_metric)
+        .output()?;
+    if !out.status.success() {
+        log::error!("cmd={:?},out={:?}",set_metric,out);
+        return Err(io::Error::new(io::ErrorKind::Other, format!("设置metric失败: {:?}", out)));
+    }
+    Ok(())
+}

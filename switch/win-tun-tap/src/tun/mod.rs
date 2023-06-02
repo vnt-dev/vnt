@@ -4,6 +4,7 @@ use std::net::Ipv4Addr;
 use winapi::um::{handleapi, synchapi, winbase, winnt};
 
 use crate::{decode_utf16, encode_utf16, ffi, IFace, netsh, route};
+
 mod wintun_raw;
 mod log;
 pub mod packet;
@@ -19,6 +20,8 @@ pub const MAX_POOL: usize = 256;
 
 
 pub struct TunDevice {
+    pub(crate) luid:u64,
+    pub(crate) index: u32,
     /// The session handle given to us by WintunStartSession
     pub(crate) session: wintun_raw::WINTUN_SESSION_HANDLE,
 
@@ -90,8 +93,12 @@ impl TunDevice {
         let shutdown_event = synchapi::CreateEventA(std::ptr::null_mut(),
                                                     0, 0, std::ptr::null_mut());
         let read_event = win_tun.WintunGetReadWaitEvent(session) as winnt::HANDLE;
-
+        let mut luid: wintun_raw::NET_LUID = std::mem::zeroed();
+        win_tun.WintunGetAdapterLUID(adapter, &mut luid as *mut wintun_raw::NET_LUID);
+        let index = ffi::luid_to_index(&std::mem::transmute(luid)).map(|index| index as u32)?;
         Ok(TunDevice {
+            luid:std::mem::transmute(luid),
+            index,
             session,
             win_tun,
             read_event,
@@ -99,7 +106,7 @@ impl TunDevice {
             adapter,
         })
     }
-    pub unsafe fn open<L>(library: L, name: &str) -> io::Result<Self>
+    pub unsafe fn delete_for_name<L>(library: L, name: &str) -> io::Result<()>
         where L: Into<libloading::Library>, {
         let win_tun = match wintun_raw::wintun::from_library(library) {
             Ok(win_tun) => win_tun,
@@ -113,7 +120,9 @@ impl TunDevice {
         if adapter.is_null() {
             return Err(io::Error::new(io::ErrorKind::Other, "Failed to open adapter"));
         }
-        Self::init(win_tun, adapter)
+        win_tun.WintunCloseAdapter(adapter);
+        win_tun.WintunDeleteDriver();
+        Ok(())
     }
     pub fn delete(self) -> io::Result<()> {
         drop(self);
@@ -138,13 +147,13 @@ pub struct Version {
     pub minor: u16,
 }
 
-impl TunDevice {
-    fn get_adapter_luid(&self) -> u64 {
-        let mut luid: wintun_raw::NET_LUID = unsafe { std::mem::zeroed() };
-        unsafe { self.win_tun.WintunGetAdapterLUID(self.adapter, &mut luid as *mut wintun_raw::NET_LUID) };
-        unsafe { std::mem::transmute(luid) }
-    }
-}
+// impl TunDevice {
+//     fn get_adapter_luid(&self) -> u64 {
+//         let mut luid: wintun_raw::NET_LUID = unsafe { std::mem::zeroed() };
+//         unsafe { self.win_tun.WintunGetAdapterLUID(self.adapter, &mut luid as *mut wintun_raw::NET_LUID) };
+//         unsafe { std::mem::transmute(luid) }
+//     }
+// }
 
 impl IFace for TunDevice {
     fn shutdown(&self) -> io::Result<()> {
@@ -154,12 +163,11 @@ impl IFace for TunDevice {
     }
 
     fn get_index(&self) -> io::Result<u32> {
-        let luid = self.get_adapter_luid();
-        ffi::luid_to_index(&unsafe { std::mem::transmute(luid) }).map(|index| index as u32)
+        Ok(self.index)
     }
 
     fn get_name(&self) -> io::Result<String> {
-        let luid = self.get_adapter_luid();
+        let luid = self.luid;
         ffi::luid_to_alias(&unsafe { std::mem::transmute(luid) }).map(|name| {
             decode_utf16(&name)
         })
@@ -184,6 +192,11 @@ impl IFace for TunDevice {
 
     fn set_mtu(&self, mtu: u16) -> io::Result<()> {
         netsh::set_interface_mtu(self.get_index()?, mtu)
+    }
+
+    fn set_metric(&self, metric: u16) -> io::Result<()> {
+        let index = self.get_index()?;
+        netsh::set_interface_metric(index, metric)
     }
 }
 

@@ -1,8 +1,7 @@
-use std::{io, net, time};
+use std::{io, time};
 use std::net::Ipv4Addr;
 
 use winapi::shared::ifdef::NET_LUID;
-use winapi::shared::minwindef::*;
 use winapi::um::winioctl::*;
 use winapi::um::winnt::HANDLE;
 
@@ -11,12 +10,15 @@ use crate::{decode_utf16, encode_utf16, ffi, IFace, netsh, route};
 mod iface;
 
 pub struct TapDevice {
+    index: u32,
     luid: NET_LUID,
     handle: HANDLE,
 
 }
-unsafe impl Send for TapDevice{}
-unsafe impl Sync for TapDevice{}
+
+unsafe impl Send for TapDevice {}
+
+unsafe impl Sync for TapDevice {}
 
 impl TapDevice {
     /// Retieve the mac of the interface
@@ -95,7 +97,8 @@ impl TapDevice {
                 Ok(handle) => break handle,
             };
         };
-        Ok(Self { luid, handle })
+        let index = ffi::luid_to_index(&luid).map(|index| index as u32)?;
+        Ok(Self { index, luid, handle })
     }
 
     pub fn open(name: &str) -> io::Result<Self> {
@@ -105,7 +108,8 @@ impl TapDevice {
         iface::check_interface(&luid)?;
 
         let handle = iface::open_interface(&luid)?;
-        Ok(Self { luid, handle })
+        let index = ffi::luid_to_index(&luid).map(|index| index as u32)?;
+        Ok(Self { index, luid, handle })
     }
 
     pub fn delete(self) -> io::Result<()> {
@@ -119,7 +123,7 @@ impl IFace for TapDevice {
     }
 
     fn get_index(&self) -> io::Result<u32> {
-        ffi::luid_to_index(&self.luid).map(|index| index as u32)
+        Ok(self.index)
     }
 
     fn get_name(&self) -> io::Result<String> {
@@ -149,6 +153,11 @@ impl IFace for TapDevice {
     fn set_mtu(&self, mtu: u16) -> io::Result<()> {
         let index = self.get_index()?;
         netsh::set_interface_mtu(index, mtu)
+    }
+
+    fn set_metric(&self, metric: u16) -> io::Result<()> {
+        let index = self.get_index()?;
+        netsh::set_interface_metric(index, metric)
     }
 }
 

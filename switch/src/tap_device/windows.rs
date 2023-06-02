@@ -77,6 +77,7 @@ pub fn create_tap(
     println!("version:{:x?}", tap_device.get_version()?);
     println!("mac:{:x?}", mac);
     tap_device.set_ip(address, netmask)?;
+    tap_device.set_metric(1)?;
     tap_device.set_mtu(1420)?;
     tap_device.set_status(true)?;
     tap_device.add_route(address, netmask, gateway)?;

@@ -73,9 +73,8 @@ pub fn create_tun(
     unsafe {
         println!("========TUN网卡配置========");
         match Library::new("wintun.dll") {
-            Ok(lib) => match TunDevice::open(lib, TUN_INTERFACE_NAME) {
-                Ok(tun_device) => {
-                    let _ = tun_device.delete();
+            Ok(lib) => match TunDevice::delete_for_name(lib, TUN_INTERFACE_NAME) {
+                Ok(_) => {
                     thread::sleep(Duration::from_millis(5));
                 }
                 Err(_) => {}
@@ -113,8 +112,8 @@ pub fn create_tun(
         };
         println!("name:{:?}", tun_device.get_name()?);
         println!("version:{:?}", tun_device.version()?);
-        log::error!("创建tun成功 {:?}",tun_device.get_name()?);
         tun_device.set_ip(address, netmask)?;
+        tun_device.set_metric(1)?;
         tun_device.set_mtu(1420)?;
         for (address, netmask) in in_ips {
             tun_device.add_route(address, netmask, gateway)?;
@@ -132,9 +131,8 @@ pub fn create_tun(
 pub fn delete_tun() {
     unsafe {
         match Library::new("wintun.dll") {
-            Ok(lib) => match TunDevice::open(lib, TUN_INTERFACE_NAME) {
-                Ok(tun_device) => {
-                    let _ = tun_device.delete();
+            Ok(lib) => match TunDevice::delete_for_name(lib, TUN_INTERFACE_NAME) {
+                Ok(_) => {
                 }
                 Err(_) => {}
             },

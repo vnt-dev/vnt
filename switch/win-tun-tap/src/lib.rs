@@ -45,4 +45,6 @@ pub trait IFace {
         where IP: Into<net::Ipv4Addr>;
     /// 设置最大传输单元
     fn set_mtu(&self, mtu: u16) -> io::Result<()>;
+    /// 设置跃点
+    fn set_metric(&self, metric: u16) -> io::Result<()>;
 }
