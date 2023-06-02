@@ -25,37 +25,64 @@ pub fn registration(
         registration_request_packet(token.clone(), device_id.clone(), name.clone(), false)?;
     let buf = request_packet.buffer();
     let mut recv_buf = [0u8; 10240];
-    channel.send_to_addr(buf, server_address)?;
-    let (len, route) = channel.recv_from(&mut recv_buf, Some(Duration::from_millis(300)))?;
-    if server_address != route.addr {
-        return Err(Error::Warn(format!("数据来源错误：{:?}", route.addr)));
-    }
-    let net_packet = NetPacket::new(&recv_buf[..len])?;
-    return match net_packet.protocol() {
-        Protocol::Service => {
-            match service_packet::Protocol::from(net_packet.transport_protocol()) {
-                service_packet::Protocol::RegistrationResponse => {
-                    let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
-                    Ok(response)
+    let mut count = 0;
+    let len = loop {
+        match channel.send_to_addr(buf, server_address) {
+            Ok(_) => {
+                match channel.recv_from(&mut recv_buf, Some(Duration::from_millis(300))) {
+                    Ok((len, route)) => {
+                        if server_address == route.addr {
+                            let net_packet = NetPacket::new(&recv_buf[..len])?;
+                            match net_packet.protocol() {
+                                Protocol::Service => {
+                                    match service_packet::Protocol::from(net_packet.transport_protocol()) {
+                                        service_packet::Protocol::RegistrationResponse => {
+                                            let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
+                                            return Ok(response);
+                                        }
+                                        _ => println!("响应数据错误"),
+                                    }
+                                }
+                                Protocol::Error => {
+                                    match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
+                                        Ok(e) => match e {
+                                            InErrorPacket::TokenError => return Err(Error::Stop("token错误".to_string())),
+                                            InErrorPacket::Disconnect => {
+                                                println!("断开连接");
+                                            }
+                                            InErrorPacket::AddressExhausted => {
+                                                println!("地址用尽");
+                                                log::warn!("地址用尽");
+                                            }
+                                            InErrorPacket::OtherError(e) => match e.message() {
+                                                Ok(str) => {
+                                                    println!("其他异常:{:?}", str);
+                                                    log::warn!("其他异常{:?}",str);
+                                                }
+                                                Err(e) => println!("其他异常:{:?}", e),
+                                            },
+                                        },
+                                        Err(e) => println!("数据解析异常:{:?}", e),
+                                    }
+                                }
+                                _ => println!("响应数据错误"),
+                            };
+                        }
+                    }
+                    Err(e) => {
+                        println!("接收服务器数据失败:{:?}", e);
+                        log::warn!("接收服务器数据失败:{:?}",e);
+                    }
                 }
-                _ => Err(Error::Warn(format!("数据错误：{:?}", net_packet))),
+            }
+            Err(e) => {
+                println!("发送数据到服务器失败:{:?}", e);
+                log::warn!("发送数据到服务器失败:{:?}",e);
             }
         }
-        Protocol::Error => {
-            match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
-                Ok(e) => match e {
-                    InErrorPacket::TokenError => Err(Error::Stop("token错误".to_string())),
-                    InErrorPacket::Disconnect => Err(Error::Warn("断开连接".to_string())),
-                    InErrorPacket::AddressExhausted => Err(Error::Stop("地址用尽".to_string())),
-                    InErrorPacket::OtherError(e) => match e.message() {
-                        Ok(str) => Err(Error::Warn(str)),
-                        Err(e) => Err(Error::Warn(format!("{:?}", e))),
-                    },
-                },
-                Err(e) => Err(Error::Warn(format!("{:?}", e))),
-            }
-        }
-        _ => Err(Error::Warn(format!("数据错误：{:?}", net_packet))),
+        count += 1;
+        println!("重试中(retrying)...");
+        std::thread::sleep(Duration::from_secs(count % 10 + 1));
     };
 }
 
@@ -112,9 +139,9 @@ impl Register {
         let new = Local::now().timestamp_millis();
         if new - last < 1000
             || self
-                .time
-                .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
-                .is_err()
+            .time
+            .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
         {
             //短时间不重复注册
             return Ok(());
@@ -126,7 +153,7 @@ impl Register {
             self.name.clone(),
             false,
         )
-        .unwrap();
+            .unwrap();
         let buf = request_packet.buffer();
         self.sender.send_to_addr(buf, self.server_address)?;
         Ok(())

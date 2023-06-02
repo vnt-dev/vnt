@@ -88,7 +88,7 @@ fn start_heartbeat_(
             let peer_list = device_list.lock().1.clone();
             for peer in peer_list {
                 set_now_time(&mut net_packet)?;
-                net_packet.first_set_ttl(MAX_TTL);
+                net_packet.first_set_ttl(2);
                 net_packet.set_destination(peer.virtual_ip);
                 if sender
                     .send_to_id(net_packet.buffer(), &peer.virtual_ip)
@@ -103,6 +103,7 @@ fn start_heartbeat_(
                         l
                     });
                     let mut num = 0;
+                    //只寻找两跳以内能到的目标
                     net_packet.first_set_ttl(2);
                     for (peer_ip, route) in route_list.iter() {
                         if peer_ip != &peer.virtual_ip && route.metric == 1 {
