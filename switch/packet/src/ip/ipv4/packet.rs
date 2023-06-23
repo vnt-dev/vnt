@@ -1,9 +1,8 @@
-use std::fmt;
+use std::{fmt, io};
 use std::net::Ipv4Addr;
 
 
 use crate::cal_checksum;
-use crate::error::*;
 use crate::ip::ipv4::protocol::Protocol;
 
 /// ip协议
@@ -38,16 +37,16 @@ impl<B: AsRef<[u8]>> IpV4Packet<B> {
     pub fn unchecked(buffer: B) -> Self {
         Self { buffer }
     }
-    pub fn new(buffer: B) -> Result<Self> {
-        if buffer.as_ref()[0] >> 4 != 4 {
-            Err(Error::Unimplemented)?
-        }
+    pub fn new(buffer: B) -> io::Result<Self> {
         if buffer.as_ref().len() < 20 {
-            Err(Error::SmallBuffer)?
+            Err(io::Error::new(io::ErrorKind::InvalidData, "len < 20"))?;
+        }
+        if buffer.as_ref()[0] >> 4 != 4 {
+            Err(io::Error::new(io::ErrorKind::InvalidData, "not ipv4"))?;
         }
         let packet = Self::unchecked(buffer);
         if packet.buffer.as_ref().len() < packet.header_len() as usize * 4 {
-            Err(Error::SmallBuffer)?
+            Err(io::Error::new(io::ErrorKind::InvalidData, "head_len err"))?;
         }
         Ok(packet)
     }
@@ -59,17 +58,6 @@ impl<B: AsRef<[u8]>> IpV4Packet<B> {
     }
     pub fn payload(&self) -> &[u8] {
         &self.buffer.as_ref()[(self.header_len() as usize * 4)..]
-        // match self.protocol() {
-        //     Protocol::Udp => {
-        //         let udp = UdpPacket::new(IpAddr::V4(self.source_ip()),
-        //                                  IpAddr::V4(self.destination_ip()),
-        //                                  &self.buffer.as_ref()[(self.header_len() as usize * 4)..])?;
-        //         Ok(crate::IpUpperLayer::UDP(udp))
-        //     }
-        //     _ => {
-        //         Ok(crate::IpUpperLayer::Unknown(self.buffer.as_ref()));
-        //     }
-        // }
     }
 }
 
@@ -82,12 +70,17 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> IpV4Packet<B> {
         let len = self.header_len() as usize * 4;
         &mut self.buffer.as_mut()[len..]
     }
-
+    pub fn set_protocol(&mut self, value: Protocol) {
+        self.header_mut()[9] = value.into();
+    }
     pub fn set_source_ip(&mut self, value: Ipv4Addr) {
         self.header_mut()[12..16].copy_from_slice(&value.octets());
     }
     pub fn set_destination_ip(&mut self, value: Ipv4Addr) {
         self.header_mut()[16..20].copy_from_slice(&value.octets());
+    }
+    pub fn set_flags(&mut self, flags: u8) {
+        self.buffer.as_mut()[6] = (self.buffer.as_ref()[6] & 0b11100000) | (flags << 5)
     }
     fn set_checksum(&mut self, value: u16) {
         self.header_mut()[10..12].copy_from_slice(&value.to_be_bytes())

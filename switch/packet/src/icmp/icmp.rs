@@ -1,9 +1,9 @@
-use std::fmt;
-
+use std::{fmt, io};
 use byteorder::{BigEndian, ReadBytesExt};
-
 use crate::cal_checksum;
-use crate::error::*;
+use crate::icmp::{Code, Kind};
+use crate::ip::ipv4::packet::IpV4Packet;
+
 /// icmp 协议
 /*  https://www.rfc-editor.org/rfc/rfc792
    0                   1                   2                   3
@@ -17,8 +17,6 @@ use crate::error::*;
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 */
-use crate::icmp::{Code, Kind};
-use crate::ip::ipv4::packet::IpV4Packet;
 
 pub struct IcmpPacket<B> {
     pub buffer: B,
@@ -28,9 +26,9 @@ impl<B: AsRef<[u8]>> IcmpPacket<B> {
     pub fn unchecked(buffer: B) -> Self {
         Self { buffer }
     }
-    pub fn new(buffer: B) -> Result<Self> {
+    pub fn new(buffer: B) -> io::Result<Self> {
         if buffer.as_ref().len() < 8 {
-            Err(Error::SmallBuffer)?
+            Err(io::Error::from(io::ErrorKind::InvalidData))?;
         }
         let packet = Self::unchecked(buffer);
         Ok(packet)
@@ -56,9 +54,7 @@ impl<B: AsRef<[u8]>> IcmpPacket<B> {
         Code::from(self.kind(), self.buffer.as_ref()[1])
     }
     pub fn checksum(&self) -> u16 {
-        (&self.buffer.as_ref()[2..])
-            .read_u16::<BigEndian>()
-            .unwrap()
+        u16::from_be_bytes(self.buffer.as_ref()[2..4].try_into().unwrap())
     }
     pub fn is_valid(&self) -> bool {
         self.checksum() == 0 || cal_checksum(self.buffer.as_ref()) == 0
@@ -71,12 +67,8 @@ impl<B: AsRef<[u8]>> IcmpPacket<B> {
             | Kind::TimestampReply
             | Kind::InformationRequest
             | Kind::InformationReply => {
-                let ide = (&self.buffer.as_ref()[4..])
-                    .read_u16::<BigEndian>()
-                    .unwrap();
-                let seq = (&self.buffer.as_ref()[6..])
-                    .read_u16::<BigEndian>()
-                    .unwrap();
+                let ide =u16::from_be_bytes(self.buffer.as_ref()[4..6].try_into().unwrap());
+                let seq = u16::from_be_bytes(self.buffer.as_ref()[6..8].try_into().unwrap());
                 HeaderOther::Identifier(ide, seq)
             }
             Kind::DestinationUnreachable | Kind::TimeExceeded | Kind::SourceQuench => {
@@ -110,6 +102,7 @@ impl<B: AsRef<[u8]>> IcmpPacket<B> {
             },
             Kind::TimestampRequest | Kind::TimestampReply => {
                 let mut buffer = Cursor::new(self.payload());
+
                 Description::Timestamp(
                     buffer.read_u32::<BigEndian>().unwrap(),
                     buffer.read_u32::<BigEndian>().unwrap(),
@@ -128,11 +121,11 @@ impl<B: AsRef<[u8]>> fmt::Debug for IcmpPacket<B> {
         } else {
             "icmp::Packet!"
         })
-        .field("kind", &self.kind())
-        .field("code", &self.code())
-        .field("checksum", &self.checksum())
-        .field("payload", &self.payload())
-        .finish()
+            .field("kind", &self.kind())
+            .field("code", &self.code())
+            .field("checksum", &self.checksum())
+            .field("payload", &self.payload())
+            .finish()
     }
 }
 

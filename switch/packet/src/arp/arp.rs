@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, io};
 
 /// 地址解析协议，由IP地址找到MAC地址
 /// https://www.ietf.org/rfc/rfc6747.txt
@@ -9,7 +9,6 @@ use std::fmt;
   |          源MAC地址                  |    源ip地址    |
   |          目的MAC地址                 |   目的ip地址   |
  */
-use crate::error::*;
 
 pub struct ArpPacket<B> {
     buffer: B,
@@ -19,9 +18,9 @@ impl<B: AsRef<[u8]>> ArpPacket<B> {
     pub fn unchecked(buffer: B) -> Self {
         Self { buffer }
     }
-    pub fn new(buffer: B) -> Result<Self> {
+    pub fn new(buffer: B) -> io::Result<Self> {
         if buffer.as_ref().len() != 28 {
-            Err(Error::InvalidPacket)?
+            Err(io::Error::from(io::ErrorKind::InvalidData))?;
         }
         let packet = Self::unchecked(buffer);
         Ok(packet)

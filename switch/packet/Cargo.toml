@@ -7,4 +7,3 @@ edition = "2021"
 
 [dependencies]
 byteorder = "1.4.3"
-thiserror = "1.0.37"

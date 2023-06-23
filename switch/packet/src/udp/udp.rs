@@ -1,7 +1,5 @@
-use std::fmt;
+use std::{fmt, io};
 use std::net::Ipv4Addr;
-
-use crate::error::*;
 
 /// udp协议
 ///
@@ -62,9 +60,9 @@ impl<B: AsRef<[u8]>> UdpPacket<B> {
             buffer,
         }
     }
-    pub fn new(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> Result<UdpPacket<B>> {
+    pub fn new(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> io::Result<UdpPacket<B>> {
         if buffer.as_ref().len() < 8 {
-            Err(Error::SmallBuffer)?
+            Err(io::Error::from(io::ErrorKind::InvalidData))?;
         }
         let packet = Self::unchecked(source_ip, destination_ip, buffer);
         Ok(packet)

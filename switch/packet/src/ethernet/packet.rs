@@ -1,5 +1,4 @@
-use std::fmt;
-use crate::error::*;
+use std::{fmt, io};
 use crate::ethernet::protocol::Protocol;
 
 /// 以太网帧协议
@@ -18,11 +17,11 @@ impl<B: AsRef<[u8]>> EthernetPacket<B> {
         EthernetPacket { buffer }
     }
 
-    pub fn new(buffer: B) -> Result<EthernetPacket<B>> {
+    pub fn new(buffer: B) -> io::Result<EthernetPacket<B>> {
         let packet = EthernetPacket::unchecked(buffer);
         //头部固定14位
         if packet.buffer.as_ref().len() < 14 {
-            Err(Error::SmallBuffer)?
+            Err(io::Error::from(io::ErrorKind::InvalidData))?;
         }
 
         Ok(packet)
