@@ -1,11 +1,10 @@
 use std::net::{Ipv4Addr, SocketAddr};
 
 pub mod heartbeat_handler;
-pub mod tun_handler;
-pub mod tap_handler;
 pub mod punch_handler;
 pub mod recv_handler;
 pub mod registration_handler;
+pub mod tun_tap;
 
 /// 是否在一个网段
 fn check_dest(dest: Ipv4Addr, virtual_netmask: Ipv4Addr, virtual_network: Ipv4Addr) -> bool {
@@ -58,19 +57,6 @@ impl From<u8> for PeerDeviceStatus {
 pub enum ConnectStatus {
     Connecting,
     Connected,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct CurrentDeviceInfoExt {
-    pub mac: [u8; 6],
-}
-
-impl CurrentDeviceInfoExt {
-    pub fn new(mac: [u8; 6]) -> Self {
-        Self {
-            mac,
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

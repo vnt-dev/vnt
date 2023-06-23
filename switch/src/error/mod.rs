@@ -5,8 +5,6 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("packet error")]
-    PacketError(#[from] packet::error::Error),
     #[error("Io error")]
     Io(#[from] io::Error),
     #[error("Channel error")]

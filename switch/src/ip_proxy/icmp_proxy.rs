@@ -6,11 +6,11 @@ use crossbeam::atomic::AtomicCell;
 
 use crossbeam_skiplist::SkipMap;
 use socket2::{Domain, SockAddr, Socket, Type};
-use p2p_channel::channel::sender::Sender;
 
 use packet::icmp::icmp;
 use packet::icmp::icmp::HeaderOther;
 use packet::ip::ipv4;
+use crate::channel::sender::ChannelSender;
 use crate::handle::CurrentDeviceInfo;
 use crate::protocol::{MAX_TTL, NetPacket, Protocol, Version};
 
@@ -18,12 +18,12 @@ pub struct IcmpProxy {
     icmp_socket: Arc<Socket>,
     // 对端-> 真实来源
     icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
-    sender: Sender<Ipv4Addr>,
+    sender: ChannelSender,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 }
 
 impl IcmpProxy {
-    pub fn new(addr: SocketAddrV4, icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>, sender: Sender<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<IcmpProxy> {
+    pub fn new(addr: SocketAddrV4, icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>, sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<IcmpProxy> {
         let icmp_socket = Arc::new(Socket::new(Domain::IPV4, Type::RAW, Some(socket2::Protocol::ICMPV4))?);
         icmp_socket.bind(&SockAddr::from(addr))?;
         // // 设置 SIO_RCVALL 参数
@@ -66,7 +66,7 @@ impl IcmpProxy {
             unsafe { std::mem::transmute(&mut buf[..]) };
         let mut net_packet = NetPacket::new([0u8; 4 + 8 + 1500]).unwrap();
         net_packet.set_version(Version::V1);
-        net_packet.set_protocol(Protocol::Ipv4Turn);
+        net_packet.set_protocol(Protocol::IpTurn);
         net_packet.set_transport_protocol(ipv4::protocol::Protocol::Ipv4.into());
         net_packet.set_ttl(MAX_TTL);
         loop {
@@ -90,7 +90,7 @@ impl IcmpProxy {
                                                         net_packet.set_destination(dest_ip);
                                                         let data_len = ipv4_packet.buffer.len();
                                                         net_packet.set_payload(ipv4_packet.buffer);
-                                                        let _ = self.sender.send_to_id(&net_packet.buffer()[..(12 + data_len)], &dest_ip);
+                                                        let _ = self.sender.try_send_by_id(&net_packet.buffer()[..(12 + data_len)], &dest_ip);
                                                     }
                                                 }
                                                 _ => {

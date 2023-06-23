@@ -18,7 +18,8 @@ use std::{fmt, io};
 pub mod control_packet;
 pub mod error_packet;
 pub mod service_packet;
-pub mod turn_packet;
+pub mod ip_turn_packet;
+pub mod other_turn_packet;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Version {
@@ -52,8 +53,8 @@ pub enum Protocol {
     Error,
     /// 控制协议
     Control,
-    /// 转发ipv4数据
-    Ipv4Turn,
+    /// 转发ip数据
+    IpTurn,
     /// 转发其他数据
     OtherTurn,
     UnKnow(u8),
@@ -65,7 +66,7 @@ impl From<u8> for Protocol {
             1 => Protocol::Service,
             2 => Protocol::Error,
             3 => Protocol::Control,
-            4 => Protocol::Ipv4Turn,
+            4 => Protocol::IpTurn,
             5 => Protocol::OtherTurn,
             val => Protocol::UnKnow(val),
         }
@@ -78,7 +79,7 @@ impl Into<u8> for Protocol {
             Protocol::Service => 1,
             Protocol::Error => 2,
             Protocol::Control => 3,
-            Protocol::Ipv4Turn => 4,
+            Protocol::IpTurn => 4,
             Protocol::OtherTurn => 5,
             Protocol::UnKnow(val) => val,
         }
@@ -143,6 +144,9 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
 }
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
+    pub fn buffer_mut(&mut self)->&mut [u8]{
+        self.buffer.as_mut()
+    }
     pub fn set_version(&mut self, version: Version) {
         self.buffer.as_mut()[0] = version.into();
     }

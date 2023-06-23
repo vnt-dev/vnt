@@ -1,12 +1,12 @@
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use chrono::Local;
-use p2p_channel::channel::sender::Sender;
-use p2p_channel::channel::Channel;
 use protobuf::Message;
+use tokio::net::UdpSocket;
+use crate::channel::sender::ChannelSender;
 
 use crate::error::*;
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
@@ -14,8 +14,8 @@ use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
 
 ///向中继服务器注册，token标识一个虚拟网关，device_id防止多次注册时得到的ip不一致
-pub fn registration(
-    channel: &mut Channel<Ipv4Addr>,
+pub async fn registration(
+    main_channel: &UdpSocket,
     server_address: SocketAddr,
     token: String,
     device_id: String,
@@ -26,52 +26,60 @@ pub fn registration(
     let buf = request_packet.buffer();
     let mut recv_buf = [0u8; 10240];
     let mut count = 0;
-    let len = loop {
-        match channel.send_to_addr(buf, server_address) {
+    loop {
+        match main_channel.send_to(buf, server_address).await {
             Ok(_) => {
-                match channel.recv_from(&mut recv_buf, Some(Duration::from_millis(300))) {
-                    Ok((len, route)) => {
-                        if server_address == route.addr {
-                            let net_packet = NetPacket::new(&recv_buf[..len])?;
-                            match net_packet.protocol() {
-                                Protocol::Service => {
-                                    match service_packet::Protocol::from(net_packet.transport_protocol()) {
-                                        service_packet::Protocol::RegistrationResponse => {
-                                            let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
-                                            return Ok(response);
+                match tokio::time::timeout(Duration::from_millis(300), main_channel.recv_from(&mut recv_buf)).await {
+                    Ok(rs) => {
+                        match rs {
+                            Ok((len, addr)) => {
+                                if server_address == addr {
+                                    let net_packet = NetPacket::new(&recv_buf[..len])?;
+                                    match net_packet.protocol() {
+                                        Protocol::Service => {
+                                            match service_packet::Protocol::from(net_packet.transport_protocol()) {
+                                                service_packet::Protocol::RegistrationResponse => {
+                                                    let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
+                                                    return Ok(response);
+                                                }
+                                                _ => println!("响应数据错误"),
+                                            }
+                                        }
+                                        Protocol::Error => {
+                                            match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
+                                                Ok(e) => match e {
+                                                    InErrorPacket::TokenError => return Err(Error::Stop("token错误".to_string())),
+                                                    InErrorPacket::Disconnect => {
+                                                        println!("断开连接");
+                                                    }
+                                                    InErrorPacket::AddressExhausted => {
+                                                        println!("地址用尽");
+                                                        log::warn!("地址用尽");
+                                                    }
+                                                    InErrorPacket::OtherError(e) => match e.message() {
+                                                        Ok(str) => {
+                                                            println!("其他异常:{:?}", str);
+                                                            log::warn!("其他异常{:?}",str);
+                                                        }
+                                                        Err(e) => println!("其他异常:{:?}", e),
+                                                    },
+                                                },
+                                                Err(e) => println!("数据解析异常:{:?}", e),
+                                            }
                                         }
                                         _ => println!("响应数据错误"),
-                                    }
+                                    };
                                 }
-                                Protocol::Error => {
-                                    match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
-                                        Ok(e) => match e {
-                                            InErrorPacket::TokenError => return Err(Error::Stop("token错误".to_string())),
-                                            InErrorPacket::Disconnect => {
-                                                println!("断开连接");
-                                            }
-                                            InErrorPacket::AddressExhausted => {
-                                                println!("地址用尽");
-                                                log::warn!("地址用尽");
-                                            }
-                                            InErrorPacket::OtherError(e) => match e.message() {
-                                                Ok(str) => {
-                                                    println!("其他异常:{:?}", str);
-                                                    log::warn!("其他异常{:?}",str);
-                                                }
-                                                Err(e) => println!("其他异常:{:?}", e),
-                                            },
-                                        },
-                                        Err(e) => println!("数据解析异常:{:?}", e),
-                                    }
-                                }
-                                _ => println!("响应数据错误"),
-                            };
+                            }
+                            Err(e) => {
+                                println!("接收服务器数据失败:{:?}", e);
+                                log::warn!("接收服务器数据失败:{:?}",e);
+                            }
                         }
                     }
-                    Err(e) => {
-                        println!("接收服务器数据失败:{:?}", e);
-                        log::warn!("接收服务器数据失败:{:?}",e);
+                    Err(_) => {
+                        println!("接收超时");
+                        log::warn!("接收超时");
                     }
                 }
             }
@@ -97,6 +105,7 @@ fn registration_request_packet(
     request.device_id = device_id;
     request.name = name;
     request.is_fast = is_fast;
+    request.version = "1.0.6".to_string();
     let bytes = request.write_to_bytes()?;
     let buf = vec![0u8; 12 + bytes.len()];
     let mut net_packet = NetPacket::new(buf)?;
@@ -109,7 +118,7 @@ fn registration_request_packet(
 }
 
 pub struct Register {
-    sender: Sender<Ipv4Addr>,
+    sender: ChannelSender,
     server_address: SocketAddr,
     token: String,
     device_id: String,
@@ -119,7 +128,7 @@ pub struct Register {
 
 impl Register {
     pub fn new(
-        sender: Sender<Ipv4Addr>,
+        sender: ChannelSender,
         server_address: SocketAddr,
         token: String,
         device_id: String,
@@ -134,7 +143,7 @@ impl Register {
             time: AtomicI64::new(0),
         }
     }
-    pub fn fast_register(&self) -> io::Result<()> {
+    pub async fn fast_register(&self) -> io::Result<()> {
         let last = self.time.load(Ordering::Relaxed);
         let new = Local::now().timestamp_millis();
         if new - last < 1000
@@ -155,7 +164,7 @@ impl Register {
         )
             .unwrap();
         let buf = request_packet.buffer();
-        self.sender.send_to_addr(buf, self.server_address)?;
+        self.sender.send_main(buf, self.server_address).await?;
         Ok(())
     }
 }

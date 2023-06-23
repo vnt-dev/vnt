@@ -1,28 +1,34 @@
-use std::io;
+use std::{io, thread};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use crossbeam::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc::channel;
 
-use p2p_channel::boot::Boot;
-use p2p_channel::channel::{Channel, Route, RouteKey};
-use p2p_channel::punch::NatInfo;
 
-use crate::{tap_device, tun_device};
+use crate::channel::channel::{Channel, Context};
+use crate::channel::idle::Idle;
+use crate::channel::punch::{NatInfo, Punch};
+use crate::channel::{Route, RouteKey};
+use crate::channel::sender::ChannelSender;
+
 use crate::external_route::ExternalRoute;
-use crate::handle::{ConnectStatus, CurrentDeviceInfo, CurrentDeviceInfoExt, heartbeat_handler, PeerDeviceInfo, punch_handler, recv_handler, registration_handler, tap_handler, tun_handler};
+use crate::handle::{ConnectStatus, CurrentDeviceInfo, heartbeat_handler, PeerDeviceInfo, punch_handler, registration_handler};
+use crate::handle::recv_handler::ChannelDataHandler;
+use crate::handle::tun_tap::{tap_handler, tun_handler};
+use crate::igmp_server::IgmpServer;
 use crate::nat::NatTest;
-use crate::tap_device::TapWriter;
-use crate::tun_device::TunWriter;
+use crate::tun_tap_device;
+use crate::tun_tap_device::DeviceWriter;
 
 pub struct Switch {
     name: String,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-    tun_writer: Option<TunWriter>,
-    tap_writer: Option<TapWriter>,
-    nat_channel: Channel<Ipv4Addr>,
+    context: Context,
+    device_writer: DeviceWriter,
     /// 0. 机器纪元，每一次上线或者下线都会增1，用于感知网络中机器变化
     /// 服务端和客户端的不一致，则服务端会推送新的设备列表
     /// 1. 网络中的虚拟ip列表
@@ -35,10 +41,16 @@ pub struct Switch {
 impl Switch {
     pub async fn start(config: Config) -> crate::Result<Switch> {
         log::info!("config:{:?}",config);
+        let main_channel = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+        let response = registration_handler::registration(&main_channel, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()).await?;
+        let (cone_sender, cone_receiver) = channel(3);
+        let (symmetric_sender, symmetric_receiver) = channel(2);
+        let context = Context::new(main_channel, 1);
+        let punch = Punch::new(context.clone());
+        let idle = Idle::new(16000, context.clone());
+        let channel_sender = ChannelSender::new(context.clone());
 
-        let (mut channel, punch, idle) = Boot::new::<Ipv4Addr>(80, 15000, 0)?;
-        let response = registration_handler::registration(&mut channel, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone())?;
-        let register = Arc::new(registration_handler::Register::new(channel.sender()?, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()));
+        let register = Arc::new(registration_handler::Register::new(channel_sender.clone(), config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> = Arc::new(Mutex::new((0, Vec::new())));
         let peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>> = Arc::new(SkipMap::new());
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
@@ -47,7 +59,7 @@ impl Switch {
         let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
 
         let local_ip = crate::nat::local_ip()?;
-        let local_port = channel.local_addr()?.port();
+        let local_port = context.main_local_port()?;
         // NAT检测
         let nat_test = NatTest::new(config.nat_test_server.clone(), Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_port);
         let in_ips = config.in_ips.iter().map(|(dest, mask, _)| { (Ipv4Addr::from(*dest), Ipv4Addr::from(*mask)) }).collect::<Vec<(Ipv4Addr, Ipv4Addr)>>();
@@ -56,51 +68,60 @@ impl Switch {
         let out_external_route = ExternalRoute::new(config.out_ips);
         let in_external_route = ExternalRoute::new(config.in_ips);
         let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, config.server_address)));
-        let ip_proxy_map = crate::ip_proxy::init_proxy(channel.sender()?,out_ips,current_device.clone()).await?;
-        let ( current_device_ext,tun_writer, tap_writer) = if config.tap {
+        let ip_proxy_map = crate::ip_proxy::init_proxy(channel_sender.clone(), out_ips, current_device.clone()).await?;
+        let (device_writer, igmp_server) = if config.tap {
             #[cfg(windows)]
             {
                 //删除switch的tun网卡避免ip冲突，因为非正常退出会保留网卡
-                tun_device::delete_tun();
+                tun_tap_device::delete_device(tun_tap_device::DeviceType::Tap);
             }
-            let (tap_writer, tap_reader, mac) = tap_device::create_tap(virtual_ip, virtual_netmask, virtual_gateway)?;
-            let current_device_ext = Arc::new(AtomicCell::new(CurrentDeviceInfoExt::new( mac)));
+            let (tap_writer, tap_reader) = tun_tap_device::create_device(tun_tap_device::DeviceType::Tap, virtual_ip, virtual_netmask, virtual_gateway, in_ips)?;
+            let igmp_server = IgmpServer::new(tap_writer.clone());
             //tap数据处理
-            tap_handler::start(channel.sender()?, tap_reader.clone(), tap_writer.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
-            (current_device_ext, None, Some(tap_writer))
+            tap_handler::start(channel_sender.clone(), tap_reader.clone(), tap_writer.clone(), igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
+            (tap_writer, igmp_server)
         } else {
             #[cfg(windows)]
             {
                 //删除switch的tap网卡避免ip冲突，非正常退出会保留网卡
-                tap_device::delete_tap();
+                tun_tap_device::delete_device(tun_tap_device::DeviceType::Tap);
             }
             // tun通道
-            let (tun_writer, tun_reader) = tun_device::create_tun(virtual_ip, virtual_netmask, virtual_gateway,in_ips)?;
-            let current_device_ext = Arc::new(AtomicCell::new(CurrentDeviceInfoExt::new( [0, 0, 0, 0, 0, 0])));
+            let (tun_writer, tun_reader) = tun_tap_device::create_device(tun_tap_device::DeviceType::Tun, virtual_ip, virtual_netmask, virtual_gateway, in_ips)?;
+            let igmp_server = IgmpServer::new(tun_writer.clone());
             //tun数据接收处理
-            tun_handler::start(channel.sender()?, tun_reader.clone(), tun_writer.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
-            (current_device_ext,Some(tun_writer), None)
+            tun_handler::start(channel_sender.clone(), tun_reader.clone(), tun_writer.clone(), igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
+            (tun_writer, igmp_server)
         };
         //外部数据接收处理
-        let channel_recv_handler = recv_handler::RecvHandler::new(channel.try_clone()?, current_device.clone(), current_device_ext,device_list.clone(), register.clone(),
-                                                                  nat_test.clone(), tun_writer.clone(), tap_writer.clone(),
-                                                                  connect_status.clone(), peer_nat_info_map.clone(), ip_proxy_map, out_external_route);
-        recv_handler::start(channel_recv_handler);
+        let channel_recv_handler = ChannelDataHandler::new(current_device.clone(), device_list.clone(),
+                                                           register.clone(), nat_test.clone(), igmp_server,
+                                                           device_writer.clone(), connect_status.clone(),
+                                                           peer_nat_info_map.clone(), ip_proxy_map, out_external_route,
+                                                           cone_sender, symmetric_sender);
+        let channel = Channel::new(context.clone(), channel_recv_handler);
+        thread::spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build().unwrap()
+                .block_on(channel.start(14, 60));
+        });
+        context.switch(nat_test.nat_info().nat_type);
         // 定时心跳
-        heartbeat_handler::start_heartbeat(channel.sender()?, device_list.clone(), current_device.clone());
+        heartbeat_handler::start_heartbeat(channel_sender.clone(), device_list.clone(), current_device.clone()).await;
         // 空闲检查
-        heartbeat_handler::start_idle(idle, channel.sender()?);
+        heartbeat_handler::start_idle(idle, channel_sender.clone()).await;
         // 打洞处理
-        punch_handler::start_cone(punch.try_clone()?, current_device.clone());
-        punch_handler::start_symmetric(punch, current_device.clone());
-        punch_handler::start_punch(nat_test.clone(), device_list.clone(), channel.sender()?, current_device.clone());
+        punch_handler::start(cone_receiver, punch.clone(), current_device.clone()).await;
+        punch_handler::start(symmetric_receiver, punch, current_device.clone()).await;
+        punch_handler::start_punch(nat_test.clone(), device_list.clone(), channel_sender.clone(), current_device.clone()).await;
+
         log::info!("switch启动成功");
         Ok(Switch {
             name: config.name,
             current_device,
-            tun_writer,
-            tap_writer,
-            nat_channel: channel,
+            context,
+            device_writer,
             nat_test,
             device_list,
             connect_status,
@@ -132,22 +153,17 @@ impl Switch {
         device_list
     }
     pub fn route(&self, ip: &Ipv4Addr) -> Option<Route> {
-        self.nat_channel.route(ip)
+        self.context.route_one(ip)
     }
     pub fn route_key(&self, route_key: &RouteKey) -> Option<Ipv4Addr> {
-        self.nat_channel.route_to_id(route_key)
+        self.context.route_to_id(route_key)
     }
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Route)> {
-        self.nat_channel.route_table()
+        self.context.route_table_one()
     }
     pub fn stop(&self) -> io::Result<()> {
-        if let Some(tap) = &self.tap_writer {
-            tap.close()?;
-        }
-        if let Some(tun) = &self.tun_writer {
-            tun.close()?;
-        }
-        self.nat_channel.close()?;
+        self.context.close();
+        self.device_writer.close()?;
         Ok(())
     }
 }

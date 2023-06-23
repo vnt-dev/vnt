@@ -2,6 +2,7 @@ use std::net::Ipv4Addr;
 
 // 目标ip，子网掩码，网关
 
+#[derive(Clone)]
 pub struct ExternalRoute {
     route_table: Vec<(u32, u32, Ipv4Addr)>,
 }

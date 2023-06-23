@@ -37,6 +37,8 @@ pub struct RegistrationRequest {
     pub name: ::std::string::String,
     // @@protoc_insertion_point(field:RegistrationRequest.is_fast)
     pub is_fast: bool,
+    // @@protoc_insertion_point(field:RegistrationRequest.version)
+    pub version: ::std::string::String,
     // special fields
     // @@protoc_insertion_point(special_field:RegistrationRequest.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -54,7 +56,7 @@ impl RegistrationRequest {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(4);
+        let mut fields = ::std::vec::Vec::with_capacity(5);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "token",
@@ -75,6 +77,11 @@ impl RegistrationRequest {
             "is_fast",
             |m: &RegistrationRequest| { &m.is_fast },
             |m: &mut RegistrationRequest| { &mut m.is_fast },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "version",
+            |m: &RegistrationRequest| { &m.version },
+            |m: &mut RegistrationRequest| { &mut m.version },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<RegistrationRequest>(
             "RegistrationRequest",
@@ -106,6 +113,9 @@ impl ::protobuf::Message for RegistrationRequest {
                 32 => {
                     self.is_fast = is.read_bool()?;
                 },
+                42 => {
+                    self.version = is.read_string()?;
+                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -130,6 +140,9 @@ impl ::protobuf::Message for RegistrationRequest {
         if self.is_fast != false {
             my_size += 1 + 1;
         }
+        if !self.version.is_empty() {
+            my_size += ::protobuf::rt::string_size(5, &self.version);
+        }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -147,6 +160,9 @@ impl ::protobuf::Message for RegistrationRequest {
         }
         if self.is_fast != false {
             os.write_bool(4, self.is_fast)?;
+        }
+        if !self.version.is_empty() {
+            os.write_string(5, &self.version)?;
         }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -169,6 +185,7 @@ impl ::protobuf::Message for RegistrationRequest {
         self.device_id.clear();
         self.name.clear();
         self.is_fast = false;
+        self.version.clear();
         self.special_fields.clear();
     }
 
@@ -178,6 +195,7 @@ impl ::protobuf::Message for RegistrationRequest {
             device_id: ::std::string::String::new(),
             name: ::std::string::String::new(),
             is_fast: false,
+            version: ::std::string::String::new(),
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -1017,28 +1035,29 @@ impl PunchNatType {
 }
 
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\rmessage.proto\"u\n\x13RegistrationRequest\x12\x14\n\x05token\x18\x01\
-    \x20\x01(\tR\x05token\x12\x1b\n\tdevice_id\x18\x02\x20\x01(\tR\x08device\
-    Id\x12\x12\n\x04name\x18\x03\x20\x01(\tR\x04name\x12\x17\n\x07is_fast\
-    \x18\x04\x20\x01(\x08R\x06isFast\"\x92\x02\n\x14RegistrationResponse\x12\
-    \x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12'\n\x0fvirtual_ga\
-    teway\x18\x02\x20\x01(\x07R\x0evirtualGateway\x12'\n\x0fvirtual_netmask\
-    \x18\x03\x20\x01(\x07R\x0evirtualNetmask\x12\x14\n\x05epoch\x18\x04\x20\
-    \x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x05\x20\x03(\x0b2\x0b.D\
-    eviceInfoR\x0edeviceInfoList\x12\x1b\n\tpublic_ip\x18\x06\x20\x01(\x07R\
-    \x08publicIp\x12\x1f\n\x0bpublic_port\x18\x07\x20\x01(\rR\npublicPort\"d\
-    \n\nDeviceInfo\x12\x12\n\x04name\x18\x01\x20\x01(\tR\x04name\x12\x1d\n\n\
-    virtual_ip\x18\x02\x20\x01(\x07R\tvirtualIp\x12#\n\rdevice_status\x18\
-    \x03\x20\x01(\rR\x0cdeviceStatus\"Y\n\nDeviceList\x12\x14\n\x05epoch\x18\
-    \x01\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x02\x20\x03(\
-    \x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xf8\x01\n\tPunchInfo\x12$\n\
-    \x0epublic_ip_list\x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\n\x0bpu\
-    blic_port\x18\x03\x20\x01(\rR\npublicPort\x12*\n\x11public_port_range\
-    \x18\x04\x20\x01(\rR\x0fpublicPortRange\x12(\n\x08nat_type\x18\x05\x20\
-    \x01(\x0e2\r.PunchNatTypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\x01\
-    (\x08R\x05reply\x12\x19\n\x08local_ip\x18\x07\x20\x01(\x07R\x07localIp\
-    \x12\x1d\n\nlocal_port\x18\x08\x20\x01(\rR\tlocalPort*'\n\x0cPunchNatTyp\
-    e\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01b\x06proto3\
+    \n\rmessage.proto\"\x8f\x01\n\x13RegistrationRequest\x12\x14\n\x05token\
+    \x18\x01\x20\x01(\tR\x05token\x12\x1b\n\tdevice_id\x18\x02\x20\x01(\tR\
+    \x08deviceId\x12\x12\n\x04name\x18\x03\x20\x01(\tR\x04name\x12\x17\n\x07\
+    is_fast\x18\x04\x20\x01(\x08R\x06isFast\x12\x18\n\x07version\x18\x05\x20\
+    \x01(\tR\x07version\"\x92\x02\n\x14RegistrationResponse\x12\x1d\n\nvirtu\
+    al_ip\x18\x01\x20\x01(\x07R\tvirtualIp\x12'\n\x0fvirtual_gateway\x18\x02\
+    \x20\x01(\x07R\x0evirtualGateway\x12'\n\x0fvirtual_netmask\x18\x03\x20\
+    \x01(\x07R\x0evirtualNetmask\x12\x14\n\x05epoch\x18\x04\x20\x01(\rR\x05e\
+    poch\x125\n\x10device_info_list\x18\x05\x20\x03(\x0b2\x0b.DeviceInfoR\
+    \x0edeviceInfoList\x12\x1b\n\tpublic_ip\x18\x06\x20\x01(\x07R\x08publicI\
+    p\x12\x1f\n\x0bpublic_port\x18\x07\x20\x01(\rR\npublicPort\"d\n\nDeviceI\
+    nfo\x12\x12\n\x04name\x18\x01\x20\x01(\tR\x04name\x12\x1d\n\nvirtual_ip\
+    \x18\x02\x20\x01(\x07R\tvirtualIp\x12#\n\rdevice_status\x18\x03\x20\x01(\
+    \rR\x0cdeviceStatus\"Y\n\nDeviceList\x12\x14\n\x05epoch\x18\x01\x20\x01(\
+    \rR\x05epoch\x125\n\x10device_info_list\x18\x02\x20\x03(\x0b2\x0b.Device\
+    InfoR\x0edeviceInfoList\"\xf8\x01\n\tPunchInfo\x12$\n\x0epublic_ip_list\
+    \x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\n\x0bpublic_port\x18\x03\
+    \x20\x01(\rR\npublicPort\x12*\n\x11public_port_range\x18\x04\x20\x01(\rR\
+    \x0fpublicPortRange\x12(\n\x08nat_type\x18\x05\x20\x01(\x0e2\r.PunchNatT\
+    ypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\x01(\x08R\x05reply\x12\
+    \x19\n\x08local_ip\x18\x07\x20\x01(\x07R\x07localIp\x12\x1d\n\nlocal_por\
+    t\x18\x08\x20\x01(\rR\tlocalPort*'\n\x0cPunchNatType\x12\r\n\tSymmetric\
+    \x10\0\x12\x08\n\x04Cone\x10\x01b\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file

@@ -6,7 +6,7 @@ use crossbeam::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 use socket2::{SockAddr, Socket};
 use tokio::net::{TcpListener, UdpSocket};
-use p2p_channel::channel::sender::Sender;
+use crate::channel::sender::ChannelSender;
 use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::icmp_proxy::IcmpProxy;
 use crate::ip_proxy::tcp_proxy::TcpProxy;
@@ -45,34 +45,34 @@ impl IpProxyMap {
     }
 }
 
-pub async fn init_proxy(sender: Sender<Ipv4Addr>, bind_ips: Vec<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<IpProxyMap> {
+pub async fn init_proxy(sender: ChannelSender, bind_ips: Vec<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<IpProxyMap> {
     let mut icmp_sockets = HashMap::new();
     let tcp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>> = Arc::new(SkipMap::new());
     let udp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>> = Arc::new(SkipMap::new());
     let icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>> = Arc::new(SkipMap::new());
-    let tcp_listener = TcpListener::bind("0.0.0.0:0").await?;
-    let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
-    let tcp_proxy_port = tcp_listener.local_addr()?.port();
-    let udp_proxy_port = udp_socket.local_addr()?.port();
-
-    {
+    let (tcp_proxy_port, udp_proxy_port) = if !bind_ips.is_empty() {
+        let tcp_listener = TcpListener::bind("0.0.0.0:0").await?;
+        let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
+        let tcp_proxy_port = tcp_listener.local_addr()?.port();
+        let udp_proxy_port = udp_socket.local_addr()?.port();
         let tcp_proxy_map = tcp_proxy_map.clone();
         tokio::spawn(async {
             let tcp_proxy = TcpProxy::new(tcp_listener, tcp_proxy_map);
             tcp_proxy.start().await
         });
-    }
-    {
         let udp_proxy_map = udp_proxy_map.clone();
         tokio::spawn(async {
             let udp_proxy = UdpProxy::new(udp_socket, udp_proxy_map);
             udp_proxy.start().await
         });
-    }
+        (tcp_proxy_port, udp_proxy_port)
+    } else {
+        (0, 0)
+    };
     for ip in bind_ips {
         let addr = SocketAddrV4::new(ip, 0);
         let icmp_proxy_map = icmp_proxy_map.clone();
-        let icmp_proxy = IcmpProxy::new(addr, icmp_proxy_map, sender.try_clone()?, current_device.clone())?;
+        let icmp_proxy = IcmpProxy::new(addr, icmp_proxy_map, sender.clone(), current_device.clone())?;
         icmp_sockets.insert(ip, icmp_proxy.icmp_socket());
         thread::spawn(move || {
             icmp_proxy.start();

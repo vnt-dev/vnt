@@ -1,93 +1,72 @@
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
 use crate::proto::message::{PunchInfo, PunchNatType};
-use crate::protocol::{control_packet, turn_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::{control_packet, other_turn_packet, NetPacket, Protocol, Version, MAX_TTL};
 use crossbeam::atomic::AtomicCell;
-use p2p_channel::channel::sender::Sender;
-use p2p_channel::punch::{NatInfo, NatType, Punch};
 use parking_lot::Mutex;
 use protobuf::Message;
 use rand::prelude::SliceRandom;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{io, thread};
+use std::io;
+use tokio::sync::mpsc::Receiver;
+use crate::channel::punch::{NatInfo, Punch};
+use crate::channel::sender::ChannelSender;
 
-pub fn start_cone(punch: Punch<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
-    thread::Builder::new()
-        .name("punch-cone".into())
-        .spawn(move || {
-            if let Err(e) = start_(true, punch, current_device) {
-                log::warn!("锥形网络打洞处理线程停止 {:?}", e);
-            }
-        })
-        .unwrap();
+pub async fn start(receiver: Receiver<(Ipv4Addr, NatInfo)>, punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
+    tokio::spawn(async move {
+        start0(receiver, punch, current_device).await;
+    });
 }
 
-pub fn start_symmetric(punch: Punch<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
-    thread::Builder::new()
-        .name("punch-symmetric".into())
-        .spawn(move || {
-            if let Err(e) = start_(false, punch, current_device) {
-                log::warn!("对称网络打洞处理线程停止 {:?}", e);
-            }
-        })
-        .unwrap();
+pub async fn start0(mut receiver: Receiver<(Ipv4Addr, NatInfo)>, mut punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
+    while let Some((peer_ip, nat_info)) = receiver.recv().await {
+        if let Err(e) = start_(&mut punch, &current_device, peer_ip, nat_info).await {
+            log::warn!("网络打洞异常 {:?}", e);
+        }
+    }
 }
 
-fn start_(
-    is_cone: bool,
-    mut punch: Punch<Ipv4Addr>,
-    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+async fn start_(
+    punch: &mut Punch,
+    current_device: &Arc<AtomicCell<CurrentDeviceInfo>>,
+    peer_ip: Ipv4Addr,
+    nat_info: NatInfo,
 ) -> io::Result<()> {
     let mut packet = NetPacket::new([0u8; 12])?;
     packet.set_version(Version::V1);
     packet.first_set_ttl(1);
     packet.set_protocol(Protocol::Control);
     packet.set_transport_protocol(control_packet::Protocol::PunchRequest.into());
-    loop {
-        let (peer_ip, nat_info) = if is_cone {
-            punch.next_cone(None)?
-        } else {
-            punch.next_symmetric(None)?
-        };
-        if let Some(route) = punch.sender().route(&peer_ip) {
-            if route.metric == 1 {
-                //直连地址不需要打洞
-                continue;
-            }
-        }
-        packet.set_source(current_device.load().virtual_ip());
-        packet.set_destination(peer_ip);
-        log::info!("发起打洞，目标:{:?},{:?}", peer_ip, nat_info);
-        if let Err(e) = punch.punch(packet.buffer(), peer_ip, nat_info) {
-            log::warn!("peer_ip:{:?},e:{:?}", peer_ip, e);
-        }
-    }
+    packet.set_source(current_device.load().virtual_ip());
+    packet.set_destination(peer_ip);
+    log::info!("发起打洞，目标:{:?},{:?}", peer_ip, nat_info);
+
+    punch.punch(packet.buffer(), peer_ip, nat_info).await
 }
 
-pub fn start_punch(
+pub async fn start_punch(
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-    sender: Sender<Ipv4Addr>,
+    sender: ChannelSender,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 ) {
-    thread::Builder::new()
-        .name("punch-send-request".into())
-        .spawn(move || {
-            if let Err(e) = start_punch_(nat_test, device_list, sender, current_device) {
-                log::warn!("对称网络打洞处理线程停止 {:?}", e);
-            }
-        })
-        .unwrap();
+    tokio::spawn(async move {
+        if let Err(e) = start_punch_(nat_test, device_list, sender, current_device).await {
+            log::warn!("打洞处理任务停止 {:?}", e);
+        }
+    });
 }
 
-fn start_punch_(
+async fn start_punch_(
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-    sender: Sender<Ipv4Addr>,
+    sender: ChannelSender,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 ) -> crate::Result<()> {
+    let mut num = 0;
+    let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
     loop {
         if sender.is_close() {
             return Ok(());
@@ -102,28 +81,19 @@ fn start_punch_(
                 if info.virtual_ip <= current_device.virtual_ip {
                     continue;
                 }
-                if let Some(route) = sender.route(&info.virtual_ip) {
-                    if route.metric == 1 {
-                        //直连地址不需要打洞
-                        continue;
-                    }
+                if !sender.need_punch(&info.virtual_ip) {
+                    continue;
                 }
                 count += 1;
-                if count > 3 {
+                if count > 2 {
                     break;
                 }
                 let buf = punch_packet(current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
-                sender.send_to_addr(&buf, current_device.connect_server)?;
+                sender.send_main(&buf, current_device.connect_server).await?;
             }
         }
-        match nat_info.nat_type {
-            NatType::Symmetric => {
-                thread::sleep(Duration::from_secs(28));
-            }
-            NatType::Cone => {
-                thread::sleep(Duration::from_secs(20));
-            }
-        }
+        num += 1;
+        tokio::time::sleep(Duration::from_secs(sleep_time[num % sleep_time.len()])).await;
     }
 }
 
@@ -137,28 +107,18 @@ pub fn punch_packet(
     punch_reply.public_ip_list = nat_info
         .public_ips
         .iter()
-        .map(|i| match i {
-            IpAddr::V4(ip) => u32::from_be_bytes(ip.octets()),
-            IpAddr::V6(_) => {
-                panic!()
-            }
-        })
+        .map(|ip| u32::from_be_bytes(ip.octets()))
         .collect();
     punch_reply.public_port = nat_info.public_port as u32;
     punch_reply.public_port_range = nat_info.public_port_range as u32;
-    punch_reply.local_ip = match nat_info.local_ip {
-        IpAddr::V4(ip) => u32::from_be_bytes(ip.octets()),
-        IpAddr::V6(_) => {
-            panic!()
-        }
-    };
+    punch_reply.local_ip = u32::from_be_bytes(nat_info.local_ip.octets());
     punch_reply.local_port = nat_info.local_port as u32;
     punch_reply.nat_type = protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
     let bytes = punch_reply.write_to_bytes()?;
     let mut net_packet = NetPacket::new(vec![0u8; 12 + bytes.len()])?;
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::OtherTurn);
-    net_packet.set_transport_protocol(turn_packet::Protocol::Punch.into());
+    net_packet.set_transport_protocol(other_turn_packet::Protocol::Punch.into());
     net_packet.first_set_ttl(MAX_TTL);
     net_packet.set_source(virtual_ip);
     net_packet.set_destination(dest);

@@ -1,5 +1,4 @@
 use crate::proto::message::PunchNatType;
-use p2p_channel::punch::{NatInfo, NatType};
 use parking_lot::Mutex;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -8,12 +7,20 @@ use std::sync::Arc;
 pub mod check;
 
 use std::net::UdpSocket;
+use crate::channel::punch::{NatInfo, NatType};
 
-pub fn local_ip() -> io::Result<IpAddr> {
+pub fn local_ip() -> io::Result<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
     let addr = socket.local_addr()?;
-    Ok(addr.ip())
+    match addr.ip() {
+        IpAddr::V4(ip) => {
+            Ok(ip)
+        }
+        IpAddr::V6(_) => {
+            Ok(Ipv4Addr::UNSPECIFIED)
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -45,7 +52,7 @@ impl NatTest {
         nat_test_server: Vec<SocketAddr>,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ip: IpAddr,
+        local_ip: Ipv4Addr,
         local_port: u16,
     ) -> NatTest {
         let info = NatTest::re_test_(
@@ -67,7 +74,7 @@ impl NatTest {
         &self,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ip: IpAddr,
+        local_ip: Ipv4Addr,
         local_port: u16,
     ) -> NatInfo {
         let info = NatTest::re_test_(
@@ -84,16 +91,16 @@ impl NatTest {
         nat_test_server: &Vec<SocketAddr>,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ip: IpAddr,
+        local_ip: Ipv4Addr,
         local_port: u16,
     ) -> NatInfo {
         return match check::public_ip_list(nat_test_server) {
             Ok((nat_type, ips, port_range)) => {
                 let mut public_ips = Vec::new();
-                public_ips.push(IpAddr::from(public_ip));
+                public_ips.push(Ipv4Addr::from(public_ip));
                 for ip in ips {
                     if ip != public_ip {
-                        public_ips.push(IpAddr::from(ip));
+                        public_ips.push(ip);
                     }
                 }
                 NatInfo::new(
@@ -108,7 +115,7 @@ impl NatTest {
             Err(e) => {
                 log::warn!("{:?}", e);
                 NatInfo::new(
-                    vec![IpAddr::from(public_ip)],
+                    vec![public_ip],
                     public_port,
                     0,
                     local_ip,

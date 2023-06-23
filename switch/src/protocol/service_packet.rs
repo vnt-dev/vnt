@@ -8,7 +8,7 @@ pub enum Protocol {
     PollDeviceList,
     /// 推送设备列表
     PushDeviceList,
-    UnKnow(u8),
+    Unknown(u8),
 }
 
 impl From<u8> for Protocol {
@@ -18,7 +18,7 @@ impl From<u8> for Protocol {
             2 => Self::RegistrationResponse,
             3 => Self::PollDeviceList,
             4 => Self::PushDeviceList,
-            val => Self::UnKnow(val),
+            val => Self::Unknown(val),
         }
     }
 }
@@ -30,7 +30,7 @@ impl Into<u8> for Protocol {
             Self::RegistrationResponse => 2,
             Self::PollDeviceList => 3,
             Self::PushDeviceList => 4,
-            Self::UnKnow(val) => val,
+            Self::Unknown(val) => val,
         }
     }
 }
