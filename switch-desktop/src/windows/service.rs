@@ -96,7 +96,6 @@ fn auto_config_path() -> io::Result<PathBuf> {
 
 fn save_auto_config(start_config: config::StartConfig) -> io::Result<()> {
     let mut file = std::fs::File::create(auto_config_path()?)?;
-    log::error!("auto_config_path()?  {:?}",auto_config_path()?);
     let config = config::ArgsConfig::new(start_config);
     match serde_yaml::to_string(&config) {
         Ok(yaml) => {

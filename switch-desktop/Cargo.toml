@@ -1,6 +1,6 @@
 [package]
 name = "switch-desktop"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,6 +16,7 @@ log4rs = "1.2.0"
 tokio = { version = "1.28.1", features = ["full"] }
 chrono = "0.4.23"
 
+rust-i18n = "1.2.2"
 serde = "1.0"
 serde_yaml = "0.9"
 serde_json = "1.0.94"

@@ -8,7 +8,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use crate::StartArgs;
+use crate::{i18n, StartArgs};
 
 pub mod log_config;
 lazy_static! {
@@ -25,7 +25,7 @@ pub fn set_win_server_home(home: PathBuf) {
     let _ = SWITCH_HOME_PATH.lock().insert(home);
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct StartConfig {
     pub tap: bool,
     pub name: String,
@@ -101,14 +101,14 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
         println!("use tun");
     }
     if start_args.token.is_none() {
-        return Err("找不到token(Token not found)".to_string());
+        return Err(i18n::switch_token_not_found_print());
     }
     let token = start_args.token.unwrap();
     if token.is_empty() {
-        return Err("token不能为空(Token cannot be empty)".to_string());
+        return Err(i18n::switch_token_cannot_be_empty_print());
     }
     if token.len() > 64 {
-        return Err("token不能超过64字符(Token cannot exceed 64 characters)".to_string());
+        return Err(i18n::switch_token_cannot_exceed_64_print());
     }
     println!("token:{:?}", token);
     let name = start_args.name.unwrap_or_else(|| {
@@ -129,7 +129,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
         }
     });
     if device_id.is_empty() || device_id.len() > 64 {
-        return Err("设备id不能为空并且长度不能大于64字符(The device id cannot be empty and the length cannot be greater than 64 characters)".to_string());
+        return Err(i18n::switch_device_id_is_empty_print());
     }
     println!("device_id:{:?}", device_id);
     let in_ips = start_args.in_ip.unwrap_or_else(|| {
@@ -142,13 +142,13 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     let in_ips_c = if let Ok(in_ips_c) = ips_parse(&in_ips) {
         in_ips_c
     } else {
-        return Err("in_ips 参数错误 示例：--in_ip 192.168.10.0/24,10.26.0.3".to_string());
+        return Err(i18n::switch_in_ips_example_print());
     };
     println!("out_ips:{:?}", out_ips);
     let out_ips_c = if let Ok(out_ips_c) = ips_parse(&out_ips) {
         out_ips_c
     } else {
-        return Err("out_ips 参数错误 示例：--out_ip 192.168.10.0/24,192.168.0.5".to_string());
+        return Err(i18n::switch_out_ips_example_print());
     };
 
 
@@ -159,11 +159,11 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
             if let Some(addr) = server.next() {
                 addr
             } else {
-                return Err("中继服务器地址错误( Relay server address error)".to_string());
+                return Err(i18n::switch_relay_server_address_error());
             }
         }
         Err(e) => {
-            return Err(format!("中继服务器地址错误( Relay server address error) :{:?}", e));
+            return Err(format!("{} :{:?}",i18n::switch_relay_server_address_error(), e));
         }
     };
     println!("中继服务器:{:?}", server);
@@ -172,7 +172,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
     }).split(",").flat_map(|a| a.to_socket_addrs()).flatten()
         .collect::<Vec<_>>();
     if nat_test_server.is_empty() {
-        return Err("NAT检测服务地址错误(NAT detection service address error)".to_string());
+        return Err(i18n::switch_nat_test_server_address_error());
     }
     println!("NAT探测服务器:{:?}", nat_test_server);
     let base_config = StartConfig {
@@ -211,10 +211,10 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
     }
     let token = args_config.token;
     if token.is_empty() {
-        return Err("token不能为空(Token cannot be empty)".to_string());
+        return Err(i18n::switch_token_cannot_be_empty_print());
     }
     if token.len() > 64 {
-        return Err("token不能超过64字符(Token cannot exceed 64 characters)".to_string());
+        return Err(i18n::switch_token_cannot_exceed_64_print());
     }
     println!("token:{:?}", token);
     let name = args_config.name;
@@ -235,7 +235,7 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
         }
     };
     if device_id.is_empty() || device_id.len() > 64 {
-        return Err("设备id不能为空并且长度不能大于64字符(The device id cannot be empty and the length cannot be greater than 64 characters)".to_string());
+        return Err(i18n::switch_device_id_is_empty_print());
     }
     println!("device_id:{:?}", device_id);
     let in_ips = args_config.in_ips;
@@ -244,13 +244,13 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
     let in_ips_c = if let Ok(in_ips_c) = ips_parse(&in_ips) {
         in_ips_c
     } else {
-        return Err("in_ips 参数错误 示例：--in_ip 192.168.10.0/24,10.26.0.3".to_string());
+        return Err(i18n::switch_in_ips_example_print());
     };
     println!("out_ips:{:?}", out_ips);
     let out_ips_c = if let Ok(out_ips_c) = ips_parse(&out_ips) {
         out_ips_c
     } else {
-        return Err("out_ips 参数错误 示例：--out_ip 192.168.10.0/24,192.168.0.5".to_string());
+        return Err(i18n::switch_out_ips_example_print());
     };
     let server = match {
         if !args_config.server.is_empty() {
@@ -264,11 +264,11 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
             if let Some(addr) = server.next() {
                 addr
             } else {
-                return Err("中继服务器地址错误( Relay server address error)".to_string());
+                return Err(i18n::switch_relay_server_address_error());
             }
         }
         Err(e) => {
-            return Err(format!("中继服务器地址错误( Relay server address error) :{:?}", e));
+            return Err(format!("{}:{:?}",i18n::switch_relay_server_address_error(), e));
         }
     };
     println!("中继服务器:{:?}", server);
@@ -279,7 +279,7 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
     }.iter().flat_map(|a| a.to_socket_addrs()).flatten()
         .collect::<Vec<_>>();
     if nat_test_server.is_empty() {
-        return Err("NAT检测服务地址错误(NAT detection service address error)".to_string());
+        return Err(i18n::switch_nat_test_server_address_error());
     }
     println!("NAT探测服务器:{:?}", nat_test_server);
     let base_config = StartConfig {
@@ -332,6 +332,7 @@ pub struct ArgsConfig {
     #[serde(default = "default_false")]
     pub log: bool,
 }
+
 #[cfg(windows)]
 impl ArgsConfig {
     pub fn new(start_config: StartConfig) -> ArgsConfig {
@@ -343,7 +344,7 @@ impl ArgsConfig {
         }).collect::<Vec<String>>();
         ArgsConfig {
             tap: start_config.tap,
-            version: "1.0.5".to_string(),
+            version: "1.0.6".to_string(),
             token: start_config.token.to_string(),
             name: start_config.name.to_string(),
             server: start_config.server.to_string(),
@@ -357,6 +358,7 @@ impl ArgsConfig {
         }
     }
 }
+
 #[cfg(windows)]
 fn subnet_mask_to_integer(subnet_mask: u32) -> u8 {
     let mut mask_bits = subnet_mask;
@@ -373,7 +375,7 @@ fn default_false() -> bool {
 }
 
 fn default_version() -> String {
-    "1.0".to_string()
+    "1.0.6".to_string()
 }
 
 fn default_str() -> String {
@@ -446,7 +448,7 @@ pub fn read_command_port() -> io::Result<u16> {
     if let Some(p) = config.command_port {
         Ok(p)
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, "not fount config"))
+        Err(io::Error::new(io::ErrorKind::Other, "not found config"))
     }
 }
 

@@ -182,7 +182,7 @@ fn command(cmd: &str, switch: &Switch) -> io::Result<String> {
             "stopping".to_string()
         }
         _ => {
-            format!("command '{}' not fount. \n Try to enter: 'help'\n", cmd)
+            format!("command '{}' not found. \n Try to enter: 'help'\n", cmd)
         }
     };
     Ok(out_str)

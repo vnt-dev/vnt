@@ -11,10 +11,11 @@ mod command;
 mod config;
 #[cfg(target_os = "windows")]
 mod windows;
-
 #[cfg(any(unix))]
 mod unix;
 mod console_out;
+mod command_args;
+mod i18n;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -60,7 +61,7 @@ enum Commands {
     Status,
 }
 
-#[derive(Parser, Debug,Default)]
+#[derive(Parser, Debug, Default)]
 pub struct StartArgs {
     /// 不超过64个字符
     /// 相同token的设备之间才能通信。
@@ -101,15 +102,15 @@ pub struct StartArgs {
     /// 配置点对网时使用，--in-ip 192.168.10.0/24,10.26.0.3，表示允许接收网段192.168.10.0/24的数据并转发到10.26.0.3
     /// Use when configuring peer-to-peer networks
     #[arg(long)]
-    in_ip:Option<Vec<String>>,
+    in_ip: Option<Vec<String>>,
     /// 配置点对网时使用，--out-ip 192.168.10.0/24,192.168.1.10，表示允许目标为192.168.10.0/24的数据从网卡192.168.1.10转发出去
     /// Use when configuring peer-to-peer networks
     #[arg(long)]
-    out_ip:Option<Vec<String>>,
+    out_ip: Option<Vec<String>>,
     /// 读取配置文件 --config config_file_path
     /// Read configuration file
     #[arg(long)]
-    config:Option<String>,
+    config: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -134,10 +135,14 @@ pub struct ConfigArgs {
     auto: bool,
 }
 
+#[macro_use]
+extern crate rust_i18n;
+i18n!("locales", fallback = "en");
+
 
 #[cfg(windows)]
-#[tokio::main]
-async fn main() {
+fn main() {
+    i18n::init();
     let args: Vec<_> = std::env::args().collect();
     if args.len() == 3 && args[1] == windows::SERVICE_FLAG {
         //以服务的方式启动
@@ -145,13 +150,16 @@ async fn main() {
         windows::service::start();
         return;
     } else {
+        if !command_args::check() {
+            return;
+        }
         let args = BaseArgs::parse();
         if let Commands::Start(start_args) = &args.command {
             if start_args.log {
                 let _ = log_init();
             }
         }
-        windows::main0(args).await;
+        windows::main0(args);
     }
 }
 
@@ -177,27 +185,21 @@ async fn main() {
 pub fn console_listen(switch: &Switch) {
     use console::Term;
     let term = Term::stdout();
-    println!("{}", style("启动成功 started").green());
+    println!("{}", style(i18n::switch_start_successfully_print()).green());
     let current_device = switch.current_device();
-    println!(
-        "当前虚拟ip(virtual ip): {:?}",
-        style(current_device.virtual_ip()).green()
-    );
-    println!(
-        "虚拟网关(virtual gateway): {:?}",
-        style(current_device.virtual_gateway()).green()
-    );
+    println!("{}: {:?}", i18n::switch_virtual_ip(), style(current_device.virtual_ip()).green());
+    println!("{}: {:?}", i18n::switch_virtual_gateway(), style(current_device.virtual_gateway()).green());
     loop {
         println!(
             "{}",
-            style("Please enter the command (Usage: list,status,exit,help):").color256(102)
+            style(i18n::switch_please_enter_the_command()).color256(102)
         );
         match term.read_line() {
             Ok(cmd) => {
                 #[cfg(unix)]
                 if cmd.is_empty() {
                     use libc::{STDIN_FILENO, isatty};
-                    if !unsafe { isatty(STDIN_FILENO) != 0 }{
+                    if !unsafe { isatty(STDIN_FILENO) != 0 } {
                         return;
                     }
                 }
@@ -252,7 +254,7 @@ fn command(cmd: &str, switch: &Switch) -> Result<(), ()> {
             return Err(());
         }
         _ => {
-            println!("command '{}' not fount. ", style(cmd).red());
+            println!("command '{}' not found. ", style(cmd).red());
             println!("Try to enter: '{}'", style("help").green());
         }
     }

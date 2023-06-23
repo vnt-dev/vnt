@@ -14,7 +14,7 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use switch::core::{Config, Switch};
 
-use crate::{BaseArgs, Commands, config};
+use crate::{BaseArgs, Commands, config, i18n};
 use crate::command::{command, CommandEnum};
 
 pub mod service;
@@ -28,7 +28,7 @@ fn admin_check() -> bool {
     if !windows_admin_check::is_app_elevated() {
         println!(
             "{}",
-            style("请使用管理员权限运行(Please run with administrator privileges)").red()
+            style(i18n::switch_use_root_print()).red()
         );
         true
     } else {
@@ -42,7 +42,7 @@ fn not_started() -> bool {
             if state == ServiceState::Running {
                 return false;
             } else {
-                println!("服务未启动")
+                println!("{}",i18n::switch_service_not_start_print())
             }
         }
         Err(e) => {
@@ -52,7 +52,7 @@ fn not_started() -> bool {
     return true;
 }
 
-pub async fn main0(base_args: BaseArgs) {
+pub fn main0(base_args: BaseArgs) {
     match base_args.command {
         Commands::Start(args) => {
             if admin_check() {
@@ -92,15 +92,15 @@ pub async fn main0(base_args: BaseArgs) {
                             Ok(_) => {
                                 //需要检查启动状态
                                 thread::sleep(Duration::from_secs(2));
-                                println!("{}", style("启动成功(Start successfully)").green());
+                                println!("{}", style(i18n::switch_start_successfully_print()).green());
                             }
                             Err(e) => {
                                 log::error!("{:?}", e);
-                                println!("{}:{}", style("启动失败").red(),e);
+                                println!("{}:{}", style(i18n::switch_start_failed_print()).red(), e);
                             }
                         }
                     } else {
-                        println!("服务未停止(Service not stopped)");
+                        println!("{}",i18n::switch_service_not_stopped_print());
                     }
                 }
                 Err(e) => {
@@ -130,18 +130,20 @@ pub async fn main0(base_args: BaseArgs) {
                                         }
                                     };
                                     if lock.try_lock_exclusive().is_err() {
-                                        println!("{}", style("文件被重复打开").red());
+                                        println!("{}", style(i18n::switch_repeated_start_print()).red());
                                         return;
                                     }
-                                    match Switch::start(config).await {
-                                        Ok(switch) => {
-                                            crate::console_listen(&switch);
+                                    tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(async move {
+                                        match Switch::start(config).await {
+                                            Ok(switch) => {
+                                                crate::console_listen(&switch);
+                                            }
+                                            Err(e) => {
+                                                log::error!("{:?}", e);
+                                                println!("启动switch失败:{:?}", e);
+                                            }
                                         }
-                                        Err(e) => {
-                                            log::error!("{:?}", e);
-                                            println!("启动switch失败:{:?}", e);
-                                        }
-                                    }
+                                    });
                                     lock.unlock().unwrap();
                                     return;
                                 }
@@ -163,17 +165,21 @@ pub async fn main0(base_args: BaseArgs) {
             }
             match stop() {
                 Ok(_) => {
-                    println!("{}", style("停止成功(Stopped successfully)").green())
+                    println!("{}", style(i18n::switch_stopped_print()).green())
                 }
                 Err(e) => {
                     log::error!("{:?}", e);
-                    println!("停止失败:{}",e);
+                    println!("停止失败:{}", e);
                 }
             }
             pause();
         }
         Commands::Install(args) => {
             if admin_check() {
+                return;
+            }
+            if service_state().is_ok() {
+                println!("{}",i18n::switch_server_already_installed_print());
                 return;
             }
             let path: PathBuf = args.path.into();
@@ -185,7 +191,7 @@ pub async fn main0(base_args: BaseArgs) {
             } else {
                 if let Err(e) = install(path, args.auto) {
                     log::error!("{:?}", e);
-                    println!("安装失败:{}",e);
+                    println!("安装失败:{}", e);
                 } else {
                     println!("{}", style("安装成功(Installation succeeded)").green())
                 }
@@ -196,18 +202,24 @@ pub async fn main0(base_args: BaseArgs) {
             if admin_check() {
                 return;
             }
+            if service_state().is_err() {
+                println!("服务未安装");
+            }
             if let Err(e) = uninstall() {
                 log::error!("{:?}", e);
-                println!("卸载失败:{}",e);
+                println!("卸载失败:{}", e);
             } else {
                 println!("{}", style("卸载成功(Uninstall succeeded)").green())
             }
             pause();
         }
         Commands::Config(args) => {
+            if service_state().is_err() {
+                println!("服务未安装");
+            }
             if let Err(e) = change(args.auto) {
                 log::error!("{:?}", e);
-                println!("配置失败:{}",e);
+                println!("配置失败:{}", e);
             } else {
                 println!("{}", style("配置成功(Config succeeded)").green())
             }
@@ -241,7 +253,7 @@ pub async fn main0(base_args: BaseArgs) {
 fn pause() {
     println!(
         "{}",
-        style("按任意键退出(Press any key to exit)...").green()
+        style(i18n::switch_press_any_key_to_exit()).green()
     );
     use console::Term;
     let term = Term::stdout();
@@ -249,7 +261,7 @@ fn pause() {
 }
 
 fn install(mut path: PathBuf, auto: bool) -> Result<(), Error> {
-    if !path.is_absolute(){
+    if !path.is_absolute() {
         path = path.canonicalize().unwrap();
     }
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
@@ -259,7 +271,7 @@ fn install(mut path: PathBuf, auto: bool) -> Result<(), Error> {
     std::fs::copy(current_exe_path, service_path.as_path()).unwrap();
     if let Err(e) = std::fs::copy("wintun.dll", path.join("wintun.dll").as_path()) {
         if e.kind() == io::ErrorKind::NotFound {
-            println!("Not fount 'wintun.dll'. Please put 'wintun.dll' in the current directory");
+            println!("'wintun.dll' not found. Please put 'wintun.dll' in the current directory");
             std::process::exit(0);
         } else {
             panic!("{:?}", e)
@@ -318,7 +330,7 @@ fn change(auto: bool) -> Result<(), Error> {
         PathBuf::from(executable_path)
     };
     let home_path = split.next().unwrap().trim();
-    let launch_arguments = vec![OsString::from(SERVICE_FLAG),OsString::from(home_path)];
+    let launch_arguments = vec![OsString::from(SERVICE_FLAG), OsString::from(home_path)];
     let service_info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: config.display_name,
