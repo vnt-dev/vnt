@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 use winapi::um::{handleapi, synchapi, winbase, winnt};
 
 use crate::{decode_utf16, encode_utf16, ffi, IFace, netsh, route};
-
+use rand::Rng;
 mod wintun_raw;
 mod log;
 pub mod packet;
@@ -20,7 +20,7 @@ pub const MAX_POOL: usize = 256;
 
 
 pub struct TunDevice {
-    pub(crate) luid:u64,
+    pub(crate) luid: u64,
     pub(crate) index: u32,
     /// The session handle given to us by WintunStartSession
     pub(crate) session: wintun_raw::WINTUN_SESSION_HANDLE,
@@ -44,11 +44,7 @@ pub struct TunDevice {
 unsafe impl Send for TunDevice {}
 
 unsafe impl Sync for TunDevice {}
-winapi::DEFINE_GUID! {
-    GUID_NETWORK_ADAPTER,
-    0x4d36e972, 0xe325, 0x11ce,
-    0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18
-}
+
 impl TunDevice {
     pub unsafe fn create<L>(library: L, pool: &str, name: &str) -> io::Result<Self>
         where L: Into<libloading::Library>, {
@@ -66,9 +62,13 @@ impl TunDevice {
         if name_utf16.len() > MAX_POOL {
             return Err(io::Error::new(io::ErrorKind::Other, format!("长度大于{}:{:?}", MAX_POOL, pool)));
         }
+        let mut guid_bytes: [u8; 16] = [0u8; 16];
+        rand::thread_rng().fill(&mut guid_bytes);
+        let guid = u128::from_ne_bytes(guid_bytes);
         //SAFETY: guid is a unique integer so transmuting either all zeroes or the user's preferred
         //guid to the winapi guid type is safe and will allow the windows kernel to see our GUID
-        let guid_struct: wintun_raw::GUID = unsafe { std::mem::transmute(GUID_NETWORK_ADAPTER) };
+
+        let guid_struct: wintun_raw::GUID = unsafe { std::mem::transmute(guid) };
         let guid_ptr = &guid_struct as *const wintun_raw::GUID;
 
         log::set_default_logger_if_unset(&win_tun);
@@ -97,7 +97,7 @@ impl TunDevice {
         win_tun.WintunGetAdapterLUID(adapter, &mut luid as *mut wintun_raw::NET_LUID);
         let index = ffi::luid_to_index(&std::mem::transmute(luid)).map(|index| index as u32)?;
         Ok(TunDevice {
-            luid:std::mem::transmute(luid),
+            luid: std::mem::transmute(luid),
             index,
             session,
             win_tun,
@@ -155,6 +155,7 @@ pub struct Version {
 //     }
 // }
 
+
 impl IFace for TunDevice {
     fn shutdown(&self) -> io::Result<()> {
         let _ = unsafe { synchapi::SetEvent(self.shutdown_event) };
@@ -178,16 +179,16 @@ impl IFace for TunDevice {
         netsh::set_interface_name(&name, new_name)
     }
 
-    fn set_ip<IP>(&self, address: IP, mask: IP) -> io::Result<()> where IP: Into<Ipv4Addr> {
-        netsh::set_interface_ip(self.get_index()?, &address.into(), &mask.into())
+    fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()>{
+        netsh::set_interface_ip(self.get_index()?, &address, &mask)
     }
 
-    fn add_route<IP>(&self, dest: IP, netmask: IP, gateway: IP) -> io::Result<()> where IP: Into<Ipv4Addr> {
-        route::add_route(self.get_index()?, dest.into(), netmask.into(), gateway.into())
+    fn add_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr, metric: u16) -> io::Result<()>  {
+        route::add_route(self.get_index()?, dest, netmask, gateway, metric)
     }
 
-    fn delete_route<IP>(&self, dest: IP, netmask: IP, gateway: IP) -> io::Result<()> where IP: Into<Ipv4Addr> {
-        route::delete_route(self.get_index()?, dest.into(), netmask.into(), gateway.into())
+    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()>  {
+        route::delete_route(self.get_index()?, dest, netmask, gateway)
     }
 
     fn set_mtu(&self, mtu: u16) -> io::Result<()> {

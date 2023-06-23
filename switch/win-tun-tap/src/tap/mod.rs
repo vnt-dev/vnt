@@ -135,19 +135,19 @@ impl IFace for TapDevice {
         netsh::set_interface_name(&name, new_name)
     }
 
-    fn set_ip<IP>(&self, address: IP, mask: IP) -> io::Result<()> where IP: Into<Ipv4Addr> {
+    fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()> {
         let index = self.get_index()?;
-        netsh::set_interface_ip(index, &address.into(), &mask.into())
+        netsh::set_interface_ip(index, &address, &mask)
     }
 
-    fn add_route<IP>(&self, dest: IP, netmask: IP, gateway: IP) -> io::Result<()> where IP: Into<Ipv4Addr> {
+    fn add_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr, metric: u16) -> io::Result<()>  {
         let index = self.get_index()?;
-        route::add_route(index, dest.into(), netmask.into(), gateway.into())
+        route::add_route(index, dest, netmask, gateway,metric)
     }
 
-    fn delete_route<IP>(&self, dest: IP, netmask: IP, gateway: IP) -> io::Result<()> where IP: Into<Ipv4Addr> {
+    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()>  {
         let index = self.get_index()?;
-        route::delete_route(index, dest.into(), netmask.into(), gateway.into())
+        route::delete_route(index, dest, netmask, gateway)
     }
 
     fn set_mtu(&self, mtu: u16) -> io::Result<()> {

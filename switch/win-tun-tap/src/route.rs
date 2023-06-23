@@ -4,10 +4,10 @@ use std::net::Ipv4Addr;
 /// 添加路由
 pub fn add_route(index: u32, dest: Ipv4Addr,
                  netmask: Ipv4Addr,
-                 gateway: Ipv4Addr, ) -> io::Result<()> {
+                 gateway: Ipv4Addr, metric: u16) -> io::Result<()> {
     let set_route = format!(
-        "route add {:?} mask {:?} {:?} if {}",
-        dest, netmask, gateway, index
+        "route add {:?} mask {:?} {:?} metric {} if {}",
+        dest, netmask, gateway, metric, index
     );
     // 执行添加路由命令
     let out = std::process::Command::new("cmd")
@@ -23,7 +23,7 @@ pub fn add_route(index: u32, dest: Ipv4Addr,
 }
 
 /// 删除路由
-pub fn delete_route(index: u32, dest: Ipv4Addr,netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {
+pub fn delete_route(index: u32, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {
     if index == 0 {
         return Err(io::Error::new(io::ErrorKind::Other, format!("网络接口索引错误: {:?}", index)));
     }

@@ -5,8 +5,8 @@ mod tun;
 mod ffi;
 mod netsh;
 mod route;
-
 use std::{io, net};
+use std::net::Ipv4Addr;
 pub use tap::TapDevice;
 pub use tun::*;
 
@@ -23,7 +23,7 @@ fn decode_utf16(string: &[u16]) -> String {
 }
 
 pub trait IFace {
-    fn shutdown(&self)->io::Result<()>;
+    fn shutdown(&self) -> io::Result<()>;
     /// 获取接口索引
     fn get_index(&self) -> io::Result<u32>;
     /// 获取名称
@@ -31,18 +31,15 @@ pub trait IFace {
     /// 设置名称
     fn set_name(&self, new_name: &str) -> io::Result<()>;
     /// 设置ip
-    fn set_ip<IP>(&self, address: IP, mask: IP) -> io::Result<()>
-        where IP: Into<net::Ipv4Addr>;
+    fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()>;
     /// 设置路由
-    fn add_route<IP>(&self, dest: IP,
-                     netmask: IP,
-                     gateway: IP, ) -> io::Result<()>
-        where IP: Into<net::Ipv4Addr>;
+    fn add_route(&self, dest: Ipv4Addr,
+                     netmask: Ipv4Addr,
+                     gateway: Ipv4Addr, metric: u16) -> io::Result<()>;
     /// 删除路由
-    fn delete_route<IP>(&self, dest: IP,
-                        netmask: IP,
-                        gateway: IP, ) -> io::Result<()>
-        where IP: Into<net::Ipv4Addr>;
+    fn delete_route(&self, dest: Ipv4Addr,
+                        netmask: Ipv4Addr,
+                        gateway: Ipv4Addr, ) -> io::Result<()>;
     /// 设置最大传输单元
     fn set_mtu(&self, mtu: u16) -> io::Result<()>;
     /// 设置跃点
