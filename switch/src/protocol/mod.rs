@@ -5,7 +5,7 @@ use std::{fmt, io};
    0                                            15                                              31
    0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |        版本(8)       |      协议(8)          |      上层协议(8)        | 初始ttl(4) | 生存时间(4) |
+  | p|unused|  版本(4)   |      协议(8)          |      上层协议(8)        | 初始ttl(4) | 生存时间(4) |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   |                                          源ip地址(32)                                         |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -115,8 +115,11 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
 }
 
 impl<B: AsRef<[u8]>> NetPacket<B> {
+    pub fn is_encrypt(&self) -> bool {
+        self.buffer.as_ref()[0] & 0x80 == 0x80
+    }
     pub fn version(&self) -> Version {
-        Version::from(self.buffer.as_ref()[0])
+        Version::from(self.buffer.as_ref()[0] & 0x0F)
     }
     pub fn protocol(&self) -> Protocol {
         Protocol::from(self.buffer.as_ref()[1])
@@ -144,11 +147,19 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
 }
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
-    pub fn buffer_mut(&mut self)->&mut [u8]{
+    pub fn buffer_mut(&mut self) -> &mut [u8] {
         self.buffer.as_mut()
     }
+    pub fn set_encrypt_flag(&mut self, is_encrypt: bool) {
+        if is_encrypt {
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x80
+        } else {
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0x7F
+        };
+    }
     pub fn set_version(&mut self, version: Version) {
-        self.buffer.as_mut()[0] = version.into();
+        let v: u8 = version.into();
+        self.buffer.as_mut()[0] = (self.buffer.as_ref()[0] & 0xF0) | (0x0F & v);
     }
     pub fn set_protocol(&mut self, protocol: Protocol) {
         self.buffer.as_mut()[1] = protocol.into();

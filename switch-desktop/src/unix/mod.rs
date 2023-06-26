@@ -45,6 +45,7 @@ pub async fn main0(base_args: BaseArgs) {
                 start_config.nat_test_server.clone(),
                 start_config.in_ips.clone(),
                 start_config.out_ips.clone(),
+                start_config.password.clone(),
             );
             let lock = match config::lock_file() {
                 Ok(lock) => {

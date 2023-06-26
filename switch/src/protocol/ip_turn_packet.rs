@@ -3,6 +3,8 @@ use std::net::Ipv4Addr;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Protocol {
+    Icmp,
+    Igmp,
     Ipv4,
     Ipv4Broadcast,
     Unknown(u8),
@@ -11,6 +13,8 @@ pub enum Protocol {
 impl From<u8> for Protocol {
     fn from(value: u8) -> Self {
         match value {
+            1 => Protocol::Icmp,
+            2 => Protocol::Igmp,
             4 => Protocol::Ipv4,
             201 => Protocol::Ipv4Broadcast,
             val => Protocol::Unknown(val),
@@ -21,6 +25,8 @@ impl From<u8> for Protocol {
 impl Into<u8> for Protocol {
     fn into(self) -> u8 {
         match self {
+            Protocol::Icmp => 1,
+            Protocol::Igmp => 2,
             Protocol::Ipv4 => 4,
             Protocol::Ipv4Broadcast => 201,
             Protocol::Unknown(val) => val,

@@ -73,7 +73,6 @@ async fn service_main(arguments: Vec<OsString>) -> windows_service::Result<()> {
     match start_switch(arguments).await {
         Ok(_) => {
             parker.park();
-
         }
         Err(e) => {
             log::error!("服务启动失败 {:?}",e);
@@ -171,12 +170,13 @@ async fn start_switch(arguments: Vec<OsString>) -> switch::Result<()> {
         start_config.nat_test_server,
         start_config.in_ips,
         start_config.out_ips,
+        start_config.password,
     );
     log::info!("switch-service服务启动");
 
 
-    tokio::spawn(async move  {
-         match Switch::start(config).await {
+    tokio::spawn(async move {
+        match Switch::start(config).await {
             Ok(switch) => {
                 let switch = Arc::new(switch);
                 let command_server = crate::command::server::CommandServer::new();
@@ -191,7 +191,6 @@ async fn start_switch(arguments: Vec<OsString>) -> switch::Result<()> {
                 log::error!("{:?}", e);
             }
         };
-
     });
     Ok(())
 }

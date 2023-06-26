@@ -63,6 +63,11 @@ fn common() -> Command {
                     .help(switch_out_ip_help())
                     .action(ArgAction::Append)
             ).arg(
+                Arg::new("password")
+                    .long("password")
+                    .help(switch_password_help())
+                    .action(ArgAction::Set)
+            ).arg(
                 Arg::new("config")
                     .long("config")
                     .help(switch_config_help())

@@ -1,6 +1,7 @@
 use std::{io, thread};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use aes_gcm::{Aes256Gcm, Key, KeyInit};
 
 use crossbeam::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
@@ -41,6 +42,12 @@ pub struct Switch {
 impl Switch {
     pub async fn start(config: Config) -> crate::Result<Switch> {
         log::info!("config:{:?}",config);
+        let cipher = if let Some(key) = &config.key {
+            let key: &Key<Aes256Gcm> = key.into();
+            Some(Aes256Gcm::new(&key))
+        } else {
+            None
+        };
         let main_channel = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
         let response = registration_handler::registration(&main_channel, config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()).await?;
         let (cone_sender, cone_receiver) = channel(3);
@@ -62,7 +69,7 @@ impl Switch {
         let local_port = context.main_local_port()?;
         // NAT检测
         let nat_test = NatTest::new(config.nat_test_server.clone(), Ipv4Addr::from(response.public_ip), response.public_port as u16, local_ip, local_port);
-        let in_ips = config.in_ips.iter().map(|(dest, mask, _)| { (Ipv4Addr::from(*dest), Ipv4Addr::from(*mask)) }).collect::<Vec<(Ipv4Addr, Ipv4Addr)>>();
+        let in_ips = config.in_ips.iter().map(|(dest, mask, _)| { (Ipv4Addr::from(*dest & *mask), Ipv4Addr::from(*mask)) }).collect::<Vec<(Ipv4Addr, Ipv4Addr)>>();
 
         let out_ips = config.out_ips.iter().map(|(_, _, ip)| *ip).collect::<Vec<Ipv4Addr>>();
         let out_external_route = ExternalRoute::new(config.out_ips);
@@ -78,7 +85,8 @@ impl Switch {
             let (tap_writer, tap_reader) = tun_tap_device::create_device(tun_tap_device::DeviceType::Tap, virtual_ip, virtual_netmask, virtual_gateway, in_ips)?;
             let igmp_server = IgmpServer::new(tap_writer.clone());
             //tap数据处理
-            tap_handler::start(channel_sender.clone(), tap_reader.clone(), tap_writer.clone(), igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
+            tap_handler::start(channel_sender.clone(), tap_reader.clone(), tap_writer.clone(),
+                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
             (tap_writer, igmp_server)
         } else {
             #[cfg(windows)]
@@ -90,7 +98,8 @@ impl Switch {
             let (tun_writer, tun_reader) = tun_tap_device::create_device(tun_tap_device::DeviceType::Tun, virtual_ip, virtual_netmask, virtual_gateway, in_ips)?;
             let igmp_server = IgmpServer::new(tun_writer.clone());
             //tun数据接收处理
-            tun_handler::start(channel_sender.clone(), tun_reader.clone(), tun_writer.clone(), igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone());
+            tun_handler::start(channel_sender.clone(), tun_reader.clone(), tun_writer.clone(),
+                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
             (tun_writer, igmp_server)
         };
         //外部数据接收处理
@@ -98,7 +107,7 @@ impl Switch {
                                                            register.clone(), nat_test.clone(), igmp_server,
                                                            device_writer.clone(), connect_status.clone(),
                                                            peer_nat_info_map.clone(), ip_proxy_map, out_external_route,
-                                                           cone_sender, symmetric_sender);
+                                                           cone_sender, symmetric_sender, cipher);
         let channel = Channel::new(context.clone(), channel_recv_handler);
         thread::spawn(move || {
             tokio::runtime::Builder::new_multi_thread()
@@ -178,7 +187,10 @@ pub struct Config {
     pub nat_test_server: Vec<SocketAddr>,
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub out_ips: Vec<(u32, u32, Ipv4Addr)>,
+    pub key: Option<[u8; 32]>,
 }
+
+use sha2::Digest;
 
 impl Config {
     pub fn new(tap: bool, token: String,
@@ -186,7 +198,15 @@ impl Config {
                name: String,
                server_address: SocketAddr,
                nat_test_server: Vec<SocketAddr>,
-               in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32, Ipv4Addr)>, ) -> Self {
+               in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32, Ipv4Addr)>, password: Option<String>, ) -> Self {
+        let key = if let Some(password) = password {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(password.as_bytes());
+            let key: [u8; 32] = hasher.finalize().into();
+            Some(key)
+        } else {
+            None
+        };
         Self {
             tap,
             token,
@@ -196,6 +216,7 @@ impl Config {
             nat_test_server,
             in_ips,
             out_ips,
+            key,
         }
     }
 }

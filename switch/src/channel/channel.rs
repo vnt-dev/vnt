@@ -330,7 +330,7 @@ impl Channel {
         #[cfg(any(unix))]
             let id = udp.as_raw_fd() as usize;
         context.udp_map.insert(id, udp.clone());
-        let mut buf = [0; 65546];
+        let mut buf = [0; 65536];
         loop {
             tokio::select! {
                 rs=udp.recv_from(&mut buf[head_reserve..])=>{

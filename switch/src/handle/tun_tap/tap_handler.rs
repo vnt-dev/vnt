@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::{io, thread};
+use aes_gcm::Aes256Gcm;
 use crossbeam::atomic::AtomicCell;
 use packet::arp::arp::ArpPacket;
 use packet::ethernet;
@@ -21,39 +22,41 @@ pub fn start(sender: ChannelSender,
              igmp_server: IgmpServer,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
              ip_route: ExternalRoute,
-             ip_proxy_map: IpProxyMap) {
+             ip_proxy_map: IpProxyMap,
+             cipher: Option<Aes256Gcm>) {
     thread::Builder::new().name("tap-handler".into()).spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
                 if let Err(e) = start_(sender, device_reader,
                                        device_writer, igmp_server,
-                                       current_device, ip_route, ip_proxy_map).await {
+                                       current_device, ip_route, ip_proxy_map, cipher).await {
                     log::warn!("tap:{:?}",e);
                 }
             });
-
     }).unwrap();
 }
 
 async fn start_(sender: ChannelSender,
-          device_reader: DeviceReader,
-          device_writer: DeviceWriter,
-          igmp_server: IgmpServer,
-          current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-          ip_route: ExternalRoute,
-          ip_proxy_map: IpProxyMap) -> io::Result<()> {
-    let mut buf = [0; 4096];
+                device_reader: DeviceReader,
+                device_writer: DeviceWriter,
+                igmp_server: IgmpServer,
+                current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+                ip_route: ExternalRoute,
+                ip_proxy_map: IpProxyMap,
+                cipher: Option<Aes256Gcm>) -> io::Result<()> {
+    let mut buf = [0; 2048];
     loop {
+        //ip拆包了会直接丢弃？
         let len = device_reader.read(&mut buf)?;
-        if let Err(e) = handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender, &ip_route, &ip_proxy_map).await {
+        if let Err(e) = handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender, &ip_route, &ip_proxy_map, &cipher).await {
             log::error!("tap handle{:?}",e);
         }
     }
 }
 
 async fn handle(buf: &mut [u8], len: usize, igmp_server: &IgmpServer, current_device: &AtomicCell<CurrentDeviceInfo>,
-          device_writer: &DeviceWriter, sender: &ChannelSender, ip_route: &ExternalRoute, proxy_map: &IpProxyMap) -> crate::Result<()> {
+                device_writer: &DeviceWriter, sender: &ChannelSender, ip_route: &ExternalRoute, proxy_map: &IpProxyMap, cipher: &Option<Aes256Gcm>) -> crate::Result<()> {
     let mut ethernet_packet = EthernetPacket::new(&mut buf[..len])?;
     let current_device = current_device.load();
     match ethernet_packet.protocol() {
@@ -68,12 +71,12 @@ async fn handle(buf: &mut [u8], len: usize, igmp_server: &IgmpServer, current_de
                 return Ok(());
             }
             //回复一个虚假的MAC地址
-            out_arp_packet.set_sender_hardware_addr(&[target_p[0], target_p[1], target_p[2], target_p[3], 123, 234]);
+            out_arp_packet.set_sender_hardware_addr(&[target_p[0], target_p[1], target_p[2], target_p[3], !sender_h[5], 234]);
             out_arp_packet.set_sender_protocol_addr(target_p);
             out_arp_packet.set_target_hardware_addr(sender_h);
             out_arp_packet.set_target_protocol_addr(sender_p);
             out_arp_packet.set_op_code(2);
-            out_ethernet_packet.set_source(&[target_p[0], target_p[1], target_p[2], target_p[3], 123, 234]);
+            out_ethernet_packet.set_source(&[target_p[0], target_p[1], target_p[2], target_p[3], !sender_h[5], 234]);
             out_ethernet_packet.set_destination(sender_h);
             device_writer.write_ethernet_tap(&out_ethernet_packet.buffer)?;
         }
@@ -105,7 +108,7 @@ async fn handle(buf: &mut [u8], len: usize, igmp_server: &IgmpServer, current_de
             }
             // 以太网帧头部14字节，预留12字节
             return crate::handle::tun_tap::base_handle(sender, &mut buf[2..], len - 2, igmp_server, current_device,
-                                                       ip_route, proxy_map).await;
+                                                       ip_route, proxy_map, cipher).await;
         }
         _ => {
             // log::warn!("不支持的二层协议：{:?}",p)

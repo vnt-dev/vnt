@@ -98,7 +98,7 @@ impl DeviceWriter {
                 Self::write(self.packet_information, writer, &buf[14..])
             }
             DeviceW::Tap((writer, mac)) => {
-                let source_mac = [buf[14 + 12], buf[14 + 13], buf[14 + 14], buf[14 + 15], 123, 234];
+                let source_mac = [buf[14 + 12], buf[14 + 13], buf[14 + 14], buf[14 + 15], !mac[5], 234];
                 let mut ethernet_packet = EthernetPacket::unchecked(buf);
                 ethernet_packet.set_source(&source_mac);
                 ethernet_packet.set_destination(mac);

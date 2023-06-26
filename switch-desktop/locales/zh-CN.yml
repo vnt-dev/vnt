@@ -10,6 +10,7 @@ switch_log_help: "记录日志，输出在 '${home}/.switch_desktop' 目录下�
 switch_tap_help: "使用tap模式，默认会使用tun模式"
 switch_in_ip_help: "配置点对网(IP代理)时使用，--in-ip 192.168.10.0/24,10.26.0.3，表示允许接收网段192.168.10.0/24的数据并转发到10.26.0.3"
 switch_out_ip_help: "配置点对网时使用，--out-ip 192.168.10.0/24,192.168.1.10，表示允许目标为192.168.10.0/24的数据从网卡192.168.1.10转发出去"
+switch_password_help: "使用该密码生成的密钥对客户端数据进行加密，并且服务端无法解密。使用相同密码的客户端才能通信"
 switch_config_help: "读取配置文件"
 switch_stop_about: "停止后台服务"
 switch_route_about: "查看路由"

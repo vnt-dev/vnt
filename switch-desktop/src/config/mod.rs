@@ -38,6 +38,7 @@ pub struct StartConfig {
     #[cfg(any(unix))]
     pub off_command_server: bool,
     pub log: bool,
+    pub password: Option<String>,
 }
 
 fn ips_parse(ips: &Vec<String>) -> Result<Vec<(u32, u32, Ipv4Addr)>, String> {
@@ -163,7 +164,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
             }
         }
         Err(e) => {
-            return Err(format!("{} :{:?}",i18n::switch_relay_server_address_error(), e));
+            return Err(format!("{} :{:?}", i18n::switch_relay_server_address_error(), e));
         }
     };
     println!("中继服务器:{:?}", server);
@@ -187,6 +188,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
         #[cfg(any(unix))]
         off_command_server: start_args.off_command_server,
         log: start_args.log,
+        password: start_args.password,
     };
     println!("========参数配置========");
     Ok(base_config)
@@ -268,7 +270,7 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
             }
         }
         Err(e) => {
-            return Err(format!("{}:{:?}",i18n::switch_relay_server_address_error(), e));
+            return Err(format!("{}:{:?}", i18n::switch_relay_server_address_error(), e));
         }
     };
     println!("中继服务器:{:?}", server);
@@ -294,6 +296,7 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
         #[cfg(any(unix))]
         off_command_server: args_config.off_command_server,
         log,
+        password:args_config.password
     };
     println!("========参数配置========");
     Ok(base_config)
@@ -331,6 +334,7 @@ pub struct ArgsConfig {
     pub off_command_server: bool,
     #[serde(default = "default_false")]
     pub log: bool,
+    pub password: Option<String>,
 }
 
 #[cfg(windows)]
@@ -355,6 +359,7 @@ impl ArgsConfig {
             log: start_config.log,
             #[cfg(any(unix))]
             off_command_server: start_config.off_command_server,
+            password: start_config.password,
         }
     }
 }

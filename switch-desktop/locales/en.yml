@@ -10,6 +10,7 @@ switch_log_help: "Record the log, the output is in the '${home}/.switch_desktop'
 switch_tap_help: "Use tap mode, tun mode will be used by default"
 switch_in_ip_help: "Use when configuring point-to-network (IP proxy), --in-ip 192.168.10.0/24,10.26.0.3, which means it is allowed to receive data from the network segment 192.168.10.0/24 and forward it to 10.26.0.3"
 switch_out_ip_help: "Use when configuring point-to-network, --out-ip 192.168.10.0/24,192.168.1.10, which means that the data with the target of 192.168.10.0/24 is allowed to be forwarded from the network card 192.168.1.10"
+switch_password_help: "Client Data Encryption"
 switch_config_help: "Read configuration file"
 switch_stop_about: "Stop background service"
 switch_route_about: "View route"

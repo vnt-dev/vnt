@@ -107,6 +107,9 @@ pub struct StartArgs {
     /// Use when configuring peer-to-peer networks
     #[arg(long)]
     out_ip: Option<Vec<String>>,
+    /// 客户端数据加密
+    #[arg(long)]
+    password:Option<String>,
     /// 读取配置文件 --config config_file_path
     /// Read configuration file
     #[arg(long)]

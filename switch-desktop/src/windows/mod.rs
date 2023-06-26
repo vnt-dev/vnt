@@ -42,7 +42,7 @@ fn not_started() -> bool {
             if state == ServiceState::Running {
                 return false;
             } else {
-                println!("{}",i18n::switch_service_not_start_print())
+                println!("{}", i18n::switch_service_not_start_print())
             }
         }
         Err(e) => {
@@ -100,7 +100,7 @@ pub fn main0(base_args: BaseArgs) {
                             }
                         }
                     } else {
-                        println!("{}",i18n::switch_service_not_stopped_print());
+                        println!("{}", i18n::switch_service_not_stopped_print());
                     }
                 }
                 Err(e) => {
@@ -118,6 +118,7 @@ pub fn main0(base_args: BaseArgs) {
                                         start_config.nat_test_server,
                                         start_config.in_ips,
                                         start_config.out_ips,
+                                        start_config.password,
                                     );
                                     let lock = match config::lock_file() {
                                         Ok(lock) => {
@@ -179,7 +180,7 @@ pub fn main0(base_args: BaseArgs) {
                 return;
             }
             if service_state().is_ok() {
-                println!("{}",i18n::switch_server_already_installed_print());
+                println!("{}", i18n::switch_server_already_installed_print());
                 return;
             }
             let path: PathBuf = args.path.into();

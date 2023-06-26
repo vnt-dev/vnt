@@ -73,6 +73,9 @@ pub fn switch_in_ip_help() -> String {
 pub fn switch_out_ip_help() -> String {
     rust_i18n::t!("switch_out_ip_help")
 }
+pub fn switch_password_help() -> String {
+    rust_i18n::t!("switch_password_help")
+}
 
 pub fn switch_config_help() -> String {
     rust_i18n::t!("switch_config_help")

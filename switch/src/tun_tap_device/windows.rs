@@ -87,7 +87,7 @@ impl DeviceWriter {
                 dev.send_packet(packet);
             }
             Device::Tap((dev, mac)) => {
-                let source_mac = [buf[14 + 12], buf[14 + 13], buf[14 + 14], buf[14 + 15], 123, 234];
+                let source_mac = [buf[14 + 12], buf[14 + 13], buf[14 + 14], buf[14 + 15], !mac[5], 234];
                 let mut ethernet_packet = EthernetPacket::unchecked(buf);
                 ethernet_packet.set_source(&source_mac);
                 ethernet_packet.set_destination(mac);
@@ -128,7 +128,9 @@ impl DeviceWriter {
         dev.add_route(address, netmask, gateway, 1)?;
         // 广播和组播路由
         dev.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
-        dev.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)
+        dev.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
+        delete_cache();
+        Ok(())
     }
     pub fn ip(&self) -> Ipv4Addr {
         self.ip.load()
@@ -252,12 +254,25 @@ fn create_tun(
         // 广播和组播路由
         tun_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
         tun_device.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
+        delete_cache();
         let device = Arc::new(Device::Tun(tun_device));
         println!("========TUN网卡配置========");
         Ok((
             DeviceWriter::new(device.clone(), in_ips, address),
             DeviceReader::new(device),
         ))
+    }
+}
+fn delete_cache(){
+    //清除路由缓存
+    let delete_cache = "netsh interface ip delete destinationcache";
+    let out = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg(delete_cache)
+        .output()
+        .unwrap();
+    if !out.status.success(){
+        log::warn!("删除缓存失败:{:?}",out);
     }
 }
 
@@ -304,6 +319,7 @@ fn create_tap(
     // 广播和组播路由
     tap_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
     tap_device.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
+    delete_cache();
     let tap = Arc::new(Device::Tap((tap_device, mac)));
     println!("========TAP网卡配置========");
     Ok((

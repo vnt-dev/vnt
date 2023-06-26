@@ -67,7 +67,7 @@ impl IcmpProxy {
         let mut net_packet = NetPacket::new([0u8; 4 + 8 + 1500]).unwrap();
         net_packet.set_version(Version::V1);
         net_packet.set_protocol(Protocol::IpTurn);
-        net_packet.set_transport_protocol(ipv4::protocol::Protocol::Ipv4.into());
+        net_packet.set_transport_protocol(ipv4::protocol::Protocol::Icmp.into());
         net_packet.set_ttl(MAX_TTL);
         loop {
             match self.recv(data) {

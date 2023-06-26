@@ -1,4 +1,8 @@
+use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use aes_gcm::{AeadInPlace, Aes256Gcm, Nonce};
+use aes_gcm::aead::consts::U12;
+use aes_gcm::aead::generic_array::GenericArray;
 use packet::ip::ipv4::packet::IpV4Packet;
 use packet::ip::ipv4::protocol::Protocol;
 use packet::tcp::tcp::TcpPacket;
@@ -42,9 +46,9 @@ async fn multicast(igmp_server: &IgmpServer, multicast_addr: Ipv4Addr, sender: &
     let mut peer_ips = Vec::with_capacity(8);
     let vec = sender.direct_route_table_one();
     if let Some(members) = igmp_server.load(&multicast_addr) {
-        let members_guard = members.read();
         for (peer_ip, route) in vec {
-            if members_guard.is_send(&peer_ip) {
+            let is_send = {members.read().is_send(&peer_ip)};
+            if is_send {
                 if sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await.is_ok() {
                     peer_ips.push(peer_ip);
                     if peer_ips.len() == u8::MAX as usize {
@@ -69,42 +73,59 @@ async fn multicast(igmp_server: &IgmpServer, multicast_addr: Ipv4Addr, sender: &
 }
 
 /// 实现一个原地发送，必须保证是如下结构
-/// |12字节开头|ip报文|至少1024字节结尾|
+/// |12字节开头|ip报文|至少1024字节+12字节结尾|
 ///
 #[inline]
 pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
-                   data_len: usize,//数据总长度=ip长度+12
-                   igmp_server: &IgmpServer,
-                   current_device: CurrentDeviceInfo,
-                   ip_route: &ExternalRoute, proxy_map: &IpProxyMap) -> Result<()> {
+                         mut data_len: usize,//数据总长度=ip长度+12
+                         igmp_server: &IgmpServer,
+                         current_device: CurrentDeviceInfo,
+                         ip_route: &ExternalRoute, proxy_map: &IpProxyMap, cipher: &Option<Aes256Gcm>) -> Result<()> {
     let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
     let protocol = ipv4_packet.protocol();
     let ip_head_len = ipv4_packet.header_len() as usize * 4;
     let src_ip = ipv4_packet.source_ip();
     let mut dest_ip = ipv4_packet.destination_ip();
     let mut net_packet = NetPacket::new(buf)?;
-    net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(protocol::Protocol::IpTurn);
+    net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
     net_packet.first_set_ttl(3);
     net_packet.set_source(src_ip);
     net_packet.set_destination(dest_ip);
+    if dest_ip == current_device.virtual_gateway {
+        if protocol == Protocol::Icmp {
+            net_packet.set_transport_protocol(ip_turn_packet::Protocol::Icmp.into());
+            //发送到服务端的不加密
+            sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
+        }
+        return Ok(());
+    }
+    if dest_ip.is_multicast() {
+        if protocol == Protocol::Igmp {
+            net_packet.set_transport_protocol(ip_turn_packet::Protocol::Igmp.into());
+            //发送到服务端
+            sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
+            return Ok(());
+        }
+    }
     if dest_ip.is_broadcast() || current_device.broadcast_address == dest_ip {
         // 广播 发送到直连目标
         if Protocol::Udp == protocol {
+            if let Some(cipher) = cipher {
+                //需要加密
+                encrypt(cipher, &mut data_len, &mut net_packet)?;
+            }
             broadcast(sender, &mut net_packet, data_len, &current_device).await?;
         }
         return Ok(());
     } else if dest_ip.is_multicast() {
-        match protocol {
-            Protocol::Igmp => {
-                //发送到服务端
-                sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
+        if protocol == Protocol::Udp {
+            if let Some(cipher) = cipher {
+                //需要加密
+                encrypt(cipher, &mut data_len, &mut net_packet)?;
             }
-            Protocol::Udp => {
-                multicast(igmp_server, dest_ip, sender, &mut net_packet, data_len, &current_device).await?;
-            }
-            _ => {}
+            multicast(igmp_server, dest_ip, sender, &mut net_packet, data_len, &current_device).await?;
         }
         return Ok(());
     } else {
@@ -158,9 +179,37 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
             }
         }
     }
+    if let Some(cipher) = cipher {
+        //需要加密
+        encrypt(cipher, &mut data_len, &mut net_packet)?;
+    }
+
     //优先发到直连到地址
     if sender.send_by_id(&net_packet.buffer()[..data_len], &dest_ip).await.is_err() {
         sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
     }
     return Ok(());
+}
+
+fn encrypt(cipher: &Aes256Gcm, data_len: &mut usize, net_packet: &mut NetPacket<&mut [u8]>) -> io::Result<()> {
+    let mut nonce = [0; 12];
+    nonce[0..4].copy_from_slice(&net_packet.source().octets());
+    nonce[4..8].copy_from_slice(&net_packet.destination().octets());
+    nonce[8] = protocol::Protocol::IpTurn.into();
+    nonce[9] = ip_turn_packet::Protocol::Ipv4.into();
+    let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce);
+    return match cipher.encrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..*data_len - 12]) {
+        Ok(tag) => {
+            if tag.len() != 16 {
+                return Err(io::Error::new(io::ErrorKind::Other, format!("加密tag长度错误:{}", tag.len())));
+            }
+            net_packet.set_encrypt_flag(true);
+            net_packet.payload_mut()[*data_len - 12..*data_len - 12 + 16].copy_from_slice(tag.as_slice());
+            *data_len += 16;
+            Ok(())
+        }
+        Err(e) => {
+            Err(io::Error::new(io::ErrorKind::Other, format!("加密失败:{}", e)))
+        }
+    };
 }

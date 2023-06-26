@@ -1,5 +1,6 @@
 use std::{io, thread};
 use std::sync::Arc;
+use aes_gcm::Aes256Gcm;
 
 use crossbeam::atomic::AtomicCell;
 
@@ -35,7 +36,7 @@ fn icmp(device_writer: &DeviceWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) ->
 /// 接收tun数据，并且转发到udp上
 #[inline]
 async fn handle(sender: &ChannelSender, data: &mut [u8], len: usize, device_writer: &DeviceWriter, igmp_server: &IgmpServer, current_device: CurrentDeviceInfo,
-                ip_route: &ExternalRoute, proxy_map: &IpProxyMap) -> Result<()> {
+                ip_route: &ExternalRoute, proxy_map: &IpProxyMap,cipher: &Option<Aes256Gcm>) -> Result<()> {
     let ipv4_packet = if let Ok(ipv4_packet) = IpV4Packet::new(&mut data[12..len]) {
         ipv4_packet
     } else {
@@ -49,7 +50,7 @@ async fn handle(sender: &ChannelSender, data: &mut [u8], len: usize, device_writ
     if src_ip == dest_ip {
         return icmp(&device_writer, ipv4_packet);
     }
-    return crate::handle::tun_tap::base_handle(sender, data, len, igmp_server, current_device, ip_route, proxy_map).await;
+    return crate::handle::tun_tap::base_handle(sender, data, len, igmp_server, current_device, ip_route, proxy_map,cipher).await;
 }
 
 pub fn start(sender: ChannelSender,
@@ -58,12 +59,13 @@ pub fn start(sender: ChannelSender,
              igmp_server: IgmpServer,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
              ip_route: ExternalRoute,
-             ip_proxy_map: IpProxyMap) {
+             ip_proxy_map: IpProxyMap,
+             cipher: Option<Aes256Gcm>) {
     thread::Builder::new().name("tun-handler".into()).spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
-                if let Err(e) = start_(sender, device_reader, device_writer, igmp_server, current_device, ip_route, ip_proxy_map).await {
+                if let Err(e) = start_(sender, device_reader, device_writer, igmp_server, current_device, ip_route, ip_proxy_map,cipher).await {
                     log::warn!("tun:{:?}",e);
                 }
             })
@@ -76,11 +78,12 @@ async fn start_(sender: ChannelSender,
                 igmp_server: IgmpServer,
                 current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
                 ip_route: ExternalRoute,
-                ip_proxy_map: IpProxyMap) -> io::Result<()> {
+                ip_proxy_map: IpProxyMap,
+                cipher: Option<Aes256Gcm>) -> io::Result<()> {
     let mut buf = [0; 4096];
     loop {
         let len = device_reader.read(&mut buf[12..])? + 12;
-        match handle(&sender, &mut buf, len, &device_writer, &igmp_server, current_device.load(), &ip_route, &ip_proxy_map).await {
+        match handle(&sender, &mut buf, len, &device_writer, &igmp_server, current_device.load(), &ip_route, &ip_proxy_map,&cipher).await {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("{:?}", e)
