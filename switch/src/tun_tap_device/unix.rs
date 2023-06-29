@@ -5,7 +5,7 @@ use bytes::BufMut;
 use tun::platform::posix::{Reader, Writer};
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use tun::platform::linux::Device;
 #[cfg(any(target_os = "macos", target_os = "ios"))]

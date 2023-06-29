@@ -8,7 +8,6 @@ use tokio::net::UdpSocket;
 /// 一个udp代理，作用是利用系统协议栈，将udp数据报解析出来再转发到目的地址
 pub struct UdpProxy {
     udp_socket: Arc<UdpSocket>,
-    //  todo 过期处理
     map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>,
 }
 
@@ -61,6 +60,7 @@ async fn start0(buf: &[u8], sender_addr: SocketAddrV4, inner_map: &Arc<SkipMap<S
         let inner_map = inner_map.clone();
         inner_map.insert(sender_addr, peer_udp_socket.clone());
         let udp_socket = udp_socket.clone();
+        let map = map.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 65536];
             loop {
@@ -90,6 +90,7 @@ async fn start0(buf: &[u8], sender_addr: SocketAddrV4, inner_map: &Arc<SkipMap<S
                 }
             }
             inner_map.remove(&sender_addr);
+            map.remove(&sender_addr);
         });
     }
     Ok(())

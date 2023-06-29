@@ -110,6 +110,9 @@ pub struct StartArgs {
     /// 客户端数据加密
     #[arg(long)]
     password:Option<String>,
+    /// 模拟组播，默认情况下组播数据会被当作广播发送，兼容性更强，但是会造成流量浪费，开启后会模拟真实组播的数据发送
+    #[arg(long)]
+    simulate_multicast:bool,
     /// 读取配置文件 --config config_file_path
     /// Read configuration file
     #[arg(long)]

@@ -1,9 +1,8 @@
 use std::io;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use crossbeam_utils::atomic::AtomicCell;
 
-use chrono::Local;
 use protobuf::Message;
 use tokio::net::UdpSocket;
 use crate::channel::sender::ChannelSender;
@@ -105,7 +104,7 @@ fn registration_request_packet(
     request.device_id = device_id;
     request.name = name;
     request.is_fast = is_fast;
-    request.version = "1.0.6".to_string();
+    request.version = "1.0.7".to_string();
     let bytes = request.write_to_bytes()?;
     let buf = vec![0u8; 12 + bytes.len()];
     let mut net_packet = NetPacket::new(buf)?;
@@ -123,7 +122,7 @@ pub struct Register {
     token: String,
     device_id: String,
     name: String,
-    time: AtomicI64,
+    time: AtomicCell<Instant>,
 }
 
 impl Register {
@@ -140,16 +139,15 @@ impl Register {
             token,
             device_id,
             name,
-            time: AtomicI64::new(0),
+            time: AtomicCell::new(Instant::now()),
         }
     }
     pub async fn fast_register(&self) -> io::Result<()> {
-        let last = self.time.load(Ordering::Relaxed);
-        let new = Local::now().timestamp_millis();
-        if new - last < 1000
+        let last = self.time.load();
+        if last.elapsed() < Duration::from_secs(2)
             || self
             .time
-            .compare_exchange(last, new, Ordering::Relaxed, Ordering::Relaxed)
+            .compare_exchange(last, Instant::now())
             .is_err()
         {
             //短时间不重复注册

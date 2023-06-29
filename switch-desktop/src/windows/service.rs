@@ -171,6 +171,7 @@ async fn start_switch(arguments: Vec<OsString>) -> switch::Result<()> {
         start_config.in_ips,
         start_config.out_ips,
         start_config.password,
+        start_config.simulate_multicast,
     );
     log::info!("switch-service服务启动");
 

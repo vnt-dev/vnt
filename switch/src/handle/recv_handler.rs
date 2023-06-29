@@ -4,8 +4,7 @@ use aes_gcm::{AeadInPlace, Aes256Gcm, Nonce, Tag};
 use aes_gcm::aead::consts::{U12, U16};
 use aes_gcm::aead::generic_array::GenericArray;
 
-use chrono::Local;
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 use protobuf::Message;
@@ -40,11 +39,11 @@ pub struct ChannelDataHandler {
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     register: Arc<Register>,
     nat_test: NatTest,
-    igmp_server: IgmpServer,
+    igmp_server: Option<IgmpServer>,
     device_writer: DeviceWriter,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
     peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
-    ip_proxy_map: IpProxyMap,
+    ip_proxy_map: Option<IpProxyMap>,
     out_external_route: ExternalRoute,
     cone_sender: Sender<(Ipv4Addr, NatInfo)>,
     symmetric_sender: Sender<(Ipv4Addr, NatInfo)>,
@@ -56,11 +55,11 @@ impl ChannelDataHandler {
                device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
                register: Arc<Register>,
                nat_test: NatTest,
-               igmp_server: IgmpServer,
+               igmp_server: Option<IgmpServer>,
                device_writer: DeviceWriter,
                connect_status: Arc<AtomicCell<ConnectStatus>>,
                peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
-               ip_proxy_map: IpProxyMap,
+               ip_proxy_map: Option<IpProxyMap>,
                out_external_route: ExternalRoute,
                cone_sender: Sender<(Ipv4Addr, NatInfo)>,
                symmetric_sender: Sender<(Ipv4Addr, NatInfo)>,
@@ -103,8 +102,9 @@ impl ChannelDataHandler {
         let source = net_packet.source();
         let current_device = self.current_device.load();
         let destination = net_packet.destination();
+        let not_broadcast = !destination.is_broadcast() && !destination.is_multicast() && destination != current_device.broadcast_address;
         if current_device.virtual_ip() != destination
-            && !destination.is_broadcast() && !destination.is_multicast() && destination != current_device.broadcast_address
+            && not_broadcast
             && self.connect_status.load() == ConnectStatus::Connected {
             if !check_dest(source, current_device.virtual_netmask, current_device.virtual_network) {
                 log::warn!("转发数据，源地址错误:{:?},当前网络:{:?},route_key:{:?}",source,current_device.virtual_network,route_key);
@@ -141,9 +141,11 @@ impl ChannelDataHandler {
                         }
                     }
                     ip_turn_packet::Protocol::Igmp => {
-                        let ipv4 = IpV4Packet::new(net_packet.payload())?;
-                        if ipv4.protocol() == ipv4::protocol::Protocol::Igmp {
-                            self.igmp_server.handle(ipv4.payload(), source)?;
+                        if let Some(igmp_server) = &self.igmp_server {
+                            let ipv4 = IpV4Packet::new(net_packet.payload())?;
+                            if ipv4.protocol() == ipv4::protocol::Protocol::Igmp {
+                                igmp_server.handle(ipv4.payload(), source)?;
+                            }
                         }
                         return Ok(());
                     }
@@ -180,7 +182,9 @@ impl ChannelDataHandler {
                         let mut ipv4 = IpV4Packet::new(data)?;
                         match ipv4.protocol() {
                             ipv4::protocol::Protocol::Igmp => {
-                                self.igmp_server.handle(ipv4.payload(), source)?;
+                                if let Some(igmp_server) = &self.igmp_server {
+                                    igmp_server.handle(ipv4.payload(), source)?;
+                                }
                                 return Ok(());
                             }
                             ipv4::protocol::Protocol::Icmp => {
@@ -226,51 +230,53 @@ impl ChannelDataHandler {
                             }
                             _ => {}
                         }
-                        if ipv4.destination_ip() != destination {
-                            if let Some(gate_way) = self.out_external_route.route(&ipv4.destination_ip()) {
-                                match ipv4.protocol() {
-                                    ipv4::protocol::Protocol::Tcp => {
-                                        let dest_ip = ipv4.destination_ip();
-                                        //转发到代理目标地址
-                                        let mut tcp_packet = packet::tcp::tcp::TcpPacket::new(source, destination, ipv4.payload_mut())?;
-                                        let source_port = tcp_packet.source_port();
-                                        let dest_port = tcp_packet.destination_port();
-                                        tcp_packet.set_destination_port(self.ip_proxy_map.tcp_proxy_port);
-                                        tcp_packet.update_checksum();
-                                        ipv4.set_destination_ip(destination);
-                                        ipv4.update_checksum();
-                                        self.ip_proxy_map.tcp_proxy_map.insert(SocketAddrV4::new(source, source_port),
-                                                                               (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
-                                    }
-                                    ipv4::protocol::Protocol::Udp => {
-                                        let dest_ip = ipv4.destination_ip();
-                                        //转发到代理目标地址
-                                        let mut udp_packet = packet::udp::udp::UdpPacket::new(source, destination, ipv4.payload_mut())?;
-                                        let source_port = udp_packet.source_port();
-                                        let dest_port = udp_packet.destination_port();
-                                        udp_packet.set_destination_port(self.ip_proxy_map.udp_proxy_port);
-                                        udp_packet.update_checksum();
-                                        ipv4.set_destination_ip(destination);
-                                        ipv4.update_checksum();
-                                        self.ip_proxy_map.udp_proxy_map.insert(SocketAddrV4::new(source, source_port),
-                                                                               (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
-                                    }
-                                    ipv4::protocol::Protocol::Icmp => {
-                                        let dest_ip = ipv4.destination_ip();
-                                        //转发到代理目标地址
-                                        let icmp_packet = icmp::IcmpPacket::new(ipv4.payload())?;
-                                        match icmp_packet.header_other() {
-                                            HeaderOther::Identifier(id, seq) => {
-                                                self.ip_proxy_map.icmp_proxy_map.insert((dest_ip, id, seq), source);
-                                                self.ip_proxy_map.send_icmp(ipv4.payload(), &gate_way, &dest_ip)?;
-                                            }
-                                            _ => {
-                                                return Ok(());
+                        if not_broadcast && ipv4.destination_ip() != destination {
+                            if let Some(ip_proxy_map) = &self.ip_proxy_map {
+                                if let Some(gate_way) = self.out_external_route.route(&ipv4.destination_ip()) {
+                                    match ipv4.protocol() {
+                                        ipv4::protocol::Protocol::Tcp => {
+                                            let dest_ip = ipv4.destination_ip();
+                                            //转发到代理目标地址
+                                            let mut tcp_packet = packet::tcp::tcp::TcpPacket::new(source, destination, ipv4.payload_mut())?;
+                                            let source_port = tcp_packet.source_port();
+                                            let dest_port = tcp_packet.destination_port();
+                                            tcp_packet.set_destination_port(ip_proxy_map.tcp_proxy_port);
+                                            tcp_packet.update_checksum();
+                                            ipv4.set_destination_ip(destination);
+                                            ipv4.update_checksum();
+                                            ip_proxy_map.tcp_proxy_map.insert(SocketAddrV4::new(source, source_port),
+                                                                                   (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                                        }
+                                        ipv4::protocol::Protocol::Udp => {
+                                            let dest_ip = ipv4.destination_ip();
+                                            //转发到代理目标地址
+                                            let mut udp_packet = packet::udp::udp::UdpPacket::new(source, destination, ipv4.payload_mut())?;
+                                            let source_port = udp_packet.source_port();
+                                            let dest_port = udp_packet.destination_port();
+                                            udp_packet.set_destination_port(ip_proxy_map.udp_proxy_port);
+                                            udp_packet.update_checksum();
+                                            ipv4.set_destination_ip(destination);
+                                            ipv4.update_checksum();
+                                            ip_proxy_map.udp_proxy_map.insert(SocketAddrV4::new(source, source_port),
+                                                                                   (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                                        }
+                                        ipv4::protocol::Protocol::Icmp => {
+                                            let dest_ip = ipv4.destination_ip();
+                                            //转发到代理目标地址
+                                            let icmp_packet = icmp::IcmpPacket::new(ipv4.payload())?;
+                                            match icmp_packet.header_other() {
+                                                HeaderOther::Identifier(id, seq) => {
+                                                    ip_proxy_map.icmp_proxy_map.insert((dest_ip, id, seq), source);
+                                                    ip_proxy_map.send_icmp(ipv4.payload(), &gate_way, &dest_ip)?;
+                                                }
+                                                _ => {
+                                                    return Ok(());
+                                                }
                                             }
                                         }
-                                    }
-                                    _ => {
-                                        return Ok(());
+                                        _ => {
+                                            return Ok(());
+                                        }
                                     }
                                 }
                             }
@@ -406,7 +412,7 @@ impl ChannelDataHandler {
             }
             ControlPacket::PongPacket(pong_packet) => {
                 context.update_read_time(&source, route_key);
-                let current_time = Local::now().timestamp_millis() as u16;
+                let current_time = crate::handle::now_time() as u16;
                 if current_time < pong_packet.time() {
                     return Ok(());
                 }

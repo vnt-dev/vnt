@@ -2,7 +2,7 @@ use std::{io, thread};
 use std::sync::Arc;
 use aes_gcm::Aes256Gcm;
 
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 
 use packet::icmp::Kind;
 use packet::icmp::icmp::IcmpPacket;
@@ -35,8 +35,8 @@ fn icmp(device_writer: &DeviceWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) ->
 
 /// 接收tun数据，并且转发到udp上
 #[inline]
-async fn handle(sender: &ChannelSender, data: &mut [u8], len: usize, device_writer: &DeviceWriter, igmp_server: &IgmpServer, current_device: CurrentDeviceInfo,
-                ip_route: &ExternalRoute, proxy_map: &IpProxyMap,cipher: &Option<Aes256Gcm>) -> Result<()> {
+async fn handle(sender: &ChannelSender, data: &mut [u8], len: usize, device_writer: &DeviceWriter, igmp_server: &Option<IgmpServer>, current_device: CurrentDeviceInfo,
+                ip_route: &Option<ExternalRoute>, proxy_map: &Option<IpProxyMap>,cipher: &Option<Aes256Gcm>) -> Result<()> {
     let ipv4_packet = if let Ok(ipv4_packet) = IpV4Packet::new(&mut data[12..len]) {
         ipv4_packet
     } else {
@@ -56,13 +56,13 @@ async fn handle(sender: &ChannelSender, data: &mut [u8], len: usize, device_writ
 pub fn start(sender: ChannelSender,
              device_reader: DeviceReader,
              device_writer: DeviceWriter,
-             igmp_server: IgmpServer,
+             igmp_server: Option<IgmpServer>,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-             ip_route: ExternalRoute,
-             ip_proxy_map: IpProxyMap,
+             ip_route: Option<ExternalRoute>,
+             ip_proxy_map: Option<IpProxyMap>,
              cipher: Option<Aes256Gcm>) {
     thread::Builder::new().name("tun-handler".into()).spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
+        tokio::runtime::Builder::new_multi_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
                 if let Err(e) = start_(sender, device_reader, device_writer, igmp_server, current_device, ip_route, ip_proxy_map,cipher).await {
@@ -75,19 +75,29 @@ pub fn start(sender: ChannelSender,
 async fn start_(sender: ChannelSender,
                 device_reader: DeviceReader,
                 device_writer: DeviceWriter,
-                igmp_server: IgmpServer,
+                igmp_server: Option<IgmpServer>,
                 current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-                ip_route: ExternalRoute,
-                ip_proxy_map: IpProxyMap,
+                ip_route: Option<ExternalRoute>,
+                ip_proxy_map: Option<IpProxyMap>,
                 cipher: Option<Aes256Gcm>) -> io::Result<()> {
-    let mut buf = [0; 4096];
     loop {
+        let mut buf = [0; 4096];
+        let sender = sender.clone();
+        let device_writer = device_writer.clone();
+        let igmp_server = igmp_server.clone();
+        let ip_route = ip_route.clone();
+        let ip_proxy_map = ip_proxy_map.clone();
+        let cipher = cipher.clone();
         let len = device_reader.read(&mut buf[12..])? + 12;
-        match handle(&sender, &mut buf, len, &device_writer, &igmp_server, current_device.load(), &ip_route, &ip_proxy_map,&cipher).await {
-            Ok(_) => {}
-            Err(e) => {
-                log::warn!("{:?}", e)
+        let current_device = current_device.load();
+        tokio::spawn(async move {
+            match handle(&sender, &mut buf, len, &device_writer, &igmp_server, current_device, &ip_route, &ip_proxy_map,&cipher).await {
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!("{:?}", e)
+                }
             }
-        }
+        });
+
     }
 }

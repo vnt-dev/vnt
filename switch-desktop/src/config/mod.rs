@@ -39,6 +39,7 @@ pub struct StartConfig {
     pub off_command_server: bool,
     pub log: bool,
     pub password: Option<String>,
+    pub simulate_multicast:bool,
 }
 
 fn ips_parse(ips: &Vec<String>) -> Result<Vec<(u32, u32, Ipv4Addr)>, String> {
@@ -189,6 +190,7 @@ pub fn default_config(start_args: StartArgs) -> Result<StartConfig, String> {
         off_command_server: start_args.off_command_server,
         log: start_args.log,
         password: start_args.password,
+        simulate_multicast:start_args.simulate_multicast,
     };
     println!("========参数配置========");
     Ok(base_config)
@@ -296,7 +298,8 @@ pub fn read_config_file(config_path: PathBuf) -> Result<StartConfig, String> {
         #[cfg(any(unix))]
         off_command_server: args_config.off_command_server,
         log,
-        password:args_config.password
+        password:args_config.password,
+        simulate_multicast:args_config.simulate_multicast
     };
     println!("========参数配置========");
     Ok(base_config)
@@ -335,6 +338,8 @@ pub struct ArgsConfig {
     #[serde(default = "default_false")]
     pub log: bool,
     pub password: Option<String>,
+    #[serde(default = "default_false")]
+    pub simulate_multicast:bool,
 }
 
 #[cfg(windows)]
@@ -360,6 +365,7 @@ impl ArgsConfig {
             #[cfg(any(unix))]
             off_command_server: start_config.off_command_server,
             password: start_config.password,
+            simulate_multicast:start_config.simulate_multicast,
         }
     }
 }

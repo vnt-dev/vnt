@@ -2,7 +2,7 @@ use std::{io, thread};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 use socket2::{SockAddr, Socket};
 use tokio::net::{TcpListener, UdpSocket};

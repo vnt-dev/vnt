@@ -6,6 +6,15 @@ pub mod recv_handler;
 pub mod registration_handler;
 pub mod tun_tap;
 
+pub fn now_time() -> u64 {
+    let now = std::time::SystemTime::now();
+    if let Ok(timestamp) = now.duration_since(std::time::UNIX_EPOCH) {
+        timestamp.as_secs() * 1000 + u64::from(timestamp.subsec_millis())
+    } else {
+        0
+    }
+}
+
 /// 是否在一个网段
 fn check_dest(dest: Ipv4Addr, virtual_netmask: Ipv4Addr, virtual_network: Ipv4Addr) -> bool {
     u32::from_be_bytes(dest.octets()) & u32::from_be_bytes(virtual_netmask.octets())

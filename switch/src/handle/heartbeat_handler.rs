@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::io;
 
-use chrono::Local;
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
 use crate::channel::idle::Idle;
@@ -52,7 +51,7 @@ pub async fn start_heartbeat(
 }
 
 fn set_now_time(packet: &mut NetPacket<[u8; 16]>) -> io::Result<()> {
-    let current_time = Local::now().timestamp_millis() as u16;
+    let current_time = crate::handle::now_time() as u16;
     let mut ping = PingPacket::new(packet.payload_mut())?;
     ping.set_time(current_time);
     Ok(())
@@ -90,40 +89,46 @@ async fn start_heartbeat_(
         }
         if count < 7 || count % 7 == 0 {
             let mut route_list: Option<Vec<(Ipv4Addr, Vec<Route>)>> = None;
-            let peer_list = {device_list.lock().1.clone()};
+            let peer_list = { device_list.lock().1.clone() };
             for peer in peer_list {
+                if peer.virtual_ip == current_device.virtual_ip {
+                    continue;
+                }
                 set_now_time(&mut net_packet)?;
                 net_packet.set_destination(peer.virtual_ip);
-                if sender
-                    .send_by_id(net_packet.buffer(), &peer.virtual_ip).await
-                    .is_err()
-                {
-                    //没有路由则发送到网关
+                if let Some(route) = sender.route_one(&peer.virtual_ip) {
+                    let _ = sender.send_by_key(net_packet.buffer(), &route.route_key()).await;
+                    if route.is_p2p() {
+                        continue;
+                    }
+                } else {
+                    //没有直连路由则发送到网关
                     let _ = sender.try_send_main(net_packet.buffer(), current_device.connect_server);
-                    //再随机发送到其他地址，看有没有客户端符合转发条件
-                    let route_list = route_list.get_or_insert_with(|| {
-                        let mut l = sender.route_table();
-                        l.shuffle(&mut rand::thread_rng());
-                        l
-                    });
-                    let mut num = 0;
-                    'a: for (peer_ip, route_list) in route_list.iter() {
-                        for route in route_list {
-                            if peer_ip != &peer.virtual_ip && route.metric == 1 {
-                                set_now_time(&mut net_packet)?;
-                                let _ = sender.try_send_by_key(net_packet.buffer(), &route.route_key());
-                                num += 1;
-                                break;
-                            }
-                            if num >= 3 {
-                                break 'a;
-                            }
+                    continue;
+                }
+
+                //再随机发送到其他地址，看有没有客户端符合转发条件
+                let route_list = route_list.get_or_insert_with(|| {
+                    let mut l = sender.route_table();
+                    l.shuffle(&mut rand::thread_rng());
+                    l
+                });
+                let mut num = 0;
+                'a: for (peer_ip, route_list) in route_list.iter() {
+                    for route in route_list {
+                        if peer_ip != &peer.virtual_ip && route.is_p2p() {
+                            set_now_time(&mut net_packet)?;
+                            let _ = sender.try_send_by_key(net_packet.buffer(), &route.route_key());
+                            num += 1;
+                            break;
+                        }
+                        if num >= 3 {
+                            break 'a;
                         }
                     }
                 }
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
-
         } else {
             for (peer_ip, route_list) in sender.route_table().iter() {
                 set_now_time(&mut net_packet)?;

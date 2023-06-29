@@ -6,7 +6,6 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub struct TcpProxy {
     tcp_listener: TcpListener,
-    //  todo 怎么过期
     map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>,
 }
 
@@ -34,6 +33,7 @@ impl TcpProxy {
                                         continue;
                                     }
                                 };
+                                let map = map.clone();
                                 tokio::spawn(async move {
                                     match proxy(tcp_stream, peer_tcp_stream).await {
                                         Ok(_) => {}
@@ -41,6 +41,7 @@ impl TcpProxy {
                                             log::warn!("tcp代理异常:{:?},来源:{},目标：{}",e,src_addr,dest_addr);
                                         }
                                     }
+                                    map.remove(&sender_addr);
                                 });
                             }
                         }

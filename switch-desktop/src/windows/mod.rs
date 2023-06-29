@@ -119,6 +119,7 @@ pub fn main0(base_args: BaseArgs) {
                                         start_config.in_ips,
                                         start_config.out_ips,
                                         start_config.password,
+                                        start_config.simulate_multicast,
                                     );
                                     let lock = match config::lock_file() {
                                         Ok(lock) => {

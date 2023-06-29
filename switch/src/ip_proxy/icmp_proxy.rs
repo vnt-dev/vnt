@@ -2,7 +2,7 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 
 use crossbeam_skiplist::SkipMap;
 use socket2::{Domain, SockAddr, Socket, Type};
@@ -68,7 +68,7 @@ impl IcmpProxy {
         net_packet.set_version(Version::V1);
         net_packet.set_protocol(Protocol::IpTurn);
         net_packet.set_transport_protocol(ipv4::protocol::Protocol::Icmp.into());
-        net_packet.set_ttl(MAX_TTL);
+        net_packet.first_set_ttl(MAX_TTL);
         loop {
             match self.recv(data) {
                 Ok((len, peer_ip)) => {

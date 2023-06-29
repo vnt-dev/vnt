@@ -22,11 +22,36 @@ pub mod tap_handler;
 
 async fn broadcast(sender: &ChannelSender, net_packet: &mut NetPacket<&mut [u8]>, data_len: usize, current_device: &CurrentDeviceInfo) -> Result<()> {
     let mut peer_ips = Vec::with_capacity(8);
-    let vec = sender.direct_route_table_one();
+    let vec = sender.route_table_one();
+    let mut relay_count = 0;
+    let mut last_peer = None;
     for (peer_ip, route) in vec {
-        if sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await.is_ok() {
-            peer_ips.push(peer_ip);
+        if peer_ip == current_device.virtual_gateway {
+            continue;
         }
+        if peer_ips.len() < u8::MAX as usize && route.is_p2p()
+            && sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await.is_ok() {
+            peer_ips.push(peer_ip);
+        } else {
+            relay_count += 1;
+            if relay_count == 1 {
+                last_peer = Some((peer_ip, route));
+            }
+            if relay_count > 1 && peer_ips.len() == u8::MAX as usize {
+                break;
+            }
+        }
+    }
+    if relay_count == 0 && !peer_ips.is_empty() {
+        //不需要转发
+        return Ok(());
+    }
+    if relay_count == 1 && !net_packet.is_encrypt() {
+        //只有一个目标，并且没加密
+        let (peer_ip, route) = last_peer.unwrap();
+        net_packet.set_destination(peer_ip);
+        sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await?;
+        return Ok(());
     }
     if peer_ips.is_empty() {
         sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
@@ -44,19 +69,41 @@ async fn broadcast(sender: &ChannelSender, net_packet: &mut NetPacket<&mut [u8]>
 
 async fn multicast(igmp_server: &IgmpServer, multicast_addr: Ipv4Addr, sender: &ChannelSender, net_packet: &mut NetPacket<&mut [u8]>, data_len: usize, current_device: &CurrentDeviceInfo) -> Result<()> {
     let mut peer_ips = Vec::with_capacity(8);
-    let vec = sender.direct_route_table_one();
+    let vec = sender.route_table_one();
+    let mut relay_count = 0;
+    let mut last_peer = None;
     if let Some(members) = igmp_server.load(&multicast_addr) {
         for (peer_ip, route) in vec {
-            let is_send = {members.read().is_send(&peer_ip)};
+            if peer_ip == current_device.virtual_gateway {
+                continue;
+            }
+            let is_send = { members.read().is_send(&peer_ip) };
             if is_send {
-                if sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await.is_ok() {
+                if peer_ips.len() < u8::MAX as usize && route.is_p2p()
+                    && sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await.is_ok() {
                     peer_ips.push(peer_ip);
-                    if peer_ips.len() == u8::MAX as usize {
+                } else {
+                    relay_count += 1;
+                    if relay_count == 1 {
+                        last_peer = Some((peer_ip, route));
+                    }
+                    if relay_count > 1 && peer_ips.len() == u8::MAX as usize {
                         break;
                     }
                 }
             }
         }
+    }
+    if relay_count == 0 && !peer_ips.is_empty() {
+        //不需要转发
+        return Ok(());
+    }
+    if relay_count == 1 && !net_packet.is_encrypt() {
+        //只有一个目标，并且没加密
+        let (peer_ip, route) = last_peer.unwrap();
+        net_packet.set_destination(peer_ip);
+        sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await?;
+        return Ok(());
     }
     if peer_ips.is_empty() {
         sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
@@ -78,9 +125,9 @@ async fn multicast(igmp_server: &IgmpServer, multicast_addr: Ipv4Addr, sender: &
 #[inline]
 pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                          mut data_len: usize,//数据总长度=ip长度+12
-                         igmp_server: &IgmpServer,
+                         igmp_server: &Option<IgmpServer>,
                          current_device: CurrentDeviceInfo,
-                         ip_route: &ExternalRoute, proxy_map: &IpProxyMap, cipher: &Option<Aes256Gcm>) -> Result<()> {
+                         ip_route: &Option<ExternalRoute>, proxy_map: &Option<IpProxyMap>, cipher: &Option<Aes256Gcm>) -> Result<()> {
     let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
     let protocol = ipv4_packet.protocol();
     let ip_head_len = ipv4_packet.header_len() as usize * 4;
@@ -102,11 +149,33 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
         return Ok(());
     }
     if dest_ip.is_multicast() {
-        if protocol == Protocol::Igmp {
-            net_packet.set_transport_protocol(ip_turn_packet::Protocol::Igmp.into());
-            //发送到服务端
-            sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
-            return Ok(());
+        match protocol {
+            Protocol::Igmp => {
+                if igmp_server.is_some() {
+                    net_packet.set_transport_protocol(ip_turn_packet::Protocol::Igmp.into());
+                    //发送到服务端
+                    net_packet.set_destination(current_device.virtual_gateway);
+                    sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
+                }
+                return Ok(());
+            }
+            Protocol::Udp => {
+                if let Some(igmp_server) = igmp_server {
+                    if let Some(cipher) = cipher {
+                        //需要加密
+                        encrypt(cipher, &mut data_len, &mut net_packet)?;
+                    }
+                    multicast(igmp_server, dest_ip, sender, &mut net_packet, data_len, &current_device).await?;
+                    return Ok(());
+                } else {
+                    //当广播
+                    dest_ip = Ipv4Addr::BROADCAST;
+                    net_packet.set_destination(dest_ip);
+                }
+            }
+            _ => {
+                return Ok(());
+            }
         }
     }
     if dest_ip.is_broadcast() || current_device.broadcast_address == dest_ip {
@@ -119,17 +188,9 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
             broadcast(sender, &mut net_packet, data_len, &current_device).await?;
         }
         return Ok(());
-    } else if dest_ip.is_multicast() {
-        if protocol == Protocol::Udp {
-            if let Some(cipher) = cipher {
-                //需要加密
-                encrypt(cipher, &mut data_len, &mut net_packet)?;
-            }
-            multicast(igmp_server, dest_ip, sender, &mut net_packet, data_len, &current_device).await?;
-        }
-        return Ok(());
-    } else {
-        if !check_dest(dest_ip, current_device.virtual_netmask, current_device.virtual_network) {
+    }
+    if !check_dest(dest_ip, current_device.virtual_netmask, current_device.virtual_network) {
+        if let Some(ip_route) = ip_route {
             if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
                 //路由的目标不能是自己
                 if r_dest_ip == src_ip {
@@ -142,41 +203,43 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                 return Ok(());
             }
         } else {
-            match protocol {
-                Protocol::Tcp => {
-                    let dest_addr = {
-                        let tcp_packet = TcpPacket::new(src_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
-                        SocketAddrV4::new(dest_ip, tcp_packet.destination_port())
-                    };
-                    if let Some(entry) = proxy_map.tcp_proxy_map.get(&dest_addr) {
-                        let source_addr = entry.value().1;
-                        let source_ip = *source_addr.ip();
-                        let mut tcp_packet = TcpPacket::new(source_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
-                        tcp_packet.set_source_port(source_addr.port());
-                        tcp_packet.update_checksum();
-                        let mut ipv4_packet = IpV4Packet::new(&mut net_packet.buffer_mut()[12..data_len])?;
-                        ipv4_packet.set_source_ip(source_ip);
-                        ipv4_packet.update_checksum();
-                    }
+            return Ok(());
+        }
+    } else if let Some(proxy_map) = proxy_map {
+        match protocol {
+            Protocol::Tcp => {
+                let dest_addr = {
+                    let tcp_packet = TcpPacket::new(src_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
+                    SocketAddrV4::new(dest_ip, tcp_packet.destination_port())
+                };
+                if let Some(entry) = proxy_map.tcp_proxy_map.get(&dest_addr) {
+                    let source_addr = entry.value().1;
+                    let source_ip = *source_addr.ip();
+                    let mut tcp_packet = TcpPacket::new(source_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
+                    tcp_packet.set_source_port(source_addr.port());
+                    tcp_packet.update_checksum();
+                    let mut ipv4_packet = IpV4Packet::new(&mut net_packet.buffer_mut()[12..data_len])?;
+                    ipv4_packet.set_source_ip(source_ip);
+                    ipv4_packet.update_checksum();
                 }
-                Protocol::Udp => {
-                    let dest_addr = {
-                        let udp_packet = UdpPacket::new(src_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
-                        SocketAddrV4::new(dest_ip, udp_packet.destination_port())
-                    };
-                    if let Some(entry) = proxy_map.udp_proxy_map.get(&dest_addr) {
-                        let source_addr = entry.value().1;
-                        let source_ip = *source_addr.ip();
-                        let mut udp_packet = UdpPacket::new(source_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
-                        udp_packet.set_source_port(source_addr.port());
-                        udp_packet.update_checksum();
-                        let mut ipv4_packet = IpV4Packet::new(&mut net_packet.buffer_mut()[12..data_len])?;
-                        ipv4_packet.set_source_ip(source_ip);
-                        ipv4_packet.update_checksum();
-                    }
-                }
-                _ => {}
             }
+            Protocol::Udp => {
+                let dest_addr = {
+                    let udp_packet = UdpPacket::new(src_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
+                    SocketAddrV4::new(dest_ip, udp_packet.destination_port())
+                };
+                if let Some(entry) = proxy_map.udp_proxy_map.get(&dest_addr) {
+                    let source_addr = entry.value().1;
+                    let source_ip = *source_addr.ip();
+                    let mut udp_packet = UdpPacket::new(source_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
+                    udp_packet.set_source_port(source_addr.port());
+                    udp_packet.update_checksum();
+                    let mut ipv4_packet = IpV4Packet::new(&mut net_packet.buffer_mut()[12..data_len])?;
+                    ipv4_packet.set_source_ip(source_ip);
+                    ipv4_packet.update_checksum();
+                }
+            }
+            _ => {}
         }
     }
     if let Some(cipher) = cipher {

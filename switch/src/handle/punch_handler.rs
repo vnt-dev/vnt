@@ -2,7 +2,7 @@ use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
 use crate::proto::message::{PunchInfo, PunchNatType};
 use crate::protocol::{control_packet, other_turn_packet, NetPacket, Protocol, Version, MAX_TTL};
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use protobuf::Message;
 use rand::prelude::SliceRandom;
@@ -89,7 +89,7 @@ async fn start_punch_(
                     break;
                 }
                 let buf = punch_packet(current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
-                sender.send_main(&buf, current_device.connect_server).await?;
+                let _ = sender.send_main(&buf, current_device.connect_server).await;
             }
         }
         num += 1;

@@ -1,9 +1,10 @@
 use std::{io, thread};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 use aes_gcm::{Aes256Gcm, Key, KeyInit};
 
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 use tokio::net::UdpSocket;
@@ -54,7 +55,7 @@ impl Switch {
         let (symmetric_sender, symmetric_receiver) = channel(2);
         let context = Context::new(main_channel, 1);
         let punch = Punch::new(context.clone());
-        let idle = Idle::new(16000, context.clone());
+        let idle = Idle::new(Duration::from_secs(16), context.clone());
         let channel_sender = ChannelSender::new(context.clone());
 
         let register = Arc::new(registration_handler::Register::new(channel_sender.clone(), config.server_address, config.token.clone(), config.device_id.clone(), config.name.clone()));
@@ -73,9 +74,17 @@ impl Switch {
 
         let out_ips = config.out_ips.iter().map(|(_, _, ip)| *ip).collect::<Vec<Ipv4Addr>>();
         let out_external_route = ExternalRoute::new(config.out_ips);
-        let in_external_route = ExternalRoute::new(config.in_ips);
+        let in_external_route = if config.in_ips.is_empty() {
+            None
+        } else {
+            Some(ExternalRoute::new(config.in_ips))
+        };
         let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new(virtual_ip, virtual_gateway, virtual_netmask, config.server_address)));
-        let ip_proxy_map = crate::ip_proxy::init_proxy(channel_sender.clone(), out_ips, current_device.clone()).await?;
+        let ip_proxy_map = if out_ips.is_empty(){
+            None
+        }else{
+            Some(crate::ip_proxy::init_proxy(channel_sender.clone(), out_ips, current_device.clone()).await?)
+        };
         let (device_writer, igmp_server) = if config.tap {
             #[cfg(windows)]
             {
@@ -83,7 +92,11 @@ impl Switch {
                 tun_tap_device::delete_device(tun_tap_device::DeviceType::Tap);
             }
             let (tap_writer, tap_reader) = tun_tap_device::create_device(tun_tap_device::DeviceType::Tap, virtual_ip, virtual_netmask, virtual_gateway, in_ips)?;
-            let igmp_server = IgmpServer::new(tap_writer.clone());
+            let igmp_server = if config.simulate_multicast {
+                Some(IgmpServer::new(tap_writer.clone()))
+            } else {
+                None
+            };
             //tap数据处理
             tap_handler::start(channel_sender.clone(), tap_reader.clone(), tap_writer.clone(),
                                igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
@@ -96,7 +109,11 @@ impl Switch {
             }
             // tun通道
             let (tun_writer, tun_reader) = tun_tap_device::create_device(tun_tap_device::DeviceType::Tun, virtual_ip, virtual_netmask, virtual_gateway, in_ips)?;
-            let igmp_server = IgmpServer::new(tun_writer.clone());
+            let igmp_server = if config.simulate_multicast {
+                Some(IgmpServer::new(tun_writer.clone()))
+            } else {
+                None
+            };
             //tun数据接收处理
             tun_handler::start(channel_sender.clone(), tun_reader.clone(), tun_writer.clone(),
                                igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
@@ -188,6 +205,7 @@ pub struct Config {
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub out_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub key: Option<[u8; 32]>,
+    pub simulate_multicast: bool,
 }
 
 use sha2::Digest;
@@ -198,7 +216,8 @@ impl Config {
                name: String,
                server_address: SocketAddr,
                nat_test_server: Vec<SocketAddr>,
-               in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32, Ipv4Addr)>, password: Option<String>, ) -> Self {
+               in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32, Ipv4Addr)>,
+               password: Option<String>, simulate_multicast: bool, ) -> Self {
         let key = if let Some(password) = password {
             let mut hasher = sha2::Sha256::new();
             hasher.update(password.as_bytes());
@@ -217,6 +236,7 @@ impl Config {
             in_ips,
             out_ips,
             key,
+            simulate_multicast,
         }
     }
 }

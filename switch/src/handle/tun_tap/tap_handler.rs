@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::{io, thread};
 use aes_gcm::Aes256Gcm;
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 use packet::arp::arp::ArpPacket;
 use packet::ethernet;
 use packet::ethernet::packet::EthernetPacket;
@@ -19,10 +19,10 @@ use crate::tun_tap_device::{DeviceReader, DeviceWriter};
 pub fn start(sender: ChannelSender,
              device_reader: DeviceReader,
              device_writer: DeviceWriter,
-             igmp_server: IgmpServer,
+             igmp_server: Option<IgmpServer>,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-             ip_route: ExternalRoute,
-             ip_proxy_map: IpProxyMap,
+             ip_route: Option<ExternalRoute>,
+             ip_proxy_map: Option<IpProxyMap>,
              cipher: Option<Aes256Gcm>) {
     thread::Builder::new().name("tap-handler".into()).spawn(move || {
         tokio::runtime::Builder::new_current_thread()
@@ -40,23 +40,23 @@ pub fn start(sender: ChannelSender,
 async fn start_(sender: ChannelSender,
                 device_reader: DeviceReader,
                 device_writer: DeviceWriter,
-                igmp_server: IgmpServer,
+                igmp_server: Option<IgmpServer>,
                 current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-                ip_route: ExternalRoute,
-                ip_proxy_map: IpProxyMap,
+                ip_route: Option<ExternalRoute>,
+                ip_proxy_map: Option<IpProxyMap>,
                 cipher: Option<Aes256Gcm>) -> io::Result<()> {
-    let mut buf = [0; 2048];
+    let mut buf = [0; 4096];
     loop {
         //ip拆包了会直接丢弃？
         let len = device_reader.read(&mut buf)?;
         if let Err(e) = handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender, &ip_route, &ip_proxy_map, &cipher).await {
-            log::error!("tap handle{:?}",e);
+            log::warn!("tap handle{:?}",e);
         }
     }
 }
 
-async fn handle(buf: &mut [u8], len: usize, igmp_server: &IgmpServer, current_device: &AtomicCell<CurrentDeviceInfo>,
-                device_writer: &DeviceWriter, sender: &ChannelSender, ip_route: &ExternalRoute, proxy_map: &IpProxyMap, cipher: &Option<Aes256Gcm>) -> crate::Result<()> {
+async fn handle(buf: &mut [u8], len: usize, igmp_server: &Option<IgmpServer>, current_device: &AtomicCell<CurrentDeviceInfo>,
+                device_writer: &DeviceWriter, sender: &ChannelSender, ip_route: &Option<ExternalRoute>, proxy_map: &Option<IpProxyMap>, cipher: &Option<Aes256Gcm>) -> crate::Result<()> {
     let mut ethernet_packet = EthernetPacket::new(&mut buf[..len])?;
     let current_device = current_device.load();
     match ethernet_packet.protocol() {

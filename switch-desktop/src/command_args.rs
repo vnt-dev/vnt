@@ -50,7 +50,8 @@ fn common() -> Command {
                 Arg::new("tap")
                     .long("tap")
                     .help(switch_tap_help())
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .value_parser(BoolishValueParser::new()),
             ).arg(
                 Arg::new("in_ip")
                     .long("in-ip")
@@ -67,6 +68,12 @@ fn common() -> Command {
                     .long("password")
                     .help(switch_password_help())
                     .action(ArgAction::Set)
+            ).arg(
+                Arg::new("simulate_multicast")
+                    .long("simulate-multicast")
+                    .help(switch_simulate_multicast_help())
+                    .action(ArgAction::SetTrue)
+                    .value_parser(BoolishValueParser::new()),
             ).arg(
                 Arg::new("config")
                     .long("config")

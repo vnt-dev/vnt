@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::time::Duration;
-use moka::sync::Cache;
+use std::time::{Duration, Instant};
+use crossbeam_skiplist::SkipMap;
 use parking_lot::RwLock;
 use packet::igmp::igmp_v2::IgmpV2Packet;
 use packet::igmp::igmp_v3::{IgmpV3QueryPacket, IgmpV3RecordType, IgmpV3ReportPacket};
@@ -15,7 +15,7 @@ use crate::tun_tap_device::DeviceWriter;
 #[derive(Clone, Debug)]
 pub struct Multicast {
     //成员虚拟ip
-    members: HashSet<Ipv4Addr>,
+    members: HashMap<Ipv4Addr, Instant>,
     //是否是过滤模式
     //成员过滤或包含的源ip
     map: HashMap<Ipv4Addr, (bool, HashSet<Ipv4Addr>)>,
@@ -29,7 +29,7 @@ impl Multicast {
         }
     }
     pub fn is_send(&self, ip: &Ipv4Addr) -> bool {
-        if self.members.contains(ip) {
+        if self.members.contains_key(ip) {
             if let Some((is_include, set)) = self.map.get(ip) {
                 if *is_include {
                     set.contains(ip)
@@ -47,30 +47,13 @@ impl Multicast {
 
 #[derive(Clone)]
 pub struct IgmpServer {
-    multicast: Cache<Ipv4Addr, Arc<RwLock<Multicast>>>,
-    members: Cache<(Ipv4Addr, Ipv4Addr), ()>,
+    multicast: Arc<SkipMap<Ipv4Addr, Arc<RwLock<Multicast>>>>,
 }
 
 impl IgmpServer {
     pub fn new(device_writer: DeviceWriter) -> Self {
-        let multicast: Cache<Ipv4Addr, Arc<RwLock<Multicast>>> = Cache::builder()
-            .time_to_idle(Duration::from_secs(30 * 60)).build();
-        let m = multicast.clone();
-        let members: Cache<(Ipv4Addr, Ipv4Addr), ()> = Cache::builder()
-            .time_to_idle(Duration::from_secs(20 * 60)).eviction_listener(move |k: Arc<(Ipv4Addr, Ipv4Addr)>, _, cause| {
-            if cause == moka::notification::RemovalCause::Replaced {
-                return;
-            }
-            log::info!("MULTICAST_MEMBER eviction {:?}", k);
-            if let Some(v) = m.get(&k.0) {
-                let mut lock = v.write();
-                lock.members.remove(&k.1);
-                lock.map.remove(&k.1);
-            }
-        }).build();
+        let multicast: Arc<SkipMap<Ipv4Addr, Arc<RwLock<Multicast>>>> = Arc::new(SkipMap::new());
         std::thread::spawn(move || {
-            //定时发送query，启动时20秒一次，连发3次，之后125秒一次
-            let mut count = 0;
             //预留以太网帧头和ip头
             let mut buf = [0; 14 + 24 + 12];
             let dest = Ipv4Addr::new(224, 0, 0, 1);
@@ -96,31 +79,42 @@ impl IgmpServer {
             {
                 let mut igmp_query = IgmpV3QueryPacket::unchecked(&mut buf[14 + 24..]);
                 igmp_query.set_igmp_type();
-                igmp_query.set_max_resp_code(100);
+                igmp_query.set_max_resp_code(50);
                 igmp_query.set_group_address(Ipv4Addr::UNSPECIFIED);
                 igmp_query.set_qrv(2);
-                igmp_query.set_qqic(125);
+                igmp_query.set_qqic(10);
                 igmp_query.update_checksum();
             }
             loop {
                 let _ = device_writer.write_ipv4(&mut buf);
-                if count < 3 {
-                    count += 1;
-                    std::thread::sleep(Duration::from_secs(20))
-                } else {
-                    std::thread::sleep(Duration::from_secs(125))
-                }
+                std::thread::sleep(Duration::from_secs(20))
             }
         });
         Self {
             multicast,
-            members,
         }
     }
     pub fn load(&self, multicast_addr: &Ipv4Addr) -> Option<Arc<RwLock<Multicast>>> {
-        self.multicast.get(multicast_addr)
+        if let Some(entry) = self.multicast.get(multicast_addr) {
+            Some(entry.value().clone())
+        } else {
+            None
+        }
     }
     pub fn handle(&self, buf: &[u8], source: Ipv4Addr) -> crate::Result<()> {
+        for x in self.multicast.iter() {
+            let mut list = Vec::new();
+            let mut write_guard = x.value().write();
+            for (ip, time) in &write_guard.members {
+                if time.elapsed() > Duration::from_secs(30) {
+                    list.push(*ip);
+                }
+            }
+            for ip in list {
+                write_guard.members.remove(&ip);
+                write_guard.map.remove(&ip);
+            }
+        }
         match IgmpType::from(buf[0]) {
             IgmpType::Query => {}
             IgmpType::ReportV1 | IgmpType::ReportV2 => {
@@ -130,13 +124,11 @@ impl IgmpServer {
                 if !multicast_addr.is_multicast() {
                     return Ok(());
                 }
-                let multi = self.multicast.get_with(multicast_addr, || {
+                let multi = self.multicast.get_or_insert_with(multicast_addr, || {
                     Arc::new(RwLock::new(Multicast::new()))
                 });
-                let mut guard = multi.write();
-                guard.members.insert(source);
-                drop(guard);
-                self.members.insert((multicast_addr, source), ());
+                let mut guard = multi.value().write();
+                guard.members.insert(source, Instant::now());
             }
             IgmpType::LeaveV2 => {
                 //退出组播
@@ -145,7 +137,11 @@ impl IgmpServer {
                 if !multicast_addr.is_multicast() {
                     return Ok(());
                 }
-                self.members.invalidate(&(multicast_addr, source));
+                if let Some(entry) = self.multicast.get(&multicast_addr) {
+                    let mut guard = entry.value().write();
+                    guard.map.remove(&source);
+                    guard.members.remove(&source);
+                }
             }
             IgmpType::ReportV3 => {
                 let report = IgmpV3ReportPacket::new(buf)?;
@@ -155,10 +151,10 @@ impl IgmpServer {
                         if !multicast_addr.is_multicast() {
                             return Ok(());
                         }
-                        let multi = self.multicast.get_with(multicast_addr, || {
+                        let multi = self.multicast.get_or_insert_with(multicast_addr, || {
                             Arc::new(RwLock::new(Multicast::new()))
                         });
-                        let mut guard = multi.write();
+                        let mut guard = multi.value().write();
 
                         match group_record.record_type() {
                             IgmpV3RecordType::ModeIsInclude | IgmpV3RecordType::ChangeToIncludeMode => {
@@ -169,10 +165,8 @@ impl IgmpServer {
                                         guard.map.remove(&source);
                                     }
                                     Some(src) => {
-                                        guard.members.insert(source);
+                                        guard.members.insert(source, Instant::now());
                                         guard.map.insert(source, (true, HashSet::from_iter(src)));
-                                        drop(guard);
-                                        self.members.insert((multicast_addr, source), ());
                                     }
                                 }
                             }
@@ -181,16 +175,14 @@ impl IgmpServer {
                                 match group_record.source_addresses() {
                                     None => {
                                         //接收所有
-                                        guard.members.insert(source);
+                                        guard.members.insert(source, Instant::now());
                                         guard.map.remove(&source);
                                     }
                                     Some(src) => {
-                                        guard.members.insert(source);
+                                        guard.members.insert(source, Instant::now());
                                         guard.map.insert(source, (false, HashSet::from_iter(src)));
                                     }
                                 }
-                                drop(guard);
-                                self.members.insert((multicast_addr, source), ());
                             }
                             IgmpV3RecordType::AllowNewSources => {
                                 //在已有源的基础上，接收目标源，如果是排除模式，则删除；是包含模式则添加
@@ -211,8 +203,6 @@ impl IgmpServer {
                                         }
                                     }
                                 }
-                                drop(guard);
-                                self.members.insert((multicast_addr, source), ());
                             }
                             IgmpV3RecordType::BlockOldSources => {
                                 //在已有源的基础上，不接收目标源
@@ -233,8 +223,6 @@ impl IgmpServer {
                                         }
                                     }
                                 }
-                                drop(guard);
-                                self.members.insert((multicast_addr, source), ());
                             }
                             IgmpV3RecordType::Unknown(_) => {}
                         }

@@ -2,7 +2,7 @@ use std::{io, thread};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
-use crossbeam::atomic::AtomicCell;
+use crossbeam_utils::atomic::AtomicCell;
 use libloading::Library;
 use parking_lot::Mutex;
 use packet::ethernet;

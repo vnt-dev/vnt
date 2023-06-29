@@ -4,20 +4,6 @@ use std::time::Duration;
 use std::{io, thread};
 use crate::channel::punch::NatType;
 
-// #[derive(Debug, Copy, Clone, PartialEq)]
-// pub enum NatType {
-//     Symmetric,
-//     Cone,
-// }
-//
-// impl Into<u8> for NatType {
-//     fn into(self) -> u8 {
-//         match self {
-//             NatType::Symmetric => 0,
-//             NatType::Cone => 1,
-//         }
-//     }
-// }
 
 /// 返回所有公网ip和端口变化范围
 pub fn public_ip_list(addrs: &Vec<SocketAddr>) -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
