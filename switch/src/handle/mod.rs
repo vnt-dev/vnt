@@ -38,7 +38,7 @@ impl PeerDeviceInfo {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq,Ord, PartialOrd)]
 pub enum PeerDeviceStatus {
     Online,
     Offline,

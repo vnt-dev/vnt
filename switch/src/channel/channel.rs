@@ -10,10 +10,11 @@ use tokio::net::UdpSocket;
 use tokio::sync::watch::{channel, Receiver, Sender};
 use crate::channel::{Route, RouteKey, Status};
 use crate::channel::punch::NatType;
+use crate::core::status::SwitchWorker;
 use crate::handle::recv_handler::ChannelDataHandler;
 
 pub struct ContextInner {
-    pub(crate) lock:Mutex<()>,
+    pub(crate) lock: Mutex<()>,
     pub(crate) count: AtomicUsize,
     pub(crate) main_channel: Arc<UdpSocket>,
     pub(crate) route_table: SkipMap<Ipv4Addr, Vec<Route>>,
@@ -35,7 +36,7 @@ impl Context {
         let channel_num = 1;
         let (status_sender, status_receiver) = channel(Status::Cone);
         let inner = Arc::new(ContextInner {
-            lock:Mutex::new(()),
+            lock: Mutex::new(()),
             count: AtomicUsize::new(0),
             main_channel,
             route_table: SkipMap::new(),
@@ -143,9 +144,9 @@ impl Context {
     fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) {
         let key = route.route_key();
         let guard = self.inner.lock.lock();
-        let mut list = if let Some(entry) = self.inner.route_table.get(&id){
+        let mut list = if let Some(entry) = self.inner.route_table.get(&id) {
             entry.value().clone()
-        }else{
+        } else {
             Vec::with_capacity(4)
         };
         let mut exist = false;
@@ -178,7 +179,7 @@ impl Context {
                 list.truncate(max_len);
             }
         }
-        self.inner.route_table.insert(id,list);
+        self.inner.route_table.insert(id, list);
         self.inner.route_table_time.insert((key, id), AtomicCell::new(Instant::now()));
         drop(guard);
     }
@@ -250,7 +251,7 @@ impl Context {
             let mut routes = v.value().clone();
             drop(v);
             routes.retain(|x| x.route_key() != route_key);
-            self.inner.route_table.insert(*id,routes);
+            self.inner.route_table.insert(*id, routes);
             self.inner.route_table_time.remove(&(route_key, *id));
         }
         drop(guard);
@@ -294,54 +295,63 @@ impl Channel {
         }
     }
     pub async fn start(self,
+                       mut worker: SwitchWorker,
                        head_reserve: usize,//头部预留字节
                        symmetric_channel_num: usize,//对称网络，则再加一组监听，提升打洞成功率
     ) {
         let context = self.context;
         let main_channel = context.inner.main_channel.clone();
         let handler = self.handler.clone();
-        tokio::spawn(Self::start_(context.clone(), handler.clone(), main_channel.clone(), head_reserve, true));
-        tokio::spawn(Self::start_(context.clone(), handler, main_channel, head_reserve, true));
+        tokio::spawn(Self::start_(worker.clone(), context.clone(), handler.clone(), main_channel.clone(), head_reserve, true));
+        tokio::spawn(Self::start_(worker.clone(), context.clone(), handler, main_channel, head_reserve, true));
         let mut cur_status = Status::Cone;
         let mut status_receiver = context.inner.status_receiver.clone();
         loop {
-            match status_receiver.changed().await {
-                Ok(_) => {
-                    match *status_receiver.borrow() {
-                        Status::Cone => {
-                            cur_status = Status::Cone;
-                        }
-                        Status::Symmetric => {
-                            if cur_status == Status::Symmetric {
-                                continue;
-                            }
-                            cur_status = Status::Symmetric;
-                            for _ in 0..symmetric_channel_num {
-                                match UdpSocket::bind("0.0.0.0:0").await {
-                                    Ok(udp) => {
-                                        let udp = Arc::new(udp);
-                                        let context = context.clone();
-                                        let handler = self.handler.clone();
-                                        tokio::spawn(Self::start_(context, handler, udp, head_reserve, false));
+            tokio::select! {
+                _=worker.stop_wait()=>{
+                    break;
+                }
+                rs=status_receiver.changed()=>{
+                    match rs {
+                        Ok(_) => {
+                            match *status_receiver.borrow() {
+                                Status::Cone => {
+                                    cur_status = Status::Cone;
+                                }
+                                Status::Symmetric => {
+                                    if cur_status == Status::Symmetric {
+                                        continue;
                                     }
-                                    Err(e) => {
-                                        log::error!("{}",e);
+                                    cur_status = Status::Symmetric;
+                                    for _ in 0..symmetric_channel_num {
+                                        match UdpSocket::bind("0.0.0.0:0").await {
+                                            Ok(udp) => {
+                                                let udp = Arc::new(udp);
+                                                let context = context.clone();
+                                                let handler = self.handler.clone();
+                                                tokio::spawn(Self::start_(worker.clone(),context, handler, udp, head_reserve, false));
+                                            }
+                                            Err(e) => {
+                                                log::error!("{}",e);
+                                            }
+                                        }
                                     }
+                                }
+                                Status::Close => {
+                                    break;
                                 }
                             }
                         }
-                        Status::Close => {
+                        Err(_) => {
                             break;
                         }
                     }
                 }
-                Err(_) => {
-                    break;
-                }
             }
         }
+        worker.stop_all();
     }
-    async fn start_(context: Context,
+    async fn start_(mut worker: SwitchWorker, context: Context,
                     mut handler: ChannelDataHandler,
                     udp: Arc<UdpSocket>,
                     head_reserve: usize,
@@ -382,8 +392,14 @@ impl Channel {
                             }
                         }
                 }
+                _=worker.stop_wait()=>{
+                    break;
+                }
             }
         }
         context.inner.udp_map.remove(&id);
+        if is_core {
+            worker.stop_all();
+        }
     }
 }

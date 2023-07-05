@@ -18,41 +18,33 @@ use crate::protocol;
 use crate::protocol::ip_turn_packet::BroadcastPacketEnd;
 
 pub mod tun_handler;
+#[cfg(any(target_os = "linux", target_os = "macos",target_os = "windows"))]
 pub mod tap_handler;
 
 async fn broadcast(sender: &ChannelSender, net_packet: &mut NetPacket<&mut [u8]>, data_len: usize, current_device: &CurrentDeviceInfo) -> Result<()> {
     let mut peer_ips = Vec::with_capacity(8);
     let vec = sender.route_table_one();
     let mut relay_count = 0;
-    let mut last_peer = None;
+    const MAX_COUNT: usize = u8::MAX as usize;
     for (peer_ip, route) in vec {
         if peer_ip == current_device.virtual_gateway {
             continue;
         }
-        if peer_ips.len() < u8::MAX as usize && route.is_p2p()
+        if peer_ips.len() == MAX_COUNT {
+            break;
+        }
+        if route.is_p2p()
             && sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await.is_ok() {
             peer_ips.push(peer_ip);
         } else {
             relay_count += 1;
-            if relay_count == 1 {
-                last_peer = Some((peer_ip, route));
-            }
-            if relay_count > 1 && peer_ips.len() == u8::MAX as usize {
-                break;
-            }
         }
     }
-    if relay_count == 0 && !peer_ips.is_empty() {
+    if relay_count == 0 && !peer_ips.is_empty() && peer_ips.len() != MAX_COUNT {
         //不需要转发
         return Ok(());
     }
-    if relay_count == 1 && !net_packet.is_encrypt() {
-        //只有一个目标，并且没加密
-        let (peer_ip, route) = last_peer.unwrap();
-        net_packet.set_destination(peer_ip);
-        sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await?;
-        return Ok(());
-    }
+
     if peer_ips.is_empty() {
         sender.send_main(&net_packet.buffer()[..data_len], current_device.connect_server).await?;
     } else {
@@ -71,7 +63,7 @@ async fn multicast(igmp_server: &IgmpServer, multicast_addr: Ipv4Addr, sender: &
     let mut peer_ips = Vec::with_capacity(8);
     let vec = sender.route_table_one();
     let mut relay_count = 0;
-    let mut last_peer = None;
+    const MAX_COUNT: usize = u8::MAX as usize;
     if let Some(members) = igmp_server.load(&multicast_addr) {
         for (peer_ip, route) in vec {
             if peer_ip == current_device.virtual_gateway {
@@ -79,30 +71,20 @@ async fn multicast(igmp_server: &IgmpServer, multicast_addr: Ipv4Addr, sender: &
             }
             let is_send = { members.read().is_send(&peer_ip) };
             if is_send {
-                if peer_ips.len() < u8::MAX as usize && route.is_p2p()
+                if peer_ips.len() == MAX_COUNT {
+                    break;
+                }
+                if route.is_p2p()
                     && sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await.is_ok() {
                     peer_ips.push(peer_ip);
                 } else {
                     relay_count += 1;
-                    if relay_count == 1 {
-                        last_peer = Some((peer_ip, route));
-                    }
-                    if relay_count > 1 && peer_ips.len() == u8::MAX as usize {
-                        break;
-                    }
                 }
             }
         }
     }
-    if relay_count == 0 && !peer_ips.is_empty() {
+    if relay_count == 0 && !peer_ips.is_empty() && peer_ips.len() != MAX_COUNT {
         //不需要转发
-        return Ok(());
-    }
-    if relay_count == 1 && !net_packet.is_encrypt() {
-        //只有一个目标，并且没加密
-        let (peer_ip, route) = last_peer.unwrap();
-        net_packet.set_destination(peer_ip);
-        sender.send_by_key(&net_packet.buffer()[..data_len], &route.route_key()).await?;
         return Ok(());
     }
     if peer_ips.is_empty() {

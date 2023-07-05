@@ -1,5 +1,5 @@
 use std::io;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use crossbeam_utils::atomic::AtomicCell;
 
@@ -7,10 +7,27 @@ use protobuf::Message;
 use tokio::net::UdpSocket;
 use crate::channel::sender::ChannelSender;
 
-use crate::error::*;
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
 use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
+
+pub enum ReqEnum {
+    TokenError,
+    AddressExhausted,
+    Timeout,
+    ServerError(String),
+    Other(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct RegResponse {
+    pub virtual_ip: Ipv4Addr,
+    pub virtual_gateway: Ipv4Addr,
+    pub virtual_netmask: Ipv4Addr,
+    pub epoch: u32,
+    pub public_ip: Ipv4Addr,
+    pub public_port: u16,
+}
 
 ///向中继服务器注册，token标识一个虚拟网关，device_id防止多次注册时得到的ip不一致
 pub async fn registration(
@@ -19,77 +36,90 @@ pub async fn registration(
     token: String,
     device_id: String,
     name: String,
-) -> Result<RegistrationResponse> {
+) -> Result<RegResponse, ReqEnum> {
     let request_packet =
-        registration_request_packet(token.clone(), device_id.clone(), name.clone(), false)?;
+        registration_request_packet(token.clone(), device_id.clone(), name.clone(), false).unwrap();
     let buf = request_packet.buffer();
     let mut recv_buf = [0u8; 10240];
-    let mut count = 0;
-    loop {
-        match main_channel.send_to(buf, server_address).await {
-            Ok(_) => {
-                match tokio::time::timeout(Duration::from_millis(300), main_channel.recv_from(&mut recv_buf)).await {
-                    Ok(rs) => {
-                        match rs {
-                            Ok((len, addr)) => {
-                                if server_address == addr {
-                                    let net_packet = NetPacket::new(&recv_buf[..len])?;
-                                    match net_packet.protocol() {
-                                        Protocol::Service => {
-                                            match service_packet::Protocol::from(net_packet.transport_protocol()) {
-                                                service_packet::Protocol::RegistrationResponse => {
-                                                    let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
-                                                    return Ok(response);
+    return match main_channel.send_to(buf, server_address).await {
+        Ok(_) => {
+            match tokio::time::timeout(Duration::from_millis(300), main_channel.recv_from(&mut recv_buf)).await {
+                Ok(rs) => {
+                    match rs {
+                        Ok((len, addr)) => {
+                            if server_address == addr {
+                                let net_packet = match NetPacket::new(&recv_buf[..len]) {
+                                    Ok(net_packet) => {
+                                        net_packet
+                                    }
+                                    Err(e) => {
+                                        return Err(ReqEnum::ServerError(format!("{}",e)))
+                                    }
+                                };
+                                match net_packet.protocol() {
+                                    Protocol::Service => {
+                                        match service_packet::Protocol::from(net_packet.transport_protocol()) {
+                                            service_packet::Protocol::RegistrationResponse => {
+                                                match RegistrationResponse::parse_from_bytes(net_packet.payload()) {
+                                                    Ok(response) => {
+                                                        Ok(RegResponse {
+                                                            virtual_ip: Ipv4Addr::from(response.virtual_ip),
+                                                            virtual_gateway: Ipv4Addr::from(response.virtual_gateway),
+                                                            virtual_netmask: Ipv4Addr::from(response.virtual_netmask),
+                                                            epoch: response.epoch,
+                                                            public_ip: Ipv4Addr::from(response.public_ip),
+                                                            public_port: response.public_port as u16,
+                                                        })
+                                                    }
+                                                    Err(_) => {
+                                                        Err(ReqEnum::ServerError("invalid data".to_string()))
+                                                    }
                                                 }
-                                                _ => println!("响应数据错误"),
+                                            }
+                                            _ => {
+                                                Err(ReqEnum::ServerError("invalid data".to_string()))
                                             }
                                         }
-                                        Protocol::Error => {
-                                            match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
-                                                Ok(e) => match e {
-                                                    InErrorPacket::TokenError => return Err(Error::Stop("token错误".to_string())),
-                                                    InErrorPacket::Disconnect => {
-                                                        println!("断开连接");
+                                    }
+                                    Protocol::Error => {
+                                        match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload()) {
+                                            Ok(e) => match e {
+                                                InErrorPacket::TokenError => Err(ReqEnum::TokenError),
+                                                InErrorPacket::Disconnect => {
+                                                    Err(ReqEnum::ServerError("disconnect".to_string()))
+                                                }
+                                                InErrorPacket::AddressExhausted => {
+                                                    Err(ReqEnum::AddressExhausted)
+                                                }
+                                                InErrorPacket::OtherError(e) => match e.message() {
+                                                    Ok(str) => {
+                                                        Err(ReqEnum::ServerError(str))
                                                     }
-                                                    InErrorPacket::AddressExhausted => {
-                                                        println!("地址用尽");
-                                                        log::warn!("地址用尽");
-                                                    }
-                                                    InErrorPacket::OtherError(e) => match e.message() {
-                                                        Ok(str) => {
-                                                            println!("其他异常:{:?}", str);
-                                                            log::warn!("其他异常{:?}",str);
-                                                        }
-                                                        Err(e) => println!("其他异常:{:?}", e),
-                                                    },
+                                                    Err(e) => Err(ReqEnum::Other(format!("{}", e))),
                                                 },
-                                                Err(e) => println!("数据解析异常:{:?}", e),
-                                            }
+                                            },
+                                            Err(e) => Err(ReqEnum::Other(format!("{}", e))),
                                         }
-                                        _ => println!("响应数据错误"),
-                                    };
+                                    }
+                                    _ => Err(ReqEnum::ServerError("invalid data".to_string())),
                                 }
-                            }
-                            Err(e) => {
-                                println!("接收服务器数据失败:{:?}", e);
-                                log::warn!("接收服务器数据失败:{:?}",e);
+                            } else {
+                                Err(ReqEnum::Other(format!("invalid data,from {}", addr)))
                             }
                         }
-                    }
-                    Err(_) => {
-                        println!("接收超时");
-                        log::warn!("接收超时");
+                        Err(e) => {
+                            Err(ReqEnum::Other(format!("receiver error:{}", e)))
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                println!("发送数据到服务器失败:{:?}", e);
-                log::warn!("发送数据到服务器失败:{:?}",e);
+                Err(_) => {
+                    Err(ReqEnum::Timeout)
+                }
             }
         }
-        count += 1;
-        println!("重试中(retrying)...");
-        std::thread::sleep(Duration::from_secs(count % 10 + 1));
+        Err(e) => {
+            Err(ReqEnum::Other(format!("send error:{}", e)))
+        }
     };
 }
 

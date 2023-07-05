@@ -8,7 +8,7 @@ use parking_lot::Mutex;
 use packet::ethernet;
 use packet::ethernet::packet::EthernetPacket;
 use win_tun_tap::{IFace, TapDevice, TunDevice};
-use crate::tun_tap_device::DeviceType;
+use crate::tun_tap_device::{DriverInfo, DeviceType};
 
 pub const TUN_INTERFACE_NAME: &str = "Switch-Tun-V1";
 pub const TUN_POOL_NAME: &str = "Switch-Tun-V1";
@@ -161,7 +161,6 @@ fn dest(ip: Ipv4Addr, mask: Ipv4Addr) -> Ipv4Addr {
     ])
 }
 
-#[derive(Clone)]
 pub struct DeviceReader {
     device: Arc<Device>,
 }
@@ -199,9 +198,8 @@ fn create_tun(
     netmask: Ipv4Addr,
     gateway: Ipv4Addr,
     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-) -> io::Result<(DeviceWriter, DeviceReader)> {
+) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     unsafe {
-        println!("========TUN网卡配置========");
         match Library::new("wintun.dll") {
             Ok(lib) => match TunDevice::delete_for_name(lib, TUN_INTERFACE_NAME) {
                 Ok(_) => {
@@ -210,7 +208,6 @@ fn create_tun(
                 Err(_) => {}
             },
             Err(e) => {
-                log::error!("wintun.dll not found");
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
                     format!("wintun.dll not found {:?}", e),
@@ -240,8 +237,8 @@ fn create_tun(
                 }
             }
         };
-        println!("name:{:?}", tun_device.get_name()?);
-        println!("version:{:?}", tun_device.version()?);
+        let name = tun_device.get_name()?;
+        let version = format!("{:?}", tun_device.version()?);
         tun_device.set_ip(address, netmask)?;
         tun_device.set_metric(1)?;
         tun_device.set_mtu(1420)?;
@@ -256,14 +253,21 @@ fn create_tun(
         tun_device.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
         delete_cache();
         let device = Arc::new(Device::Tun(tun_device));
-        println!("========TUN网卡配置========");
+        let driver_info = DriverInfo {
+            device_type: DeviceType::Tun,
+            name,
+            version,
+            mac: None,
+        };
         Ok((
             DeviceWriter::new(device.clone(), in_ips, address),
             DeviceReader::new(device),
+            driver_info
         ))
     }
 }
-fn delete_cache(){
+
+fn delete_cache() {
     //清除路由缓存
     let delete_cache = "netsh interface ip delete destinationcache";
     let out = std::process::Command::new("cmd")
@@ -271,7 +275,7 @@ fn delete_cache(){
         .arg(delete_cache)
         .output()
         .unwrap();
-    if !out.status.success(){
+    if !out.status.success() {
         log::warn!("删除缓存失败:{:?}",out);
     }
 }
@@ -293,8 +297,7 @@ fn create_tap(
     netmask: Ipv4Addr,
     gateway: Ipv4Addr,
     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-) -> io::Result<(DeviceWriter, DeviceReader)> {
-    println!("========TAP网卡配置========");
+) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     let tap_device = match TapDevice::open(TAP_INTERFACE_NAME) {
         Ok(tap_device) => tap_device,
         Err(e) => {
@@ -305,9 +308,9 @@ fn create_tap(
         }
     };
     let mac = tap_device.get_mac()?;
-    println!("name:{:?}", tap_device.get_name()?);
-    println!("version:{:x?}", tap_device.get_version()?);
-    println!("mac:{:x?}", mac);
+    let name = tap_device.get_name()?;
+    let version = format!("{:?}", tap_device.get_version()?);
+    let mac_str = format!("mac:{:x?}", mac);
     tap_device.set_ip(address, netmask)?;
     tap_device.set_metric(1)?;
     tap_device.set_mtu(1420)?;
@@ -321,10 +324,16 @@ fn create_tap(
     tap_device.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
     delete_cache();
     let tap = Arc::new(Device::Tap((tap_device, mac)));
-    println!("========TAP网卡配置========");
+    let driver_info = DriverInfo {
+        device_type: DeviceType::Tap,
+        name,
+        version,
+        mac: Some(mac_str),
+    };
     Ok((
         DeviceWriter::new(tap.clone(), in_ips, address),
-        DeviceReader::new(tap)
+        DeviceReader::new(tap),
+        driver_info
     ))
 }
 
@@ -341,7 +350,7 @@ fn delete_tap() {
 pub fn create_device(device_type: DeviceType, address: Ipv4Addr,
                      netmask: Ipv4Addr,
                      gateway: Ipv4Addr,
-                     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, ) -> io::Result<(DeviceWriter, DeviceReader)> {
+                     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, ) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     match device_type {
         DeviceType::Tun => {
             create_tun(address, netmask, gateway, in_ips)

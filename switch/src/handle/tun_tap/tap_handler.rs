@@ -10,13 +10,14 @@ use packet::icmp::Kind;
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 use crate::channel::sender::ChannelSender;
+use crate::core::status::SwitchWorker;
 use crate::external_route::ExternalRoute;
 use crate::handle::CurrentDeviceInfo;
 use crate::igmp_server::IgmpServer;
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::{DeviceReader, DeviceWriter};
 
-pub fn start(sender: ChannelSender,
+pub fn start(worker: SwitchWorker, sender: ChannelSender,
              device_reader: DeviceReader,
              device_writer: DeviceWriter,
              igmp_server: Option<IgmpServer>,
@@ -24,7 +25,7 @@ pub fn start(sender: ChannelSender,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
              cipher: Option<Aes256Gcm>) {
-    thread::Builder::new().name("tap-handler".into()).spawn(move || {
+    thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
@@ -33,8 +34,9 @@ pub fn start(sender: ChannelSender,
                                        current_device, ip_route, ip_proxy_map, cipher).await {
                     log::warn!("tap:{:?}",e);
                 }
+                worker.stop_all();
             });
-    }).unwrap();
+    });
 }
 
 async fn start_(sender: ChannelSender,

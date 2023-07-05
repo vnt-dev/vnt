@@ -9,6 +9,7 @@ use packet::icmp::icmp::IcmpPacket;
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 use crate::channel::sender::ChannelSender;
+use crate::core::status::SwitchWorker;
 
 use crate::error::*;
 use crate::external_route::ExternalRoute;
@@ -36,7 +37,7 @@ fn icmp(device_writer: &DeviceWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) ->
 /// 接收tun数据，并且转发到udp上
 #[inline]
 async fn handle(sender: &ChannelSender, data: &mut [u8], len: usize, device_writer: &DeviceWriter, igmp_server: &Option<IgmpServer>, current_device: CurrentDeviceInfo,
-                ip_route: &Option<ExternalRoute>, proxy_map: &Option<IpProxyMap>,cipher: &Option<Aes256Gcm>) -> Result<()> {
+                ip_route: &Option<ExternalRoute>, proxy_map: &Option<IpProxyMap>, cipher: &Option<Aes256Gcm>) -> Result<()> {
     let ipv4_packet = if let Ok(ipv4_packet) = IpV4Packet::new(&mut data[12..len]) {
         ipv4_packet
     } else {
@@ -50,10 +51,10 @@ async fn handle(sender: &ChannelSender, data: &mut [u8], len: usize, device_writ
     if src_ip == dest_ip {
         return icmp(&device_writer, ipv4_packet);
     }
-    return crate::handle::tun_tap::base_handle(sender, data, len, igmp_server, current_device, ip_route, proxy_map,cipher).await;
+    return crate::handle::tun_tap::base_handle(sender, data, len, igmp_server, current_device, ip_route, proxy_map, cipher).await;
 }
 
-pub fn start(sender: ChannelSender,
+pub fn start(worker: SwitchWorker, sender: ChannelSender,
              device_reader: DeviceReader,
              device_writer: DeviceWriter,
              igmp_server: Option<IgmpServer>,
@@ -61,15 +62,16 @@ pub fn start(sender: ChannelSender,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
              cipher: Option<Aes256Gcm>) {
-    thread::Builder::new().name("tun-handler".into()).spawn(move || {
-        tokio::runtime::Builder::new_multi_thread()
+    thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
-                if let Err(e) = start_(sender, device_reader, device_writer, igmp_server, current_device, ip_route, ip_proxy_map,cipher).await {
+                if let Err(e) = start_(sender, device_reader, device_writer, igmp_server, current_device, ip_route, ip_proxy_map, cipher).await {
                     log::warn!("tun:{:?}",e);
                 }
+                worker.stop_all();
             })
-    }).unwrap();
+    });
 }
 
 async fn start_(sender: ChannelSender,
@@ -80,24 +82,17 @@ async fn start_(sender: ChannelSender,
                 ip_route: Option<ExternalRoute>,
                 ip_proxy_map: Option<IpProxyMap>,
                 cipher: Option<Aes256Gcm>) -> io::Result<()> {
+    let mut buf = [0; 4096];
     loop {
-        let mut buf = [0; 4096];
-        let sender = sender.clone();
-        let device_writer = device_writer.clone();
-        let igmp_server = igmp_server.clone();
-        let ip_route = ip_route.clone();
-        let ip_proxy_map = ip_proxy_map.clone();
-        let cipher = cipher.clone();
+        if sender.is_close() {
+            return Ok(());
+        }
         let len = device_reader.read(&mut buf[12..])? + 12;
-        let current_device = current_device.load();
-        tokio::spawn(async move {
-            match handle(&sender, &mut buf, len, &device_writer, &igmp_server, current_device, &ip_route, &ip_proxy_map,&cipher).await {
-                Ok(_) => {}
-                Err(e) => {
-                    log::warn!("{:?}", e)
-                }
+        match handle(&sender, &mut buf, len, &device_writer, &igmp_server,current_device.load(), &ip_route, &ip_proxy_map, &cipher).await {
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("{:?}", e)
             }
-        });
-
+        }
     }
 }

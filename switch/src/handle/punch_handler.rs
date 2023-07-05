@@ -13,10 +13,17 @@ use std::io;
 use tokio::sync::mpsc::Receiver;
 use crate::channel::punch::{NatInfo, Punch};
 use crate::channel::sender::ChannelSender;
+use crate::core::status::SwitchWorker;
 
-pub async fn start(receiver: Receiver<(Ipv4Addr, NatInfo)>, punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
+pub fn start(mut worker: SwitchWorker, receiver: Receiver<(Ipv4Addr, NatInfo)>, punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
     tokio::spawn(async move {
-        start0(receiver, punch, current_device).await;
+        tokio::select! {
+            _=start0(receiver, punch, current_device)=>{}
+            _=worker.stop_wait()=>{
+                return;
+            }
+        }
+        worker.stop_all();
     });
 }
 
@@ -47,54 +54,62 @@ async fn start_(
 }
 
 pub async fn start_punch(
+    mut worker: SwitchWorker,
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     sender: ChannelSender,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 ) {
-    tokio::spawn(async move {
-        if let Err(e) = start_punch_(nat_test, device_list, sender, current_device).await {
-            log::warn!("打洞处理任务停止 {:?}", e);
-        }
-    });
-}
-
-async fn start_punch_(
-    nat_test: NatTest,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-    sender: ChannelSender,
-    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-) -> crate::Result<()> {
     let mut num = 0;
     let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
     loop {
         if sender.is_close() {
-            return Ok(());
+            break;
         }
-        let current_device = current_device.load();
-        let nat_info = nat_test.nat_info();
-        {
-            let mut list = device_list.lock().clone().1;
-            list.shuffle(&mut rand::thread_rng());
-            let mut count = 0;
-            for info in list {
-                if info.virtual_ip <= current_device.virtual_ip {
-                    continue;
+        tokio::select! {
+            rs= start_punch_(Duration::from_secs(sleep_time[num % sleep_time.len()]),&nat_test, &device_list, &sender, &current_device)=>{
+                 if let Err(e) = rs {
+                    log::warn!("打洞处理任务异常 {:?}", e);
                 }
-                if !sender.need_punch(&info.virtual_ip) {
-                    continue;
-                }
-                count += 1;
-                if count > 2 {
-                    break;
-                }
-                let buf = punch_packet(current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
-                let _ = sender.send_main(&buf, current_device.connect_server).await;
+            }
+           _=worker.stop_wait()=>{
+                break;
             }
         }
         num += 1;
-        tokio::time::sleep(Duration::from_secs(sleep_time[num % sleep_time.len()])).await;
     }
+
+    worker.stop_all();
+}
+
+async fn start_punch_(
+    sleep_time: Duration,
+    nat_test: &NatTest,
+    device_list: &Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    sender: &ChannelSender,
+    current_device: &Arc<AtomicCell<CurrentDeviceInfo>>,
+) -> crate::Result<()> {
+    let current_device = current_device.load();
+    let nat_info = nat_test.nat_info();
+    let mut list = device_list.lock().clone().1;
+    list.shuffle(&mut rand::thread_rng());
+    let mut count = 0;
+    for info in list {
+        if info.virtual_ip <= current_device.virtual_ip {
+            continue;
+        }
+        if !sender.need_punch(&info.virtual_ip) {
+            continue;
+        }
+        count += 1;
+        if count > 2 {
+            break;
+        }
+        let buf = punch_packet(current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
+        let _ = sender.send_main(&buf, current_device.connect_server).await;
+    }
+    tokio::time::sleep(sleep_time).await;
+    Ok(())
 }
 
 pub fn punch_packet(

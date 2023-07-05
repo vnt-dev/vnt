@@ -58,7 +58,6 @@ pub fn public_ip_list_(
     udp: &UdpSocket,
     addrs: &Vec<SocketAddr>,
 ) -> io::Result<(HashSet<Ipv4Addr>, u16, u16)> {
-    // println!("local port {:?}", udp.local_addr().unwrap().port());
     udp.set_read_timeout(Some(Duration::from_millis(300)))?;
     let mut buf = [0u8; 128];
     for addr in addrs {

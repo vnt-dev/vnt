@@ -6,9 +6,9 @@ use tun::platform::posix::{Reader, Writer};
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
 use crossbeam_utils::atomic::AtomicCell;
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux"))]
 use tun::platform::linux::Device;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(any(target_os = "macos"))]
 use tun::platform::macos::Device;
 use parking_lot::Mutex;
 use packet::ethernet;
@@ -128,7 +128,6 @@ impl DeviceWriter {
     }
 }
 
-#[derive(Clone)]
 pub struct DeviceReader(Reader);
 
 impl DeviceReader {

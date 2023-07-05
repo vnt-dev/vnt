@@ -245,7 +245,7 @@ impl ChannelDataHandler {
                                             ipv4.set_destination_ip(destination);
                                             ipv4.update_checksum();
                                             ip_proxy_map.tcp_proxy_map.insert(SocketAddrV4::new(source, source_port),
-                                                                                   (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                                                                              (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
                                         }
                                         ipv4::protocol::Protocol::Udp => {
                                             let dest_ip = ipv4.destination_ip();
@@ -258,7 +258,7 @@ impl ChannelDataHandler {
                                             ipv4.set_destination_ip(destination);
                                             ipv4.update_checksum();
                                             ip_proxy_map.udp_proxy_map.insert(SocketAddrV4::new(source, source_port),
-                                                                                   (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                                                                              (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
                                         }
                                         ipv4::protocol::Protocol::Icmp => {
                                             let dest_ip = ipv4.destination_ip();
@@ -329,11 +329,14 @@ impl ChannelDataHandler {
                 if current_ip != new_ip {
                     // ip发生变化
                     log::info!("ip发生变化,old_ip:{:?},new_ip:{:?}",current_ip,new_ip);
-                    let old_netmask = current_device.virtual_netmask;
-                    let old_gateway = current_device.virtual_gateway();
+                    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+                        let old_netmask = current_device.virtual_netmask;
+                    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+                        let old_gateway = current_device.virtual_gateway();
                     let virtual_ip = Ipv4Addr::from(response.virtual_ip);
                     let virtual_gateway = Ipv4Addr::from(response.virtual_gateway);
                     let virtual_netmask = Ipv4Addr::from(response.virtual_netmask);
+                    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
                     self.device_writer.change_ip(virtual_ip, virtual_netmask, virtual_gateway, old_netmask, old_gateway)?;
                     let new_current_device = CurrentDeviceInfo::new(virtual_ip, virtual_gateway,
                                                                     virtual_netmask, current_device.connect_server);
@@ -346,7 +349,7 @@ impl ChannelDataHandler {
             service_packet::Protocol::PollDeviceList => {}
             service_packet::Protocol::PushDeviceList => {
                 let device_list_t = DeviceList::parse_from_bytes(net_packet.payload())?;
-                let ip_list = device_list_t
+                let ip_list: Vec<PeerDeviceInfo> = device_list_t
                     .device_info_list
                     .into_iter()
                     .map(|info| {
@@ -357,6 +360,10 @@ impl ChannelDataHandler {
                         )
                     })
                     .collect();
+                let route = Route::from(*route_key, 2, 99);
+                for x in &ip_list {
+                    context.add_route_if_absent(x.virtual_ip, route);
+                }
                 let mut dev = self.device_list.lock();
                 if dev.0 != device_list_t.epoch as u16 {
                     dev.0 = device_list_t.epoch as u16;
@@ -434,7 +441,6 @@ impl ChannelDataHandler {
                 }
             }
             ControlPacket::PunchRequest => {
-                // log::info!("PunchRequest route_key:{:?}",route_key);
                 //回应
                 net_packet.set_transport_protocol(control_packet::Protocol::PunchResponse.into());
                 net_packet.set_source(current_device.virtual_ip());

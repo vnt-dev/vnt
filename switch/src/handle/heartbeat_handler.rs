@@ -9,20 +9,26 @@ use rand::prelude::SliceRandom;
 use crate::channel::idle::Idle;
 use crate::channel::Route;
 use crate::channel::sender::ChannelSender;
+use crate::core::status::SwitchWorker;
 
 
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol::control_packet::PingPacket;
 use crate::protocol::{control_packet, NetPacket, Protocol, Version};
 
-pub async fn start_idle(idle: Idle, sender: ChannelSender) {
+pub fn start_idle(mut worker: SwitchWorker, idle: Idle, sender: ChannelSender) {
     tokio::spawn(async move {
-        match start_idle_(idle, sender).await {
-            Ok(_) => {}
-            Err(e) => {
-                log::warn!("空闲检测任务停止:{:?}", e);
+        tokio::select! {
+             _=worker.stop_wait()=>{
+                    return;
+             }
+             rs=start_idle_(idle, sender)=>{
+                 if let Err(e) = rs {
+                    log::warn!("空闲检测任务停止:{:?}", e);
+                }
             }
         }
+        worker.stop_all();
     });
 }
 
@@ -38,15 +44,24 @@ async fn start_idle_(idle: Idle, sender: ChannelSender) -> io::Result<()> {
     }
 }
 
-pub async fn start_heartbeat(
+pub fn start_heartbeat(
+    mut worker: SwitchWorker,
     sender: ChannelSender,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = start_heartbeat_(sender, device_list, current_device).await {
-            log::warn!("心跳任务停止:{:?}", e);
+        tokio::select! {
+             _=worker.stop_wait()=>{
+                    return;
+             }
+            rs=start_heartbeat_(sender, device_list, current_device)=>{
+                if let Err(e) = rs {
+                    log::warn!("心跳任务停止:{:?}", e);
+                }
+            }
         }
+        worker.stop_all();
     });
 }
 
@@ -70,6 +85,9 @@ async fn start_heartbeat_(
     net_packet.first_set_ttl(2);
     let mut count = 0;
     loop {
+        if sender.is_close() {
+            return Ok(());
+        }
         let current_device = current_device.load();
         net_packet.set_source(current_device.virtual_ip());
         {
@@ -103,7 +121,7 @@ async fn start_heartbeat_(
                     }
                 } else {
                     //没有直连路由则发送到网关
-                    let _ = sender.try_send_main(net_packet.buffer(), current_device.connect_server);
+                    let _ = sender.send_main(net_packet.buffer(), current_device.connect_server).await;
                     continue;
                 }
 

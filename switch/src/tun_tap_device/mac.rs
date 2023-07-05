@@ -1,11 +1,11 @@
 use std::io;
 use std::net::Ipv4Addr;
-use crate::tun_tap_device::{DeviceReader, DeviceType, DeviceWriter};
+use crate::tun_tap_device::{DeviceReader, DeviceType, DeviceWriter, DriverInfo};
 use tun::Device;
 use parking_lot::Mutex;
 use std::process::Command;
 use std::sync::Arc;
-use crate::tun_tap_device::unix::DeviceW;
+use crate::tun_tap_device::linux_mac::DeviceW;
 
 impl DeviceWriter {
     pub fn change_ip(&self, address: Ipv4Addr, netmask: Ipv4Addr,
@@ -42,14 +42,13 @@ pub fn create_device(device_type: DeviceType,
                      netmask: Ipv4Addr,
                      gateway: Ipv4Addr,
                      in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-) -> io::Result<(DeviceWriter, DeviceReader)> {
+) -> io::Result<(DeviceWriter, DeviceReader,DriverInfo)> {
     match device_type {
         DeviceType::Tun => {}
         DeviceType::Tap => {
             unimplemented!()
         }
     }
-    println!("========TUN网卡配置========");
     let mut config = tun::Configuration::default();
 
     config
@@ -74,11 +73,16 @@ pub fn create_device(device_type: DeviceType,
     let queue = dev.queue(0).unwrap();
     let reader = queue.reader();
     let writer = queue.writer();
-    println!("name:{:?}", name);
-    println!("========TUN网卡配置========");
+    let driver_info = DriverInfo {
+        device_type,
+        name:name.to_string(),
+        version:String::new(),
+        mac: None,
+    };
     Ok((
         DeviceWriter::new(DeviceW::Tun(writer), Arc::new(Mutex::new(dev)), in_ips, address, packet_information),
         DeviceReader::new(reader),
+        driver_info
     ))
 }
 
