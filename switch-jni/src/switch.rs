@@ -2,7 +2,7 @@ use std::ptr;
 use jni::errors::Error;
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JValue};
-use jni::sys::{jbyte, jint, jlong, jobject, jobjectArray, jsize};
+use jni::sys::{jboolean, jbyte, jint, jlong, jobject, jobjectArray, jsize};
 use switch::channel::Route;
 use switch::core::sync::SwitchSync;
 use switch::handle::PeerDeviceInfo;
@@ -25,6 +25,31 @@ pub unsafe extern "C" fn Java_top_wherewego_switchjni_Switch_waitStop0(
 ) {
     let switch = raw_switch as *mut SwitchSync;
     let _ = (&mut *switch).wait_stop();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_top_wherewego_switchjni_Switch_waitStopMs0(
+    _env: JNIEnv,
+    _class: JClass,
+    raw_switch: jlong,
+    ms: jlong,
+) -> jboolean {
+    let switch = raw_switch as *mut SwitchSync;
+    if (&mut *switch).wait_stop_ms(ms as _) {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_top_wherewego_switchjni_Switch_drop0(
+    _env: JNIEnv,
+    _class: JClass,
+    raw_switch: jlong,
+) {
+    let switch = raw_switch as *mut SwitchSync;
+    let _ = Box::from_raw(switch).stop();
 }
 
 #[no_mangle]
@@ -69,14 +94,14 @@ pub unsafe extern "C" fn Java_top_wherewego_switchjni_Switch_list0(
                     Err(e) => {
                         env.throw_new("java/lang/RuntimeException", format!("error:{:?}", e))
                             .expect("throw");
-                        return ptr::null_mut()
+                        return ptr::null_mut();
                     }
                 }
             }
             Err(e) => {
                 env.throw_new("java/lang/RuntimeException", format!("error:{:?}", e))
                     .expect("throw");
-                return ptr::null_mut()
+                return ptr::null_mut();
             }
         }
     }

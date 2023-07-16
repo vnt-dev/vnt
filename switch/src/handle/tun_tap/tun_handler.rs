@@ -62,21 +62,22 @@ pub fn start(worker: SwitchWorker, sender: ChannelSender,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
              cipher: Option<Aes256Gcm>) {
-    thread::spawn(move || {
+    thread::Builder::new().name("tun_handler".into()).spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
-                if let Err(e) = start_(sender, device_reader, device_writer, igmp_server, current_device, ip_route, ip_proxy_map, cipher).await {
-                    log::warn!("tun:{:?}",e);
+                if let Err(e) = start_(sender, device_reader, &device_writer, igmp_server, current_device, ip_route, ip_proxy_map, cipher).await {
+                    log::warn!("stop:{}",e);
                 }
+                let _ = device_writer.close();
                 worker.stop_all();
             })
-    });
+    }).unwrap();
 }
 
 async fn start_(sender: ChannelSender,
                 device_reader: DeviceReader,
-                device_writer: DeviceWriter,
+                device_writer: &DeviceWriter,
                 igmp_server: Option<IgmpServer>,
                 current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
                 ip_route: Option<ExternalRoute>,
@@ -88,7 +89,7 @@ async fn start_(sender: ChannelSender,
             return Ok(());
         }
         let len = device_reader.read(&mut buf[12..])? + 12;
-        match handle(&sender, &mut buf, len, &device_writer, &igmp_server,current_device.load(), &ip_route, &ip_proxy_map, &cipher).await {
+        match handle(&sender, &mut buf, len, device_writer, &igmp_server, current_device.load(), &ip_route, &ip_proxy_map, &cipher).await {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("{:?}", e)

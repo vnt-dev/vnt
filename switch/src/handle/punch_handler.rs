@@ -78,8 +78,6 @@ pub async fn start_punch(
         }
         num += 1;
     }
-
-    worker.stop_all();
 }
 
 async fn start_punch_(

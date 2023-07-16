@@ -17,7 +17,7 @@ pub struct SwitchSync {
 
 impl SwitchUtilSync {
     pub fn new(config: Config) -> io::Result<SwitchUtilSync> {
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
         let switch_util = runtime.block_on(SwitchUtil::new(config))?;
         Ok(SwitchUtilSync {
             switch_util,
@@ -38,9 +38,15 @@ impl SwitchUtilSync {
     pub fn build(self) -> crate::Result<SwitchSync> {
         let runtime = self.runtime;
         let switch = runtime.block_on(self.switch_util.build())?;
+        {
+            let mut switch = switch.clone();
+            std::thread::spawn(move || {
+                runtime.block_on(switch.wait_stop())
+            });
+        }
         Ok(SwitchSync {
             switch,
-            runtime,
+            runtime: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
         })
     }
 }
@@ -50,8 +56,7 @@ impl SwitchSync {
         self.runtime.block_on(self.switch.wait_stop())
     }
     pub fn wait_stop_ms(&mut self, ms: u64) -> bool {
-        self.runtime.block_on(tokio::time::timeout(Duration::from_millis(ms),
-                                                   self.switch.wait_stop())).is_ok()
+        self.runtime.block_on(self.switch.wait_stop_ms(Duration::from_millis(ms)))
     }
 }
 

@@ -53,9 +53,10 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<SwitchUtilSync, Error> 
     let token = to_string_not_null(env, &config, "token")?;
     let name = to_string_not_null(env, &config, "name")?;
     let device_id = to_string_not_null(env, &config, "deviceId")?;
-    let server = to_string_not_null(env, &config, "server")?;
+    let password = to_string(env, &config, "password")?;
+    let server_address_str = to_string_not_null(env, &config, "server")?;
     let nat_test_server = to_string_not_null(env, &config, "natTestServer")?;
-    let server_address = match server.to_socket_addrs() {
+    let server_address = match server_address_str.to_socket_addrs() {
         Ok(mut rs) => {
             if let Some(addr) = rs.next() {
                 addr
@@ -75,9 +76,9 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<SwitchUtilSync, Error> 
         .collect::<Vec<_>>();
     let config = Config::new(false,
                              token, device_id, name,
-                             server_address,
+                             server_address, server_address_str,
                              nat_test_server, vec![],
-                             vec![], None, false, );
+                             vec![], password, false, None);
     match SwitchUtilSync::new(config) {
         Ok(switch_util) => {
             Ok(switch_util)

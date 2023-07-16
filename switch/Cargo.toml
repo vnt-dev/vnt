@@ -1,6 +1,6 @@
 [package]
 name = "switch"
-version = "1.0.7"
+version = "1.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -32,3 +32,4 @@ libloading = "0.7.4"
 [build-dependencies]
 protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
+

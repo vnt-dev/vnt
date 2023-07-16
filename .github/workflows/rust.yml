@@ -65,7 +65,7 @@ jobs:
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:
-      NAME: switch-desktop # change with the name of your project
+      NAME: switch-cmd # change with the name of your project
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
@@ -106,7 +106,7 @@ jobs:
       - name: Install rust target
         run: rustup target add $TARGET
       - name: Run build
-        run: cargo build --package switch-desktop --release --verbose --target $TARGET
+        run: cargo build --package switch-cmd --release --verbose --target $TARGET
       - name: List target
         run: find ./target
       - name: Compress
@@ -128,7 +128,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v2
         with:
-          name: switch-desktop
+          name: switch-cmd
           path: |
             ./artifacts
   # deploys to github releases on tag
@@ -140,7 +140,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v2
         with:
-          name: switch-desktop
+          name: switch-cmd
           path: ./artifacts
       - name: List
         run: find ./artifacts

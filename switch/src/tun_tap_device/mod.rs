@@ -44,6 +44,7 @@ impl DeviceType {
     }
 }
 
+#[derive(Clone)]
 pub struct DriverInfo {
     pub device_type: DeviceType,
     pub name: String,

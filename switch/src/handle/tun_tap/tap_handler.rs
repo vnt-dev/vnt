@@ -25,7 +25,7 @@ pub fn start(worker: SwitchWorker, sender: ChannelSender,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
              cipher: Option<Aes256Gcm>) {
-    thread::spawn(move || {
+    thread::Builder::new().name("tap_handler".into()).spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
@@ -36,7 +36,7 @@ pub fn start(worker: SwitchWorker, sender: ChannelSender,
                 }
                 worker.stop_all();
             });
-    });
+    }).unwrap();
 }
 
 async fn start_(sender: ChannelSender,

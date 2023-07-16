@@ -10,15 +10,17 @@ pub enum SwitchStatus {
 }
 
 pub struct SwitchWorker {
+    _name: String,
     wg: WaitGroup,
     status_s: Arc<Sender<SwitchStatus>>,
     status_r: Receiver<SwitchStatus>,
 }
 
-impl Clone for SwitchWorker {
-    fn clone(&self) -> Self {
+impl SwitchWorker {
+    pub fn worker(&self, name: &str) -> Self {
         self.wg.add();
         SwitchWorker {
+            _name: name.to_string(),
             wg: self.wg.clone(),
             status_s: self.status_s.clone(),
             status_r: self.status_r.clone(),
@@ -53,6 +55,7 @@ impl SwitchWorker {
     }
 }
 
+#[derive(Clone)]
 pub struct SwitchStatusManger {
     wg: WaitGroup,
     status_s: Arc<Sender<SwitchStatus>>,
@@ -74,9 +77,10 @@ impl SwitchStatusManger {
     pub async fn wait(&mut self) {
         self.wg.wait().await
     }
-    pub fn worker(&self) -> SwitchWorker {
+    pub fn worker(&self, name: &str) -> SwitchWorker {
         self.wg.add();
         SwitchWorker {
+            _name: name.to_string(),
             wg: self.wg.clone(),
             status_s: self.status_s.clone(),
             status_r: self.status_r.clone(),

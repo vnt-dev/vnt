@@ -107,11 +107,11 @@ impl<B: AsRef<[u8]>> UdpPacket<B> {
     }
 }
 
-impl<B: AsRef<[u8]> + AsMut<[u8]>> UdpPacket<B> {
-    fn header_mut(&mut self) -> &mut [u8] {
-        &mut self.buffer.as_mut()[..8]
-    }
-}
+// impl<B: AsRef<[u8]> + AsMut<[u8]>> UdpPacket<B> {
+//     fn header_mut(&mut self) -> &mut [u8] {
+//         &mut self.buffer.as_mut()[..8]
+//     }
+// }
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> UdpPacket<B> {
     /// 设置源端口

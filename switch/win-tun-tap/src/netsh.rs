@@ -1,10 +1,12 @@
 use std::io;
 use std::net::Ipv4Addr;
+use std::os::windows::process::CommandExt;
 
 /// 设置网卡名称
 pub fn set_interface_name(old_name: &str, new_name: &str) -> io::Result<()> {
     let cmd = format!(" netsh interface set interface name={:?} newname={:?}", old_name, new_name);
     let out = std::process::Command::new("cmd")
+        .creation_flags(0x08000000) //winapi-0.3.9/src/um/winbase.rs:283
         .arg("/C")
         .arg(&cmd)
         .output()?;
@@ -21,6 +23,7 @@ pub fn set_interface_ip(index: u32, address: &Ipv4Addr, netmask: &Ipv4Addr) -> i
         index, address, netmask,
     );
     let out = std::process::Command::new("cmd")
+        .creation_flags(0x08000000)
         .arg("/C")
         .arg(&set_address)
         .output()?;
@@ -37,6 +40,7 @@ pub fn set_interface_mtu(index: u32, mtu: u16) -> io::Result<()> {
         index, mtu
     );
     let out = std::process::Command::new("cmd")
+        .creation_flags(0x08000000)
         .arg("/C")
         .arg(&set_mtu)
         .output()?;
@@ -49,6 +53,7 @@ pub fn set_interface_mtu(index: u32, mtu: u16) -> io::Result<()> {
 pub fn set_interface_metric(index: u32, metric: u16) -> io::Result<()> {
     let set_metric = format!("netsh interface ip set interface {} metric={}", index,metric);
     let out = std::process::Command::new("cmd")
+        .creation_flags(0x08000000)
         .arg("/C")
         .arg(&set_metric)
         .output()?;

@@ -1,5 +1,5 @@
-use std::{io, thread};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::io;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,12 +34,12 @@ pub mod status;
 pub mod sync;
 
 
+#[derive(Clone)]
 pub struct Switch {
     name: String,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     context: Context,
     switch_status_manager: SwitchStatusManger,
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     device_writer: DeviceWriter,
     /// 0. 机器纪元，每一次上线或者下线都会增1，用于感知网络中机器变化
     /// 服务端和客户端的不一致，则服务端会推送新的设备列表
@@ -113,9 +113,11 @@ impl SwitchUtil {
             }
             tun_tap_device::DeviceType::Tun
         };
+        let mtu = self.config.mtu.unwrap_or(1430);
         let in_ips = self.config.in_ips.iter().map(|(dest, mask, _)| { (Ipv4Addr::from(*dest & *mask), Ipv4Addr::from(*mask)) }).collect::<Vec<(Ipv4Addr, Ipv4Addr)>>();
 
-        let (device_writer, device_reader, driver_info) = tun_tap_device::create_device(device_type, response.virtual_ip, response.virtual_netmask, response.virtual_gateway, in_ips)?;
+        let (device_writer, device_reader, driver_info) = tun_tap_device::create_device(device_type, response.virtual_ip,
+                                                                                        response.virtual_netmask, response.virtual_gateway, in_ips, mtu)?;
         let _ = self.iface.insert((device_writer, device_reader));
         Ok(driver_info)
     }
@@ -154,7 +156,7 @@ impl SwitchUtil {
         let register = Arc::new(registration_handler::Register::new(channel_sender.clone(),
                                                                     config.server_address, config.token.clone(),
                                                                     config.device_id.clone(), config.name.clone()));
-        let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> = Arc::new(Mutex::new((0, Vec::new())));
+        let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> = Arc::new(Mutex::new((response.epoch, response.device_info_list)));
         let peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>> = Arc::new(SkipMap::new());
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
         let virtual_ip = response.virtual_ip;
@@ -188,14 +190,14 @@ impl SwitchUtil {
         };
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         if config.tap {
-            tap_handler::start(switch_status_manager.worker(), channel_sender.clone(), device_reader, device_writer.clone(),
+            tap_handler::start(switch_status_manager.worker("tap_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
                                igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
         } else {
-            tun_handler::start(switch_status_manager.worker(), channel_sender.clone(), device_reader, device_writer.clone(),
+            tun_handler::start(switch_status_manager.worker("tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
                                igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
         }
         #[cfg(any(target_os = "android"))]
-        tun_handler::start(switch_status_manager.worker(), channel_sender.clone(), device_reader, device_writer.clone(),
+        tun_handler::start(switch_status_manager.worker("android tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
                            igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
 
         //外部数据接收处理
@@ -204,46 +206,33 @@ impl SwitchUtil {
                                                            device_writer.clone(), connect_status.clone(),
                                                            peer_nat_info_map.clone(), ip_proxy_map, out_external_route,
                                                            cone_sender, symmetric_sender, cipher);
-        let channel = Channel::new(context.clone(), channel_recv_handler);
-        let channel_worker = switch_status_manager.worker();
-        //数据接收
-        thread::spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build().unwrap()
-                .block_on(async move {
-                    if let Some(tcp_proxy) = tcp_proxy {
-                        tokio::spawn(tcp_proxy.start());
-                    }
-                    if let Some(udp_proxy) = udp_proxy {
-                        tokio::spawn(udp_proxy.start());
-                    }
-                    channel.start(channel_worker, 14, 65).await;
-                });
-        });
         {
-            let other_worker = switch_status_manager.worker();
+            let channel = Channel::new(context.clone(), channel_recv_handler);
+            let channel_worker = switch_status_manager.worker("channel_worker");
+            if let Some(tcp_proxy) = tcp_proxy {
+                tokio::spawn(tcp_proxy.start());
+            }
+            if let Some(udp_proxy) = udp_proxy {
+                tokio::spawn(udp_proxy.start());
+            }
+            tokio::spawn(async move {
+                channel.start(channel_worker, 14, 65).await
+            });
+        }
+        {
+            let other_worker = switch_status_manager.worker("punch_handler");
             let nat_test = nat_test.clone();
             let device_list = device_list.clone();
             let current_device = current_device.clone();
-            //其他任务处理
-            thread::spawn(move || {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build().unwrap()
-                    .block_on(async move {
-                        // 定时心跳
-                        heartbeat_handler::start_heartbeat(other_worker.clone(), channel_sender.clone(), device_list.clone(), current_device.clone());
-                        // 空闲检查
-                        heartbeat_handler::start_idle(other_worker.clone(), idle, channel_sender.clone());
-                        // 打洞处理
-                        punch_handler::start(other_worker.clone(), cone_receiver, punch.clone(), current_device.clone());
-                        punch_handler::start(other_worker.clone(), symmetric_receiver, punch, current_device.clone());
-                        punch_handler::start_punch(other_worker.clone(), nat_test.clone(),
-                                                   device_list.clone(), channel_sender.clone(),
-                                                   current_device.clone()).await;
-                    });
-            });
+            // 定时心跳
+            heartbeat_handler::start_heartbeat(other_worker.worker("heartbeat"), channel_sender.clone(), device_list.clone(), current_device.clone(), config.server_address_str);
+            // 空闲检查
+            heartbeat_handler::start_idle(other_worker.worker("idle"), idle, channel_sender.clone());
+            // 打洞处理
+            punch_handler::start(other_worker.worker("cone_receiver"), cone_receiver, punch.clone(), current_device.clone());
+            punch_handler::start(other_worker.worker("symmetric_receiver"), symmetric_receiver, punch, current_device.clone());
+            tokio::spawn(punch_handler::start_punch(other_worker, nat_test,
+                                                    device_list, channel_sender, current_device));
         }
         context.switch(nat_test.nat_info().nat_type);
         Ok(Switch {
@@ -251,7 +240,6 @@ impl SwitchUtil {
             current_device,
             context,
             switch_status_manager,
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             device_writer,
             nat_test,
             device_list,
@@ -295,12 +283,31 @@ impl Switch {
     pub fn stop(&self) -> io::Result<()> {
         self.context.close();
         self.switch_status_manager.stop_all();
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         self.device_writer.close()?;
+        let virtual_gateway = self.current_device.load().virtual_gateway;
+        let _ = std::net::UdpSocket::bind("0.0.0.0:0")?.send_to(&[0],
+                                                                SocketAddr::V4(SocketAddrV4::new(virtual_gateway, 10000)));
         Ok(())
     }
     pub async fn wait_stop(&mut self) {
         self.switch_status_manager.wait().await;
+        let _ = self.stop();
+    }
+    pub async fn wait_stop_ms(&mut self, ms: Duration) -> bool {
+        tokio::select! {
+            _=self.switch_status_manager.wait()=>{
+                let _ = self.stop();
+                return true;
+            }
+            _=tokio::time::sleep(ms)=>{
+                return false;
+            }
+        }
+    }
+}
+
+impl Drop for Switch {
+    fn drop(&mut self) {
         let _ = self.stop();
     }
 }
@@ -312,11 +319,13 @@ pub struct Config {
     pub device_id: String,
     pub name: String,
     pub server_address: SocketAddr,
+    pub server_address_str: String,
     pub nat_test_server: Vec<SocketAddr>,
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub out_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub key: Option<[u8; 32]>,
     pub simulate_multicast: bool,
+    pub mtu: Option<u16>,
 }
 
 
@@ -325,9 +334,10 @@ impl Config {
                device_id: String,
                name: String,
                server_address: SocketAddr,
+               server_address_str: String,
                nat_test_server: Vec<SocketAddr>,
                in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32, Ipv4Addr)>,
-               password: Option<String>, simulate_multicast: bool, ) -> Self {
+               password: Option<String>, simulate_multicast: bool, mtu: Option<u16>, ) -> Self {
         let key = if let Some(password) = password {
             let mut hasher = sha2::Sha256::new();
             hasher.update(password.as_bytes());
@@ -342,11 +352,13 @@ impl Config {
             device_id,
             name,
             server_address,
+            server_address_str,
             nat_test_server,
             in_ips,
             out_ips,
             key,
             simulate_multicast,
+            mtu,
         }
     }
 }

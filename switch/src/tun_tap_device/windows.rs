@@ -1,8 +1,8 @@
 use std::{io, thread};
 use std::net::Ipv4Addr;
+use std::os::windows::process::CommandExt;
 use std::sync::Arc;
 use std::time::Duration;
-use crossbeam_utils::atomic::AtomicCell;
 use libloading::Library;
 use parking_lot::Mutex;
 use packet::ethernet;
@@ -37,16 +37,14 @@ pub struct DeviceWriter {
     device: Arc<Device>,
     lock: Arc<Mutex<()>>,
     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-    ip: Arc<AtomicCell<Ipv4Addr>>,
 }
 
 impl DeviceWriter {
-    pub fn new(device: Arc<Device>, in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, ip: Ipv4Addr) -> Self {
+    pub fn new(device: Arc<Device>, in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, _ip: Ipv4Addr) -> Self {
         Self {
             device,
             lock: Arc::new(Default::default()),
             in_ips,
-            ip: Arc::new(AtomicCell::new(ip)),
         }
     }
 }
@@ -120,7 +118,6 @@ impl DeviceWriter {
             log::warn!("{:?}", e);
         }
         dev.set_ip(address, netmask)?;
-        self.ip.store(address);
         for (address, netmask) in &self.in_ips {
             dev.add_route(*address, *netmask, gateway, 1)?;
         }
@@ -131,9 +128,6 @@ impl DeviceWriter {
         dev.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
         delete_cache();
         Ok(())
-    }
-    pub fn ip(&self) -> Ipv4Addr {
-        self.ip.load()
     }
     pub fn close(&self) -> io::Result<()> {
         match self.device.as_ref() {
@@ -198,6 +192,7 @@ fn create_tun(
     netmask: Ipv4Addr,
     gateway: Ipv4Addr,
     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
+    mtu: u16,
 ) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     unsafe {
         match Library::new("wintun.dll") {
@@ -241,7 +236,7 @@ fn create_tun(
         let version = format!("{:?}", tun_device.version()?);
         tun_device.set_ip(address, netmask)?;
         tun_device.set_metric(1)?;
-        tun_device.set_mtu(1420)?;
+        tun_device.set_mtu(mtu)?;
         // ip代理路由
         for (address, netmask) in &in_ips {
             tun_device.add_route(*address, *netmask, gateway, 1)?;
@@ -271,6 +266,7 @@ fn delete_cache() {
     //清除路由缓存
     let delete_cache = "netsh interface ip delete destinationcache";
     let out = std::process::Command::new("cmd")
+        .creation_flags(0x08000000)
         .arg("/C")
         .arg(delete_cache)
         .output()
@@ -297,6 +293,7 @@ fn create_tap(
     netmask: Ipv4Addr,
     gateway: Ipv4Addr,
     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
+    mtu: u16,
 ) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     let tap_device = match TapDevice::open(TAP_INTERFACE_NAME) {
         Ok(tap_device) => tap_device,
@@ -313,7 +310,7 @@ fn create_tap(
     let mac_str = format!("mac:{:x?}", mac);
     tap_device.set_ip(address, netmask)?;
     tap_device.set_metric(1)?;
-    tap_device.set_mtu(1420)?;
+    tap_device.set_mtu(mtu)?;
     tap_device.set_status(true)?;
     tap_device.add_route(address, netmask, gateway, 1)?;
     for (address, netmask) in &in_ips {
@@ -350,13 +347,14 @@ fn delete_tap() {
 pub fn create_device(device_type: DeviceType, address: Ipv4Addr,
                      netmask: Ipv4Addr,
                      gateway: Ipv4Addr,
-                     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, ) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
+                     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
+                     mtu: u16) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     match device_type {
         DeviceType::Tun => {
-            create_tun(address, netmask, gateway, in_ips)
+            create_tun(address, netmask, gateway, in_ips, mtu)
         }
         DeviceType::Tap => {
-            create_tap(address, netmask, gateway, in_ips)
+            create_tap(address, netmask, gateway, in_ips, mtu)
         }
     }
 }

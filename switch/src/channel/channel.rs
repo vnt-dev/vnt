@@ -302,8 +302,8 @@ impl Channel {
         let context = self.context;
         let main_channel = context.inner.main_channel.clone();
         let handler = self.handler.clone();
-        tokio::spawn(Self::start_(worker.clone(), context.clone(), handler.clone(), main_channel.clone(), head_reserve, true));
-        tokio::spawn(Self::start_(worker.clone(), context.clone(), handler, main_channel, head_reserve, true));
+        tokio::spawn(Self::start_(worker.worker("main_channel_1"), context.clone(), handler.clone(), main_channel.clone(), head_reserve, true));
+        tokio::spawn(Self::start_(worker.worker("main_channel_2"), context.clone(), handler, main_channel, head_reserve, true));
         let mut cur_status = Status::Cone;
         let mut status_receiver = context.inner.status_receiver.clone();
         loop {
@@ -314,7 +314,8 @@ impl Channel {
                 rs=status_receiver.changed()=>{
                     match rs {
                         Ok(_) => {
-                            match *status_receiver.borrow() {
+                            let s = status_receiver.borrow().clone();
+                            match s {
                                 Status::Cone => {
                                     cur_status = Status::Cone;
                                 }
@@ -329,7 +330,7 @@ impl Channel {
                                                 let udp = Arc::new(udp);
                                                 let context = context.clone();
                                                 let handler = self.handler.clone();
-                                                tokio::spawn(Self::start_(worker.clone(),context, handler, udp, head_reserve, false));
+                                                tokio::spawn(Self::start_(worker.worker("symmetric_channel"),context, handler, udp, head_reserve, false));
                                             }
                                             Err(e) => {
                                                 log::error!("{}",e);

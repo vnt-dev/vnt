@@ -5,7 +5,6 @@ use bytes::BufMut;
 use tun::platform::posix::{Reader, Writer};
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
-use crossbeam_utils::atomic::AtomicCell;
 #[cfg(any(target_os = "linux"))]
 use tun::platform::linux::Device;
 #[cfg(any(target_os = "macos"))]
@@ -38,17 +37,15 @@ pub struct DeviceWriter {
     writer: DeviceW,
     pub lock: Arc<Mutex<Device>>,
     pub in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-    ip: Arc<AtomicCell<Ipv4Addr>>,
     packet_information: bool,
 }
 
 impl DeviceWriter {
-    pub fn new(writer: DeviceW,lock: Arc<Mutex<Device>>, in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, ip: Ipv4Addr, packet_information: bool) -> Self {
+    pub fn new(writer: DeviceW,lock: Arc<Mutex<Device>>, in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, _ip: Ipv4Addr, packet_information: bool) -> Self {
         Self {
             writer,
             lock,
             in_ips,
-            ip: Arc::new(AtomicCell::new(ip)),
             packet_information,
         }
     }
@@ -106,9 +103,6 @@ impl DeviceWriter {
                 Self::write(self.packet_information, writer, &ethernet_packet.buffer)
             }
         }
-    }
-    pub fn ip(&self) -> Ipv4Addr {
-        self.ip.load()
     }
     pub fn close(&self) -> io::Result<()> {
         unsafe {

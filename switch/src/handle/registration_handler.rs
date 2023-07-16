@@ -6,6 +6,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use protobuf::Message;
 use tokio::net::UdpSocket;
 use crate::channel::sender::ChannelSender;
+use crate::handle::PeerDeviceInfo;
 
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
 use crate::protocol::error_packet::InErrorPacket;
@@ -24,7 +25,8 @@ pub struct RegResponse {
     pub virtual_ip: Ipv4Addr,
     pub virtual_gateway: Ipv4Addr,
     pub virtual_netmask: Ipv4Addr,
-    pub epoch: u32,
+    pub epoch: u16,
+    pub device_info_list: Vec<PeerDeviceInfo>,
     pub public_ip: Ipv4Addr,
     pub public_port: u16,
 }
@@ -62,11 +64,23 @@ pub async fn registration(
                                             service_packet::Protocol::RegistrationResponse => {
                                                 match RegistrationResponse::parse_from_bytes(net_packet.payload()) {
                                                     Ok(response) => {
+                                                        let device_info_list: Vec<PeerDeviceInfo> = response
+                                                            .device_info_list
+                                                            .into_iter()
+                                                            .map(|info| {
+                                                                PeerDeviceInfo::new(
+                                                                    Ipv4Addr::from(info.virtual_ip),
+                                                                    info.name,
+                                                                    info.device_status as u8,
+                                                                )
+                                                            })
+                                                            .collect();
                                                         Ok(RegResponse {
                                                             virtual_ip: Ipv4Addr::from(response.virtual_ip),
                                                             virtual_gateway: Ipv4Addr::from(response.virtual_gateway),
                                                             virtual_netmask: Ipv4Addr::from(response.virtual_netmask),
-                                                            epoch: response.epoch,
+                                                            epoch: response.epoch as u16,
+                                                            device_info_list,
                                                             public_ip: Ipv4Addr::from(response.public_ip),
                                                             public_port: response.public_port as u16,
                                                         })
@@ -134,7 +148,7 @@ fn registration_request_packet(
     request.device_id = device_id;
     request.name = name;
     request.is_fast = is_fast;
-    request.version = "1.0.7".to_string();
+    request.version = "1.1.0".to_string();
     let bytes = request.write_to_bytes()?;
     let buf = vec![0u8; 12 + bytes.len()];
     let mut net_packet = NetPacket::new(buf)?;

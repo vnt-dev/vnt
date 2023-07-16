@@ -15,7 +15,6 @@ impl DeviceWriter {
             .destination(gateway)
             .address(address)
             .netmask(netmask)
-            .mtu(1420)
             .up();
         let mut dev = self.lock.lock();
         if let Err(e) = dev.configure(&config) {
@@ -42,7 +41,8 @@ pub fn create_device(device_type: DeviceType,
                      netmask: Ipv4Addr,
                      gateway: Ipv4Addr,
                      in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-) -> io::Result<(DeviceWriter, DeviceReader,DriverInfo)> {
+                     mtu: u16,
+) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     match device_type {
         DeviceType::Tun => {}
         DeviceType::Tap => {
@@ -55,7 +55,7 @@ pub fn create_device(device_type: DeviceType,
         .destination(gateway)
         .address(address)
         .netmask(netmask)
-        .mtu(1420)
+        .mtu(mtu.into())
         .up();
 
     let dev = tun::create(&config).unwrap();
@@ -75,8 +75,8 @@ pub fn create_device(device_type: DeviceType,
     let writer = queue.writer();
     let driver_info = DriverInfo {
         device_type,
-        name:name.to_string(),
-        version:String::new(),
+        name: name.to_string(),
+        version: String::new(),
         mac: None,
     };
     Ok((

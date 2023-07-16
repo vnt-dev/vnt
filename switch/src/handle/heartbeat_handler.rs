@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 use std::io;
@@ -49,13 +49,14 @@ pub fn start_heartbeat(
     sender: ChannelSender,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    server_address_str: String,
 ) {
     tokio::spawn(async move {
         tokio::select! {
              _=worker.stop_wait()=>{
                     return;
              }
-            rs=start_heartbeat_(sender, device_list, current_device)=>{
+            rs=start_heartbeat_(sender, device_list, current_device,server_address_str)=>{
                 if let Err(e) = rs {
                     log::warn!("心跳任务停止:{:?}", e);
                 }
@@ -76,6 +77,7 @@ async fn start_heartbeat_(
     sender: ChannelSender,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    server_address_str: String,
 ) -> io::Result<()> {
     let mut net_packet = NetPacket::new([0u8; 16])?;
     net_packet.set_version(Version::V1);
@@ -88,20 +90,33 @@ async fn start_heartbeat_(
         if sender.is_close() {
             return Ok(());
         }
-        let current_device = current_device.load();
-        net_packet.set_source(current_device.virtual_ip());
+        let mut current_dev = current_device.load();
+        if count % 6 == 0 {
+            if let Ok(mut addr) = server_address_str.to_socket_addrs() {
+                if let Some(addr) = addr.next() {
+                    if addr != current_dev.connect_server {
+                        let mut tmp = current_dev.clone();
+                        tmp.connect_server = addr;
+                        if current_device.compare_exchange(current_dev, tmp).is_ok() {
+                            current_dev.connect_server = addr;
+                        }
+                    }
+                }
+            }
+        }
+        net_packet.set_source(current_dev.virtual_ip());
         {
             let mut ping = PingPacket::new(net_packet.payload_mut())?;
             let epoch = { device_list.lock().0 };
             ping.set_epoch(epoch);
         }
         set_now_time(&mut net_packet)?;
-        net_packet.set_destination(current_device.virtual_gateway());
-        if let Err(e) = sender.send_main(net_packet.buffer(), current_device.connect_server).await
+        net_packet.set_destination(current_dev.virtual_gateway());
+        if let Err(e) = sender.send_main(net_packet.buffer(), current_dev.connect_server).await
         {
             log::warn!(
                     "connect_server:{:?},e:{:?}",
-                    current_device.connect_server,
+                    current_dev.connect_server,
                     e
                 );
         }
@@ -109,7 +124,7 @@ async fn start_heartbeat_(
             let mut route_list: Option<Vec<(Ipv4Addr, Vec<Route>)>> = None;
             let peer_list = { device_list.lock().1.clone() };
             for peer in peer_list {
-                if peer.virtual_ip == current_device.virtual_ip {
+                if peer.virtual_ip == current_dev.virtual_ip {
                     continue;
                 }
                 set_now_time(&mut net_packet)?;
@@ -121,7 +136,7 @@ async fn start_heartbeat_(
                     }
                 } else {
                     //没有直连路由则发送到网关
-                    let _ = sender.send_main(net_packet.buffer(), current_device.connect_server).await;
+                    let _ = sender.send_main(net_packet.buffer(), current_dev.connect_server).await;
                     continue;
                 }
 

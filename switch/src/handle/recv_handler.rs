@@ -21,7 +21,7 @@ use crate::channel::{Route, RouteKey};
 
 use crate::error::Error;
 use crate::external_route::ExternalRoute;
-use crate::handle::{check_dest, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
+use crate::handle::{check_dest, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, PeerDeviceStatus};
 use crate::handle::registration_handler::Register;
 use crate::igmp_server::IgmpServer;
 use crate::ip_proxy::IpProxyMap;
@@ -362,7 +362,9 @@ impl ChannelDataHandler {
                     .collect();
                 let route = Route::from(*route_key, 2, 99);
                 for x in &ip_list {
-                    context.add_route_if_absent(x.virtual_ip, route);
+                    if x.status == PeerDeviceStatus::Online {
+                        context.add_route_if_absent(x.virtual_ip, route);
+                    }
                 }
                 let mut dev = self.device_list.lock();
                 if dev.0 != device_list_t.epoch as u16 {

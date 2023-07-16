@@ -15,7 +15,6 @@ impl DeviceWriter {
             .destination(gateway)
             .address(address)
             .netmask(netmask)
-            .mtu(1420)
             // .queues(2)
             .up();
         let mut dev = self.lock.lock();
@@ -56,6 +55,7 @@ pub fn create_device(device_type: DeviceType,
                      netmask: Ipv4Addr,
                      gateway: Ipv4Addr,
                      in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
+                     mtu: u16,
 ) -> io::Result<(DeviceWriter, DeviceReader,DriverInfo)> {
     let mut config = tun::Configuration::default();
 
@@ -63,7 +63,7 @@ pub fn create_device(device_type: DeviceType,
         .destination(gateway)
         .address(address)
         .netmask(netmask)
-        .mtu(1420)
+        .mtu(mtu.into())
         // .queues(2) 用多个队列有兼容性问题
         .up();
     match device_type {
