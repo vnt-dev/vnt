@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Switch Desktop</title>
+    <script src="js/jquery-3.7.0.min.js"></script>
+    <style>
+        html {
+            background-color: #f1f1f1;
+        }
+
+        .add {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            transition: color 1s;
+            border: 1px solid #616161;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 14px;
+        }
+
+        .add:before {
+            content: "";
+            position: absolute;
+            top: 10px;
+            left: 42px;
+            width: 16px;
+            border-top: 80px solid #666;
+        }
+
+        .add:after {
+            content: "";
+            position: absolute;
+            height: 16px;
+            left: 10px;
+            top: 42px;
+            border-left: 80px solid #666;
+        }
+
+        .add:hover {
+            border: 1px solid #4CAF50;
+        }
+
+        .form-row, .form-row-save {
+            display: flex;
+            flex-direction: row;
+            margin-bottom: 10px;
+        }
+
+        .form-row-save {
+            margin-top: 20px;
+        }
+
+        .form-row label {
+            width: 140px;
+            text-align: right;
+            margin-right: 10px;
+        }
+
+        .form-row input {
+            flex: 1;
+            min-height: 20px;
+        }
+
+        .form-row-save .reset, .save {
+            width: 100px;
+            height: 36px;
+            border-radius: 5px;
+            cursor: pointer;
+            border: none;
+            font-size: 16px;
+        }
+
+        .form-row-save .reset {
+            margin-right: 10px;
+            background-color: #a1a1a1;
+        }
+
+        .form-row-save .save {
+            margin-left: auto;
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        #add-div {
+            height: 100%;
+            width: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            position: absolute;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            display: none;
+
+        }
+
+        #add-div-in {
+            padding: 30px;
+            height: 380px;
+            width: 580px;
+            position: relative;
+            background-color: #fff;
+            margin: 50px auto;
+            border-radius: 10px;
+        }
+
+        .data-item {
+            display: flex;
+            align-items: center;
+            margin-top: 5px;
+            border-bottom: 1px solid #b1b1b1;
+            font-size: 10px;
+        }
+
+        span {
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        .label {
+            font-weight: bold;
+            margin-right: 5px;
+        }
+
+        .item {
+            padding: 10px;
+            border: 1px solid #666;
+            border-radius: 5px;
+            width: 260px;
+            height: 120px;
+            cursor: pointer;
+            margin: 5px;
+            position: relative;
+        }
+
+        .item:hover {
+            border: 1px solid #4CAF50;
+            background-color: #e1e1e1;
+        }
+
+        .list {
+            min-width: 880px;
+            width: 100%;
+            height: 100%;
+        }
+
+        .left-float {
+            float: left;
+        }
+
+        .menu {
+            position: absolute;
+            display: none;
+            border: 1px solid #f1f1f1;
+            background-color: #fff;
+            box-shadow: 1px 1px 10px 5px rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+            overflow: hidden;
+            z-index: 999;
+        }
+
+        .menu-items {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+            width: 90px;
+            background-color: #fff;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .menu-items li::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 10px;
+            width: 70px;
+            height: 1px;
+            background-color: #e1e1e1;
+        }
+
+        .menu-items li {
+            position: relative;
+            padding: 5px;
+        }
+
+        .menu-items li:hover {
+            background-color: #f0f0f0;
+        }
+
+        #connect-body {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #f1f1f1;
+            display: none;
+        }
+
+        #connect-body .top {
+            position: relative;
+            margin: 10px;
+        }
+
+        #connect-body .bottom {
+            position: relative;
+        }
+
+        .peer-item {
+            padding: 10px;
+            border: 1px solid #666;
+            border-radius: 5px;
+            width: 260px;
+            height: 120px;
+            cursor: pointer;
+            margin: 5px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .peer-item > div {
+            display: flex;
+            align-items: center;
+            margin-top: 5px;
+            border-bottom: 1px solid #b1b1b1;
+            font-size: 14px;
+        }
+
+        /*#connect-body .bottom span {*/
+        /*    width: 140px;*/
+        /*}*/
+
+        .connect-ip {
+            color: #4CAF50;
+            margin-right: 20px;
+        }
+
+        .connect-close {
+            text-align: center;
+            width: 80px;
+            height: 30px;
+            font-size: 20px;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: chocolate;
+            color: floralwhite;
+        }
+
+        #alert-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #loader {
+            height: 100%;
+            width: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            position: absolute;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            display: none;
+        }
+
+        #loader div {
+            position: relative;
+            margin: 100px auto;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #555;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            /*display: inline-block;*/
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .Online {
+            border: 1px solid #4CAF50;
+            background-color: #e1e1e1;
+        }
+        .Online .peer-ip{
+            color: #4CAF50;
+        }
+        .Offline{
+            color: #555;
+        }
+
+        .p2p {
+            color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+
+<div class="list">
+    <div id="list-in">
+    </div>
+    <div id="add-button" class="add left-float"></div>
+</div>
+<div id="add-div">
+    <div id="add-div-in">
+        <form id="add-form">
+            <div class="form-row">
+                <label for="token">Token:</label>
+                <input type="text" id="token" name="token" required>
+            </div>
+
+            <div class="form-row">
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name" required>
+            </div>
+            <div class="form-row">
+                <label for="deviceId">DeviceId:</label>
+                <input type="text" id="deviceId" name="device-id" required>
+            </div>
+            <div class="form-row">
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password">
+            </div>
+            <div class="form-row">
+                <label for="inIps">InIps:</label>
+                <input type="text" id="inIps" name="inIps"
+                       placeholder="192.168.10.0/24,10.26.0.3 192.168.8.0/24,10.26.0.4">
+            </div>
+            <div class="form-row">
+                <label for="outIps">OutIps:</label>
+                <input type="text" id="outIps" name="outIps"
+                       placeholder="192.168.10.0/24,192.168.1.10 192.168.8.0/24,192.168.1.10">
+            </div>
+            <div class="form-row">
+                <label for="server">ServerAddress:</label>
+                <input type="text" id="server" name="server" required value="nat1.wherewego.top:29871">
+            </div>
+            <div class="form-row">
+                <label for="natServer">NatServerAddress:</label>
+                <input type="text" id="natServer" name="natServer" required
+                       value="nat1.wherewego.top:35061 nat1.wherewego.top:35062 nat2.wherewego.top:35061 nat2.wherewego.top:35062">
+            </div>
+            <div class="form-row">
+                <label for="simulateMulticast">SimulateMulticast:</label>
+                <select id="simulateMulticast" name="simulateMulticast">
+                    <option value="false">false</option>
+                    <option value="true">true</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label for="tunTap">Tun/Tap:</label>
+                <select id="tunTap" name="tunTap">
+                    <option value="tun">tun</option>
+                    <option value="tap">tap</option>
+                </select>
+            </div>
+            <div class="form-row-save">
+                <input class="reset" type="reset" value="cancel">
+                <input class="save" type="submit" value="save">
+            </div>
+        </form>
+    </div>
+</div>
+<div id="context-menu" class="menu">
+    <ul class="menu-items">
+        <li id="menu-connect">connect</li>
+        <li id="menu-edit">edit</li>
+        <li id="menu-remove">remove</li>
+    </ul>
+</div>
+<div id="connect-body">
+    <div class="top">
+        <div>
+            <label class="label">Server:</label>
+            <span class="connect-server"></span>
+        </div>
+        <div>
+            <label class="label">Token:</label>
+            <span class="connect-token"></span>
+        </div>
+        <div>
+            <label class="label">Name:</label>
+            <span class="connect-name"></span>
+        </div>
+        <div>
+            <label class="label">IP:</label>
+            <span class="connect-ip"></span>
+            <label class="label">Gateway:</label>
+            <span class="connect-gateway"></span>
+            <label class="label">Netmask:</label>
+            <span class="connect-netmask"></span>
+        </div>
+        <hr>
+        <div class="connect-close">
+            close
+        </div>
+    </div>
+    <div class="bottom">
+
+    </div>
+</div>
+<div id="alert-box" class="hidden">
+    <span id="alert-message"></span>
+</div>
+<div id="loader">
+    <div></div>
+</div>
+<script type="text/javascript">
+    const invoke = window.__TAURI__.invoke
+    let nameDefault;
+    let deviceIdDefault;
+    invoke('default_value_name').then((name) => {
+        $('#name').val(name);
+        nameDefault = name;
+    });
+    invoke('default_value_device_id').then((device_id) => {
+        $('#deviceId').val(device_id);
+        deviceIdDefault = device_id;
+    });
+</script>
+<script type="text/javascript">
+    let configList = [];
+    $('html').contextmenu(function (event) {
+        event.preventDefault();
+    })
+    $('html').click(function () {
+        $('#context-menu').css('display', 'none');
+    })
+    $('#connect-body .connect-close').click(function () {
+        invoke('close').then(() => {
+            stopFlushPeerList();
+            $('#connect-body').css('display', 'none');
+        });
+    })
+    let showAlertTimeout;
+
+    function showAlert(message, duration) {
+        if (showAlertTimeout != null) {
+            clearTimeout(showAlertTimeout);
+        }
+        $('#alert-message').text(message);
+        $('#alert-box').removeClass('hidden');
+        showAlertTimeout = setTimeout(function () {
+            $('#alert-box').addClass('hidden');
+        }, duration);
+    }
+
+    function loadPeerList() {
+        invoke('list').then((res) => {
+            let html = '';
+            for (let index = 0; index < res.length; index++) {
+                let item = res[index];
+                html += ' <div class="peer-item left-float ' + item.status + '">\n' +
+                    '            <div>\n' +
+                    '                <label class="label">name:</label>\n' +
+                    '                <span>' + item.name + '</span>\n' +
+                    '            </div>\n' +
+                    '            <div>\n' +
+                    '                <label class="label">ip:</label>\n' +
+                    '                <span class="peer-ip">' + item.virtual_ip + '</span>\n' +
+                    '            </div>\n' +
+                    '            <div>\n' +
+                    '                <label class="label">status:</label>\n' +
+                    '                <span>' + item.status + '</span>\n' +
+                    '            </div>\n' +
+                    '            <div>\n' +
+                    '                <label class="label">rt:</label>\n' +
+                    '                <span>' + item.rt + '</span>\n' +
+                    '            </div>\n' +
+                    '            <div>\n' +
+                    '                <label class="label">connect type:</label>\n' +
+                    '                <span class="' + item.connect + '">' + item.connect + '</span>\n' +
+                    '            </div>\n' +
+                    '        </div>'
+            }
+            $('#connect-body .bottom').html(html);
+        })
+    }
+
+    let flushPeerListTimeout;
+
+    function flushPeerList(duration) {
+        stopFlushPeerList();
+        flushPeerListTimeout = setInterval(function () {
+            loadPeerList();
+        }, duration);
+    }
+
+    function stopFlushPeerList() {
+        if (flushPeerListTimeout != null) {
+            clearInterval(flushPeerListTimeout);
+        }
+    }
+
+    let listLoad = function () {
+        let html = '';
+        for (let index = 0; index < configList.length; index++) {
+            let item = configList[index];
+            html += ' <div class="item left-float" index="' + index + '" title="connect">' +
+                '            <div>' +
+                '                <div class="data-item">' +
+                '                    <label class="label">Name:</label>' +
+                '                    <span>' + item.name + '</span>' +
+                '                </div>' +
+                '                <div class="data-item">' +
+                '                    <label class="label">Server:</label>' +
+                '                    <span>' + item.server_address + '</span>' +
+                '                </div>' +
+                '                <div class="data-item">' +
+                '                    <label class="label">Token:</label>' +
+                '                    <span>' + item.token + '</span>' +
+                '                </div>' +
+                // '                <div class="connect">···</div>' +
+                '            </div>' +
+                '        </div>'
+        }
+        $('#list-in').html(html);
+        $('#list-in .item').mousedown(function (e) {
+            if (3 == e.which) {
+                let posX = e.clientX;
+                let posY = e.clientY;
+                $('#context-menu').attr('index', $(this).attr('index'));
+                $('#context-menu').css('left', posX + 'px');
+                $('#context-menu').css('top', posY + 'px');
+                $('#context-menu').css('display', 'block');
+            }
+        })
+        $('#list-in .item').click(function () {
+            let index = parseInt($(this).attr('index'));
+            let config = configList[index];
+            connect(config);
+        })
+    }
+    let connect = function (config) {
+        $('#loader').css('display', 'block');
+        invoke('connect', {'config': config}).then((res) => {
+            $('#connect-body .connect-server').html(config.server_address);
+            $('#connect-body .connect-token').html(config.token);
+            $('#connect-body .connect-name').html(config.name);
+            $('#connect-body .connect-ip').html(res.virtual_ip);
+            $('#connect-body .connect-gateway').html(res.virtual_gateway);
+            $('#connect-body .connect-netmask').html(res.virtual_netmask);
+            $('#connect-body').css('display', 'block');
+            $('#loader').css('display', 'none');
+            loadPeerList();
+            flushPeerList(2000);
+        }).catch((error) => {
+            $('#loader').css('display', 'none');
+            showAlert(error, 2000);
+        })
+    }
+    $('#menu-connect').click(function () {
+        let index = parseInt($('#context-menu').attr('index'));
+        let config = configList[index];
+        connect(config);
+    })
+    $('#menu-remove').click(function () {
+        let index = parseInt($('#context-menu').attr('index'));
+        configList.splice(index, 1);
+        localStorage.setItem('configList', JSON.stringify(configList));
+        listLoad();
+    })
+    let editIndex = -1;
+    $('#menu-edit').click(function () {
+        let index = parseInt($('#context-menu').attr('index'));
+        editIndex = index;
+        $('#index').val(index);
+        $('#name').val(configList[index].name);
+        $('#deviceId').val(configList[index].device_id);
+        $('#token').val(configList[index].token);
+        $('#password').val(configList[index].key);
+        $('#inIps').val(configList[index].in_ips);
+        $('#inIps').val(configList[index].out_ips);
+        $('#server').val(configList[index].server_address);
+        $('#natServer').val(configList[index].nat_test_server);
+        if (configList[index].simulate_multicast) {
+            $('#simulateMulticast').val('true');
+        } else {
+            $('#simulateMulticast').val('false');
+        }
+        if (configList[index].tap) {
+            $('#tunTap').val('tap');
+        } else {
+            $('#tunTap').val('tun');
+        }
+        $('#add-div').css('display', 'block');
+    })
+    let tmp = localStorage.getItem('configList');
+    if (tmp != null) {
+        configList = JSON.parse(tmp);
+        listLoad();
+    }
+
+    $('#add-button').click(function () {
+        editIndex = -1;
+        $('#name').val(nameDefault);
+        $('#deviceId').val(deviceIdDefault);
+        $('#add-div').css('display', 'block');
+    })
+    $('.reset').click(function () {
+        $('#add-div').css('display', 'none');
+    })
+    $('#add-form').submit(function () {
+        let token = $('#token').val();
+        let name = $('#name').val();
+        let deviceId = $('#deviceId').val();
+        let password = $('#password').val();
+        let inIps = $('#inIps').val();
+        let outIps = $('#outIps').val();
+        let server = $('#server').val();
+        let natServer = $('#natServer').val();
+        let simulateMulticast = $('#simulateMulticast').val();
+        let tunTap = $('#tunTap').val();
+        let config = {
+            'token': token,
+            'name': name,
+            'device_id': deviceId,
+            'in_ips': inIps,
+            'out_ips': outIps,
+            'server_address': server,
+            'nat_test_server': natServer,
+            'key': password,
+            'simulate_multicast': 'true' === simulateMulticast,
+            'tap': 'tap' === tunTap,
+            'time': Date.now()
+        }
+        if (editIndex===-1) {
+            let isPush = true;
+            for (let index = 0; index < configList.length; index++) {
+                let item = configList[index];
+                if (item.token == token && item.server_address == server) {
+                    configList[index] = config;
+                    isPush = false;
+                    break;
+                }
+            }
+            if (isPush) {
+                configList.push(config);
+            }
+        } else {
+            configList[editIndex] = config;
+        }
+
+        configList.sort(function (a, b) {
+            return b.time - a.time;
+        });
+        listLoad();
+        localStorage.setItem('configList', JSON.stringify(configList));
+        $('#add-form')[0].reset();
+        $('#add-div').css('display', 'none');
+        return false;
+    })
+</script>
+</body>
+</html>

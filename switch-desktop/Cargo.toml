@@ -1,38 +1,37 @@
 [package]
 name = "switch-desktop"
-version = "1.0.7"
+version = "1.1.0"
+description = "switch desktop"
+authors = ["lubeilin"]
+license = ""
+repository = ""
+default-run = "switch-desktop"
 edition = "2021"
+rust-version = "1.60"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[build-dependencies]
+tauri-build = { version = "1.4.0", features = [] }
+embed-resource = "2.2"
+
 [dependencies]
 switch = {path="../switch"}
-mac_address = "1.1.4"
-clap = { version = "4.0.32", features = ["derive"] }
-console = "0.15.2"
+common = {path="../common"}
 dirs = "4.0.0"
-log = "0.4.17"
-log4rs = "1.2.0"
-tokio = { version = "1.28.1", features = ["full"] }
-chrono = "0.4.23"
-
-rust-i18n = "1.2.2"
-serde = "1.0"
-serde_yaml = "0.9"
-serde_json = "1.0.94"
-crossbeam = "0.8.2"
+os_info = "3.7.0"
 lazy_static = "1.4.0"
 parking_lot = "0.12.1"
 
-fs2 = "0.4.3"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "1.4.0", features = [] }
 
-os_info = "3.5.1"
-[target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
-sudo = "0.6.0"
-libc = "0.2"
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = [] }
 
-[target.'cfg(target_os = "windows")'.dependencies]
-winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
-#runas = "0.2.1"
-windows-service = "0.6.0"
-
+[features]
+# this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
+# If you use cargo directly instead of tauri's cli you can use this feature flag to switch between tauri's `dev` and `build` modes.
+# DO NOT REMOVE!!
+custom-protocol = [ "tauri/custom-protocol" ]

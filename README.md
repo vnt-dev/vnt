@@ -9,15 +9,15 @@
 1. 指定一个token，在多台设备上运行该程序，例如：
     ```shell
       # linux上
-      root@DESKTOP-0BCHNIO:/opt# ./switch-desktop start --token 123456
+      root@DESKTOP-0BCHNIO:/opt# ./switch-cmd start --token 123456
       # 在另一台linux上使用nohup后台运行
-      [root@izj6cemne76ykdzkataftfz switch]# nohup ./switch-desktop start --token 123456 &
+      root@izj6cemne76ykdzkataftfz switch# nohup ./switch-cmd start --token 123456 &
       # windows上
-      D:\switch\bin_v1>switch-desktop.exe start --token 123456
+      D:\switch\bin_v1>switch-cmd.exe start --token 123456
     ```
-2. 可以执行status命令查看当前设备的虚拟ip
+2. 可以执行info命令查看当前设备的虚拟ip
    ```shell
-    root@DESKTOP-0BCHNIO:/opt# ./switch-desktop status
+    root@DESKTOP-0BCHNIO:/opt# ./switch-cmd --info
     Name: Ubuntu 18.04 (bionic) [64-bit]
     Virtual ip: 10.26.0.2
     Virtual gateway: 10.26.0.1
@@ -30,7 +30,7 @@
     ```
 3. 也可以执行list命令查看其他设备的虚拟ip
    ```shell
-    root@DESKTOP-0BCHNIO:/opt# ./switch-desktop list
+    root@DESKTOP-0BCHNIO:/opt# ./switch-cmd --list
     Name                                                       Virtual Ip      P2P/Relay      Rt      Status
     Windows 10.0.22621 (Windows 11 Professional) [64-bit]      10.26.0.3       p2p            2       Online
     CentOS 7.9.2009 (Core) [64-bit]                            10.26.0.4       p2p            35      Online
@@ -54,7 +54,7 @@
 
 ### 使用须知
 - token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
-- 建议指定deviceId，默认使用MAC地址，在某些环境下可能发生变化
+- 建议指定deviceId，默认使用MAC地址，在某些环境下可能发生变化，**注意不要重复**
 - 公共服务器目前的配置是2核4G 4Mbps，有需要再扩展~
 - 需要root/管理员权限
 - 使用命令行运行
@@ -63,7 +63,7 @@
 ### 编译
  前提条件:安装rust编译环境(https://www.rust-lang.org/zh-CN/tools/install)
  
- 到项目根目录下执行 cargo build -p switch-desktop
+ 到项目根目录下执行 cargo build -p switch-cmd
  
 ### 支持平台
 - Mac
