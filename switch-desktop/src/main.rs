@@ -58,7 +58,7 @@ async fn connect(config: ConnectConfig) -> Result<ConnectRegResponse, String> {
             return Err(format!("server err:{}", e));
         }
     };
-    let nat_test_server = config.nat_test_server.split(" ").flat_map(|a| a.to_socket_addrs()).flatten()
+    let nat_test_server = config.nat_test_server.split(&[',', ' '][..]).flat_map(|a| a.to_socket_addrs()).flatten()
         .collect::<Vec<_>>();
     let in_ips = config.in_ips.split(" ").into_iter().filter(|e| !e.is_empty()).map(|e| e.to_string()).collect();
     let in_ips = match ips_parse(&in_ips) {

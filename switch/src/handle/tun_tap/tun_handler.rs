@@ -89,6 +89,8 @@ async fn start_(sender: ChannelSender,
             return Ok(());
         }
         let len = device_reader.read(&mut buf[12..])? + 12;
+        #[cfg(any(target_os = "macos"))]
+            let mut buf = &mut buf;
         match handle(&sender, &mut buf, len, device_writer, &igmp_server, current_device.load(), &ip_route, &ip_proxy_map, &cipher).await {
             Ok(_) => {}
             Err(e) => {

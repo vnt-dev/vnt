@@ -88,7 +88,7 @@ pub fn create_device(device_type: DeviceType,
 
 fn add_route(name: &str, address: Ipv4Addr, netmask: Ipv4Addr) -> io::Result<()> {
     let route_add_str: String = format!(
-        "sudo route -n add -net {:?}/{:?} -interface {}",
+        "route -n add {} -netmask {} -interface {}",
         address, netmask, name
     );
     let route_add_out = Command::new("sh")

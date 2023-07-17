@@ -10,6 +10,7 @@ use switch::handle::registration_handler::ReqEnum;
 
 mod command;
 mod console_out;
+mod root_check;
 
 #[tokio::main]
 async fn main() {
@@ -25,8 +26,8 @@ async fn main() {
     opts.optopt("s", "", "注册和中继服务器地址", "<server>");
     opts.optopt("e", "", "NAT探测服务器地址,使用逗号分隔", "<addr1,addr2>");
     opts.optflag("a", "", "使用tap模式,默认使用tun模式");
-    opts.optmulti("i", "", "配置点对网(IP代理)时使用,--in-ip 192.168.10.0/24,10.26.0.3，表示允许接收网段192.168.10.0/24的数据并转发到10.26.0.3", "<in-ip>");
-    opts.optmulti("o", "", "配置点对网时使用,--out-ip 192.168.10.0/24,192.168.1.10，表示允许目标为192.168.10.0/24的数据从网卡192.168.1.10转发出去", "<out-ip>");
+    opts.optmulti("i", "", "配置点对网(IP代理)时使用,-i 192.168.10.0/24,10.26.0.3，表示允许接收网段192.168.10.0/24的数据并转发到10.26.0.3", "<in-ip>");
+    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.10.0/24,192.168.1.10，表示允许目标为192.168.10.0/24的数据从网卡192.168.1.10转发出去", "<out-ip>");
     opts.optopt("w", "", "使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信", "<password>");
     opts.optflag("m", "", "模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     opts.optopt("u", "", "虚拟网卡mtu值", "<mtu>");
@@ -45,6 +46,14 @@ async fn main() {
             return;
         }
     };
+    if matches.opt_present("h") || args.len() == 1 {
+        print_usage(&program, opts);
+        return;
+    }
+    if !root_check::is_app_elevated() {
+        println!("Please run it with administrator or root privileges");
+        return;
+    }
     if matches.opt_present("list") {
         command::command(command::CommandEnum::List);
         return;
@@ -59,10 +68,6 @@ async fn main() {
         return;
     } else if matches.opt_present("all") {
         command::command(command::CommandEnum::All);
-        return;
-    }
-    if matches.opt_present("h") {
-        print_usage(&program, opts);
         return;
     }
     if !matches.opt_present("k") {
