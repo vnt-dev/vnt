@@ -45,19 +45,19 @@ async fn main() {
             return;
         }
     };
-    if matches.opt_present("l") {
+    if matches.opt_present("list") {
         command::command(command::CommandEnum::List);
         return;
-    } else if matches.opt_present("f") {
+    } else if matches.opt_present("info") {
         command::command(command::CommandEnum::Info);
         return;
-    } else if matches.opt_present("q") {
+    } else if matches.opt_present("stop") {
         command::command(command::CommandEnum::Stop);
         return;
-    } else if matches.opt_present("r") {
+    } else if matches.opt_present("route") {
         command::command(command::CommandEnum::Route);
         return;
-    } else if matches.opt_present("z") {
+    } else if matches.opt_present("all") {
         command::command(command::CommandEnum::All);
         return;
     }
