@@ -3,7 +3,7 @@
 A virtual network tool (VPN)
 
 将不同网络下的多个设备虚拟到一个局域网下
-
+### switch-cmd参数详解 [参数说明](https://github.com/lbl8603/switch/blob/main/switch-cmd/README.md)
 ### 快速使用：
 
 1. 指定一个token，在多台设备上运行该程序，例如：
@@ -45,7 +45,7 @@ A virtual network tool (VPN)
 1. 和远程桌面(如mstsc)搭配，超低延迟的体验
 2. 安装samba服务，共享磁盘
 3. 搭配公网服务器nginx反向代理，在公网访问本地文件
-4. 点对网(结合启动参数'-i'和'-o')
+4. 点对网,访问内网其他机器、IP代理(结合启动参数'-i'和'-o')
 
 ### 使用须知
 
@@ -102,4 +102,4 @@ switch默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 
 1. 方法一：找到冲突的IP，将其改成别的
 2. 方法二：自建服务器，指定其他不会冲突的网段
-3. 方法三：增加参数--device-id，设置不同的id会让switch-server分配不同的IP，从而绕开有冲突的IP
+3. 方法三：增加参数-d <device-id> ，设置不同的id会让switch-server分配不同的IP，从而绕开有冲突的IP
