@@ -3,7 +3,7 @@
 A virtual network tool (VPN)
 
 将不同网络下的多个设备虚拟到一个局域网下
-
+### switch-cmd参数详解 [参数说明](https://github.com/lbl8603/switch/blob/main/switch-cmd/README.md)
 ### 快速使用：
 
 1. 指定一个token，在多台设备上运行该程序，例如：
