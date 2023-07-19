@@ -106,6 +106,17 @@ switch默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 2. 方法二：自建服务器，指定其他不会冲突的网段
 3. 方法三：增加参数-d <device-id> ，设置不同的id会让switch-server分配不同的IP，从而绕开有冲突的IP
 
+#### 问题2: windows系统上wintun.dll加载失败
+
+##### 可能原因：
+没有下载wintun.dll 或者使用的wintun.dll有问题
+##### 解决方法：
+1. 下载最新版的wintun.dll [下载链接](https://www.wintun.net/builds/wintun-0.14.1.zip)
+2. 解压后找到对应架构的目录,通常是amd64
+3. 将对应的wintun.dll放到和switch-cmd同目录下（或者放到C盘Windows目录下）
+4. 再次启动switch-cmd
+
+
 </details>
 
 ### 交流群
