@@ -87,6 +87,7 @@ A virtual network tool (VPN)
 
 ### Todo
 
+- 桌面UI(测试中)
 - 服务端数据加密
 - 支持Ipv6
 
