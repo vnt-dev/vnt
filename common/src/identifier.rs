@@ -38,7 +38,6 @@ pub fn get_unique_identifier() -> Option<String> {
     let identifier = result
         .lines()
         .find(|line| line.contains("IOPlatformUUID"))
-        .and_then(|line| line.split('"').nth(4))
         .unwrap_or("").trim();
     if identifier.is_empty() {
         None

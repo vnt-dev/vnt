@@ -1,5 +1,5 @@
 [workspace]
-members = ["switch","common","switch-desktop","switch-cmd","switch-jni"]
+members = ["vnt","common","vnt-cli","vnt-jni"]
 
 [profile.release]
 opt-level = 'z'

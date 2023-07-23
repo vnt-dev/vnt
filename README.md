@@ -1,23 +1,23 @@
-# switch
+# Vnt
 
 A virtual network tool (VPN)
 
 将不同网络下的多个设备虚拟到一个局域网下
-### switch-cmd参数详解 [参数说明](https://github.com/lbl8603/switch/blob/main/switch-cmd/README.md)
+### vnt-cli参数详解 [参数说明](https://github.com/lbl8603/vnt/blob/main/vnt-cli/README.md)
 ### 快速使用：
 
 1. 指定一个token，在多台设备上运行该程序，例如：
     ```shell
       # linux上
-      root@DESKTOP-0BCHNIO:/opt# ./switch-cmd -k 123456
+      root@DESKTOP-0BCHNIO:/opt# ./vnt-cli -k 123456
       # 在另一台linux上使用nohup后台运行
-      root@izj6cemne76ykdzkataftfz switch# nohup ./switch-cmd -k 123456 &
+      root@izj6cemne76ykdzkataftfz vnt# nohup ./vnt-cli -k 123456 &
       # windows上
-      D:\switch\bin_v1>switch-cmd.exe -k 123456
+      D:\vnt\bin_v1>vnt-cli.exe -k 123456
     ```
 2. 可以执行info命令查看当前设备的虚拟ip
    ```shell
-    root@DESKTOP-0BCHNIO:/opt# ./switch-cmd --info
+    root@DESKTOP-0BCHNIO:/opt# ./vnt-cli --info
     Name: Ubuntu 18.04 (bionic) [64-bit]
     Virtual ip: 10.26.0.2
     Virtual gateway: 10.26.0.1
@@ -30,14 +30,14 @@ A virtual network tool (VPN)
     ```
 3. 也可以执行list命令查看其他设备的虚拟ip
    ```shell
-    root@DESKTOP-0BCHNIO:/opt# ./switch-cmd --list
+    root@DESKTOP-0BCHNIO:/opt# ./vnt-cli --list
     Name                                                       Virtual Ip      P2P/Relay      Rt      Status
     Windows 10.0.22621 (Windows 11 Professional) [64-bit]      10.26.0.3       p2p            2       Online
     CentOS 7.9.2009 (Core) [64-bit]                            10.26.0.4       p2p            35      Online
     ```
 4. 最后可以用虚拟ip实现设备间相互访问
 
-      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/switch/dev/documents/img/ssh.jpg">
+      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/vnt/dev/documents/img/ssh.jpg">
 5. 帮助，使用-h命令查看
 
 ### 更多玩法
@@ -52,15 +52,15 @@ A virtual network tool (VPN)
 - token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
 - 默认使用公共服务器，目前的配置是2核4G 4Mbps，有需要再扩展~
 - 需要root/管理员权限
-- switch-cmd需要使用命令行运行
-- Mac和Linux下需要加可执行权限(例如:chmod +x ./switch-cmd)
-- 可以自己搭注册和中继服务器([server](https://github.com/lbl8603/switch-server))
+- vnt-cli需要使用命令行运行
+- Mac和Linux下需要加可执行权限(例如:chmod +x ./vnt-cli)
+- 可以自己搭注册和中继服务器([server](https://github.com/lbl8603/vnts))
 
 ### 编译
 
 前提条件:安装rust编译环境([install rust](https://www.rust-lang.org/zh-CN/tools/install))
 
-到项目根目录下执行 cargo build -p switch-cmd
+到项目根目录下执行 cargo build -p vnt-cli
 
 ### 支持平台
 
@@ -98,13 +98,13 @@ A virtual network tool (VPN)
 
 ##### 可能原因:
 
-switch默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
+vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 
 ##### 解决方法:
 
 1. 方法一：找到冲突的IP，将其改成别的
 2. 方法二：自建服务器，指定其他不会冲突的网段
-3. 方法三：增加参数-d <device-id> ，设置不同的id会让switch-server分配不同的IP，从而绕开有冲突的IP
+3. 方法三：增加参数-d <device-id> ，设置不同的id会让服务端分配不同的IP，从而绕开有冲突的IP
 
 #### 问题2: windows系统上wintun.dll加载失败
 
@@ -113,8 +113,8 @@ switch默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 ##### 解决方法：
 1. 下载最新版的wintun.dll [下载链接](https://www.wintun.net/builds/wintun-0.14.1.zip)
 2. 解压后找到对应架构的目录,通常是amd64
-3. 将对应的wintun.dll放到和switch-cmd同目录下（或者放到C盘Windows目录下）
-4. 再次启动switch-cmd
+3. 将对应的wintun.dll放到和vnt-cli同目录下（或者放到C盘Windows目录下）
+4. 再次启动vnt-cli
 
 
 </details>

@@ -58,6 +58,8 @@ jobs:
             OS: ubuntu-latest
           - TARGET: x86_64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
+          - TARGET: aarch64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
+            OS: macos-latest
           - TARGET: i686-pc-windows-msvc # tested on a windows machine
             OS: windows-latest
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
@@ -65,7 +67,7 @@ jobs:
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:
-      NAME: switch-cmd # change with the name of your project
+      NAME: vnt-cli # change with the name of your project
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
@@ -106,7 +108,7 @@ jobs:
       - name: Install rust target
         run: rustup target add $TARGET
       - name: Run build
-        run: cargo build --package switch-cmd --release --verbose --target $TARGET
+        run: cargo build --package vnt-cli --release --verbose --target $TARGET
       - name: List target
         run: find ./target
       - name: Compress
@@ -128,7 +130,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v2
         with:
-          name: switch-cmd
+          name: vnt-cli
           path: |
             ./artifacts
   # deploys to github releases on tag
@@ -140,7 +142,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v2
         with:
-          name: switch-cmd
+          name: vnt-cli
           path: ./artifacts
       - name: List
         run: find ./artifacts
