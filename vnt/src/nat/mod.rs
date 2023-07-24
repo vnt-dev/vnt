@@ -76,7 +76,6 @@ impl NatTest {
         if !guard.public_ips.contains(&ip) {
             guard.public_ips.push(ip);
         }
-        println!("{:?}",guard);
     }
     pub fn re_test(
         &self,
