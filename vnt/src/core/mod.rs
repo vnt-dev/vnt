@@ -60,20 +60,25 @@ pub struct VntUtil {
 impl VntUtil {
     pub async fn new(config: Config) -> io::Result<VntUtil> {
         let main_channel = UdpSocket::bind("0.0.0.0:0").await?;
-        let main_tcp_channel = if config.tcp {
-            Some(TcpStream::connect(config.server_address).await?)
-        } else {
-            None
-        };
         Ok(VntUtil {
             config,
             main_channel,
-            main_tcp_channel,
+            main_tcp_channel: None,
             response: None,
             iface: None,
         })
     }
     pub async fn connect(&mut self) -> Result<RegResponse, ReqEnum> {
+        if self.config.tcp {
+            match TcpStream::connect(self.config.server_address).await {
+                Ok(tcp) => {
+                    let _ = self.main_tcp_channel.insert(tcp);
+                }
+                Err(e) => {
+                    return Err(ReqEnum::Other(format!("connect error:{}", e)));
+                }
+            }
+        }
         match registration_handler::registration(&self.main_channel, self.main_tcp_channel.as_mut(), self.config.server_address,
                                                  self.config.token.clone(), self.config.device_id.clone(),
                                                  self.config.name.clone(), self.config.ip.unwrap_or(Ipv4Addr::UNSPECIFIED)).await {

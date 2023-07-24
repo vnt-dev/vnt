@@ -24,12 +24,15 @@ pub enum NatType {
 }
 
 impl NatInfo {
-    pub fn new(public_ips: Vec<Ipv4Addr>,
+    pub fn new(mut public_ips: Vec<Ipv4Addr>,
                public_port: u16,
                public_port_range: u16,
                local_ip: Ipv4Addr,
                local_port: u16,
                nat_type: NatType, ) -> Self {
+        public_ips.retain(|ip| {
+            !ip.is_loopback() && !ip.is_private()
+        });
         Self {
             public_ips,
             public_port,
@@ -68,7 +71,7 @@ impl Punch {
             return Ok(());
         }
         if !nat_info.local_ip.is_unspecified() || nat_info.local_port != 0 {
-            let _ = self.context.send_main(buf, SocketAddr::V4(SocketAddrV4::new(nat_info.local_ip, nat_info.local_port))).await;
+            let _ = self.context.send_main_udp(buf, SocketAddr::V4(SocketAddrV4::new(nat_info.local_ip, nat_info.local_port))).await;
         }
         match nat_info.nat_type {
             NatType::Symmetric => {
@@ -122,7 +125,7 @@ impl Punch {
                 for ip in nat_info.public_ips {
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, nat_info.public_port));
                     if is_cone {
-                        self.context.send_main(buf, addr).await?;
+                        self.context.send_main_udp(buf, addr).await?;
                     } else {
                         //只有一方是对称，则对称方要使用全部端口发送数据，符合上述计算的概率
                         self.context.send_all(buf, addr).await?;
@@ -143,7 +146,7 @@ impl Punch {
                     return Ok(());
                 }
                 let addr = SocketAddr::V4(SocketAddrV4::new(*pub_ip, *port));
-                self.context.send_main(buf, addr).await?;
+                self.context.send_main_udp(buf, addr).await?;
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }

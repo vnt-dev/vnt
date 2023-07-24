@@ -70,6 +70,14 @@ impl NatTest {
     pub fn nat_info(&self) -> NatInfo {
         self.info.lock().clone()
     }
+    pub fn update_addr(&self, ip: Ipv4Addr, port: u16) {
+        let mut guard = self.info.lock();
+        guard.public_port = port;
+        if !guard.public_ips.contains(&ip) {
+            guard.public_ips.push(ip);
+        }
+        println!("{:?}",guard);
+    }
     pub fn re_test(
         &self,
         public_ip: Ipv4Addr,

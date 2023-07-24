@@ -14,7 +14,7 @@ use crate::core::status::VntWorker;
 
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol::control_packet::PingPacket;
-use crate::protocol::{control_packet, NetPacket, Protocol, Version};
+use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
 
 pub fn start_idle(mut worker: VntWorker, idle: Idle, sender: ChannelSender) {
     tokio::spawn(async move {
@@ -91,7 +91,19 @@ async fn start_heartbeat_(
             return Ok(());
         }
         let mut current_dev = current_device.load();
-        if count % 6 == 0 {
+        if count % 10 == 0 {
+            let mut packet = NetPacket::new([0; 12])?;
+            packet.set_version(Version::V1);
+            packet.set_protocol(Protocol::Control);
+            packet.set_transport_protocol(
+                control_packet::Protocol::AddrRequest.into(),
+            );
+            packet.first_set_ttl(MAX_TTL);
+            packet.set_source(current_dev.virtual_ip());
+            packet.set_destination(current_dev.virtual_gateway);
+            let _ = sender.send_main_udp(packet.buffer(), current_dev.connect_server).await;
+        }
+        if count % 20 == 19 {
             if let Ok(mut addr) = server_address_str.to_socket_addrs() {
                 if let Some(addr) = addr.next() {
                     if addr != current_dev.connect_server {
@@ -164,9 +176,9 @@ async fn start_heartbeat_(
             }
         } else {
             for (peer_ip, route_list) in sender.route_table().iter() {
-                set_now_time(&mut net_packet)?;
                 net_packet.set_destination(*peer_ip);
                 for route in route_list {
+                    set_now_time(&mut net_packet)?;
                     if let Err(e) = sender.send_by_key(net_packet.buffer(), &route.route_key()).await {
                         log::warn!("peer_ip:{:?},route:{:?},e:{:?}", peer_ip, route, e);
                     }

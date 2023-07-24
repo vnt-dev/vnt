@@ -416,6 +416,36 @@ impl ChannelDataHandler {
                 let route = Route::from(*route_key, metric, 99);
                 context.add_route_if_absent(source, route);
             }
+            ControlPacket::AddrRequest => {
+                match route_key.addr.ip() {
+                    std::net::IpAddr::V4(ipv4) => {
+                        let mut packet = NetPacket::new([0;12+6])?;
+                        packet.set_version(Version::V1);
+                        packet.set_protocol(Protocol::Control);
+                        packet.set_transport_protocol(
+                            control_packet::Protocol::AddrResponse.into(),
+                        );
+                        packet.first_set_ttl(MAX_TTL);
+                        packet.set_source(current_device.virtual_ip());
+                        packet.set_destination(source);
+                        let mut addr_packet = control_packet::AddrPacket::new(packet.payload_mut())?;
+                        addr_packet.set_ipv4(ipv4);
+                        addr_packet.set_port(route_key.addr.port());
+                        context.send_by_key(packet.buffer(), route_key).await?;
+                    }
+                    std::net::IpAddr::V6(_) => {}
+                }
+            }
+            ControlPacket::AddrResponse(addr_packet) => {
+                if addr_packet.port() != 0
+                    && !addr_packet.ipv4().is_multicast()
+                    && !addr_packet.ipv4().is_broadcast()
+                    && !addr_packet.ipv4().is_unspecified()
+                    && !addr_packet.ipv4().is_loopback()
+                    && !addr_packet.ipv4().is_private() {
+                    self.nat_test.update_addr(addr_packet.ipv4(), addr_packet.port())
+                }
+            }
         }
         Ok(())
     }

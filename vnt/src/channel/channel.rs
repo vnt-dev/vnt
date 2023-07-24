@@ -87,6 +87,9 @@ impl Context {
     pub fn main_local_port(&self) -> io::Result<u16> {
         self.inner.main_channel.local_addr().map(|k| k.port())
     }
+    pub async fn send_main_udp(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
+        self.inner.main_channel.send_to(buf, addr).await
+    }
     pub async fn send_main(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
         if let Some(sender) = &self.inner.main_tcp_channel {
             let mut vec = vec![0; 4 + buf.len()];
