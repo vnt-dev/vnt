@@ -1,18 +1,33 @@
 use std::io;
-
-use aes_gcm::{AeadInPlace, Aes128Gcm, Aes256Gcm, Key, Nonce, Tag,KeyInit};
-use aes_gcm::aead::consts::{U12, U16};
-use aes_gcm::aead::generic_array::GenericArray;
+use ring::aead;
+use ring::aead::{LessSafeKey, UnboundKey};
 use sha2::Digest;
 
 use crate::protocol;
 use crate::protocol::{ip_turn_packet, NetPacket};
 
-#[derive(Clone)]
 pub enum Cipher {
-    AesGCM128(Aes128Gcm),
-    AesGCM256(Aes256Gcm),
+    AesGCM128(LessSafeKey, [u8; 16]),
+    AesGCM256(LessSafeKey, [u8; 32]),
     None,
+}
+
+impl Clone for Cipher {
+    fn clone(&self) -> Self {
+        match &self {
+            Cipher::AesGCM128(_, key) => {
+                let c = LessSafeKey::new(UnboundKey::new(&aead::AES_128_GCM, key.as_slice()).unwrap());
+                Cipher::AesGCM128(c, *key)
+            }
+            Cipher::AesGCM256(_, key) => {
+                let c = LessSafeKey::new(UnboundKey::new(&aead::AES_256_GCM, key.as_slice()).unwrap());
+                Cipher::AesGCM256(c, *key)
+            }
+            Cipher::None => {
+                Cipher::None
+            }
+        }
+    }
 }
 
 impl Cipher {
@@ -22,11 +37,11 @@ impl Cipher {
             hasher.update(password.as_bytes());
             let key: [u8; 32] = hasher.finalize().into();
             if password.len() < 8 {
-                let key: &Key<Aes128Gcm> = key[..16].into();
-                Cipher::AesGCM128(Aes128Gcm::new(&key))
+                let c = LessSafeKey::new(UnboundKey::new(&aead::AES_128_GCM, &key[..16]).unwrap());
+                Cipher::AesGCM128(c, key[..16].try_into().unwrap())
             } else {
-                let key: &Key<Aes256Gcm> = &key.into();
-                Cipher::AesGCM256(Aes256Gcm::new(&key))
+                let c = LessSafeKey::new(UnboundKey::new(&aead::AES_256_GCM, &key).unwrap());
+                Cipher::AesGCM256(c, key)
             }
         } else {
             Cipher::None
@@ -52,15 +67,14 @@ impl Cipher {
         nonce[4..8].copy_from_slice(&net_packet.destination().octets());
         nonce[8] = protocol::Protocol::IpTurn.into();
         nonce[9] = ip_turn_packet::Protocol::Ipv4.into();
-        let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce);
+        let nonce = aead::Nonce::assume_unique_for_key(nonce);
         let payload_len = net_packet.payload().len() - 16;
-        let tag: GenericArray<u8, U16> = Tag::clone_from_slice(&net_packet.payload()[payload_len..]);
         let rs = match &self {
-            Cipher::AesGCM128(cipher) => {
-                cipher.decrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len], &tag)
+            Cipher::AesGCM128(cipher, _) => {
+                cipher.open_in_place(nonce, aead::Aad::empty(), net_packet.payload_mut())
             }
-            Cipher::AesGCM256(cipher) => {
-                cipher.decrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len], &tag)
+            Cipher::AesGCM256(cipher, _) => {
+                cipher.open_in_place(nonce, aead::Aad::empty(), net_packet.payload_mut())
             }
             Cipher::None => {
                 return Ok(None);
@@ -86,13 +100,13 @@ impl Cipher {
         nonce[4..8].copy_from_slice(&net_packet.destination().octets());
         nonce[8] = protocol::Protocol::IpTurn.into();
         nonce[9] = ip_turn_packet::Protocol::Ipv4.into();
-        let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce);
+        let nonce = aead::Nonce::assume_unique_for_key(nonce);
         let rs = match &self {
-            Cipher::AesGCM128(cipher) => {
-                cipher.encrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len])
+            Cipher::AesGCM128(cipher, _) => {
+                cipher.seal_in_place_separate_tag(nonce, aead::Aad::empty(), &mut net_packet.payload_mut()[..payload_len])
             }
-            Cipher::AesGCM256(cipher) => {
-                cipher.encrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len])
+            Cipher::AesGCM256(cipher, _) => {
+                cipher.seal_in_place_separate_tag(nonce, aead::Aad::empty(), &mut net_packet.payload_mut()[..payload_len])
             }
             Cipher::None => {
                 return Ok(None);
@@ -100,11 +114,12 @@ impl Cipher {
         };
         return match rs {
             Ok(tag) => {
+                let tag = tag.as_ref();
                 if tag.len() != 16 {
                     return Err(io::Error::new(io::ErrorKind::Other, format!("加密tag长度错误:{}", tag.len())));
                 }
                 net_packet.set_encrypt_flag(true);
-                net_packet.payload_mut()[payload_len..payload_len + 16].copy_from_slice(tag.as_slice());
+                net_packet.payload_mut()[payload_len..payload_len + 16].copy_from_slice(tag);
                 Ok(Some(payload_len + 16))
             }
             Err(e) => {
