@@ -134,7 +134,6 @@ impl<B: AsRef<[u8]>> TcpPacket<B> {
             &self.source_ip,
             &self.destination_ip,
             6,
-            self.buffer.as_ref().len() as u16,
         )
     }
     pub fn urgent_pointer(&self) -> u16 {

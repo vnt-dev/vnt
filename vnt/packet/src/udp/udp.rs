@@ -102,7 +102,6 @@ impl<B: AsRef<[u8]>> UdpPacket<B> {
             &self.source_ip,
             &self.destination_ip,
             17,
-            self.length(),
         )
     }
 }

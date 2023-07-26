@@ -103,9 +103,9 @@ pub fn ipv4_cal_checksum(
     src_ip: &Ipv4Addr,
     dest_ip: &Ipv4Addr,
     protocol: u8,
-    length: u16,
 ) -> u16 {
     use std::io::Cursor;
+    let length = buffer.len();
     let mut sum = 0;
     let src_ip = src_ip.octets();
     sum += u32c(src_ip[0], src_ip[1]);
