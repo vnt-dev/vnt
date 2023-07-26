@@ -15,8 +15,7 @@ crossbeam-skiplist = "0.1"
 parking_lot = "0.12.1"
 rand = "0.8.5"
 sha2 = { version = "0.10.6", features = ["oid"] }
-aes-gcm = "0.10.2"
-
+ring = "0.16.20"
 thiserror = "1.0.37"
 protobuf = "3.2.0"
 socket2 ={ version = "0.5.2", features = ["all"] }

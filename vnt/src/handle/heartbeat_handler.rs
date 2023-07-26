@@ -149,7 +149,6 @@ async fn start_heartbeat_(
                 } else {
                     //没有直连路由则发送到网关
                     let _ = sender.send_main(net_packet.buffer(), current_dev.connect_server).await;
-                    continue;
                 }
 
                 //再随机发送到其他地址，看有没有客户端符合转发条件
@@ -167,7 +166,7 @@ async fn start_heartbeat_(
                             num += 1;
                             break;
                         }
-                        if num >= 3 {
+                        if num >= 2 {
                             break 'a;
                         }
                     }

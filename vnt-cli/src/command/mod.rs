@@ -72,6 +72,7 @@ pub fn command_route(vnt: &Vnt) -> Vec<RouteItem> {
 }
 
 pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
+    let info = vnt.current_device();
     let device_list = vnt.device_list();
     let mut list = Vec::new();
     for peer in device_list {
@@ -87,7 +88,13 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
             ("".to_string(), "".to_string(), "".to_string())
         };
         let (nat_traversal_type, rt) = if let Some(route) = vnt.route(&peer.virtual_ip) {
-            let nat_traversal_type = if route.metric == 1 { "p2p" } else { "relay" }.to_string();
+            let nat_traversal_type = if route.metric == 1 {
+                "p2p"
+            } else if route.addr == info.connect_server {
+                "server-relay"
+            } else {
+                "client-relay"
+            }.to_string();
             let rt = if route.rt < 0 {
                 "".to_string()
             } else {
