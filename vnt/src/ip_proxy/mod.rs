@@ -1,5 +1,5 @@
 use std::{io, thread};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use crossbeam_utils::atomic::AtomicCell;
@@ -45,7 +45,7 @@ impl IpProxyMap {
     }
 }
 
-pub async fn init_proxy(sender: ChannelSender, bind_ips: Vec<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
+pub async fn init_proxy(sender: ChannelSender, bind_ips: HashSet<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
     let mut icmp_sockets = HashMap::new();
     let tcp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>> = Arc::new(SkipMap::new());
     let udp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>> = Arc::new(SkipMap::new());

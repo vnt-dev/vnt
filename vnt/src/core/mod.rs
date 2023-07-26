@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
@@ -183,7 +184,7 @@ impl VntUtil {
         // NAT检测
         let nat_test = NatTest::new(config.nat_test_server.clone(), response.public_ip, response.public_port, local_ip, local_port);
 
-        let out_ips = config.out_ips.iter().map(|(_, _, ip)| *ip).collect::<Vec<Ipv4Addr>>();
+        let out_ips = config.out_ips.iter().map(|(_, _, ip)| *ip).collect::<HashSet<Ipv4Addr>>();
         let out_external_route = ExternalRoute::new(config.out_ips);
         let in_external_route = if config.in_ips.is_empty() {
             None
