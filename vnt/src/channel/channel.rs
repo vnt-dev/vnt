@@ -257,9 +257,11 @@ impl Context {
         }
     }
     pub fn route_to_id(&self, route_key: &RouteKey) -> Option<Ipv4Addr> {
-        for x in self.inner.route_table_time.iter() {
-            if &x.key().0 == route_key {
-                return Some(x.key().1);
+        for x in self.inner.route_table.iter() {
+            for route in x.value() {
+                if &route.route_key() == route_key {
+                    return Some(*x.key());
+                }
             }
         }
         None
@@ -311,8 +313,8 @@ impl Context {
             drop(v);
             routes.retain(|x| x.route_key() != route_key);
             self.inner.route_table.insert(*id, routes);
-            self.inner.route_table_time.remove(&(route_key, *id));
         }
+        self.inner.route_table_time.remove(&(route_key, *id));
         drop(guard);
     }
     pub fn update_read_time(&self, id: &Ipv4Addr, route_key: &RouteKey) {
