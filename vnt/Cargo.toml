@@ -15,11 +15,12 @@ crossbeam-skiplist = "0.1"
 parking_lot = "0.12.1"
 rand = "0.8.5"
 sha2 = { version = "0.10.6", features = ["oid"] }
-ring = "0.16.20"
 thiserror = "1.0.37"
 protobuf = "3.2.0"
 socket2 ={ version = "0.5.2", features = ["all"] }
 tokio = { version = "1.28.1", features = ["full"] }
+aes-gcm = {version="0.10.2", optional = true}
+ring = {version="0.16.20", optional = true}
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
 tun = { path = "./rust-tun" }
 
@@ -31,4 +32,9 @@ libloading = "0.7.4"
 [build-dependencies]
 protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
+
+[features]
+default=["aes-gcm"]
+ring-cipher=["ring"]
+
 

@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vnt = {path="../vnt"}
-common = {path="../common"}
+vnt = { path = "../vnt", package = "vnt", optional = true }
+common = { path = "../common" }
 tokio = { version = "1.28.1", features = ["full"] }
 getopts = "0.2.21"
 console = "0.15.2"
@@ -19,7 +19,7 @@ log = "0.4.17"
 [dependencies.uuid]
 version = "1.4.1"
 features = [
-    "v4",                # Lets you generate random UUIDs
+    "v4", # Lets you generate random UUIDs
 ]
 
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
@@ -27,9 +27,12 @@ sudo = "0.6.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
+
 [features]
-default = []
-mini = []
+default = ["normal"]
+normal = ["vnt"]
+ring-cipher = ["vnt/ring-cipher"]
+
 
 [build-dependencies]
 embed-manifest = "1.4.0"
