@@ -140,7 +140,7 @@ async fn main0() {
         .collect::<Vec<_>>();
 
     let in_ip = matches.opt_strs("i");
-    let in_ip = match ips_parse(&in_ip) {
+    let in_ip = match ips_parse(&in_ip, true) {
         Ok(in_ip) => { in_ip }
         Err(e) => {
             print_usage(&program, opts);
@@ -150,7 +150,7 @@ async fn main0() {
         }
     };
     let out_ip = matches.opt_strs("o");
-    let out_ip = match ips_parse(&out_ip) {
+    let out_ip = match ips_parse(&out_ip, false) {
         Ok(out_ip) => { out_ip }
         Err(e) => {
             print_usage(&program, opts);

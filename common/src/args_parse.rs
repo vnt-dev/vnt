@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-pub fn ips_parse(ips: &Vec<String>) -> Result<Vec<(u32, u32, Ipv4Addr)>, String> {
+pub fn ips_parse(ips: &Vec<String>,in_ip:bool) -> Result<Vec<(u32, u32, Ipv4Addr)>, String> {
     let mut in_ips_c = vec![];
     for x in ips {
         let mut split = x.split(",");
@@ -12,7 +12,10 @@ pub fn ips_parse(ips: &Vec<String>) -> Result<Vec<(u32, u32, Ipv4Addr)>, String>
         let ip = if let Some(ip) = split.next() {
             ip
         } else {
-            return Err("ipv4/mask,ipv4".to_string());
+            if in_ip{
+                return Err("ipv4/mask,ipv4".to_string());
+            }
+            "0.0.0.0"
         };
         let ip = if let Ok(ip) = ip.parse::<Ipv4Addr>() {
             ip
