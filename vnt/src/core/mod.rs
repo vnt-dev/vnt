@@ -183,12 +183,14 @@ impl VntUtil {
         let local_port = context.main_local_port()?;
         // NAT检测
         let nat_test = NatTest::new(config.nat_test_server.clone(), response.public_ip, response.public_port, local_ip, local_port);
-
-        let mut out_ips = config.out_ips.iter().map(|(_, _, ip)| *ip).collect::<HashSet<Ipv4Addr>>();
-        if out_ips.remove(&Ipv4Addr::UNSPECIFIED) {
-            out_ips.insert(local_ip);
+        let mut out_ip_list = config.out_ips;
+        for (_, _, ip) in out_ip_list.iter_mut() {
+            if ip == &Ipv4Addr::UNSPECIFIED {
+                *ip = local_ip;
+            }
         }
-        let out_external_route = ExternalRoute::new(config.out_ips);
+        let out_ips = out_ip_list.iter().map(|(_, _, ip)| *ip).collect::<HashSet<Ipv4Addr>>();
+        let out_external_route = ExternalRoute::new(out_ip_list);
         let in_external_route = if config.in_ips.is_empty() {
             None
         } else {
