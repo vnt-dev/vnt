@@ -31,7 +31,6 @@ async fn main0() {
     let args: Vec<String> = std::env::args().collect();
     let program = args[0].clone();
     let mut opts = Options::new();
-    opts.long_only(false);
     opts.optopt("k", "", &format!("{}", green("必选,使用相同的token,就能组建一个局域网络".to_string())), "<token>");
     opts.optopt("n", "", "给设备一个名字,默认使用系统版本", "<name>");
     opts.optopt("d", "", "设备唯一标识符,不使用--ip参数时,服务端凭此参数分配ip", "<id>");
@@ -39,8 +38,8 @@ async fn main0() {
     opts.optopt("s", "", "注册和中继服务器地址", "<server>");
     opts.optopt("e", "", "NAT探测服务器地址,使用逗号分隔", "<addr1,addr2>");
     opts.optflag("a", "", "使用tap模式,默认使用tun模式");
-    opts.optmulti("i", "", "配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3，表示允许接收网段192.168.0.0/24的数据并转发到10.26.0.3", "<in-ip>");
-    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.0.0/24,192.168.0.10，表示允许目标为192.168.0.0/24的数据从网卡192.168.0.10转发出去", "<out-ip>");
+    opts.optmulti("i", "", "配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3 \n表示允许接收网段192.168.0.0/24的数据并转发到10.26.0.3", "<in-ip>");
+    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.0.0/24,192.168.0.10 \n表示允许目标为192.168.0.0/24的数据从网卡192.168.0.10转发出去,不指定出口地址则使用默认网卡", "<out-ip>");
     opts.optopt("w", "", "使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信", "<password>");
     opts.optflag("m", "", "模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     opts.optopt("u", "", "虚拟网卡mtu值", "<mtu>");
@@ -310,7 +309,7 @@ async fn main0() {
 
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
-    println!("version:1.1.1");
+    println!("version:1.1.2");
     println!("{}", opts.usage(&brief));
 }
 

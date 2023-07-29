@@ -178,7 +178,7 @@ fn registration_request_packet(
     request.virtual_ip = ip.into();
     request.allow_ip_change = allow_ip_change;
     request.is_fast = is_fast;
-    request.version = "1.1.1".to_string();
+    request.version = "1.1.2".to_string();
     let bytes = request.write_to_bytes()?;
     let buf = vec![0u8; 12 + bytes.len()];
     let mut net_packet = NetPacket::new(buf)?;
