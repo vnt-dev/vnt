@@ -5,7 +5,7 @@ use std::str::FromStr;
 use console::style;
 use getopts::Options;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use common::args_parse::ips_parse;
+use common::args_parse::{ips_parse, out_ips_parse};
 use vnt::core::{Config, VntUtil};
 use vnt::handle::registration_handler::ReqEnum;
 
@@ -33,16 +33,16 @@ async fn main0() {
     let mut opts = Options::new();
     opts.optopt("k", "", &format!("{}", green("必选,使用相同的token,就能组建一个局域网络".to_string())), "<token>");
     opts.optopt("n", "", "给设备一个名字,默认使用系统版本", "<name>");
-    opts.optopt("d", "", "设备唯一标识符,不使用--ip参数时,服务端凭此参数分配ip", "<id>");
+    opts.optopt("d", "", "设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip", "<id>");
     opts.optflag("c", "", "关闭交互式命令,使用此参数禁用控制台输入");
     opts.optopt("s", "", "注册和中继服务器地址", "<server>");
     opts.optopt("e", "", "NAT探测服务器地址,使用逗号分隔", "<addr1,addr2>");
     opts.optflag("a", "", "使用tap模式,默认使用tun模式");
     opts.optmulti("i", "", "配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3 \n表示允许接收网段192.168.0.0/24的数据并转发到10.26.0.3", "<in-ip>");
-    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.0.0/24,192.168.0.10 \n表示允许目标为192.168.0.0/24的数据从网卡192.168.0.10转发出去,不指定出口地址则使用默认网卡", "<out-ip>");
+    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.0.0/24 \n表示允许目标为192.168.0.0/24的数据转发出去", "<out-ip>");
     opts.optopt("w", "", "使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信", "<password>");
     opts.optflag("m", "", "模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
-    opts.optopt("u", "", "虚拟网卡mtu值", "<mtu>");
+    opts.optopt("u", "", "自定义mtu(默认为1430)", "<mtu>");
     opts.optflag("", "tcp", "和服务端使用tcp通信,默认使用udp,一般来说udp延迟和消耗更低");
     opts.optopt("", "ip", "指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配", "<IP>");
     opts.optflag("", "relay", "仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
@@ -139,22 +139,24 @@ async fn main0() {
         .collect::<Vec<_>>();
 
     let in_ip = matches.opt_strs("i");
-    let in_ip = match ips_parse(&in_ip, true) {
+    let in_ip = match ips_parse(&in_ip) {
         Ok(in_ip) => { in_ip }
         Err(e) => {
             print_usage(&program, opts);
             println!();
             println!("-i {}", e);
+            println!("example: -i 192.168.0.0/24,10.26.0.3");
             return;
         }
     };
     let out_ip = matches.opt_strs("o");
-    let out_ip = match ips_parse(&out_ip, false) {
+    let out_ip = match out_ips_parse(&out_ip) {
         Ok(out_ip) => { out_ip }
         Err(e) => {
             print_usage(&program, opts);
             println!();
             println!("-o {}", e);
+            println!("example: -o 0.0.0.0/0");
             return;
         }
     };

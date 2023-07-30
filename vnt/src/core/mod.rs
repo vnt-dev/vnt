@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
@@ -18,7 +17,7 @@ use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
 use crate::core::status::VntStatusManger;
 use crate::error::Error;
-use crate::external_route::ExternalRoute;
+use crate::external_route::{AllowExternalRoute, ExternalRoute};
 use crate::handle::{ConnectStatus, CurrentDeviceInfo, heartbeat_handler, PeerDeviceInfo, punch_handler, registration_handler};
 use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::registration_handler::{RegResponse, ReqEnum};
@@ -183,25 +182,18 @@ impl VntUtil {
         let local_port = context.main_local_port()?;
         // NAT检测
         let nat_test = NatTest::new(config.nat_test_server.clone(), response.public_ip, response.public_port, local_ip, local_port);
-        let mut out_ip_list = config.out_ips;
-        for (_, _, ip) in out_ip_list.iter_mut() {
-            if ip == &Ipv4Addr::UNSPECIFIED {
-                *ip = local_ip;
-            }
-        }
-        let out_ips = out_ip_list.iter().map(|(_, _, ip)| *ip).collect::<HashSet<Ipv4Addr>>();
-        let out_external_route = ExternalRoute::new(out_ip_list);
         let in_external_route = if config.in_ips.is_empty() {
             None
         } else {
             Some(ExternalRoute::new(config.in_ips))
         };
-        let (tcp_proxy, udp_proxy, ip_proxy_map) = if out_ips.is_empty() {
+        let (tcp_proxy, udp_proxy, ip_proxy_map) = if  config.out_ips.is_empty() {
             (None, None, None)
         } else {
-            let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(channel_sender.clone(), out_ips, current_device.clone()).await?;
+            let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(channel_sender.clone(),  current_device.clone()).await?;
             (Some(tcp_proxy), Some(udp_proxy), Some(ip_proxy_map))
         };
+        let out_external_route = AllowExternalRoute::new(config.out_ips);
 
         let igmp_server = if config.simulate_multicast {
             Some(IgmpServer::new(device_writer.clone()))
@@ -345,7 +337,7 @@ pub struct Config {
     pub server_address_str: String,
     pub nat_test_server: Vec<SocketAddr>,
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
-    pub out_ips: Vec<(u32, u32, Ipv4Addr)>,
+    pub out_ips: Vec<(u32, u32)>,
     pub password: Option<String>,
     pub simulate_multicast: bool,
     pub mtu: Option<u16>,
@@ -362,7 +354,7 @@ impl Config {
                server_address: SocketAddr,
                server_address_str: String,
                nat_test_server: Vec<SocketAddr>,
-               in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32, Ipv4Addr)>,
+               in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32)>,
                password: Option<String>, simulate_multicast: bool, mtu: Option<u16>, tcp: bool,
                ip: Option<Ipv4Addr>,
                relay: bool, ) -> Self {

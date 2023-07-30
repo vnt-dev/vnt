@@ -1,5 +1,4 @@
 use std::{io, thread};
-use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use crossbeam_utils::atomic::AtomicCell;
@@ -27,28 +26,23 @@ pub enum Protocol {
 pub struct IpProxyMap {
     pub(crate) tcp_proxy_port: u16,
     pub(crate) udp_proxy_port: u16,
-    //真实源地址 -> (绑定地址,目的地址)
-    pub(crate) tcp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>,
-    pub(crate) udp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>,
+    //真实源地址 -> 目的地址
+    pub(crate) tcp_proxy_map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>,
+    pub(crate) udp_proxy_map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>,
     // icmp用Identifier来区分，没有Identifier的一律不转发
     pub(crate) icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
-    icmp_sockets: HashMap<Ipv4Addr, Arc<Socket>>,
+    icmp_socket: Arc<Socket>,
 }
 
 impl IpProxyMap {
-    pub fn send_icmp(&self, buf: &[u8], src: &Ipv4Addr, dest: &Ipv4Addr) -> io::Result<usize> {
-        if let Some(socket) = self.icmp_sockets.get(src) {
-            socket.send_to(buf, &SockAddr::from(SocketAddrV4::new(*dest, 0)))
-        } else {
-            Err(io::Error::new(io::ErrorKind::Other, format!("not found src:{},dest:{}", src, dest)))
-        }
+    pub fn send_icmp(&self, buf: &[u8], dest: &Ipv4Addr) -> io::Result<usize> {
+        self.icmp_socket.send_to(buf, &SockAddr::from(SocketAddrV4::new(*dest, 0)))
     }
 }
 
-pub async fn init_proxy(sender: ChannelSender, bind_ips: HashSet<Ipv4Addr>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
-    let mut icmp_sockets = HashMap::new();
-    let tcp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>> = Arc::new(SkipMap::new());
-    let udp_proxy_map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>> = Arc::new(SkipMap::new());
+pub async fn init_proxy(sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
+    let tcp_proxy_map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(SkipMap::new());
+    let udp_proxy_map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(SkipMap::new());
     let icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>> = Arc::new(SkipMap::new());
     let tcp_listener = TcpListener::bind("0.0.0.0:0").await?;
     let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
@@ -56,15 +50,12 @@ pub async fn init_proxy(sender: ChannelSender, bind_ips: HashSet<Ipv4Addr>, curr
     let udp_proxy_port = udp_socket.local_addr()?.port();
     let tcp_proxy = TcpProxy::new(tcp_listener, tcp_proxy_map.clone());
     let udp_proxy = UdpProxy::new(udp_socket, udp_proxy_map.clone());
-    for ip in bind_ips {
-        let addr = SocketAddrV4::new(ip, 0);
-        let icmp_proxy_map = icmp_proxy_map.clone();
-        let icmp_proxy = IcmpProxy::new(addr, icmp_proxy_map, sender.clone(), current_device.clone())?;
-        icmp_sockets.insert(ip, icmp_proxy.icmp_socket());
-        thread::spawn(move || {
-            icmp_proxy.start();
-        });
-    }
+    let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    let icmp_proxy = IcmpProxy::new(addr, icmp_proxy_map.clone(), sender.clone(), current_device.clone())?;
+    let icmp_socket = icmp_proxy.icmp_socket();
+    thread::spawn(move || {
+        icmp_proxy.start();
+    });
 
     Ok((tcp_proxy, udp_proxy, IpProxyMap {
         tcp_proxy_port,
@@ -72,6 +63,6 @@ pub async fn init_proxy(sender: ChannelSender, bind_ips: HashSet<Ipv4Addr>, curr
         tcp_proxy_map,
         udp_proxy_map,
         icmp_proxy_map,
-        icmp_sockets,
+        icmp_socket,
     }))
 }

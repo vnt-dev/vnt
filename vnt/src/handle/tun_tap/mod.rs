@@ -190,7 +190,7 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                     SocketAddrV4::new(dest_ip, tcp_packet.destination_port())
                 };
                 if let Some(entry) = proxy_map.tcp_proxy_map.get(&dest_addr) {
-                    let source_addr = entry.value().1;
+                    let source_addr = entry.value();
                     let source_ip = *source_addr.ip();
                     let mut tcp_packet = TcpPacket::new(source_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
                     tcp_packet.set_source_port(source_addr.port());
@@ -206,7 +206,7 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                     SocketAddrV4::new(dest_ip, udp_packet.destination_port())
                 };
                 if let Some(entry) = proxy_map.udp_proxy_map.get(&dest_addr) {
-                    let source_addr = entry.value().1;
+                    let source_addr = entry.value();
                     let source_ip = *source_addr.ip();
                     let mut udp_packet = UdpPacket::new(source_ip, dest_ip, &mut net_packet.buffer_mut()[12 + ip_head_len..data_len])?;
                     udp_packet.set_source_port(source_addr.port());

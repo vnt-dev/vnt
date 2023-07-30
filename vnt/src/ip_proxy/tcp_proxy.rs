@@ -6,11 +6,11 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub struct TcpProxy {
     tcp_listener: TcpListener,
-    map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>,
+    map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>>,
 }
 
 impl TcpProxy {
-    pub fn new(tcp_listener: TcpListener, map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>) -> Self {
+    pub fn new(tcp_listener: TcpListener, map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>>) -> Self {
         Self {
             tcp_listener,
             map,
@@ -25,11 +25,11 @@ impl TcpProxy {
                     match sender_addr {
                         SocketAddr::V4(sender_addr) => {
                             if let Some(entry) = map.get(&sender_addr) {
-                                let (src_addr, dest_addr) = *entry.value();
+                                let dest_addr = *entry.value();
                                 let peer_tcp_stream = match TcpStream::connect(dest_addr).await {
                                     Ok(peer_tcp_stream) => {peer_tcp_stream}
                                     Err(e) => {
-                                        log::warn!("tcp代理异常:{:?},来源:{},目标：{}",e,src_addr,dest_addr);
+                                        log::warn!("tcp代理异常:{:?},来源:{},目标：{}",e,sender_addr,dest_addr);
                                         continue;
                                     }
                                 };
@@ -38,7 +38,7 @@ impl TcpProxy {
                                     match proxy(tcp_stream, peer_tcp_stream).await {
                                         Ok(_) => {}
                                         Err(e) => {
-                                            log::warn!("tcp代理异常:{:?},来源:{},目标：{}",e,src_addr,dest_addr);
+                                            log::warn!("tcp代理异常:{:?},来源:{},目标：{}",e,sender_addr,dest_addr);
                                         }
                                     }
                                     map.remove(&sender_addr);

@@ -8,11 +8,11 @@ use tokio::net::UdpSocket;
 /// 一个udp代理，作用是利用系统协议栈，将udp数据报解析出来再转发到目的地址
 pub struct UdpProxy {
     udp_socket: Arc<UdpSocket>,
-    map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>,
+    map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>,
 }
 
 impl UdpProxy {
-    pub fn new(udp_socket: UdpSocket, map: Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>) -> Self {
+    pub fn new(udp_socket: UdpSocket, map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>) -> Self {
         let udp_socket = Arc::new(udp_socket);
         Self {
             udp_socket,
@@ -48,11 +48,11 @@ impl UdpProxy {
     }
 }
 
-async fn start0(buf: &[u8], sender_addr: SocketAddrV4, inner_map: &Arc<SkipMap<SocketAddrV4, Arc<UdpSocket>>>, map: &Arc<SkipMap<SocketAddrV4, (SocketAddrV4, SocketAddrV4)>>, udp_socket: &Arc<UdpSocket>) -> io::Result<()> {
+async fn start0(buf: &[u8], sender_addr: SocketAddrV4, inner_map: &Arc<SkipMap<SocketAddrV4, Arc<UdpSocket>>>, map: &Arc<SkipMap<SocketAddrV4, SocketAddrV4>>, udp_socket: &Arc<UdpSocket>) -> io::Result<()> {
     if let Some(entry) = inner_map.get(&sender_addr) {
         entry.value().send(buf).await?;
     } else if let Some(entry) = map.get(&sender_addr) {
-        let (src_addr, dest_addr) = *entry.value();
+        let dest_addr = *entry.value();
         let peer_udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
         peer_udp_socket.connect(dest_addr).await?;
         peer_udp_socket.send(buf).await?;
@@ -71,20 +71,20 @@ async fn start0(buf: &[u8], sender_addr: SocketAddrV4, inner_map: &Arc<SkipMap<S
                                 match udp_socket.send_to(&buf[..len], sender_addr).await {
                                     Ok(_) => {}
                                     Err(e) => {
-                                        log::warn!("udp代理异常:{:?},来源:{},目标：{}",e,src_addr,dest_addr);
+                                        log::warn!("udp代理异常:{:?},来源:{},目标：{}",e,sender_addr,dest_addr);
                                         break;
                                     }
                                 }
                             }
                             Err(e) => {
-                                log::warn!("udp代理异常:{:?},来源:{},目标：{}",e,src_addr,dest_addr);
+                                log::warn!("udp代理异常:{:?},来源:{},目标：{}",e,sender_addr,dest_addr);
                                 break;
                             }
                         }
                     }
                     Err(_) => {
                         //超时关闭
-                        log::warn!("udp代理超时关闭,来源:{},目标：{}",src_addr,dest_addr);
+                        log::warn!("udp代理超时关闭,来源:{},目标：{}",sender_addr,dest_addr);
                         break;
                     }
                 }

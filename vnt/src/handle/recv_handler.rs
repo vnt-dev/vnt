@@ -17,7 +17,7 @@ use crate::channel::{Route, RouteKey};
 use crate::cipher::Cipher;
 
 use crate::error::Error;
-use crate::external_route::ExternalRoute;
+use crate::external_route::AllowExternalRoute;
 use crate::handle::{check_dest, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, PeerDeviceStatus};
 use crate::handle::registration_handler::Register;
 use crate::igmp_server::IgmpServer;
@@ -41,7 +41,7 @@ pub struct ChannelDataHandler {
     connect_status: Arc<AtomicCell<ConnectStatus>>,
     peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
     ip_proxy_map: Option<IpProxyMap>,
-    out_external_route: ExternalRoute,
+    out_external_route: AllowExternalRoute,
     cone_sender: Sender<(Ipv4Addr, NatInfo)>,
     symmetric_sender: Sender<(Ipv4Addr, NatInfo)>,
     cipher: Cipher,
@@ -58,7 +58,7 @@ impl ChannelDataHandler {
                connect_status: Arc<AtomicCell<ConnectStatus>>,
                peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
                ip_proxy_map: Option<IpProxyMap>,
-               out_external_route: ExternalRoute,
+               out_external_route: AllowExternalRoute,
                cone_sender: Sender<(Ipv4Addr, NatInfo)>,
                symmetric_sender: Sender<(Ipv4Addr, NatInfo)>,
                cipher: Cipher,
@@ -185,7 +185,7 @@ impl ChannelDataHandler {
                         }
                         if not_broadcast && ipv4.destination_ip() != destination {
                             if let Some(ip_proxy_map) = &self.ip_proxy_map {
-                                if let Some(gate_way) = self.out_external_route.route(&ipv4.destination_ip()) {
+                                if self.out_external_route.allow(&ipv4.destination_ip()) {
                                     match ipv4.protocol() {
                                         ipv4::protocol::Protocol::Tcp => {
                                             let dest_ip = ipv4.destination_ip();
@@ -197,8 +197,7 @@ impl ChannelDataHandler {
                                             tcp_packet.update_checksum();
                                             ipv4.set_destination_ip(destination);
                                             ipv4.update_checksum();
-                                            ip_proxy_map.tcp_proxy_map.insert(SocketAddrV4::new(source, source_port),
-                                                                              (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                                            ip_proxy_map.tcp_proxy_map.insert(SocketAddrV4::new(source, source_port), SocketAddrV4::new(dest_ip, dest_port));
                                         }
                                         ipv4::protocol::Protocol::Udp => {
                                             let dest_ip = ipv4.destination_ip();
@@ -210,8 +209,7 @@ impl ChannelDataHandler {
                                             udp_packet.update_checksum();
                                             ipv4.set_destination_ip(destination);
                                             ipv4.update_checksum();
-                                            ip_proxy_map.udp_proxy_map.insert(SocketAddrV4::new(source, source_port),
-                                                                              (SocketAddrV4::new(gate_way, 0), SocketAddrV4::new(dest_ip, dest_port)));
+                                            ip_proxy_map.udp_proxy_map.insert(SocketAddrV4::new(source, source_port), SocketAddrV4::new(dest_ip, dest_port));
                                         }
                                         ipv4::protocol::Protocol::Icmp => {
                                             let dest_ip = ipv4.destination_ip();
@@ -220,7 +218,7 @@ impl ChannelDataHandler {
                                             match icmp_packet.header_other() {
                                                 HeaderOther::Identifier(id, seq) => {
                                                     ip_proxy_map.icmp_proxy_map.insert((dest_ip, id, seq), source);
-                                                    ip_proxy_map.send_icmp(ipv4.payload(), &gate_way, &dest_ip)?;
+                                                    ip_proxy_map.send_icmp(ipv4.payload(), &dest_ip)?;
                                                 }
                                                 _ => {
                                                     return Ok(());
@@ -419,7 +417,7 @@ impl ChannelDataHandler {
             ControlPacket::AddrRequest => {
                 match route_key.addr.ip() {
                     std::net::IpAddr::V4(ipv4) => {
-                        let mut packet = NetPacket::new([0;12+6])?;
+                        let mut packet = NetPacket::new([0; 12 + 6])?;
                         packet.set_version(Version::V1);
                         packet.set_protocol(Protocol::Control);
                         packet.set_transport_protocol(
