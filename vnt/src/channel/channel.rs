@@ -259,7 +259,7 @@ impl Context {
     pub fn route_to_id(&self, route_key: &RouteKey) -> Option<Ipv4Addr> {
         for x in self.inner.route_table.iter() {
             for route in x.value() {
-                if &route.route_key() == route_key {
+                if &route.route_key() == route_key && route.is_p2p() {
                     return Some(*x.key());
                 }
             }
