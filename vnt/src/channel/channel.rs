@@ -134,7 +134,7 @@ impl Context {
             if !route.is_p2p() {
                 if let Some(time) = self.inner.route_table_time.get(&(route.route_key(), *id)) {
                     //借道传输时，长时间不通信的通道不使用
-                    if time.value().load().elapsed() > Duration::from_secs(3) {
+                    if time.value().load().elapsed() > Duration::from_secs(6) {
                         return Err(io::Error::new(io::ErrorKind::NotFound, "route time out"));
                     }
                 }
