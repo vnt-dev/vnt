@@ -251,7 +251,7 @@ impl Context {
     }
     pub fn route_one(&self, id: &Ipv4Addr) -> Option<Route> {
         if let Some(v) = self.inner.route_table.get(id) {
-            v.value().iter().max_by_key(|k| k.sort_key()).map(|k| *k)
+            v.value().first().map(|v| *v)
         } else {
             None
         }

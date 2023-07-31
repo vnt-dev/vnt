@@ -99,6 +99,7 @@ impl ChannelDataHandler {
             return Ok(());
         }
         let source = net_packet.source();
+        context.update_read_time(&source, route_key);
         let current_device = self.current_device.load();
         let destination = net_packet.destination();
         let not_broadcast = !destination.is_broadcast() && !destination.is_multicast() && destination != current_device.broadcast_address;
@@ -361,17 +362,15 @@ impl ChannelDataHandler {
         let metric = net_packet.source_ttl() - net_packet.ttl() + 1;
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PingPacket(_) => {
-                context.update_read_time(&source, route_key);
                 net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
                 net_packet.set_source(current_device.virtual_ip());
                 net_packet.set_destination(source);
                 net_packet.first_set_ttl(MAX_TTL);
                 context.send_by_key(net_packet.buffer(), route_key).await?;
-                let route = Route::from(*route_key, metric, 99);
+                let route = Route::from(*route_key, metric, 199);
                 context.add_route_if_absent(source, route);
             }
             ControlPacket::PongPacket(pong_packet) => {
-                context.update_read_time(&source, route_key);
                 let current_time = crate::handle::now_time() as u16;
                 if current_time < pong_packet.time() {
                     return Ok(());
@@ -403,7 +402,7 @@ impl ChannelDataHandler {
                 net_packet.set_destination(source);
                 net_packet.first_set_ttl(1);
                 context.send_by_key(net_packet.buffer(), route_key).await?;
-                let route = Route::from(*route_key, metric, 99);
+                let route = Route::from(*route_key, metric, 199);
                 context.add_route_if_absent(source, route);
             }
             ControlPacket::PunchResponse => {
@@ -411,7 +410,7 @@ impl ChannelDataHandler {
                     return Ok(());
                 }
                 // log::info!("PunchResponse route_key:{:?}",route_key);
-                let route = Route::from(*route_key, metric, 99);
+                let route = Route::from(*route_key, metric, 199);
                 context.add_route_if_absent(source, route);
             }
             ControlPacket::AddrRequest => {
