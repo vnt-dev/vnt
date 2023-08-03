@@ -270,7 +270,7 @@ impl ChannelDataHandler {
                 let local_port = context.main_local_port()?;
                 let local_ip = nat::local_ip()?;
                 let nat_info = self.nat_test.re_test(Ipv4Addr::from(response.public_ip),
-                                                     response.public_port as u16, local_ip, local_port);
+                                                     response.public_port as u16, local_ip, local_port).await;
                 context.switch(nat_info.nat_type);
                 let new_ip = Ipv4Addr::from(response.virtual_ip);
                 let current_ip = current_device.virtual_ip();

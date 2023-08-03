@@ -21,6 +21,8 @@ socket2 ={ version = "0.5.2", features = ["all"] }
 tokio = { version = "1.28.1", features = ["full"] }
 aes-gcm = {version="0.10.2", optional = true}
 ring = {version="0.16.20", optional = true}
+stun-format = {version="1.0.1",features=["fmt","rfc3489"]}
+
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
 tun = { path = "./rust-tun" }
 

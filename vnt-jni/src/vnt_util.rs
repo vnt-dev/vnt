@@ -55,7 +55,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     let device_id = to_string_not_null(env, &config, "deviceId")?;
     let password = to_string(env, &config, "password")?;
     let server_address_str = to_string_not_null(env, &config, "server")?;
-    let nat_test_server = to_string_not_null(env, &config, "natTestServer")?;
+    // let nat_test_server = to_string_not_null(env, &config, "natTestServer")?;
     let server_address = match server_address_str.to_socket_addrs() {
         Ok(mut rs) => {
             if let Some(addr) = rs.next() {
@@ -72,12 +72,14 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
             return Err(Error::JavaException);
         }
     };
-    let nat_test_server = nat_test_server.split(",").flat_map(|a| a.trim().to_socket_addrs()).flatten()
-        .collect::<Vec<_>>();
+    let mut stun_server = Vec::new();
+    stun_server.push("stun1.l.google.com:19302".to_string());
+    stun_server.push("stun2.l.google.com:19302".to_string());
+    stun_server.push("stun.qq.com:3478".to_string());
     let config = Config::new(false,
                              token, device_id, name,
                              server_address, server_address_str,
-                             nat_test_server, vec![],
+                             stun_server, vec![],
                              vec![], password, false, None, false, None, false);
     match VntUtilSync::new(config) {
         Ok(vnt_util) => {

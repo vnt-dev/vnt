@@ -31,15 +31,15 @@ async fn main0() {
     let args: Vec<String> = std::env::args().collect();
     let program = args[0].clone();
     let mut opts = Options::new();
-    opts.optopt("k", "", &format!("{}", green("必选,使用相同的token,就能组建一个局域网络".to_string())), "<token>");
-    opts.optopt("n", "", "给设备一个名字,默认使用系统版本", "<name>");
+    opts.optopt("k", "", "必选,使用相同的token,就能组建一个局域网络", "<token>");
+    opts.optopt("n", "", "给设备一个名字,便于区分不同设备,默认使用系统版本", "<name>");
     opts.optopt("d", "", "设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip", "<id>");
     opts.optflag("c", "", "关闭交互式命令,使用此参数禁用控制台输入");
     opts.optopt("s", "", "注册和中继服务器地址", "<server>");
-    opts.optopt("e", "", "NAT探测服务器地址,使用逗号分隔", "<addr1,addr2>");
+    opts.optmulti("e", "", "stun服务器,用于探测NAT类型,可多次指定,如-e addr1 -e addr2", "<stun-server>");
     opts.optflag("a", "", "使用tap模式,默认使用tun模式");
-    opts.optmulti("i", "", "配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3 \n表示允许接收网段192.168.0.0/24的数据并转发到10.26.0.3", "<in-ip>");
-    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.0.0/24 \n表示允许将数据转发到192.168.0.0/24", "<out-ip>");
+    opts.optmulti("i", "", "配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3 \n表示允许接收网段192.168.0.0/24的数据并转发到10.26.0.3,可指定多个网段", "<in-ip>");
+    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.0.0/24 \n表示允许将数据转发到192.168.0.0/24,可指定多个网段", "<out-ip>");
     opts.optopt("w", "", "使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信", "<password>");
     opts.optflag("m", "", "模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     opts.optopt("u", "", "自定义mtu(默认为1430)", "<mtu>");
@@ -47,11 +47,11 @@ async fn main0() {
     opts.optopt("", "ip", "指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配", "<IP>");
     opts.optflag("", "relay", "仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     //"后台运行时,查看其他设备列表"
-    opts.optflag("", "list", &format!("{}", yellow("后台运行时,查看其他设备列表".to_string())));
-    opts.optflag("", "all", &format!("{}", yellow("后台运行时,查看其他设备完整信息".to_string())));
-    opts.optflag("", "info", &format!("{}", yellow("后台运行时,查看当前设备信息".to_string())));
-    opts.optflag("", "route", &format!("{}", yellow("后台运行时,查看数据转发路径".to_string())));
-    opts.optflag("", "stop", &format!("{}", yellow("停止后台运行".to_string())));
+    opts.optflag("", "list", "后台运行时,查看其他设备列表");
+    opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
+    opts.optflag("", "info", "后台运行时,查看当前设备信息");
+    opts.optflag("", "route", "后台运行时,查看数据转发路径");
+    opts.optflag("", "stop", "停止后台运行");
     opts.optflag("h", "help", "帮助");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
@@ -132,11 +132,12 @@ async fn main0() {
             return;
         }
     };
-    let nat_test_server = matches.opt_get_default("e",
-                                                  "nat1.wherewego.top:35061,nat1.wherewego.top:35062,nat2.wherewego.top:35061,nat2.wherewego.top:35062".to_string()).unwrap();
-
-    let nat_test_server = nat_test_server.split(",").flat_map(|a| a.to_socket_addrs()).flatten()
-        .collect::<Vec<_>>();
+    let mut stun_server = matches.opt_strs("e");
+    if stun_server.is_empty() {
+        stun_server.push("stun1.l.google.com:19302".to_string());
+        stun_server.push("stun2.l.google.com:19302".to_string());
+        stun_server.push("stun.qq.com:3478".to_string());
+    }
 
     let in_ip = matches.opt_strs("i");
     let in_ip = match ips_parse(&in_ip) {
@@ -192,7 +193,7 @@ async fn main0() {
     let config = Config::new(tap,
                              token, device_id, name,
                              server_address, server_address_str,
-                             nat_test_server, in_ip,
+                             stun_server, in_ip,
                              out_ip, password, simulate_multicast, mtu, tcp_channel, virtual_ip, relay);
     let mut vnt_util = VntUtil::new(config).await.unwrap();
     let response = loop {
@@ -309,10 +310,33 @@ async fn main0() {
     vnt.wait_stop().await;
 }
 
-fn print_usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} [options]", program);
+fn print_usage(program: &str, _opts: Options) {
+    println!("Usage: {} [options]", program);
     println!("version:1.1.2");
-    println!("{}", opts.usage(&brief));
+    println!("Options:");
+    println!("  -k <token>          {}", green("必选,使用相同的token,就能组建一个局域网络".to_string()));
+    println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
+    println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip");
+    println!("  -c                  关闭交互式命令,使用此参数禁用控制台输入");
+    println!("  -s <server>         注册和中继服务器地址");
+    println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可多次指定,如-e addr1 -e addr2");
+    println!("  -a                  使用tap模式,默认使用tun模式");
+    println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
+    println!("                      并转发到10.26.0.3,可指定多个网段");
+    println!("  -o <out-ip>         配置点对网时使用,-o 192.168.0.0/24表示允许将数据转发到192.168.0.0/24,可指定多个网段");
+    println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
+    println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
+    println!("  -u <mtu>            自定义mtu(默认为1430)");
+    println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
+    println!("  --ip <IP>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
+    println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
+    println!();
+    println!("  --list              {}",yellow("后台运行时,查看其他设备列表".to_string()));
+    println!("  --all               {}",yellow("后台运行时,查看其他设备完整信息".to_string()));
+    println!("  --info              {}",yellow("后台运行时,查看当前设备信息".to_string()));
+    println!("  --route             {}",yellow("后台运行时,查看数据转发路径".to_string()));
+    println!("  --stop              {}",yellow("停止后台运行".to_string()));
+    println!("  -h, --help          帮助");
 }
 
 fn green(str: String) -> impl std::fmt::Display {

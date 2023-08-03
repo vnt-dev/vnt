@@ -181,16 +181,16 @@ impl VntUtil {
         let local_ip = crate::nat::local_ip()?;
         let local_port = context.main_local_port()?;
         // NAT检测
-        let nat_test = NatTest::new(config.nat_test_server.clone(), response.public_ip, response.public_port, local_ip, local_port);
+        let nat_test = NatTest::new(config.stun_server.clone(), response.public_ip, response.public_port, local_ip, local_port).await;
         let in_external_route = if config.in_ips.is_empty() {
             None
         } else {
             Some(ExternalRoute::new(config.in_ips))
         };
-        let (tcp_proxy, udp_proxy, ip_proxy_map) = if  config.out_ips.is_empty() {
+        let (tcp_proxy, udp_proxy, ip_proxy_map) = if config.out_ips.is_empty() {
             (None, None, None)
         } else {
-            let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(channel_sender.clone(),  current_device.clone()).await?;
+            let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(channel_sender.clone(), current_device.clone()).await?;
             (Some(tcp_proxy), Some(udp_proxy), Some(ip_proxy_map))
         };
         let out_external_route = AllowExternalRoute::new(config.out_ips);
@@ -335,7 +335,7 @@ pub struct Config {
     pub name: String,
     pub server_address: SocketAddr,
     pub server_address_str: String,
-    pub nat_test_server: Vec<SocketAddr>,
+    pub stun_server: Vec<String>,
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub out_ips: Vec<(u32, u32)>,
     pub password: Option<String>,
@@ -353,11 +353,16 @@ impl Config {
                name: String,
                server_address: SocketAddr,
                server_address_str: String,
-               nat_test_server: Vec<SocketAddr>,
+               mut stun_server: Vec<String>,
                in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32)>,
                password: Option<String>, simulate_multicast: bool, mtu: Option<u16>, tcp: bool,
                ip: Option<Ipv4Addr>,
                relay: bool, ) -> Self {
+        for x in stun_server.iter_mut() {
+            if !x.contains(":") {
+                x.push_str(":3478");
+            }
+        }
         Self {
             tap,
             token,
@@ -365,7 +370,7 @@ impl Config {
             name,
             server_address,
             server_address_str,
-            nat_test_server,
+            stun_server,
             in_ips,
             out_ips,
             password,
