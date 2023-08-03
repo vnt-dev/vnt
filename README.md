@@ -50,11 +50,12 @@ A virtual network tool (VPN)
 ### 使用须知
 
 - token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
-- 默认使用公共服务器，目前的配置是2核4G 4Mbps，有需要再扩展~
+- 默认使用公共服务器做注册和中继，目前的配置是2核4G 4Mbps，有需要再扩展~
 - 需要root/管理员权限
 - vnt-cli需要使用命令行运行
 - Mac和Linux下需要加可执行权限(例如:chmod +x ./vnt-cli)
 - 可以自己搭注册和中继服务器([server](https://github.com/lbl8603/vnts))
+- vnt使用stun服务器探测网络NAT类型，默认使用谷歌和腾讯的stun服务器，也可自己搭建(-e参数指定)
 
 ### 编译
 
