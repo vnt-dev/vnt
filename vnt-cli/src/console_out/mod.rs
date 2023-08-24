@@ -92,11 +92,11 @@ pub fn console_device_list_all(mut list: Vec<DeviceItem>) {
     out_list.push(vec![("Name".to_string(), Style::new()),
                        ("Virtual Ip".to_string(), Style::new()),
                        ("Status".to_string(), Style::new()),
+                       ("P2P/Relay".to_string(), Style::new()),
+                       ("Rt".to_string(), Style::new()),
                        ("NAT Type".to_string(), Style::new()),
                        ("Public Ips".to_string(), Style::new()),
-                       ("Local Ip".to_string(), Style::new()),
-                       ("P2P/Relay".to_string(), Style::new()),
-                       ("Rt".to_string(), Style::new())]);
+                       ("Local Ip".to_string(), Style::new())]);
     for item in list {
         if &item.status == "Online" {
             if &item.nat_traversal_type == "p2p" {
