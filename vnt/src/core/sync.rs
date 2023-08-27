@@ -2,7 +2,9 @@ use std::io;
 use std::ops::Deref;
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use crate::cipher::RsaCipher;
 use crate::core::{Config, Vnt, VntUtil};
+use crate::handle::handshake_handler::HandshakeEnum;
 use crate::handle::registration_handler::{RegResponse, ReqEnum};
 
 pub struct VntUtilSync {
@@ -24,8 +26,17 @@ impl VntUtilSync {
             runtime,
         })
     }
-    pub fn connect(&mut self) -> Result<RegResponse, ReqEnum> {
+    pub fn connect(&mut self) -> io::Result<()> {
         self.runtime.block_on(self.vnt_util.connect())
+    }
+    pub fn handshake(&mut self) -> Result<Option<RsaCipher>, HandshakeEnum> {
+        self.runtime.block_on(self.vnt_util.handshake())
+    }
+    pub fn secret_handshake(&mut self) -> Result<(), HandshakeEnum> {
+        self.runtime.block_on(self.vnt_util.secret_handshake())
+    }
+    pub fn register(&mut self) -> Result<RegResponse, ReqEnum> {
+        self.runtime.block_on(self.vnt_util.register())
     }
     #[cfg(any(target_os = "android"))]
     pub fn create_iface(&mut self, vpn_fd: i32) {

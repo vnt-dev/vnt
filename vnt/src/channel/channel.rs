@@ -92,9 +92,7 @@ impl Context {
     }
     pub async fn send_main(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
         if let Some(sender) = &self.inner.main_tcp_channel {
-            let mut vec = vec![0; 4 + buf.len()];
-            vec[4..].copy_from_slice(buf);
-            if sender.send(vec).await.is_ok() {
+            if sender.send(buf.to_vec()).await.is_ok() {
                 Ok(buf.len())
             } else {
                 Err(io::Error::new(io::ErrorKind::Other, "send_main err"))
@@ -105,9 +103,7 @@ impl Context {
     }
     pub fn try_send_main(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
         if let Some(sender) = &self.inner.main_tcp_channel {
-            let mut vec = vec![0; 4 + buf.len()];
-            vec[4..].copy_from_slice(buf);
-            if sender.try_send(vec).is_ok() {
+            if sender.try_send(buf.to_vec()).is_ok() {
                 Ok(buf.len())
             } else {
                 Err(io::Error::new(io::ErrorKind::Other, "try_send_main err"))
@@ -339,71 +335,91 @@ impl Channel {
     }
 }
 
-impl Channel {
-    async fn handle(handler: &mut ChannelDataHandler,
-                    context: &Context,
-                    id: usize,
-                    result: io::Result<(usize, SocketAddr)>,
-                    buf: &mut [u8], start: usize) {
-        match result {
-            Ok((len, addr)) => {
-                handler.handle(buf, start, start + len, RouteKey::new(id, addr), context).await;
-            }
-            Err(e) => {
-                log::error!("{:?}",e)
-            }
-        }
+#[derive(Clone)]
+struct BufSenderGroup(usize, Vec<tokio::sync::mpsc::Sender<(Vec<u8>, usize, usize, RouteKey)>>);
+
+struct BufReceiverGroup(Vec<tokio::sync::mpsc::Receiver<(Vec<u8>, usize, usize, RouteKey)>>);
+
+impl BufSenderGroup {
+    pub async fn send(&mut self, val: (Vec<u8>, usize, usize, RouteKey)) -> bool {
+        let index = self.0 % self.1.len();
+        self.0 = self.0.wrapping_add(1);
+        self.1[index].send(val).await.is_ok()
     }
-    async fn tcp_handle(mut tcp_r: OwnedReadHalf, context: Context,
-                        mut handler: ChannelDataHandler, head_reserve: usize, ) -> io::Result<()> {
-        let mut buf = [0; 4096];
+}
+
+fn buf_channel_group(size: usize) -> (BufSenderGroup, BufReceiverGroup) {
+    let mut buf_sender_group = Vec::with_capacity(size);
+    let mut buf_receiver_group = Vec::with_capacity(size);
+    for _ in 0..size {
+        let (buf_sender, buf_receiver) = tokio::sync::mpsc::channel::<(Vec<u8>, usize, usize, RouteKey)>(10);
+        buf_sender_group.push(buf_sender);
+        buf_receiver_group.push(buf_receiver);
+    }
+    (BufSenderGroup(0, buf_sender_group), BufReceiverGroup(buf_receiver_group))
+}
+
+impl Channel {
+    async fn tcp_handle(mut tcp_r: OwnedReadHalf, mut buf_sender: BufSenderGroup, head_reserve: usize) -> io::Result<()> {
+        let mut head = [0; 4];
         let addr = tcp_r.peer_addr()?;
         let key = RouteKey::new(0, addr);
         loop {
-            tcp_r.read_exact(&mut buf[head_reserve..head_reserve + 4]).await?;
-            let len = 4 + (((buf[head_reserve + 2] as u16) << 8) | buf[head_reserve + 3] as u16) as usize;
-            tcp_r.read_exact(&mut buf[head_reserve + 4..head_reserve + len]).await?;
-            handler.handle(&mut buf[4..], head_reserve, head_reserve + len - 4, key, &context).await;
+            let mut buf = vec![0; 4096];
+            tcp_r.read_exact(&mut head).await?;
+            let len = (((head[2] as u16) << 8) | head[3] as u16) as usize;
+            if len < 12 || len > buf.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "length overflow",
+                ));
+            }
+            tcp_r.read_exact(&mut buf[head_reserve..head_reserve + len]).await?;
+            if !buf_sender.send((buf, head_reserve, head_reserve + len, key)).await {
+                return Err(io::Error::new(io::ErrorKind::Other, "buf_sender发送数据失败"));
+            }
         }
     }
-    async fn start_tcp(mut worker: VntWorker, tcp_stream: TcpStream, mut receiver: tokio::sync::mpsc::Receiver<Vec<u8>>, context: Context, handler: ChannelDataHandler, head_reserve: usize) {
+    async fn start_tcp(mut worker: VntWorker, tcp_stream: TcpStream, mut receiver: tokio::sync::mpsc::Receiver<Vec<u8>>,
+                       current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+                       buf_sender: BufSenderGroup, head_reserve: usize) {
         let (tcp_r, mut tcp_w) = tcp_stream.into_split();
         {
-            let context = context.clone();
-            let handler = handler.clone();
+            let buf_sender = buf_sender.clone();
             tokio::spawn(async move {
-                if let Err(e) = Self::tcp_handle(tcp_r, context, handler, head_reserve).await {
+                if let Err(e) = Self::tcp_handle(tcp_r, buf_sender, head_reserve).await {
                     log::info!("tcp链接断开:{:?}",e);
                 }
             });
         }
+        let mut head = [0; 4];
         loop {
             tokio::select! {
                 _=worker.stop_wait()=>{
                     break;
                 }
                 rs=receiver.recv()=>{
-                    if let Some(mut data) = rs{
-                        if data.len()<4{
-                            continue
-                        }
-                        let len = data.len() - 4;
-                        data[2] = (len >> 8) as u8;
-                        data[3] = (len & 0xFF) as u8;
-                        if let Err(e) = tcp_w.write_all(&data).await {
-                            if context.is_close() {
-                                break;
-                            }
+                    if let Some(data) = rs{
+                        let len = data.len();
+                        head[2] = (len >> 8) as u8;
+                        head[3] = (len & 0xFF) as u8;
+                        let mut err = false;
+                        if let Err(e) = tcp_w.write_all(&head).await{
+                            err = true;
                             log::info!("发送失败,需要重连:{:?}",e);
+                        }else if let Err(e) = tcp_w.write_all(&data).await{
+                            err = true;
+                            log::info!("发送失败,需要重连:{:?}",e);
+                        }
+                        if err {
                             let _ = tcp_w.shutdown().await;
-                            match TcpStream::connect(context.inner.current_device.load().connect_server).await {
+                            match TcpStream::connect(current_device.load().connect_server).await {
                                 Ok(tcp_stream) => {
                                     let (r, w) = tcp_stream.into_split();
                                     tcp_w = w;
-                                    let context = context.clone();
-                                    let handler = handler.clone();
+                                    let buf_sender = buf_sender.clone();
                                     tokio::spawn(async move {
-                                        if let Err(e) = Self::tcp_handle(r, context, handler, head_reserve).await {
+                                        if let Err(e) = Self::tcp_handle(r, buf_sender, head_reserve).await {
                                             log::info!("tcp 链接断开:{:?}",e);
                                         }
                                     });
@@ -421,6 +437,7 @@ impl Channel {
         }
         worker.stop_all();
     }
+
     pub async fn start(self,
                        mut worker: VntWorker,
                        tcp: Option<(TcpStream, tokio::sync::mpsc::Receiver<Vec<u8>>)>,
@@ -428,14 +445,22 @@ impl Channel {
                        symmetric_channel_num: usize,//对称网络，则再加一组监听，提升打洞成功率
                        relay: bool,
     ) {
+        let (buf_sender, buf_receiver) = buf_channel_group(6);
+        for mut buf_receiver in buf_receiver.0 {
+            let context = self.context.clone();
+            let handler = self.handler.clone();
+            tokio::spawn(async move {
+                while let Some((mut buf, start, end, route_key)) = buf_receiver.recv().await {
+                    handler.handle(&mut buf, start, end, route_key, &context).await;
+                }
+            });
+        }
         let context = self.context;
         let main_channel = context.inner.main_channel.clone();
-        let handler = self.handler.clone();
         if let Some((tcp_stream, receiver)) = tcp {
-            tokio::spawn(Self::start_tcp(worker.worker("main_channel_tcp"), tcp_stream, receiver, context.clone(), handler.clone(), head_reserve));
+            tokio::spawn(Self::start_tcp(worker.worker("main_channel_tcp"), tcp_stream, receiver, context.inner.current_device.clone(), buf_sender.clone(), head_reserve));
         }
-        tokio::spawn(Self::start_(worker.worker("main_channel_1"), context.clone(), handler.clone(), main_channel.clone(), head_reserve, true));
-        // tokio::spawn(Self::start_(worker.worker("main_channel_2"), context.clone(), handler, main_channel, head_reserve, true));
+        tokio::spawn(Self::start_(worker.worker("main_channel_1"), context.clone(), main_channel.clone(), buf_sender.clone(), head_reserve, true));
         if relay {
             worker.stop_wait().await;
             return;
@@ -465,8 +490,7 @@ impl Channel {
                                             Ok(udp) => {
                                                 let udp = Arc::new(udp);
                                                 let context = context.clone();
-                                                let handler = self.handler.clone();
-                                                tokio::spawn(Self::start_(worker.worker("symmetric_channel"),context, handler, udp, head_reserve, false));
+                                                tokio::spawn(Self::start_(worker.worker("symmetric_channel"),context, udp,buf_sender.clone(), head_reserve, false));
                                             }
                                             Err(e) => {
                                                 log::error!("{}",e);
@@ -489,8 +513,8 @@ impl Channel {
         worker.stop_all();
     }
     async fn start_(mut worker: VntWorker, context: Context,
-                    mut handler: ChannelDataHandler,
                     udp: Arc<UdpSocket>,
+                    mut buf_sender: BufSenderGroup,
                     head_reserve: usize,
                     is_core: bool) {
         let mut status_receiver = context.inner.status_receiver.clone();
@@ -503,11 +527,21 @@ impl Channel {
         #[cfg(any(unix))]
             let id = 1 + udp.as_raw_fd() as usize;
         context.inner.udp_map.insert(id, udp.clone());
-        let mut buf = [0; 4096];
         loop {
+            let mut buf = vec![0; 4096];
             tokio::select! {
                 rs=udp.recv_from(&mut buf[head_reserve..])=>{
-                    Self::handle(&mut handler,&context,id,rs,&mut buf,head_reserve).await;
+                     match rs {
+                        Ok((len, addr)) => {
+                            if !buf_sender.send((buf,head_reserve,head_reserve+len,RouteKey::new(id, addr))).await{
+                                 log::error!("udp buf_sender发送数据失败");
+                                 break;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("{:?}",e)
+                        }
+                    }
                 }
                 changed=status_receiver.changed()=>{
                         match changed {

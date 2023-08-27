@@ -56,18 +56,27 @@ pub fn console_device_list(mut list: Vec<DeviceItem>) {
                        ("Rt".to_string(), Style::new())]);
     for item in list {
         if &item.status == "Online" {
-            if &item.nat_traversal_type == "p2p" {
-                out_list.push(vec![(item.name, Style::new().green()),
-                                   (item.virtual_ip, Style::new().green()),
-                                   (item.status, Style::new().green()),
-                                   (item.nat_traversal_type, Style::new().green()),
-                                   (item.rt, Style::new().green())]);
+            if item.client_secret != item.current_client_secret {
+                //加密状态不一致，无法通信的
+                out_list.push(vec![(item.name, Style::new().red()),
+                                   (item.virtual_ip, Style::new().red()),
+                                   (item.status, Style::new().red()),
+                                   ("".to_string(), Style::new().red()),
+                                   ("".to_string(), Style::new().red())]);
             } else {
-                out_list.push(vec![(item.name, Style::new().yellow()),
-                                   (item.virtual_ip, Style::new().yellow()),
-                                   (item.status, Style::new().yellow()),
-                                   (item.nat_traversal_type, Style::new().yellow()),
-                                   (item.rt, Style::new().yellow())]);
+                if &item.nat_traversal_type == "p2p" {
+                    out_list.push(vec![(item.name, Style::new().green()),
+                                       (item.virtual_ip, Style::new().green()),
+                                       (item.status, Style::new().green()),
+                                       (item.nat_traversal_type, Style::new().green()),
+                                       (item.rt, Style::new().green())]);
+                } else {
+                    out_list.push(vec![(item.name, Style::new().yellow()),
+                                       (item.virtual_ip, Style::new().yellow()),
+                                       (item.status, Style::new().yellow()),
+                                       (item.nat_traversal_type, Style::new().yellow()),
+                                       (item.rt, Style::new().yellow())]);
+                }
             }
         } else {
             out_list.push(vec![(item.name, Style::new().color256(102)),

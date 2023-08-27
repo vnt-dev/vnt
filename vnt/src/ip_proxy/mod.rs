@@ -6,6 +6,7 @@ use crossbeam_skiplist::SkipMap;
 use socket2::{SockAddr, Socket};
 use tokio::net::{TcpListener, UdpSocket};
 use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::icmp_proxy::IcmpProxy;
 use crate::ip_proxy::tcp_proxy::TcpProxy;
@@ -40,7 +41,7 @@ impl IpProxyMap {
     }
 }
 
-pub async fn init_proxy(sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
+pub async fn init_proxy(sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>, client_cipher: Cipher,) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
     let tcp_proxy_map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(SkipMap::new());
     let udp_proxy_map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(SkipMap::new());
     let icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>> = Arc::new(SkipMap::new());
@@ -51,7 +52,8 @@ pub async fn init_proxy(sender: ChannelSender, current_device: Arc<AtomicCell<Cu
     let tcp_proxy = TcpProxy::new(tcp_listener, tcp_proxy_map.clone());
     let udp_proxy = UdpProxy::new(udp_socket, udp_proxy_map.clone());
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
-    let icmp_proxy = IcmpProxy::new(addr, icmp_proxy_map.clone(), sender.clone(), current_device.clone())?;
+    let icmp_proxy = IcmpProxy::new(addr, icmp_proxy_map.clone(),
+                                    sender.clone(), current_device.clone(),client_cipher)?;
     let icmp_socket = icmp_proxy.icmp_socket();
     thread::spawn(move || {
         icmp_proxy.start();

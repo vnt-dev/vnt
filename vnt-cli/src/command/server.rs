@@ -1,5 +1,5 @@
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::io::Write;
 use tokio::net::UdpSocket;
 
 use vnt::core::Vnt;
@@ -15,27 +15,11 @@ impl CommandServer {
 
 impl CommandServer {
     pub async fn start(self, vnt: Vnt) -> io::Result<()> {
-        let mut port = 21637 as u16;
-        let udp = loop {
-            match UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(
-                Ipv4Addr::new(127, 0, 0, 1),
-                port,
-            ))).await {
-                Ok(udp) => {
-                    break udp;
-                }
-                Err(e) => {
-                    if e.kind() == io::ErrorKind::AddrInUse {
-                        port += 1;
-                    } else {
-                        log::error!("创建udp失败 {:?}", e);
-                        return Err(e);
-                    }
-                }
-            }
-        };
+        let udp = UdpSocket::bind("127.0.0.1:0").await?;
         let path_buf = crate::app_home()?.join("command-port");
-        std::fs::write(path_buf, udp.local_addr()?.port().to_string())?;
+        let mut file = std::fs::File::create(path_buf)?;
+        file.write_all(udp.local_addr()?.port().to_string().as_bytes())?;
+        file.sync_all()?;
         let mut buf = [0u8; 64];
         loop {
             let (len, addr) = udp.recv_from(&mut buf).await?;

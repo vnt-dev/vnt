@@ -7,6 +7,7 @@ pub enum Protocol {
     AddressExhausted,
     IpAlreadyExists,
     InvalidIp,
+    NoKey,
     Other(u8),
 }
 
@@ -18,6 +19,7 @@ impl From<u8> for Protocol {
             3 => Self::AddressExhausted,
             4 => Self::IpAlreadyExists,
             5 => Self::InvalidIp,
+            6 => Self::NoKey,
             val => Self::Other(val),
         }
     }
@@ -31,6 +33,7 @@ impl Into<u8> for Protocol {
             Protocol::AddressExhausted => 3,
             Protocol::IpAlreadyExists => 4,
             Protocol::InvalidIp => 5,
+            Protocol::NoKey => 6,
             Protocol::Other(val) => val,
         }
     }
@@ -42,6 +45,7 @@ pub enum InErrorPacket<B> {
     AddressExhausted,
     IpAlreadyExists,
     InvalidIp,
+    NoKey,
     OtherError(ErrorPacket<B>),
 }
 
@@ -53,6 +57,7 @@ impl<B: AsRef<[u8]>> InErrorPacket<B> {
             Protocol::AddressExhausted => Ok(InErrorPacket::AddressExhausted),
             Protocol::IpAlreadyExists => Ok(InErrorPacket::IpAlreadyExists),
             Protocol::InvalidIp => Ok(InErrorPacket::InvalidIp),
+            Protocol::NoKey => Ok(InErrorPacket::NoKey),
             Protocol::Other(_) => Ok(InErrorPacket::OtherError(ErrorPacket::new(buffer)?)),
         }
     }

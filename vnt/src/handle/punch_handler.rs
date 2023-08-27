@@ -13,12 +13,16 @@ use std::io;
 use tokio::sync::mpsc::Receiver;
 use crate::channel::punch::{NatInfo, Punch};
 use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
 use crate::core::status::VntWorker;
+use crate::protocol::body::ENCRYPTION_RESERVED;
 
-pub fn start(mut worker: VntWorker, receiver: Receiver<(Ipv4Addr, NatInfo)>, punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
+pub fn start(mut worker: VntWorker, receiver: Receiver<(Ipv4Addr, NatInfo)>,
+             punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+             client_cipher: Cipher, ) {
     tokio::spawn(async move {
         tokio::select! {
-            _=start0(receiver, punch, current_device)=>{}
+            _=start0(receiver, punch, current_device,client_cipher)=>{}
             _=worker.stop_wait()=>{
                 return;
             }
@@ -27,21 +31,24 @@ pub fn start(mut worker: VntWorker, receiver: Receiver<(Ipv4Addr, NatInfo)>, pun
     });
 }
 
-pub async fn start0(mut receiver: Receiver<(Ipv4Addr, NatInfo)>, mut punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) {
+pub async fn start0(mut receiver: Receiver<(Ipv4Addr, NatInfo)>,
+                    mut punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+                    client_cipher: Cipher, ) {
     while let Some((peer_ip, nat_info)) = receiver.recv().await {
-        if let Err(e) = start_(&mut punch, &current_device, peer_ip, nat_info).await {
+        if let Err(e) = start_(&client_cipher, &mut punch, &current_device, peer_ip, nat_info).await {
             log::warn!("网络打洞异常 {:?}", e);
         }
     }
 }
 
 async fn start_(
+    client_cipher: &Cipher,
     punch: &mut Punch,
     current_device: &Arc<AtomicCell<CurrentDeviceInfo>>,
     peer_ip: Ipv4Addr,
     nat_info: NatInfo,
 ) -> io::Result<()> {
-    let mut packet = NetPacket::new([0u8; 12])?;
+    let mut packet = NetPacket::new_encrypt([0u8; 12 + ENCRYPTION_RESERVED])?;
     packet.set_version(Version::V1);
     packet.first_set_ttl(1);
     packet.set_protocol(Protocol::Control);
@@ -49,7 +56,7 @@ async fn start_(
     packet.set_source(current_device.load().virtual_ip());
     packet.set_destination(peer_ip);
     log::info!("发起打洞，目标:{:?},{:?}", peer_ip, nat_info);
-
+    client_cipher.encrypt_ipv4(&mut packet)?;
     punch.punch(packet.buffer(), peer_ip, nat_info).await
 }
 
@@ -59,6 +66,7 @@ pub async fn start_punch(
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     sender: ChannelSender,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
 ) {
     let mut num = 0;
     let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
@@ -67,7 +75,8 @@ pub async fn start_punch(
             break;
         }
         tokio::select! {
-            rs= start_punch_(Duration::from_secs(sleep_time[num % sleep_time.len()]),&nat_test, &device_list, &sender, &current_device)=>{
+            rs= start_punch_(Duration::from_secs(sleep_time[num % sleep_time.len()]),&nat_test, &device_list,
+                &sender, &current_device,&client_cipher)=>{
                  if let Err(e) = rs {
                     log::warn!("打洞处理任务异常 {:?}", e);
                 }
@@ -86,6 +95,7 @@ async fn start_punch_(
     device_list: &Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     sender: &ChannelSender,
     current_device: &Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: &Cipher,
 ) -> crate::Result<()> {
     let current_device = current_device.load();
     let nat_info = nat_test.nat_info();
@@ -103,7 +113,7 @@ async fn start_punch_(
         if count > 2 {
             break;
         }
-        let buf = punch_packet(current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
+        let buf = punch_packet(client_cipher, current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
         let _ = sender.send_main(&buf, current_device.connect_server).await;
     }
     tokio::time::sleep(sleep_time).await;
@@ -111,6 +121,7 @@ async fn start_punch_(
 }
 
 pub fn punch_packet(
+    client_cipher: &Cipher,
     virtual_ip: Ipv4Addr,
     nat_info: &NatInfo,
     dest: Ipv4Addr,
@@ -128,13 +139,14 @@ pub fn punch_packet(
     punch_reply.local_port = nat_info.local_port as u32;
     punch_reply.nat_type = protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
     let bytes = punch_reply.write_to_bytes()?;
-    let mut net_packet = NetPacket::new(vec![0u8; 12 + bytes.len()])?;
+    let mut net_packet = NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::OtherTurn);
     net_packet.set_transport_protocol(other_turn_packet::Protocol::Punch.into());
     net_packet.first_set_ttl(MAX_TTL);
     net_packet.set_source(virtual_ip);
     net_packet.set_destination(dest);
-    net_packet.set_payload(&bytes);
+    net_packet.set_payload(&bytes)?;
+    client_cipher.encrypt_ipv4(&mut net_packet)?;
     Ok(net_packet.into_buffer())
 }

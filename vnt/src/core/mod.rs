@@ -6,6 +6,7 @@ use std::time::Duration;
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
+use rand::Rng;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc::channel;
 
@@ -14,11 +15,12 @@ use crate::channel::channel::{Channel, Context};
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
 use crate::channel::sender::ChannelSender;
-use crate::cipher::Cipher;
+use crate::cipher::{Cipher, RsaCipher};
 use crate::core::status::VntStatusManger;
 use crate::error::Error;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
-use crate::handle::{ConnectStatus, CurrentDeviceInfo, heartbeat_handler, PeerDeviceInfo, punch_handler, registration_handler};
+use crate::handle::{ConnectStatus, CurrentDeviceInfo, handshake_handler, heartbeat_handler, PeerDeviceInfo, punch_handler, registration_handler};
+use crate::handle::handshake_handler::HandshakeEnum;
 use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::registration_handler::{RegResponse, ReqEnum};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -35,7 +37,7 @@ pub mod sync;
 
 #[derive(Clone)]
 pub struct Vnt {
-    name: String,
+    config: Config,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     context: Context,
     vnt_status_manager: VntStatusManger,
@@ -55,33 +57,54 @@ pub struct VntUtil {
     main_tcp_channel: Option<TcpStream>,
     response: Option<RegResponse>,
     iface: Option<(DeviceWriter, DeviceReader)>,
+    server_cipher: Cipher,
+    rsa_cipher: Option<RsaCipher>,
 }
 
 impl VntUtil {
     pub async fn new(config: Config) -> io::Result<VntUtil> {
         let main_channel = UdpSocket::bind("0.0.0.0:0").await?;
+        let server_cipher = if config.server_encrypt {
+            let mut key = [0 as u8; 32];
+            rand::thread_rng().fill(&mut key);
+            Cipher::new_key(key, config.token.clone())?
+        } else {
+            Cipher::None
+        };
         Ok(VntUtil {
             config,
             main_channel,
             main_tcp_channel: None,
             response: None,
             iface: None,
+            server_cipher,
+            rsa_cipher: None,
         })
     }
-    pub async fn connect(&mut self) -> Result<RegResponse, ReqEnum> {
+    ///链接
+    pub async fn connect(&mut self) -> io::Result<()> {
         if self.config.tcp {
-            match TcpStream::connect(self.config.server_address).await {
-                Ok(tcp) => {
-                    let _ = self.main_tcp_channel.insert(tcp);
-                }
-                Err(e) => {
-                    return Err(ReqEnum::Other(format!("connect error:{}", e)));
-                }
-            }
+            let tcp = TcpStream::connect(self.config.server_address).await?;
+            let _ = self.main_tcp_channel.insert(tcp);
         }
-        match registration_handler::registration(&self.main_channel, self.main_tcp_channel.as_mut(), self.config.server_address,
+        Ok(())
+    }
+
+    ///握手 用于获取公钥
+    pub async fn handshake(&mut self) -> Result<Option<RsaCipher>, HandshakeEnum> {
+        let rsa_cipher = handshake_handler::handshake(&self.main_channel, self.main_tcp_channel.as_mut(), self.config.server_address, self.config.server_encrypt).await?;
+        self.rsa_cipher = rsa_cipher.clone();
+        Ok(rsa_cipher)
+    }
+    /// 加密握手 用于同步密钥
+    pub async fn secret_handshake(&mut self) -> Result<(), HandshakeEnum> {
+        handshake_handler::secret_handshake(&self.main_channel, self.main_tcp_channel.as_mut(), self.config.server_address, self.rsa_cipher.as_ref().unwrap(), &self.server_cipher,self.config.token.clone()).await
+    }
+    /// 注册
+    pub async fn register(&mut self) -> Result<RegResponse, ReqEnum> {
+        match registration_handler::registration(&self.main_channel, self.main_tcp_channel.as_mut(), &self.server_cipher, self.config.server_address,
                                                  self.config.token.clone(), self.config.device_id.clone(),
-                                                 self.config.name.clone(), self.config.ip.unwrap_or(Ipv4Addr::UNSPECIFIED)).await {
+                                                 self.config.name.clone(), self.config.ip.unwrap_or(Ipv4Addr::UNSPECIFIED),self.config.password.is_some()).await {
             Ok(res) => {
                 let _ = self.response.insert(res.clone());
                 Ok(res)
@@ -149,9 +172,9 @@ impl VntUtil {
                 res
             }
         };
-        let config = self.config;
+        let config = self.config.clone();
         let vnt_status_manager = VntStatusManger::new();
-        let cipher = Cipher::new(config.password.clone());
+        let client_cipher = Cipher::new_password(config.password.clone(), config.token.clone());
         let virtual_ip = response.virtual_ip;
         let virtual_gateway = response.virtual_gateway;
         let virtual_netmask = response.virtual_netmask;
@@ -170,9 +193,9 @@ impl VntUtil {
         let idle = Idle::new(Duration::from_secs(16), context.clone());
         let channel_sender = ChannelSender::new(context.clone());
 
-        let register = Arc::new(registration_handler::Register::new(channel_sender.clone(),
+        let register = Arc::new(registration_handler::Register::new(self.server_cipher.clone(), channel_sender.clone(),
                                                                     config.server_address, config.token.clone(),
-                                                                    config.device_id.clone(), config.name.clone()));
+                                                                    config.device_id.clone(), config.name.clone(),config.password.is_some()));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> = Arc::new(Mutex::new((response.epoch, response.device_info_list)));
         let peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>> = Arc::new(SkipMap::new());
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
@@ -190,7 +213,7 @@ impl VntUtil {
         let (tcp_proxy, udp_proxy, ip_proxy_map) = if config.out_ips.is_empty() {
             (None, None, None)
         } else {
-            let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(channel_sender.clone(), current_device.clone()).await?;
+            let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(channel_sender.clone(), current_device.clone(), client_cipher.clone()).await?;
             (Some(tcp_proxy), Some(udp_proxy), Some(ip_proxy_map))
         };
         let out_external_route = AllowExternalRoute::new(config.out_ips);
@@ -203,21 +226,22 @@ impl VntUtil {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         if config.tap {
             tap_handler::start(vnt_status_manager.worker("tap_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
+                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), client_cipher.clone(), self.server_cipher.clone());
         } else {
             tun_handler::start(vnt_status_manager.worker("tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
+                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), client_cipher.clone(), self.server_cipher.clone()).await;
         }
         #[cfg(any(target_os = "android"))]
         tun_handler::start(vnt_status_manager.worker("android tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone());
+                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone()).await;
 
         //外部数据接收处理
         let channel_recv_handler = ChannelDataHandler::new(current_device.clone(), device_list.clone(),
                                                            register.clone(), nat_test.clone(), igmp_server,
                                                            device_writer.clone(), connect_status.clone(),
                                                            peer_nat_info_map.clone(), ip_proxy_map, out_external_route,
-                                                           cone_sender, symmetric_sender, cipher, config.relay);
+                                                           cone_sender, symmetric_sender, client_cipher.clone(),
+                                                           self.server_cipher.clone(), self.rsa_cipher.clone(), config.relay,config.token.clone());
         {
             let channel = Channel::new(context.clone(), channel_recv_handler);
             let channel_worker = vnt_status_manager.worker("channel_worker");
@@ -238,20 +262,21 @@ impl VntUtil {
             let device_list = device_list.clone();
             let current_device = current_device.clone();
             // 定时心跳
-            heartbeat_handler::start_heartbeat(other_worker.worker("heartbeat"), channel_sender.clone(), device_list.clone(), current_device.clone(), config.server_address_str);
+            heartbeat_handler::start_heartbeat(other_worker.worker("heartbeat"), channel_sender.clone(), device_list.clone(),
+                                               current_device.clone(), config.server_address_str, client_cipher.clone(), self.server_cipher.clone());
             // 空闲检查
             heartbeat_handler::start_idle(other_worker.worker("idle"), idle, channel_sender.clone());
             if !config.relay {
                 // 打洞处理
-                punch_handler::start(other_worker.worker("cone_receiver"), cone_receiver, punch.clone(), current_device.clone());
-                punch_handler::start(other_worker.worker("symmetric_receiver"), symmetric_receiver, punch, current_device.clone());
+                punch_handler::start(other_worker.worker("cone_receiver"), cone_receiver, punch.clone(), current_device.clone(), client_cipher.clone());
+                punch_handler::start(other_worker.worker("symmetric_receiver"), symmetric_receiver, punch, current_device.clone(), client_cipher.clone());
                 tokio::spawn(punch_handler::start_punch(other_worker, nat_test,
-                                                        device_list, channel_sender, current_device));
+                                                        device_list, channel_sender, current_device, client_cipher.clone()));
             }
         }
         context.switch(nat_test.nat_info().nat_type);
         Ok(Vnt {
-            name: config.name,
+            config:self.config,
             current_device,
             context,
             vnt_status_manager,
@@ -266,7 +291,13 @@ impl VntUtil {
 
 impl Vnt {
     pub fn name(&self) -> &str {
-        &self.name
+        &self.config.name
+    }
+    pub fn server_encrypt(&self) -> bool {
+        self.config.server_encrypt
+    }
+    pub fn client_encrypt(&self) -> bool {
+        self.config.password.is_some()
     }
     pub fn current_device(&self) -> CurrentDeviceInfo {
         self.current_device.load()
@@ -344,6 +375,7 @@ pub struct Config {
     pub tcp: bool,
     pub ip: Option<Ipv4Addr>,
     pub relay: bool,
+    pub server_encrypt: bool,
 }
 
 
@@ -357,7 +389,7 @@ impl Config {
                in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32)>,
                password: Option<String>, simulate_multicast: bool, mtu: Option<u16>, tcp: bool,
                ip: Option<Ipv4Addr>,
-               relay: bool, ) -> Self {
+               relay: bool, server_encrypt: bool, ) -> Self {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
                 x.push_str(":3478");
@@ -379,6 +411,7 @@ impl Config {
             tcp,
             ip,
             relay,
+            server_encrypt,
         }
     }
 }

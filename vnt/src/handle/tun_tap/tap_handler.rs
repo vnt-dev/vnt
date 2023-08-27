@@ -16,6 +16,7 @@ use crate::cipher::Cipher;
 use crate::core::status::VntWorker;
 use crate::external_route::ExternalRoute;
 use crate::handle::CurrentDeviceInfo;
+use crate::handle::tun_tap::channel_group::{buf_channel_group, BufSenderGroup};
 use crate::igmp_server::IgmpServer;
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::{DeviceReader, DeviceWriter};
@@ -27,14 +28,34 @@ pub fn start(worker: VntWorker, sender: ChannelSender,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
-             cipher: Cipher) {
+             client_cipher: Cipher, server_cipher: Cipher) {
+    let (buf_sender, buf_receiver) = buf_channel_group(6);
+    for mut buf_receiver in buf_receiver.0 {
+        let sender = sender.clone();
+        let device_writer = device_writer.clone();
+        let igmp_server = igmp_server.clone();
+        let current_device = current_device.clone();
+        let ip_route = ip_route.clone();
+        let ip_proxy_map = ip_proxy_map.clone();
+        let client_cipher = client_cipher.clone();
+        let server_cipher = server_cipher.clone();
+        tokio::spawn(async move {
+            while let Some((mut buf, _, len)) = buf_receiver.recv().await {
+                match handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender,
+                             &ip_route, &ip_proxy_map, &client_cipher, &server_cipher).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("{:?}", e)
+                    }
+                }
+            }
+        });
+    }
     thread::Builder::new().name("tap_handler".into()).spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap()
             .block_on(async move {
-                if let Err(e) = start_(sender, device_reader,
-                                       device_writer, igmp_server,
-                                       current_device, ip_route, ip_proxy_map, cipher).await {
+                if let Err(e) = start_(sender, device_reader, buf_sender).await {
                     log::warn!("tap:{:?}",e);
                 }
                 worker.stop_all();
@@ -44,24 +65,23 @@ pub fn start(worker: VntWorker, sender: ChannelSender,
 
 async fn start_(sender: ChannelSender,
                 device_reader: DeviceReader,
-                device_writer: DeviceWriter,
-                igmp_server: Option<IgmpServer>,
-                current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-                ip_route: Option<ExternalRoute>,
-                ip_proxy_map: Option<IpProxyMap>,
-                cipher: Cipher) -> io::Result<()> {
-    let mut buf = [0; 4096];
+                mut buf_sender: BufSenderGroup) -> io::Result<()> {
     loop {
-        //ip拆包了会直接丢弃？
+        let mut buf = vec![0; 4096];
+        if sender.is_close() {
+            return Ok(());
+        }
+        let start = 0;
         let len = device_reader.read(&mut buf)?;
-        if let Err(e) = handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender, &ip_route, &ip_proxy_map, &cipher).await {
-            log::warn!("tap handle{:?}",e);
+        if !buf_sender.send((buf, start, len)).await {
+            return Err(io::Error::new(io::ErrorKind::Other, "tap buf_sender发送失败"));
         }
     }
 }
 
 async fn handle(buf: &mut [u8], len: usize, igmp_server: &Option<IgmpServer>, current_device: &AtomicCell<CurrentDeviceInfo>,
-                device_writer: &DeviceWriter, sender: &ChannelSender, ip_route: &Option<ExternalRoute>, proxy_map: &Option<IpProxyMap>, cipher: &Cipher) -> crate::Result<()> {
+                device_writer: &DeviceWriter, sender: &ChannelSender, ip_route: &Option<ExternalRoute>,
+                proxy_map: &Option<IpProxyMap>, client_cipher: &Cipher, server_cipher: &Cipher) -> crate::Result<()> {
     let mut ethernet_packet = EthernetPacket::new(&mut buf[..len])?;
     let current_device = current_device.load();
     match ethernet_packet.protocol() {
@@ -113,7 +133,7 @@ async fn handle(buf: &mut [u8], len: usize, igmp_server: &Option<IgmpServer>, cu
             }
             // 以太网帧头部14字节，预留12字节
             return crate::handle::tun_tap::base_handle(sender, &mut buf[2..], len - 2, igmp_server, current_device,
-                                                       ip_route, proxy_map, cipher).await;
+                                                       ip_route, proxy_map, client_cipher, server_cipher).await;
         }
         _ => {
             // log::warn!("不支持的二层协议：{:?}",p)

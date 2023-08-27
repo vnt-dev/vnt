@@ -77,6 +77,9 @@ jobs:
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
             OS: windows-latest
             FEATURES: ring-cipher
+          - TARGET: mipsel-unknown-linux-musl # openwrt
+            OS: ubuntu-latest
+            FEATURES: normal
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:
@@ -102,22 +105,45 @@ jobs:
           # dependencies are only needed on ubuntu as that's the only place where
           # we make cross-compilation
           if [[ $OS =~ ^ubuntu.*$ ]]; then
-            sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools 
+            sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools gcc-mipsel-linux-gnu
           fi
           # some additional configuration for cross-compilation on linux
           cat >>~/.cargo/config <<EOF
+          [target.x86_64-unknown-linux-musl]
+          rustflags = ["-C", "target-feature=+crt-static"]
           [target.aarch64-unknown-linux-gnu]
           linker = "aarch64-linux-gnu-gcc"
+          rustflags = ["-C", "target-feature=+crt-static"]
           [target.aarch64-unknown-linux-musl]
           linker = "aarch64-linux-gnu-gcc"
+          rustflags = ["-C", "target-feature=+crt-static"]
           [target.armv7-unknown-linux-gnueabihf]
           linker = "arm-linux-gnueabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static"]
           [target.armv7-unknown-linux-musleabihf]
           linker = "arm-linux-gnueabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static"]
           [target.arm-unknown-linux-gnueabihf]
           linker = "arm-linux-gnueabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static"]
           [target.arm-unknown-linux-musleabihf]
           linker = "arm-linux-gnueabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static"]
+          [target.mipsel-unknown-linux-musl]
+          linker = "mipsel-linux-gnu-gcc"
+          rustflags = ["-C", "target-feature=+crt-static"]
+          [target.x86_64-pc-windows-msvc]
+          rustflags = ["-C", "target-feature=+crt-static"]    
+          [target.i686-pc-windows-msvc]
+          rustflags = ["-C", "target-feature=+crt-static"]      
+          [target.x86_64-apple-darwin]
+          rustflags = ["-C", "target-feature=+crt-static"] 
+          [target.aarch64-apple-darwin]
+          rustflags = ["-C", "target-feature=+crt-static"]     
+          [target.i686-unknown-linux-musl]
+          rustflags = ["-C", "target-feature=+crt-static"]    
+          [target.x86_64-unknown-linux-gnu]
+          rustflags = ["-C", "target-feature=+crt-static"]
           EOF
       - name: Install rust target
         run: rustup target add $TARGET

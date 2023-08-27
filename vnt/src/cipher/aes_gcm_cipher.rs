@@ -1,111 +1,111 @@
 use std::io;
 
-use aes_gcm::{AeadInPlace, Aes128Gcm, Aes256Gcm, Key, Nonce, Tag,KeyInit};
+use aes_gcm::{AeadInPlace, Aes128Gcm, Aes256Gcm, Key, KeyInit, Nonce, Tag};
 use aes_gcm::aead::consts::{U12, U16};
 use aes_gcm::aead::generic_array::GenericArray;
-use sha2::Digest;
+use rand::RngCore;
 
-use crate::protocol;
-use crate::protocol::{ip_turn_packet, NetPacket};
+use crate::cipher::finger::Finger;
+use crate::protocol::{body::ENCRYPTION_RESERVED, body::SecretBody, NetPacket};
+
+
 
 #[derive(Clone)]
-pub enum Cipher {
-    AesGCM128(Aes128Gcm),
-    AesGCM256(Aes256Gcm),
-    None,
+pub struct AesGcmCipher {
+    pub(crate) cipher: AesGcmEnum,
+    pub(crate) finger: Finger,
 }
 
-impl Cipher {
-    pub fn new(password: Option<String>) -> Self {
-        if let Some(password) = password {
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(password.as_bytes());
-            let key: [u8; 32] = hasher.finalize().into();
-            if password.len() < 8 {
-                let key: &Key<Aes128Gcm> = key[..16].into();
-                Cipher::AesGCM128(Aes128Gcm::new(&key))
-            } else {
-                let key: &Key<Aes256Gcm> = &key.into();
-                Cipher::AesGCM256(Aes256Gcm::new(&key))
-            }
-        } else {
-            Cipher::None
+#[derive(Clone)]
+pub enum AesGcmEnum {
+    AES128GCM(Aes128Gcm),
+    AES256GCM(Aes256Gcm),
+}
+
+impl AesGcmCipher {
+    pub fn new_128(key: [u8; 16], finger: Finger) -> Self {
+        let key: &Key<Aes128Gcm> = &key.into();
+        Self {
+            cipher: AesGcmEnum::AES128GCM(Aes128Gcm::new(key)),
+            finger,
         }
     }
-    pub fn decrypt_ipv4(&self, net_packet: &mut NetPacket<&mut [u8]>) -> io::Result<Option<usize>> {
-        match &self {
-            Cipher::None => {
-                return Ok(None);
-            }
-            _ => {}
+    pub fn new_256(key: [u8; 32], finger: Finger) -> Self {
+        let key: &Key<Aes256Gcm> = &key.into();
+        Self {
+            cipher: AesGcmEnum::AES256GCM(Aes256Gcm::new(key)),
+            finger,
         }
+    }
+
+    pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
         if !net_packet.is_encrypt() {
             //未加密的数据直接丢弃
             return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
         }
-        if net_packet.payload().len() < 16 {
-            log::error!("数据异常,长度小于16");
+        if net_packet.payload().len() < ENCRYPTION_RESERVED {
+            log::error!("数据异常,长度小于{}",ENCRYPTION_RESERVED);
             return Err(io::Error::new(io::ErrorKind::Other, "data err"));
         }
-        let mut nonce = [0; 12];
-        nonce[0..4].copy_from_slice(&net_packet.source().octets());
-        nonce[4..8].copy_from_slice(&net_packet.destination().octets());
-        nonce[8] = protocol::Protocol::IpTurn.into();
-        nonce[9] = ip_turn_packet::Protocol::Ipv4.into();
-        let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce);
-        let payload_len = net_packet.payload().len() - 16;
-        let tag: GenericArray<u8, U16> = Tag::clone_from_slice(&net_packet.payload()[payload_len..]);
-        let rs = match &self {
-            Cipher::AesGCM128(cipher) => {
-                cipher.decrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len], &tag)
-            }
-            Cipher::AesGCM256(cipher) => {
-                cipher.decrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len], &tag)
-            }
-            Cipher::None => {
-                return Ok(None);
-            }
+        let mut nonce_raw = [0; 12];
+        nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
+        nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
+        nonce_raw[8] = net_packet.protocol().into();
+        nonce_raw[9] = net_packet.transport_protocol();
+        nonce_raw[10] = net_packet.is_gateway() as u8;
+        nonce_raw[11] = net_packet.source_ttl();
+        let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce_raw);
+
+        let mut secret_body = SecretBody::new(net_packet.payload_mut())?;
+        let tag = secret_body.tag();
+        if tag.len() != 16 {
+            return Err(io::Error::new(io::ErrorKind::Other, "tag err"));
+        }
+        let finger = self.finger.calculate_finger(&nonce_raw, &secret_body);
+        if &finger != secret_body.finger() {
+            return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
+        }
+        let tag: GenericArray<u8, U16> = Tag::clone_from_slice(tag);
+        let rs = match &self.cipher {
+            AesGcmEnum::AES128GCM(aes_gcm) => { aes_gcm.decrypt_in_place_detached(nonce, &[], secret_body.body_mut(), &tag) }
+            AesGcmEnum::AES256GCM(aes_gcm) => { aes_gcm.decrypt_in_place_detached(nonce, &[], secret_body.body_mut(), &tag) }
         };
         if let Err(e) = rs {
             return Err(io::Error::new(io::ErrorKind::Other, format!("解密失败:{}", e)));
         }
-        return Ok(Some(payload_len));
+        net_packet.set_encrypt_flag(false);
+        net_packet.set_data_len(net_packet.data_len() - ENCRYPTION_RESERVED)?;
+        return Ok(());
     }
     /// net_packet 必须预留足够长度
     /// data_len是有效载荷的长度
-    /// 返回加密后载荷的长度
-    pub fn encrypt_ipv4(&self, payload_len: usize, net_packet: &mut NetPacket<&mut [u8]>) -> io::Result<Option<usize>> {
-        match &self {
-            Cipher::None => {
-                return Ok(None);
-            }
-            _ => {}
+    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
+        if net_packet.reserve() < ENCRYPTION_RESERVED {
+            return Err(io::Error::new(io::ErrorKind::Other, "too short"));
         }
-        let mut nonce = [0; 12];
-        nonce[0..4].copy_from_slice(&net_packet.source().octets());
-        nonce[4..8].copy_from_slice(&net_packet.destination().octets());
-        nonce[8] = protocol::Protocol::IpTurn.into();
-        nonce[9] = ip_turn_packet::Protocol::Ipv4.into();
-        let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce);
-        let rs = match &self {
-            Cipher::AesGCM128(cipher) => {
-                cipher.encrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len])
-            }
-            Cipher::AesGCM256(cipher) => {
-                cipher.encrypt_in_place_detached(nonce, &[], &mut net_packet.payload_mut()[..payload_len])
-            }
-            Cipher::None => {
-                return Ok(None);
-            }
+        let mut nonce_raw = [0; 12];
+        nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
+        nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
+        nonce_raw[8] = net_packet.protocol().into();
+        nonce_raw[9] = net_packet.transport_protocol();
+        nonce_raw[10] = net_packet.is_gateway() as u8;
+        nonce_raw[11] = net_packet.source_ttl();
+        let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce_raw);
+        let data_len = net_packet.data_len() + ENCRYPTION_RESERVED;
+        net_packet.set_data_len(data_len)?;
+        let mut secret_body = SecretBody::new(net_packet.payload_mut())?;
+        secret_body.set_random(rand::thread_rng().next_u32());
+        let rs = match &self.cipher {
+            AesGcmEnum::AES128GCM(aes_gcm) => { aes_gcm.encrypt_in_place_detached(nonce, &[], secret_body.body_mut()) }
+            AesGcmEnum::AES256GCM(aes_gcm) => { aes_gcm.encrypt_in_place_detached(nonce, &[], secret_body.body_mut()) }
         };
         return match rs {
             Ok(tag) => {
-                if tag.len() != 16 {
-                    return Err(io::Error::new(io::ErrorKind::Other, format!("加密tag长度错误:{}", tag.len())));
-                }
+                secret_body.set_tag(tag.as_slice())?;
+                let finger = self.finger.calculate_finger(&nonce_raw, &secret_body);
+                secret_body.set_finger(&finger)?;
                 net_packet.set_encrypt_flag(true);
-                net_packet.payload_mut()[payload_len..payload_len + 16].copy_from_slice(tag.as_slice());
-                Ok(Some(payload_len + 16))
+                Ok(())
             }
             Err(e) => {
                 Err(io::Error::new(io::ErrorKind::Other, format!("加密失败:{}", e)))

@@ -2,11 +2,17 @@ use std::io;
 use std::net::{Ipv4Addr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::str::FromStr;
+
 use console::style;
 use getopts::Options;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::signal;
+#[cfg(unix)]
+use tokio::signal::unix::{signal, SignalKind};
+
 use common::args_parse::{ips_parse, out_ips_parse};
-use vnt::core::{Config, VntUtil};
+use vnt::core::{Config, Vnt, VntUtil};
+use vnt::handle::handshake_handler::HandshakeEnum;
 use vnt::handle::registration_handler::ReqEnum;
 
 mod command;
@@ -28,24 +34,26 @@ async fn main() {
 }
 
 async fn main0() {
+    let _ = log4rs::init_file("log4rs.yaml", Default::default());
     let args: Vec<String> = std::env::args().collect();
     let program = args[0].clone();
     let mut opts = Options::new();
-    opts.optopt("k", "", "必选,使用相同的token,就能组建一个局域网络", "<token>");
-    opts.optopt("n", "", "给设备一个名字,便于区分不同设备,默认使用系统版本", "<name>");
-    opts.optopt("d", "", "设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip", "<id>");
-    opts.optflag("c", "", "关闭交互式命令,使用此参数禁用控制台输入");
+    opts.optopt("k", "", "组网标识", "<token>");
+    opts.optopt("n", "", "设备名称", "<name>");
+    opts.optopt("d", "", "设备标识", "<id>");
+    opts.optflag("c", "", "关闭交互式命令");
     opts.optopt("s", "", "注册和中继服务器地址", "<server>");
-    opts.optmulti("e", "", "stun服务器,用于探测NAT类型,可多次指定,如-e addr1 -e addr2", "<stun-server>");
-    opts.optflag("a", "", "使用tap模式,默认使用tun模式");
-    opts.optmulti("i", "", "配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3 \n表示允许接收网段192.168.0.0/24的数据并转发到10.26.0.3,可指定多个网段", "<in-ip>");
-    opts.optmulti("o", "", "配置点对网时使用,-o 192.168.0.0/24 \n表示允许将数据转发到192.168.0.0/24,可指定多个网段", "<out-ip>");
-    opts.optopt("w", "", "使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信", "<password>");
-    opts.optflag("m", "", "模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
+    opts.optmulti("e", "", "stun服务器", "<stun-server>");
+    opts.optflag("a", "", "使用tap模式");
+    opts.optmulti("i", "", "配置点对网(IP代理)入站时使用", "<in-ip>");
+    opts.optmulti("o", "", "配置点对网出站时使用", "<out-ip>");
+    opts.optopt("w", "", "客户端加密", "<password>");
+    opts.optflag("W", "", "服务端加密");
+    opts.optflag("m", "", "模拟组播");
     opts.optopt("u", "", "自定义mtu(默认为1430)", "<mtu>");
-    opts.optflag("", "tcp", "和服务端使用tcp通信,默认使用udp,一般来说udp延迟和消耗更低");
-    opts.optopt("", "ip", "指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配", "<IP>");
-    opts.optflag("", "relay", "仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
+    opts.optflag("", "tcp", "tcp");
+    opts.optopt("", "ip", "指定虚拟ip", "<IP>");
+    opts.optflag("", "relay", "仅使用服务器转发");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -117,7 +125,7 @@ async fn main0() {
         return;
     }
     let name = matches.opt_get_default("n", os_info::get().to_string()).unwrap();
-    let server_address_str = matches.opt_get_default("s", "nat1.wherewego.top:29871".to_string()).unwrap();
+    let server_address_str = matches.opt_get_default("s", "nat1.wherewego.top:29872".to_string()).unwrap();
     let server_address = match server_address_str.to_socket_addrs() {
         Ok(mut addr) => {
             if let Some(addr) = addr.next() {
@@ -162,6 +170,7 @@ async fn main0() {
         }
     };
     let password: Option<String> = matches.opt_get("w").unwrap();
+    let server_encrypt = matches.opt_present("W");
     let simulate_multicast = matches.opt_present("m");
     let unused_cmd = matches.opt_present("c");
     let mtu: Option<String> = matches.opt_get("u").unwrap();
@@ -190,45 +199,101 @@ async fn main0() {
     }
     let tcp_channel = matches.opt_present("tcp");
     let relay = matches.opt_present("relay");
+    println!("version 1.2.0");
     let config = Config::new(tap,
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, in_ip,
-                             out_ip, password, simulate_multicast, mtu, tcp_channel, virtual_ip, relay);
+                             out_ip, password, simulate_multicast, mtu,
+                             tcp_channel, virtual_ip, relay, server_encrypt);
     let mut vnt_util = VntUtil::new(config).await.unwrap();
+    let mut conn_count = 0;
     let response = loop {
-        match vnt_util.connect().await {
+        if conn_count > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        conn_count += 1;
+        if let Err(e) = vnt_util.connect().await {
+            println!("connect server failed {}", e);
+            return;
+        }
+        match vnt_util.handshake().await {
             Ok(response) => {
-                break response;
+                if server_encrypt {
+                    let finger = response.unwrap().finger().unwrap();
+                    println!("{}{}", green("server fingerprint:".to_string()), finger);
+                    match vnt_util.secret_handshake().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            match e {
+                                HandshakeEnum::NotSecret => {}
+                                HandshakeEnum::KeyError => {}
+                                HandshakeEnum::Timeout => {
+                                    println!("handshake timeout")
+                                }
+                                HandshakeEnum::ServerError(str) => {
+                                    println!("error:{}", str);
+                                }
+                                HandshakeEnum::Other(str) => {
+                                    println!("error:{}", str);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                match vnt_util.register().await {
+                    Ok(response) => {
+                        break response;
+                    }
+                    Err(e) => {
+                        match e {
+                            ReqEnum::TokenError => {
+                                println!("token error");
+                                return;
+                            }
+                            ReqEnum::AddressExhausted => {
+                                println!("address exhausted");
+                                return;
+                            }
+                            ReqEnum::Timeout => {
+                                println!("timeout...");
+                            }
+                            ReqEnum::ServerError(str) => {
+                                println!("error:{}", str);
+                            }
+                            ReqEnum::Other(str) => {
+                                println!("error:{}", str);
+                            }
+                            ReqEnum::IpAlreadyExists => {
+                                println!("ip already exists");
+                                return;
+                            }
+                            ReqEnum::InvalidIp => {
+                                println!("invalid ip");
+                                return;
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 match e {
-                    ReqEnum::TokenError => {
-                        println!("token error");
+                    HandshakeEnum::NotSecret => {
+                        println!("The server does not support encryption");
+                        return;
                     }
-                    ReqEnum::AddressExhausted => {
-                        println!("address exhausted");
+                    HandshakeEnum::KeyError => {}
+                    HandshakeEnum::Timeout => {
+                        println!("handshake timeout")
                     }
-                    ReqEnum::Timeout => {
-                        println!("timeout...");
-                        continue;
-                    }
-                    ReqEnum::ServerError(str) => {
+                    HandshakeEnum::ServerError(str) => {
                         println!("error:{}", str);
-                        continue;
                     }
-                    ReqEnum::Other(str) => {
+                    HandshakeEnum::Other(str) => {
                         println!("error:{}", str);
-                        continue;
-                    }
-                    ReqEnum::IpAlreadyExists => {
-                        println!("ip already exists");
-                    }
-                    ReqEnum::InvalidIp => {
-                        println!("invalid ip");
                     }
                 }
-                return;
             }
         }
     };
@@ -259,44 +324,56 @@ async fn main0() {
         let stdin = tokio::io::stdin();
         let mut cmd = String::new();
         let mut reader = BufReader::new(stdin);
+        #[cfg(unix)]
+            let mut sigterm = signal(SignalKind::terminate()).expect("Error setting SIGTERM handler");
         loop {
             cmd.clear();
             println!("input:list,info,route,all,stop");
+            #[cfg(unix)]
             tokio::select! {
                 _ = vnt.wait_stop()=>{
                     break;
                 }
+                _ = signal::ctrl_c()=>{
+                    let _ = vnt.stop();
+                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
+                    return;
+                }
+                _ = sigterm.recv()=>{
+                    let _ = vnt.stop();
+                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
+                    return;
+                }
                 rs = reader.read_line(&mut cmd)=>{
                      match rs {
                         Ok(len) => {
-                            if len ==0 {
+                            if !command(&cmd[..len],&vnt){
                                 break;
                             }
-                            match cmd[..len].to_lowercase().trim() {
-                                "list" => {
-                                    let list = command::command_list(&vnt);
-                                    console_out::console_device_list(list);
-                                }
-                                "info"=>{
-                                    let info = command::command_info(&vnt);
-                                    console_out::console_info(info);
-                                }
-                                "route" =>{
-                                    let route = command::command_route(&vnt);
-                                    console_out::console_route_table(route);
-                                }
-                                "all" =>{
-                                    let list = command::command_list(&vnt);
-                                    console_out::console_device_list_all(list);
-                                }
-                                "stop" =>{
-                                    let _ = vnt.stop();
-                                    break;
-                                }
-                                _ => {
-                                }
+                        }
+                        Err(e) => {
+                            println!("input err:{}",e);
+                            break;
+                        }
+                    }
+                }
+            }
+            #[cfg(windows)]
+            tokio::select! {
+                _ = vnt.wait_stop()=>{
+                    break;
+                }
+                _ = signal::ctrl_c()=>{
+                    let _ = vnt.stop();
+                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
+                    return;
+                }
+                rs = reader.read_line(&mut cmd)=>{
+                     match rs {
+                        Ok(len) => {
+                            if !command(&cmd[..len],&vnt){
+                                break;
                             }
-                            println!();
                         }
                         Err(e) => {
                             println!("input err:{}",e);
@@ -310,9 +387,40 @@ async fn main0() {
     vnt.wait_stop().await;
 }
 
+fn command(cmd: &str, vnt: &Vnt) -> bool {
+    if cmd.is_empty() {
+        return false;
+    }
+    match cmd.to_lowercase().trim() {
+        "list" => {
+            let list = command::command_list(&vnt);
+            console_out::console_device_list(list);
+        }
+        "info" => {
+            let info = command::command_info(&vnt);
+            console_out::console_info(info);
+        }
+        "route" => {
+            let route = command::command_route(&vnt);
+            console_out::console_route_table(route);
+        }
+        "all" => {
+            let list = command::command_list(&vnt);
+            console_out::console_device_list_all(list);
+        }
+        "stop" => {
+            let _ = vnt.stop();
+            return false;
+        }
+        _ => {}
+    }
+    println!();
+    return true;
+}
+
 fn print_usage(program: &str, _opts: Options) {
     println!("Usage: {} [options]", program);
-    println!("version:1.1.2");
+    println!("version:1.2.0");
     println!("Options:");
     println!("  -k <token>          {}", green("必选,使用相同的token,就能组建一个局域网络".to_string()));
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
@@ -325,17 +433,18 @@ fn print_usage(program: &str, _opts: Options) {
     println!("                      并转发到10.26.0.3,可指定多个网段");
     println!("  -o <out-ip>         配置点对网时使用,-o 192.168.0.0/24表示允许将数据转发到192.168.0.0/24,可指定多个网段");
     println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
+    println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
     println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     println!("  -u <mtu>            自定义mtu(默认为1430)");
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <IP>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!();
-    println!("  --list              {}",yellow("后台运行时,查看其他设备列表".to_string()));
-    println!("  --all               {}",yellow("后台运行时,查看其他设备完整信息".to_string()));
-    println!("  --info              {}",yellow("后台运行时,查看当前设备信息".to_string()));
-    println!("  --route             {}",yellow("后台运行时,查看数据转发路径".to_string()));
-    println!("  --stop              {}",yellow("停止后台运行".to_string()));
+    println!("  --list              {}", yellow("后台运行时,查看其他设备列表".to_string()));
+    println!("  --all               {}", yellow("后台运行时,查看其他设备完整信息".to_string()));
+    println!("  --info              {}", yellow("后台运行时,查看当前设备信息".to_string()));
+    println!("  --route             {}", yellow("后台运行时,查看数据转发路径".to_string()));
+    println!("  --stop              {}", yellow("停止后台运行".to_string()));
     println!("  -h, --help          帮助");
 }
 

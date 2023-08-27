@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr};
 
+pub mod handshake_handler;
 pub mod heartbeat_handler;
 pub mod punch_handler;
 pub mod recv_handler;
@@ -26,14 +27,16 @@ pub struct PeerDeviceInfo {
     pub virtual_ip: Ipv4Addr,
     pub name: String,
     pub status: PeerDeviceStatus,
+    pub client_secret: bool,
 }
 
 impl PeerDeviceInfo {
-    pub fn new(virtual_ip: Ipv4Addr, name: String, status: u8) -> Self {
+    pub fn new(virtual_ip: Ipv4Addr, name: String, status: u8,client_secret: bool) -> Self {
         Self {
             virtual_ip,
             name,
             status: PeerDeviceStatus::from(status),
+            client_secret
         }
     }
 }

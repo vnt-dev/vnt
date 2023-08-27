@@ -9,12 +9,14 @@ use rand::prelude::SliceRandom;
 use crate::channel::idle::Idle;
 use crate::channel::Route;
 use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
 use crate::core::status::VntWorker;
 
 
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol::control_packet::PingPacket;
 use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
+use crate::protocol::body::ENCRYPTION_RESERVED;
 
 pub fn start_idle(mut worker: VntWorker, idle: Idle, sender: ChannelSender) {
     tokio::spawn(async move {
@@ -50,13 +52,15 @@ pub fn start_heartbeat(
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     server_address_str: String,
+    client_cipher: Cipher,
+    server_cipher: Cipher,
 ) {
     tokio::spawn(async move {
         tokio::select! {
              _=worker.stop_wait()=>{
                     return;
              }
-            rs=start_heartbeat_(sender, device_list, current_device,server_address_str)=>{
+            rs=start_heartbeat_(sender, device_list, current_device,server_address_str,client_cipher,server_cipher)=>{
                 if let Err(e) = rs {
                     log::warn!("心跳任务停止:{:?}", e);
                 }
@@ -66,11 +70,29 @@ pub fn start_heartbeat(
     });
 }
 
-fn set_now_time(packet: &mut NetPacket<[u8; 16]>) -> io::Result<()> {
-    let current_time = crate::handle::now_time() as u16;
-    let mut ping = PingPacket::new(packet.payload_mut())?;
-    ping.set_time(current_time);
-    Ok(())
+
+fn heartbeat_packet( device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,client_cipher: &Cipher, server_cipher: &Cipher, gateway: bool, src: Ipv4Addr, dest: Ipv4Addr) -> NetPacket<[u8; 48]> {
+    let mut net_packet = NetPacket::new_encrypt([0u8; 12 + 4 + ENCRYPTION_RESERVED]).unwrap();
+    net_packet.set_version(Version::V1);
+    net_packet.set_protocol(Protocol::Control);
+    net_packet.set_transport_protocol(control_packet::Protocol::Ping.into());
+    //只寻找两跳以内能到的目标
+    net_packet.first_set_ttl(2);
+    net_packet.set_source(src);
+    net_packet.set_destination(dest);
+    {
+        let mut ping = PingPacket::new(net_packet.payload_mut()).unwrap();
+        let epoch = { device_list.lock().0 };
+        ping.set_epoch(epoch);
+        ping.set_time( crate::handle::now_time() as u16);
+    }
+    if gateway {
+        net_packet.set_gateway_flag(true);
+        server_cipher.encrypt_ipv4(&mut net_packet).unwrap();
+    } else {
+        client_cipher.encrypt_ipv4(&mut net_packet).unwrap();
+    }
+    net_packet
 }
 
 async fn start_heartbeat_(
@@ -78,22 +100,19 @@ async fn start_heartbeat_(
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     server_address_str: String,
+    client_cipher: Cipher,
+    server_cipher: Cipher,
 ) -> io::Result<()> {
-    let mut net_packet = NetPacket::new([0u8; 16])?;
-    net_packet.set_version(Version::V1);
-    net_packet.set_protocol(Protocol::Control);
-    net_packet.set_transport_protocol(control_packet::Protocol::Ping.into());
-    //只寻找两跳以内能到的目标
-    net_packet.first_set_ttl(2);
     let mut count = 0;
     loop {
         if sender.is_close() {
             return Ok(());
         }
         let mut current_dev = current_device.load();
-        if count % 10 == 0 {
-            let mut packet = NetPacket::new([0; 12])?;
+        if count % 20 == 2 {
+            let mut packet = NetPacket::new_encrypt([0; 12 + ENCRYPTION_RESERVED])?;
             packet.set_version(Version::V1);
+            packet.set_gateway_flag(true);
             packet.set_protocol(Protocol::Control);
             packet.set_transport_protocol(
                 control_packet::Protocol::AddrRequest.into(),
@@ -101,6 +120,7 @@ async fn start_heartbeat_(
             packet.first_set_ttl(MAX_TTL);
             packet.set_source(current_dev.virtual_ip());
             packet.set_destination(current_dev.virtual_gateway);
+            server_cipher.encrypt_ipv4(&mut packet)?;
             let _ = sender.send_main_udp(packet.buffer(), current_dev.connect_server).await;
         }
         if count % 20 == 19 {
@@ -116,15 +136,9 @@ async fn start_heartbeat_(
                 }
             }
         }
-        net_packet.set_source(current_dev.virtual_ip());
-        {
-            let mut ping = PingPacket::new(net_packet.payload_mut())?;
-            let epoch = { device_list.lock().0 };
-            ping.set_epoch(epoch);
-        }
-        set_now_time(&mut net_packet)?;
-        net_packet.set_destination(current_dev.virtual_gateway());
-        if let Err(e) = sender.send_main(net_packet.buffer(), current_dev.connect_server).await
+        let src = current_dev.virtual_ip();
+        let server_packet = heartbeat_packet(&device_list,&client_cipher, &server_cipher, true, src, current_dev.virtual_gateway);
+        if let Err(e) = sender.send_main(server_packet.buffer(), current_dev.connect_server).await
         {
             log::warn!(
                     "connect_server:{:?},e:{:?}",
@@ -139,16 +153,15 @@ async fn start_heartbeat_(
                 if peer.virtual_ip == current_dev.virtual_ip {
                     continue;
                 }
-                set_now_time(&mut net_packet)?;
-                net_packet.set_destination(peer.virtual_ip);
+                let client_packet = heartbeat_packet(&device_list,&client_cipher, &server_cipher, false, src, peer.virtual_ip);
                 if let Some(route) = sender.route_one(&peer.virtual_ip) {
-                    let _ = sender.send_by_key(net_packet.buffer(), &route.route_key()).await;
+                    let _ = sender.send_by_key(client_packet.buffer(), &route.route_key()).await;
                     if route.is_p2p() {
                         continue;
                     }
                 } else {
                     //没有直连路由则发送到网关
-                    let _ = sender.send_main(net_packet.buffer(), current_dev.connect_server).await;
+                    let _ = sender.send_main(client_packet.buffer(), current_dev.connect_server).await;
                 }
 
                 //再随机发送到其他地址，看有没有客户端符合转发条件
@@ -161,8 +174,7 @@ async fn start_heartbeat_(
                 'a: for (peer_ip, route_list) in route_list.iter() {
                     for route in route_list {
                         if peer_ip != &peer.virtual_ip && route.is_p2p() {
-                            set_now_time(&mut net_packet)?;
-                            let _ = sender.try_send_by_key(net_packet.buffer(), &route.route_key());
+                            let _ = sender.try_send_by_key(client_packet.buffer(), &route.route_key());
                             num += 1;
                             break;
                         }
@@ -175,10 +187,12 @@ async fn start_heartbeat_(
             }
         } else {
             for (peer_ip, route_list) in sender.route_table().iter() {
-                net_packet.set_destination(*peer_ip);
+                if peer_ip == &current_dev.virtual_gateway {
+                    continue;
+                }
+                let client_packet = heartbeat_packet(&device_list,&client_cipher, &server_cipher, false, src, *peer_ip);
                 for route in route_list {
-                    set_now_time(&mut net_packet)?;
-                    if let Err(e) = sender.send_by_key(net_packet.buffer(), &route.route_key()).await {
+                    if let Err(e) = sender.send_by_key(client_packet.buffer(), &route.route_key()).await {
                         log::warn!("peer_ip:{:?},route:{:?},e:{:?}", peer_ip, route, e);
                     }
                     tokio::time::sleep(Duration::from_millis(2)).await;

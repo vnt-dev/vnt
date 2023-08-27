@@ -11,10 +11,14 @@ impl DeviceWriter {
     pub fn change_ip(&self, address: Ipv4Addr, netmask: Ipv4Addr,
                      gateway: Ipv4Addr, _old_netmask: Ipv4Addr, _old_gateway: Ipv4Addr) -> io::Result<()> {
         let mut config = tun::Configuration::default();
+        let broadcast_address = (!u32::from_be_bytes(netmask.octets()))
+            | u32::from_be_bytes(gateway.octets());
+        let broadcast_address = Ipv4Addr::from(broadcast_address);
         config
             .destination(gateway)
             .address(address)
             .netmask(netmask)
+            .broadcast(broadcast_address)
             // .queues(2)
             .up();
         let mut dev = self.lock.lock();
@@ -58,12 +62,15 @@ pub fn create_device(device_type: DeviceType,
                      mtu: u16,
 ) -> io::Result<(DeviceWriter, DeviceReader,DriverInfo)> {
     let mut config = tun::Configuration::default();
-
+    let broadcast_address = (!u32::from_be_bytes(netmask.octets()))
+        | u32::from_be_bytes(gateway.octets());
+    let broadcast_address = Ipv4Addr::from(broadcast_address);
     config
         .destination(gateway)
         .address(address)
         .netmask(netmask)
         .mtu(mtu.into())
+        .broadcast(broadcast_address)
         // .queues(2) 用多个队列有兼容性问题
         .up();
     match device_type {

@@ -11,8 +11,10 @@ use packet::icmp::icmp;
 use packet::icmp::icmp::HeaderOther;
 use packet::ip::ipv4;
 use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
 use crate::protocol::{MAX_TTL, NetPacket, Protocol, Version};
+use crate::protocol::body::ENCRYPTION_RESERVED;
 
 pub struct IcmpProxy {
     icmp_socket: Arc<Socket>,
@@ -20,41 +22,20 @@ pub struct IcmpProxy {
     icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
     sender: ChannelSender,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
 }
 
 impl IcmpProxy {
-    pub fn new(addr: SocketAddrV4, icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>, sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>) -> io::Result<IcmpProxy> {
+    pub fn new(addr: SocketAddrV4, icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
+               sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>, client_cipher: Cipher) -> io::Result<IcmpProxy> {
         let icmp_socket = Arc::new(Socket::new(Domain::IPV4, Type::RAW, Some(socket2::Protocol::ICMPV4))?);
         icmp_socket.bind(&SockAddr::from(addr))?;
-        // // 设置 SIO_RCVALL 参数
-        // #[cfg(windows)]
-        // {
-        //     use std::os::windows::io::AsRawSocket;
-        //     let raw_fd = icmp_socket.as_raw_socket();
-        //     let mut rcvall: winapi::shared::minwindef::DWORD = 1;
-        //     let mut bytes_returned: winapi::shared::minwindef::DWORD = 0;
-        //     let result = unsafe {
-        //         winapi::um::winsock2::WSAIoctl(
-        //             raw_fd as _,
-        //             winapi::shared::mstcpip::SIO_RCVALL,
-        //             &mut rcvall as *mut winapi::shared::minwindef::DWORD as *mut std::ffi::c_void,
-        //             std::mem::size_of::<winapi::shared::minwindef::DWORD>() as winapi::shared::minwindef::DWORD,
-        //             std::ptr::null_mut(),
-        //             0,
-        //             &mut bytes_returned as winapi::shared::minwindef::LPDWORD,
-        //             std::ptr::null_mut(),
-        //             None,
-        //         )
-        //     };
-        //     if result != 0 {
-        //         return Err(io::Error::from_raw_os_error(unsafe { winapi::um::winsock2::WSAGetLastError() }));
-        //     }
-        // }
         Ok(IcmpProxy {
             icmp_socket,
             icmp_proxy_map,
             sender,
             current_device,
+            client_cipher,
         })
     }
     pub fn icmp_socket(&self) -> Arc<Socket> {
@@ -64,11 +45,7 @@ impl IcmpProxy {
         let mut buf = [0 as u8; 1500];
         let data: &mut [MaybeUninit<u8>] =
             unsafe { std::mem::transmute(&mut buf[..]) };
-        let mut net_packet = NetPacket::new([0u8; 4 + 8 + 1500]).unwrap();
-        net_packet.set_version(Version::V1);
-        net_packet.set_protocol(Protocol::IpTurn);
-        net_packet.set_transport_protocol(ipv4::protocol::Protocol::Icmp.into());
-        net_packet.first_set_ttl(MAX_TTL);
+
         loop {
             match self.recv(data) {
                 Ok((len, peer_ip)) => {
@@ -88,12 +65,20 @@ impl IcmpProxy {
                                                         let current_device = self.current_device.load();
                                                         let virtual_ip = current_device.virtual_ip();
                                                         let connect_server = current_device.connect_server;
+                                                        let mut net_packet = NetPacket::new_encrypt(vec![0u8; 12 + len + ENCRYPTION_RESERVED]).unwrap();
+                                                        net_packet.set_version(Version::V1);
+                                                        net_packet.set_protocol(Protocol::IpTurn);
+                                                        net_packet.set_transport_protocol(crate::protocol::ip_turn_packet::Protocol::Ipv4.into());
+                                                        net_packet.first_set_ttl(MAX_TTL);
                                                         net_packet.set_source(virtual_ip);
                                                         net_packet.set_destination(dest_ip);
-                                                        let data_len = ipv4_packet.buffer.len();
-                                                        net_packet.set_payload(ipv4_packet.buffer);
-                                                        if self.sender.try_send_by_id(&net_packet.buffer()[..(12 + data_len)], &dest_ip).is_err() {
-                                                            let _ = self.sender.try_send_main(&net_packet.buffer()[..(12 + data_len)], connect_server);
+                                                        net_packet.set_payload(ipv4_packet.buffer).unwrap();
+                                                        if let Err(e) = self.client_cipher.encrypt_ipv4(&mut net_packet) {
+                                                            log::warn!("加密失败:{}",e);
+                                                            continue;
+                                                        }
+                                                        if self.sender.try_send_by_id(net_packet.buffer(), &dest_ip).is_err() {
+                                                            let _ = self.sender.try_send_main(net_packet.buffer(), connect_server);
                                                         }
                                                     }
                                                 }

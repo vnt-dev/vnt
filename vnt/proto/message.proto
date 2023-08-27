@@ -1,4 +1,18 @@
 syntax = "proto3";
+message HandshakeRequest{
+  string version = 1;
+  bool secret = 2;
+}
+message HandshakeResponse{
+  string version = 1;
+  bool secret = 2;
+  bytes public_key = 3;
+  string key_finger = 4;
+}
+message SecretHandshakeRequest{
+  string token = 1;
+  bytes key = 2;
+}
 message RegistrationRequest{
   string token = 1;
   string device_id = 2;
@@ -7,6 +21,7 @@ message RegistrationRequest{
   string version = 5;
   fixed32 virtual_ip = 6;
   bool allow_ip_change = 7;
+  bool client_secret = 8;
 }
 
 message RegistrationResponse{
@@ -23,6 +38,7 @@ message DeviceInfo{
   string name = 1;
   fixed32 virtual_ip = 2;
   uint32 device_status = 3;
+  bool client_secret = 4;
 }
 
 message DeviceList{

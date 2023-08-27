@@ -26,6 +26,462 @@
 const _PROTOBUF_VERSION_CHECK: () = ::protobuf::VERSION_3_2_0;
 
 #[derive(PartialEq,Clone,Default,Debug)]
+// @@protoc_insertion_point(message:HandshakeRequest)
+pub struct HandshakeRequest {
+    // message fields
+    // @@protoc_insertion_point(field:HandshakeRequest.version)
+    pub version: ::std::string::String,
+    // @@protoc_insertion_point(field:HandshakeRequest.secret)
+    pub secret: bool,
+    // special fields
+    // @@protoc_insertion_point(special_field:HandshakeRequest.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a HandshakeRequest {
+    fn default() -> &'a HandshakeRequest {
+        <HandshakeRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl HandshakeRequest {
+    pub fn new() -> HandshakeRequest {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(2);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "version",
+            |m: &HandshakeRequest| { &m.version },
+            |m: &mut HandshakeRequest| { &mut m.version },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "secret",
+            |m: &HandshakeRequest| { &m.secret },
+            |m: &mut HandshakeRequest| { &mut m.secret },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<HandshakeRequest>(
+            "HandshakeRequest",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for HandshakeRequest {
+    const NAME: &'static str = "HandshakeRequest";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.version = is.read_string()?;
+                },
+                16 => {
+                    self.secret = is.read_bool()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.version.is_empty() {
+            my_size += ::protobuf::rt::string_size(1, &self.version);
+        }
+        if self.secret != false {
+            my_size += 1 + 1;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.version.is_empty() {
+            os.write_string(1, &self.version)?;
+        }
+        if self.secret != false {
+            os.write_bool(2, self.secret)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> HandshakeRequest {
+        HandshakeRequest::new()
+    }
+
+    fn clear(&mut self) {
+        self.version.clear();
+        self.secret = false;
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static HandshakeRequest {
+        static instance: HandshakeRequest = HandshakeRequest {
+            version: ::std::string::String::new(),
+            secret: false,
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for HandshakeRequest {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("HandshakeRequest").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for HandshakeRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for HandshakeRequest {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+#[derive(PartialEq,Clone,Default,Debug)]
+// @@protoc_insertion_point(message:HandshakeResponse)
+pub struct HandshakeResponse {
+    // message fields
+    // @@protoc_insertion_point(field:HandshakeResponse.version)
+    pub version: ::std::string::String,
+    // @@protoc_insertion_point(field:HandshakeResponse.secret)
+    pub secret: bool,
+    // @@protoc_insertion_point(field:HandshakeResponse.public_key)
+    pub public_key: ::std::vec::Vec<u8>,
+    // @@protoc_insertion_point(field:HandshakeResponse.key_finger)
+    pub key_finger: ::std::string::String,
+    // special fields
+    // @@protoc_insertion_point(special_field:HandshakeResponse.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a HandshakeResponse {
+    fn default() -> &'a HandshakeResponse {
+        <HandshakeResponse as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl HandshakeResponse {
+    pub fn new() -> HandshakeResponse {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(4);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "version",
+            |m: &HandshakeResponse| { &m.version },
+            |m: &mut HandshakeResponse| { &mut m.version },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "secret",
+            |m: &HandshakeResponse| { &m.secret },
+            |m: &mut HandshakeResponse| { &mut m.secret },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "public_key",
+            |m: &HandshakeResponse| { &m.public_key },
+            |m: &mut HandshakeResponse| { &mut m.public_key },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "key_finger",
+            |m: &HandshakeResponse| { &m.key_finger },
+            |m: &mut HandshakeResponse| { &mut m.key_finger },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<HandshakeResponse>(
+            "HandshakeResponse",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for HandshakeResponse {
+    const NAME: &'static str = "HandshakeResponse";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.version = is.read_string()?;
+                },
+                16 => {
+                    self.secret = is.read_bool()?;
+                },
+                26 => {
+                    self.public_key = is.read_bytes()?;
+                },
+                34 => {
+                    self.key_finger = is.read_string()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.version.is_empty() {
+            my_size += ::protobuf::rt::string_size(1, &self.version);
+        }
+        if self.secret != false {
+            my_size += 1 + 1;
+        }
+        if !self.public_key.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(3, &self.public_key);
+        }
+        if !self.key_finger.is_empty() {
+            my_size += ::protobuf::rt::string_size(4, &self.key_finger);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.version.is_empty() {
+            os.write_string(1, &self.version)?;
+        }
+        if self.secret != false {
+            os.write_bool(2, self.secret)?;
+        }
+        if !self.public_key.is_empty() {
+            os.write_bytes(3, &self.public_key)?;
+        }
+        if !self.key_finger.is_empty() {
+            os.write_string(4, &self.key_finger)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> HandshakeResponse {
+        HandshakeResponse::new()
+    }
+
+    fn clear(&mut self) {
+        self.version.clear();
+        self.secret = false;
+        self.public_key.clear();
+        self.key_finger.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static HandshakeResponse {
+        static instance: HandshakeResponse = HandshakeResponse {
+            version: ::std::string::String::new(),
+            secret: false,
+            public_key: ::std::vec::Vec::new(),
+            key_finger: ::std::string::String::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for HandshakeResponse {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("HandshakeResponse").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for HandshakeResponse {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for HandshakeResponse {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+#[derive(PartialEq,Clone,Default,Debug)]
+// @@protoc_insertion_point(message:SecretHandshakeRequest)
+pub struct SecretHandshakeRequest {
+    // message fields
+    // @@protoc_insertion_point(field:SecretHandshakeRequest.token)
+    pub token: ::std::string::String,
+    // @@protoc_insertion_point(field:SecretHandshakeRequest.key)
+    pub key: ::std::vec::Vec<u8>,
+    // special fields
+    // @@protoc_insertion_point(special_field:SecretHandshakeRequest.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a SecretHandshakeRequest {
+    fn default() -> &'a SecretHandshakeRequest {
+        <SecretHandshakeRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl SecretHandshakeRequest {
+    pub fn new() -> SecretHandshakeRequest {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(2);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "token",
+            |m: &SecretHandshakeRequest| { &m.token },
+            |m: &mut SecretHandshakeRequest| { &mut m.token },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "key",
+            |m: &SecretHandshakeRequest| { &m.key },
+            |m: &mut SecretHandshakeRequest| { &mut m.key },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<SecretHandshakeRequest>(
+            "SecretHandshakeRequest",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for SecretHandshakeRequest {
+    const NAME: &'static str = "SecretHandshakeRequest";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                10 => {
+                    self.token = is.read_string()?;
+                },
+                18 => {
+                    self.key = is.read_bytes()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if !self.token.is_empty() {
+            my_size += ::protobuf::rt::string_size(1, &self.token);
+        }
+        if !self.key.is_empty() {
+            my_size += ::protobuf::rt::bytes_size(2, &self.key);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if !self.token.is_empty() {
+            os.write_string(1, &self.token)?;
+        }
+        if !self.key.is_empty() {
+            os.write_bytes(2, &self.key)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> SecretHandshakeRequest {
+        SecretHandshakeRequest::new()
+    }
+
+    fn clear(&mut self) {
+        self.token.clear();
+        self.key.clear();
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static SecretHandshakeRequest {
+        static instance: SecretHandshakeRequest = SecretHandshakeRequest {
+            token: ::std::string::String::new(),
+            key: ::std::vec::Vec::new(),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for SecretHandshakeRequest {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("SecretHandshakeRequest").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for SecretHandshakeRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for SecretHandshakeRequest {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+#[derive(PartialEq,Clone,Default,Debug)]
 // @@protoc_insertion_point(message:RegistrationRequest)
 pub struct RegistrationRequest {
     // message fields
@@ -43,6 +499,8 @@ pub struct RegistrationRequest {
     pub virtual_ip: u32,
     // @@protoc_insertion_point(field:RegistrationRequest.allow_ip_change)
     pub allow_ip_change: bool,
+    // @@protoc_insertion_point(field:RegistrationRequest.client_secret)
+    pub client_secret: bool,
     // special fields
     // @@protoc_insertion_point(special_field:RegistrationRequest.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -60,7 +518,7 @@ impl RegistrationRequest {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(7);
+        let mut fields = ::std::vec::Vec::with_capacity(8);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "token",
@@ -96,6 +554,11 @@ impl RegistrationRequest {
             "allow_ip_change",
             |m: &RegistrationRequest| { &m.allow_ip_change },
             |m: &mut RegistrationRequest| { &mut m.allow_ip_change },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "client_secret",
+            |m: &RegistrationRequest| { &m.client_secret },
+            |m: &mut RegistrationRequest| { &mut m.client_secret },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<RegistrationRequest>(
             "RegistrationRequest",
@@ -136,6 +599,9 @@ impl ::protobuf::Message for RegistrationRequest {
                 56 => {
                     self.allow_ip_change = is.read_bool()?;
                 },
+                64 => {
+                    self.client_secret = is.read_bool()?;
+                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -169,6 +635,9 @@ impl ::protobuf::Message for RegistrationRequest {
         if self.allow_ip_change != false {
             my_size += 1 + 1;
         }
+        if self.client_secret != false {
+            my_size += 1 + 1;
+        }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -196,6 +665,9 @@ impl ::protobuf::Message for RegistrationRequest {
         if self.allow_ip_change != false {
             os.write_bool(7, self.allow_ip_change)?;
         }
+        if self.client_secret != false {
+            os.write_bool(8, self.client_secret)?;
+        }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
     }
@@ -220,6 +692,7 @@ impl ::protobuf::Message for RegistrationRequest {
         self.version.clear();
         self.virtual_ip = 0;
         self.allow_ip_change = false;
+        self.client_secret = false;
         self.special_fields.clear();
     }
 
@@ -232,6 +705,7 @@ impl ::protobuf::Message for RegistrationRequest {
             version: ::std::string::String::new(),
             virtual_ip: 0,
             allow_ip_change: false,
+            client_secret: false,
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -514,6 +988,8 @@ pub struct DeviceInfo {
     pub virtual_ip: u32,
     // @@protoc_insertion_point(field:DeviceInfo.device_status)
     pub device_status: u32,
+    // @@protoc_insertion_point(field:DeviceInfo.client_secret)
+    pub client_secret: bool,
     // special fields
     // @@protoc_insertion_point(special_field:DeviceInfo.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -531,7 +1007,7 @@ impl DeviceInfo {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(3);
+        let mut fields = ::std::vec::Vec::with_capacity(4);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
         fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
             "name",
@@ -547,6 +1023,11 @@ impl DeviceInfo {
             "device_status",
             |m: &DeviceInfo| { &m.device_status },
             |m: &mut DeviceInfo| { &mut m.device_status },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "client_secret",
+            |m: &DeviceInfo| { &m.client_secret },
+            |m: &mut DeviceInfo| { &mut m.client_secret },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<DeviceInfo>(
             "DeviceInfo",
@@ -575,6 +1056,9 @@ impl ::protobuf::Message for DeviceInfo {
                 24 => {
                     self.device_status = is.read_uint32()?;
                 },
+                32 => {
+                    self.client_secret = is.read_bool()?;
+                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -596,6 +1080,9 @@ impl ::protobuf::Message for DeviceInfo {
         if self.device_status != 0 {
             my_size += ::protobuf::rt::uint32_size(3, self.device_status);
         }
+        if self.client_secret != false {
+            my_size += 1 + 1;
+        }
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -610,6 +1097,9 @@ impl ::protobuf::Message for DeviceInfo {
         }
         if self.device_status != 0 {
             os.write_uint32(3, self.device_status)?;
+        }
+        if self.client_secret != false {
+            os.write_bool(4, self.client_secret)?;
         }
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -631,6 +1121,7 @@ impl ::protobuf::Message for DeviceInfo {
         self.name.clear();
         self.virtual_ip = 0;
         self.device_status = 0;
+        self.client_secret = false;
         self.special_fields.clear();
     }
 
@@ -639,6 +1130,7 @@ impl ::protobuf::Message for DeviceInfo {
             name: ::std::string::String::new(),
             virtual_ip: 0,
             device_status: 0,
+            client_secret: false,
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -1107,33 +1599,41 @@ impl PunchNatType {
 }
 
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\rmessage.proto\"\xd6\x01\n\x13RegistrationRequest\x12\x14\n\x05token\
-    \x18\x01\x20\x01(\tR\x05token\x12\x1b\n\tdevice_id\x18\x02\x20\x01(\tR\
-    \x08deviceId\x12\x12\n\x04name\x18\x03\x20\x01(\tR\x04name\x12\x17\n\x07\
-    is_fast\x18\x04\x20\x01(\x08R\x06isFast\x12\x18\n\x07version\x18\x05\x20\
-    \x01(\tR\x07version\x12\x1d\n\nvirtual_ip\x18\x06\x20\x01(\x07R\tvirtual\
-    Ip\x12&\n\x0fallow_ip_change\x18\x07\x20\x01(\x08R\rallowIpChange\"\xb3\
-    \x02\n\x14RegistrationResponse\x12\x1d\n\nvirtual_ip\x18\x01\x20\x01(\
-    \x07R\tvirtualIp\x12'\n\x0fvirtual_gateway\x18\x02\x20\x01(\x07R\x0evirt\
-    ualGateway\x12'\n\x0fvirtual_netmask\x18\x03\x20\x01(\x07R\x0evirtualNet\
-    mask\x12\x14\n\x05epoch\x18\x04\x20\x01(\rR\x05epoch\x125\n\x10device_in\
-    fo_list\x18\x05\x20\x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\x12\x1b\
-    \n\tpublic_ip\x18\x06\x20\x01(\x07R\x08publicIp\x12\x1f\n\x0bpublic_port\
-    \x18\x07\x20\x01(\rR\npublicPort\x12\x1f\n\x0bpublic_ipv6\x18\x08\x20\
-    \x01(\x0cR\npublicIpv6\"d\n\nDeviceInfo\x12\x12\n\x04name\x18\x01\x20\
-    \x01(\tR\x04name\x12\x1d\n\nvirtual_ip\x18\x02\x20\x01(\x07R\tvirtualIp\
-    \x12#\n\rdevice_status\x18\x03\x20\x01(\rR\x0cdeviceStatus\"Y\n\nDeviceL\
-    ist\x12\x14\n\x05epoch\x18\x01\x20\x01(\rR\x05epoch\x125\n\x10device_inf\
-    o_list\x18\x02\x20\x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xa2\x02\
-    \n\tPunchInfo\x12$\n\x0epublic_ip_list\x18\x02\x20\x03(\x07R\x0cpublicIp\
-    List\x12\x1f\n\x0bpublic_port\x18\x03\x20\x01(\rR\npublicPort\x12*\n\x11\
-    public_port_range\x18\x04\x20\x01(\rR\x0fpublicPortRange\x12(\n\x08nat_t\
-    ype\x18\x05\x20\x01(\x0e2\r.PunchNatTypeR\x07natType\x12\x14\n\x05reply\
-    \x18\x06\x20\x01(\x08R\x05reply\x12\x19\n\x08local_ip\x18\x07\x20\x01(\
-    \x07R\x07localIp\x12\x1d\n\nlocal_port\x18\x08\x20\x01(\rR\tlocalPort\
-    \x12(\n\x10public_ipv6_list\x18\t\x20\x03(\x0cR\x0epublicIpv6List*'\n\
-    \x0cPunchNatType\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01b\x06\
-    proto3\
+    \n\rmessage.proto\"D\n\x10HandshakeRequest\x12\x18\n\x07version\x18\x01\
+    \x20\x01(\tR\x07version\x12\x16\n\x06secret\x18\x02\x20\x01(\x08R\x06sec\
+    ret\"\x83\x01\n\x11HandshakeResponse\x12\x18\n\x07version\x18\x01\x20\
+    \x01(\tR\x07version\x12\x16\n\x06secret\x18\x02\x20\x01(\x08R\x06secret\
+    \x12\x1d\n\npublic_key\x18\x03\x20\x01(\x0cR\tpublicKey\x12\x1d\n\nkey_f\
+    inger\x18\x04\x20\x01(\tR\tkeyFinger\"@\n\x16SecretHandshakeRequest\x12\
+    \x14\n\x05token\x18\x01\x20\x01(\tR\x05token\x12\x10\n\x03key\x18\x02\
+    \x20\x01(\x0cR\x03key\"\xfb\x01\n\x13RegistrationRequest\x12\x14\n\x05to\
+    ken\x18\x01\x20\x01(\tR\x05token\x12\x1b\n\tdevice_id\x18\x02\x20\x01(\t\
+    R\x08deviceId\x12\x12\n\x04name\x18\x03\x20\x01(\tR\x04name\x12\x17\n\
+    \x07is_fast\x18\x04\x20\x01(\x08R\x06isFast\x12\x18\n\x07version\x18\x05\
+    \x20\x01(\tR\x07version\x12\x1d\n\nvirtual_ip\x18\x06\x20\x01(\x07R\tvir\
+    tualIp\x12&\n\x0fallow_ip_change\x18\x07\x20\x01(\x08R\rallowIpChange\
+    \x12#\n\rclient_secret\x18\x08\x20\x01(\x08R\x0cclientSecret\"\xb3\x02\n\
+    \x14RegistrationResponse\x12\x1d\n\nvirtual_ip\x18\x01\x20\x01(\x07R\tvi\
+    rtualIp\x12'\n\x0fvirtual_gateway\x18\x02\x20\x01(\x07R\x0evirtualGatewa\
+    y\x12'\n\x0fvirtual_netmask\x18\x03\x20\x01(\x07R\x0evirtualNetmask\x12\
+    \x14\n\x05epoch\x18\x04\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\
+    \x18\x05\x20\x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\x12\x1b\n\tpubl\
+    ic_ip\x18\x06\x20\x01(\x07R\x08publicIp\x12\x1f\n\x0bpublic_port\x18\x07\
+    \x20\x01(\rR\npublicPort\x12\x1f\n\x0bpublic_ipv6\x18\x08\x20\x01(\x0cR\
+    \npublicIpv6\"\x89\x01\n\nDeviceInfo\x12\x12\n\x04name\x18\x01\x20\x01(\
+    \tR\x04name\x12\x1d\n\nvirtual_ip\x18\x02\x20\x01(\x07R\tvirtualIp\x12#\
+    \n\rdevice_status\x18\x03\x20\x01(\rR\x0cdeviceStatus\x12#\n\rclient_sec\
+    ret\x18\x04\x20\x01(\x08R\x0cclientSecret\"Y\n\nDeviceList\x12\x14\n\x05\
+    epoch\x18\x01\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x02\
+    \x20\x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xa2\x02\n\tPunchInfo\
+    \x12$\n\x0epublic_ip_list\x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\
+    \n\x0bpublic_port\x18\x03\x20\x01(\rR\npublicPort\x12*\n\x11public_port_\
+    range\x18\x04\x20\x01(\rR\x0fpublicPortRange\x12(\n\x08nat_type\x18\x05\
+    \x20\x01(\x0e2\r.PunchNatTypeR\x07natType\x12\x14\n\x05reply\x18\x06\x20\
+    \x01(\x08R\x05reply\x12\x19\n\x08local_ip\x18\x07\x20\x01(\x07R\x07local\
+    Ip\x12\x1d\n\nlocal_port\x18\x08\x20\x01(\rR\tlocalPort\x12(\n\x10public\
+    _ipv6_list\x18\t\x20\x03(\x0cR\x0epublicIpv6List*'\n\x0cPunchNatType\x12\
+    \r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01b\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
@@ -1151,7 +1651,10 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
     file_descriptor.get(|| {
         let generated_file_descriptor = generated_file_descriptor_lazy.get(|| {
             let mut deps = ::std::vec::Vec::with_capacity(0);
-            let mut messages = ::std::vec::Vec::with_capacity(5);
+            let mut messages = ::std::vec::Vec::with_capacity(8);
+            messages.push(HandshakeRequest::generated_message_descriptor_data());
+            messages.push(HandshakeResponse::generated_message_descriptor_data());
+            messages.push(SecretHandshakeRequest::generated_message_descriptor_data());
             messages.push(RegistrationRequest::generated_message_descriptor_data());
             messages.push(RegistrationResponse::generated_message_descriptor_data());
             messages.push(DeviceInfo::generated_message_descriptor_data());

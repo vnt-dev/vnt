@@ -8,6 +8,11 @@ pub enum Protocol {
     PollDeviceList,
     /// 推送设备列表
     PushDeviceList,
+    /// 和服务端握手
+    HandshakeRequest,
+    HandshakeResponse,
+    SecretHandshakeRequest,
+    SecretHandshakeResponse,
     Unknown(u8),
 }
 
@@ -18,6 +23,10 @@ impl From<u8> for Protocol {
             2 => Self::RegistrationResponse,
             3 => Self::PollDeviceList,
             4 => Self::PushDeviceList,
+            5 => Self::HandshakeRequest,
+            6 => Self::HandshakeResponse,
+            7 => Self::SecretHandshakeRequest,
+            8 => Self::SecretHandshakeResponse,
             val => Self::Unknown(val),
         }
     }
@@ -30,6 +39,10 @@ impl Into<u8> for Protocol {
             Self::RegistrationResponse => 2,
             Self::PollDeviceList => 3,
             Self::PushDeviceList => 4,
+            Self::HandshakeRequest => 5,
+            Self::HandshakeResponse => 6,
+            Self::SecretHandshakeRequest => 7,
+            Self::SecretHandshakeResponse => 8,
             Self::Unknown(val) => val,
         }
     }

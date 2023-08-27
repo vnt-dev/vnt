@@ -1,4 +1,3 @@
-use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use crossbeam_utils::atomic::AtomicCell;
@@ -7,11 +6,13 @@ use protobuf::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
 use crate::handle::PeerDeviceInfo;
 
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
 use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::body::ENCRYPTION_RESERVED;
 
 pub enum ReqEnum {
     TokenError,
@@ -38,14 +39,16 @@ pub struct RegResponse {
 pub async fn registration(
     main_channel: &UdpSocket,
     main_tcp_channel: Option<&mut TcpStream>,
+    server_cipher: &Cipher,
     server_address: SocketAddr,
     token: String,
     device_id: String,
     name: String,
     ip: Ipv4Addr,
+    client_secret: bool,
 ) -> Result<RegResponse, ReqEnum> {
     let request_packet =
-        registration_request_packet(token.clone(), device_id.clone(), name.clone(), ip, false, false).unwrap();
+        registration_request_packet(server_cipher, token.clone(), device_id.clone(), name.clone(), ip, false, false, client_secret).unwrap();
     let buf = request_packet.buffer();
     let mut recv_buf = [0u8; 10240];
     let recv_buf = if let Some(main_tcp_channel) = main_tcp_channel {
@@ -61,10 +64,13 @@ pub async fn registration(
             return Err(ReqEnum::Other(format!("read error:{}", e)));
         }
         let len = 4 + (((recv_buf[2] as u16) << 8) | recv_buf[3] as u16) as usize;
+        if len > recv_buf.len() {
+            return Err(ReqEnum::Other("too long".to_string()));
+        }
         if let Err(e) = main_tcp_channel.read_exact(&mut recv_buf[4..len]).await {
             return Err(ReqEnum::Other(format!("read error:{}", e)));
         }
-        &recv_buf[4..len]
+        &mut recv_buf[4..len]
     } else {
         if let Err(e) = main_channel.send_to(buf, server_address).await {
             return Err(ReqEnum::Other(format!("send error:{}", e)));
@@ -76,7 +82,7 @@ pub async fn registration(
                         if server_address != addr {
                             return Err(ReqEnum::Other(format!("invalid data,from {}", addr)));
                         }
-                        &recv_buf[..len]
+                        &mut recv_buf[..len]
                     }
                     Err(e) => {
                         return Err(ReqEnum::Other(format!("receiver error:{}", e)));
@@ -88,7 +94,7 @@ pub async fn registration(
             }
         }
     };
-    let net_packet = match NetPacket::new(recv_buf) {
+    let mut net_packet = match NetPacket::new(recv_buf) {
         Ok(net_packet) => {
             net_packet
         }
@@ -96,6 +102,9 @@ pub async fn registration(
             return Err(ReqEnum::ServerError(format!("{}", e)));
         }
     };
+    if let Err(e) = server_cipher.decrypt_ipv4(&mut net_packet) {
+        return Err(ReqEnum::ServerError(format!("decrypt_ipv4 {}", e)));
+    }
     match net_packet.protocol() {
         Protocol::Service => {
             match service_packet::Protocol::from(net_packet.transport_protocol()) {
@@ -110,6 +119,7 @@ pub async fn registration(
                                         Ipv4Addr::from(info.virtual_ip),
                                         info.name,
                                         info.device_status as u8,
+                                        info.client_secret,
                                     )
                                 })
                                 .collect();
@@ -155,6 +165,9 @@ pub async fn registration(
                     InErrorPacket::InvalidIp => {
                         Err(ReqEnum::InvalidIp)
                     }
+                    InErrorPacket::NoKey => {
+                        Err(ReqEnum::ServerError("no key".to_string()))
+                    }
                 },
                 Err(e) => Err(ReqEnum::Other(format!("{}", e))),
             }
@@ -164,12 +177,14 @@ pub async fn registration(
 }
 
 fn registration_request_packet(
+    server_cipher: &Cipher,
     token: String,
     device_id: String,
     name: String,
     ip: Ipv4Addr,
     is_fast: bool,
     allow_ip_change: bool,
+    client_secret: bool,
 ) -> crate::Result<NetPacket<Vec<u8>>> {
     let mut request = RegistrationRequest::new();
     request.token = token;
@@ -178,45 +193,54 @@ fn registration_request_packet(
     request.virtual_ip = ip.into();
     request.allow_ip_change = allow_ip_change;
     request.is_fast = is_fast;
-    request.version = "1.1.2".to_string();
+    request.version = "1.2.0".to_string();
+    request.client_secret = client_secret;
     let bytes = request.write_to_bytes()?;
-    let buf = vec![0u8; 12 + bytes.len()];
-    let mut net_packet = NetPacket::new(buf)?;
+    let buf = vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED];
+    let mut net_packet = NetPacket::new_encrypt(buf)?;
     net_packet.set_version(Version::V1);
+    net_packet.set_gateway_flag(true);
     net_packet.set_protocol(Protocol::Service);
     net_packet.set_transport_protocol(service_packet::Protocol::RegistrationRequest.into());
     net_packet.first_set_ttl(MAX_TTL);
-    net_packet.set_payload(&bytes);
+    net_packet.set_payload(&bytes)?;
+    server_cipher.encrypt_ipv4(&mut net_packet)?;
     Ok(net_packet)
 }
 
 pub struct Register {
+    server_cipher: Cipher,
     sender: ChannelSender,
     server_address: SocketAddr,
     token: String,
     device_id: String,
     name: String,
     time: AtomicCell<Instant>,
+    client_secret: bool,
 }
 
 impl Register {
     pub fn new(
+        server_cipher: Cipher,
         sender: ChannelSender,
         server_address: SocketAddr,
         token: String,
         device_id: String,
         name: String,
+        client_secret: bool,
     ) -> Self {
         Self {
+            server_cipher,
             sender,
             server_address,
             token,
             device_id,
             name,
             time: AtomicCell::new(Instant::now()),
+            client_secret,
         }
     }
-    pub async fn fast_register(&self, ip: Ipv4Addr) -> io::Result<()> {
+    pub async fn fast_register(&self, ip: Ipv4Addr) -> crate::Result<()> {
         let last = self.time.load();
         if last.elapsed() < Duration::from_secs(2)
             || self
@@ -229,14 +253,15 @@ impl Register {
         }
         log::info!("重新连接");
         let request_packet = registration_request_packet(
+            &self.server_cipher,
             self.token.clone(),
             self.device_id.clone(),
             self.name.clone(),
             ip,
             false,
             true,
-        )
-            .unwrap();
+            self.client_secret,
+        )?;
         let buf = request_packet.buffer();
         self.sender.send_main(buf, self.server_address).await?;
         Ok(())

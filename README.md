@@ -85,11 +85,11 @@ A virtual network tool (VPN)
 - IP代理
 - p2p组播/广播
 - 客户端数据加密
+- 服务端数据加密
 
 ### Todo
 
 - 桌面UI(测试中)
-- 服务端数据加密
 - 支持Ipv6
 
 ### 常见问题
