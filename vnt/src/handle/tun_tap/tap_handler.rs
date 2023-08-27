@@ -1,7 +1,9 @@
 use std::{io, thread};
 use std::sync::Arc;
+use byte_pool::BytePool;
 
 use crossbeam_utils::atomic::AtomicCell;
+use lazy_static::lazy_static;
 
 use packet::arp::arp::ArpPacket;
 use packet::ethernet;
@@ -28,8 +30,8 @@ pub fn start(worker: VntWorker, sender: ChannelSender,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
-             client_cipher: Cipher, server_cipher: Cipher) {
-    let (buf_sender, buf_receiver) = buf_channel_group(thread::available_parallelism().unwrap().get());
+             client_cipher: Cipher, server_cipher: Cipher,parallel:usize) {
+    let (buf_sender, buf_receiver) = buf_channel_group(parallel);
     for mut buf_receiver in buf_receiver.0 {
         let sender = sender.clone();
         let device_writer = device_writer.clone();
@@ -62,12 +64,15 @@ pub fn start(worker: VntWorker, sender: ChannelSender,
             });
     }).unwrap();
 }
-
+lazy_static!{
+    static ref POOL:BytePool<Vec<u8>> = BytePool::<Vec<u8>>::new();
+}
 async fn start_(sender: ChannelSender,
                 device_reader: DeviceReader,
                 mut buf_sender: BufSenderGroup) -> io::Result<()> {
+
     loop {
-        let mut buf = vec![0; 4096];
+        let mut buf = POOL.alloc(4096);
         if sender.is_close() {
             return Ok(());
         }

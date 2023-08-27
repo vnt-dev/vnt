@@ -80,7 +80,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, vec![],
-                             vec![], password, false, None, false, None, false,false);
+                             vec![], password, false, None, false, None, false,false,1);
     match VntUtilSync::new(config) {
         Ok(vnt_util) => {
             Ok(vnt_util)

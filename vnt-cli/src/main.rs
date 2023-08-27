@@ -27,13 +27,7 @@ pub fn app_home() -> io::Result<PathBuf> {
     Ok(path)
 }
 
-#[tokio::main]
-async fn main() {
-    main0().await;
-    std::process::exit(0);
-}
-
-async fn main0() {
+fn main() {
     let _ = log4rs::init_file("log4rs.yaml", Default::default());
     let args: Vec<String> = std::env::args().collect();
     let program = args[0].clone();
@@ -52,8 +46,10 @@ async fn main0() {
     opts.optflag("m", "", "模拟组播");
     opts.optopt("u", "", "自定义mtu(默认为1430)", "<mtu>");
     opts.optflag("", "tcp", "tcp");
-    opts.optopt("", "ip", "指定虚拟ip", "<IP>");
+    opts.optopt("", "ip", "指定虚拟ip", "<ip>");
     opts.optflag("", "relay", "仅使用服务器转发");
+    opts.optopt("", "par", "任务并行度(必须为正整数)", "<parallel>");
+    opts.optopt("", "thread", "线程数(必须为正整数)", "<thread>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -199,13 +195,30 @@ async fn main0() {
     }
     let tcp_channel = matches.opt_present("tcp");
     let relay = matches.opt_present("relay");
+    let parallel = matches.opt_get::<usize>("par").unwrap().unwrap_or(2);
+    if parallel == 0 {
+        println!("--par invalid");
+        return;
+    }
+    let thread_num = matches.opt_get::<usize>("thread").unwrap().unwrap_or(std::thread::available_parallelism().unwrap().get() * 2);
+    if thread_num == 0 {
+        println!("--thread invalid");
+        return;
+    }
     println!("version 1.2.0");
     let config = Config::new(tap,
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, in_ip,
                              out_ip, password, simulate_multicast, mtu,
-                             tcp_channel, virtual_ip, relay, server_encrypt);
+                             tcp_channel, virtual_ip, relay, server_encrypt, parallel);
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(thread_num).build().unwrap();
+    runtime.block_on(main0(config,!unused_cmd));
+    std::process::exit(0);
+}
+
+async fn main0(config: Config,show_cmd:bool) {
+    let server_encrypt = config.server_encrypt;
     let mut vnt_util = VntUtil::new(config).await.unwrap();
     let mut conn_count = 0;
     let response = loop {
@@ -320,7 +333,7 @@ async fn main0() {
             println!("command error :{}", e);
         }
     });
-    if !unused_cmd {
+    if show_cmd {
         let stdin = tokio::io::stdin();
         let mut cmd = String::new();
         let mut reader = BufReader::new(stdin);
@@ -437,8 +450,10 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     println!("  -u <mtu>            自定义mtu(不加密默认为1430，加密默认为1410)");
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
-    println!("  --ip <IP>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
+    println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
+    println!("  --par <parallel>    任务并行度(必须为正整数),默认值为2");
+    println!("  --thread <thread>   线程数(必须为正整数),默认为核心数乘2");
     println!();
     println!("  --list              {}", yellow("后台运行时,查看其他设备列表".to_string()));
     println!("  --all               {}", yellow("后台运行时,查看其他设备完整信息".to_string()));

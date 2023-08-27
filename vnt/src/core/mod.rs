@@ -98,13 +98,13 @@ impl VntUtil {
     }
     /// 加密握手 用于同步密钥
     pub async fn secret_handshake(&mut self) -> Result<(), HandshakeEnum> {
-        handshake_handler::secret_handshake(&self.main_channel, self.main_tcp_channel.as_mut(), self.config.server_address, self.rsa_cipher.as_ref().unwrap(), &self.server_cipher,self.config.token.clone()).await
+        handshake_handler::secret_handshake(&self.main_channel, self.main_tcp_channel.as_mut(), self.config.server_address, self.rsa_cipher.as_ref().unwrap(), &self.server_cipher, self.config.token.clone()).await
     }
     /// 注册
     pub async fn register(&mut self) -> Result<RegResponse, ReqEnum> {
         match registration_handler::registration(&self.main_channel, self.main_tcp_channel.as_mut(), &self.server_cipher, self.config.server_address,
                                                  self.config.token.clone(), self.config.device_id.clone(),
-                                                 self.config.name.clone(), self.config.ip.unwrap_or(Ipv4Addr::UNSPECIFIED),self.config.password.is_some()).await {
+                                                 self.config.name.clone(), self.config.ip.unwrap_or(Ipv4Addr::UNSPECIFIED), self.config.password.is_some()).await {
             Ok(res) => {
                 let _ = self.response.insert(res.clone());
                 Ok(res)
@@ -149,9 +149,9 @@ impl VntUtil {
         };
         let mtu = match self.config.mtu {
             None => {
-                if self.config.password.is_none(){
+                if self.config.password.is_none() {
                     1430
-                }else{
+                } else {
                     1410
                 }
             }
@@ -206,7 +206,7 @@ impl VntUtil {
 
         let register = Arc::new(registration_handler::Register::new(self.server_cipher.clone(), channel_sender.clone(),
                                                                     config.server_address, config.token.clone(),
-                                                                    config.device_id.clone(), config.name.clone(),config.password.is_some()));
+                                                                    config.device_id.clone(), config.name.clone(), config.password.is_some()));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> = Arc::new(Mutex::new((response.epoch, response.device_info_list)));
         let peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>> = Arc::new(DashMap::new());
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
@@ -237,14 +237,16 @@ impl VntUtil {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         if config.tap {
             tap_handler::start(vnt_status_manager.worker("tap_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), client_cipher.clone(), self.server_cipher.clone());
+                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(),
+                               client_cipher.clone(), self.server_cipher.clone(),config.parallel);
         } else {
             tun_handler::start(vnt_status_manager.worker("tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), client_cipher.clone(), self.server_cipher.clone()).await;
+                               igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(),
+                               client_cipher.clone(), self.server_cipher.clone(),config.parallel).await;
         }
         #[cfg(any(target_os = "android"))]
         tun_handler::start(vnt_status_manager.worker("android tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone()).await;
+                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone(),config.parallel).await;
 
         //外部数据接收处理
         let channel_recv_handler = ChannelDataHandler::new(current_device.clone(), device_list.clone(),
@@ -252,7 +254,7 @@ impl VntUtil {
                                                            device_writer.clone(), connect_status.clone(),
                                                            peer_nat_info_map.clone(), ip_proxy_map, out_external_route,
                                                            cone_sender, symmetric_sender, client_cipher.clone(),
-                                                           self.server_cipher.clone(), self.rsa_cipher.clone(), config.relay,config.token.clone());
+                                                           self.server_cipher.clone(), self.rsa_cipher.clone(), config.relay, config.token.clone());
         {
             let channel = Channel::new(context.clone(), channel_recv_handler);
             let channel_worker = vnt_status_manager.worker("channel_worker");
@@ -264,7 +266,7 @@ impl VntUtil {
                 tokio::spawn(udp_proxy.start());
             }
             tokio::spawn(async move {
-                channel.start(channel_worker, tcp, 14, 65, relay).await
+                channel.start(channel_worker, tcp, 14, 65, relay,config.parallel).await
             });
         }
         {
@@ -287,7 +289,7 @@ impl VntUtil {
         }
         context.switch(nat_test.nat_info().nat_type);
         Ok(Vnt {
-            config:self.config,
+            config: self.config,
             current_device,
             context,
             vnt_status_manager,
@@ -387,6 +389,7 @@ pub struct Config {
     pub ip: Option<Ipv4Addr>,
     pub relay: bool,
     pub server_encrypt: bool,
+    pub parallel: usize,
 }
 
 
@@ -400,7 +403,7 @@ impl Config {
                in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32)>,
                password: Option<String>, simulate_multicast: bool, mtu: Option<u16>, tcp: bool,
                ip: Option<Ipv4Addr>,
-               relay: bool, server_encrypt: bool, ) -> Self {
+               relay: bool, server_encrypt: bool, parallel: usize, ) -> Self {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
                 x.push_str(":3478");
@@ -423,6 +426,7 @@ impl Config {
             ip,
             relay,
             server_encrypt,
+            parallel,
         }
     }
 }

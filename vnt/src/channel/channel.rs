@@ -13,7 +13,10 @@ use crate::channel::punch::NatType;
 use crate::core::status::VntWorker;
 use crate::handle::CurrentDeviceInfo;
 use crate::handle::recv_handler::ChannelDataHandler;
-
+use byte_pool::{Block, BytePool};
+lazy_static::lazy_static! {
+    static ref POOL:BytePool = BytePool::new();
+}
 pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
     pub(crate) main_channel: Arc<UdpSocket>,
@@ -65,7 +68,7 @@ impl Context {
     pub fn close(&self) {
         let _ = self.inner.status_sender.send(Status::Close);
     }
-    pub fn is_main_tcp(&self)->bool{
+    pub fn is_main_tcp(&self) -> bool {
         self.inner.main_tcp_channel.is_some()
     }
     pub fn switch(&self, nat_type: NatType) {
@@ -204,7 +207,7 @@ impl Context {
     }
     fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) {
         let key = route.route_key();
-        let mut list = self.inner.route_table.entry(id).or_insert_with(||Vec::with_capacity(4));
+        let mut list = self.inner.route_table.entry(id).or_insert_with(|| Vec::with_capacity(4));
         let mut exist = false;
         for x in list.iter_mut() {
             if x.metric < route.metric {
@@ -293,7 +296,7 @@ impl Context {
         v
     }
     pub fn remove_route_all(&self, id: &Ipv4Addr) {
-        if let Some((_,routes)) = self.inner.route_table.remove(id) {
+        if let Some((_, routes)) = self.inner.route_table.remove(id) {
             for x in routes {
                 self.inner.route_table_time.remove(&(x.route_key(), *id));
             }
@@ -331,12 +334,12 @@ impl Channel {
 }
 
 #[derive(Clone)]
-struct BufSenderGroup(usize, Vec<tokio::sync::mpsc::Sender<(Vec<u8>, usize, usize, RouteKey)>>);
+struct BufSenderGroup(usize, Vec<tokio::sync::mpsc::Sender<(Block<'static>, usize, usize, RouteKey)>>);
 
-struct BufReceiverGroup(Vec<tokio::sync::mpsc::Receiver<(Vec<u8>, usize, usize, RouteKey)>>);
+struct BufReceiverGroup(Vec<tokio::sync::mpsc::Receiver<(Block<'static>, usize, usize, RouteKey)>>);
 
 impl BufSenderGroup {
-    pub async fn send(&mut self, val: (Vec<u8>, usize, usize, RouteKey)) -> bool {
+    pub async fn send(&mut self, val: (Block<'static>, usize, usize, RouteKey)) -> bool {
         let index = self.0 % self.1.len();
         self.0 = self.0.wrapping_add(1);
         self.1[index].send(val).await.is_ok()
@@ -347,7 +350,7 @@ fn buf_channel_group(size: usize) -> (BufSenderGroup, BufReceiverGroup) {
     let mut buf_sender_group = Vec::with_capacity(size);
     let mut buf_receiver_group = Vec::with_capacity(size);
     for _ in 0..size {
-        let (buf_sender, buf_receiver) = tokio::sync::mpsc::channel::<(Vec<u8>, usize, usize, RouteKey)>(10);
+        let (buf_sender, buf_receiver) = tokio::sync::mpsc::channel::<(Block<'static, Vec<u8>>, usize, usize, RouteKey)>(10);
         buf_sender_group.push(buf_sender);
         buf_receiver_group.push(buf_receiver);
     }
@@ -360,7 +363,7 @@ impl Channel {
         let addr = tcp_r.peer_addr()?;
         let key = RouteKey::new(0, addr);
         loop {
-            let mut buf = vec![0; 4096];
+            let mut buf = POOL.alloc(4096);
             tcp_r.read_exact(&mut head).await?;
             let len = (((head[2] as u16) << 8) | head[3] as u16) as usize;
             if len < 12 || len > buf.len() {
@@ -439,8 +442,9 @@ impl Channel {
                        head_reserve: usize,//头部预留字节
                        symmetric_channel_num: usize,//对称网络，则再加一组监听，提升打洞成功率
                        relay: bool,
+                       parallel: usize,
     ) {
-        let (buf_sender, buf_receiver) = buf_channel_group(std::thread::available_parallelism().unwrap().get());
+        let (buf_sender, buf_receiver) = buf_channel_group(parallel);
         for mut buf_receiver in buf_receiver.0 {
             let context = self.context.clone();
             let handler = self.handler.clone();
@@ -523,7 +527,7 @@ impl Channel {
             let id = 1 + udp.as_raw_fd() as usize;
         context.inner.udp_map.insert(id, udp.clone());
         loop {
-            let mut buf = vec![0; 4096];
+            let mut buf = POOL.alloc(4096);
             tokio::select! {
                 rs=udp.recv_from(&mut buf[head_reserve..])=>{
                      match rs {
