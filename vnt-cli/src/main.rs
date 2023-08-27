@@ -435,7 +435,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
     println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
     println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
-    println!("  -u <mtu>            自定义mtu(默认为1430)");
+    println!("  -u <mtu>            自定义mtu(不加密默认为1430，加密默认为1410)");
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <IP>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");

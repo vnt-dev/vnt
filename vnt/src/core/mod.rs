@@ -147,7 +147,18 @@ impl VntUtil {
             }
             tun_tap_device::DeviceType::Tun
         };
-        let mtu = self.config.mtu.unwrap_or(1430);
+        let mtu = match self.config.mtu {
+            None => {
+                if self.config.password.is_none(){
+                    1430
+                }else{
+                    1410
+                }
+            }
+            Some(mtu) => {
+                mtu
+            }
+        };
         let in_ips = self.config.in_ips.iter().map(|(dest, mask, _)| { (Ipv4Addr::from(*dest & *mask), Ipv4Addr::from(*mask)) }).collect::<Vec<(Ipv4Addr, Ipv4Addr)>>();
 
         let (device_writer, device_reader, driver_info) = tun_tap_device::create_device(device_type, response.virtual_ip,
