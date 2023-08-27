@@ -113,8 +113,8 @@ async fn start_punch_(
         if count > 2 {
             break;
         }
-        let buf = punch_packet(client_cipher, current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
-        let _ = sender.send_main(&buf, current_device.connect_server).await;
+        let packet = punch_packet(client_cipher, current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
+        let _ = sender.send_main(packet.buffer(), current_device.connect_server).await;
     }
     tokio::time::sleep(sleep_time).await;
     Ok(())
@@ -125,7 +125,7 @@ pub fn punch_packet(
     virtual_ip: Ipv4Addr,
     nat_info: &NatInfo,
     dest: Ipv4Addr,
-) -> crate::Result<Vec<u8>> {
+) -> crate::Result<NetPacket<Vec<u8>>> {
     let mut punch_reply = PunchInfo::new();
     punch_reply.reply = false;
     punch_reply.public_ip_list = nat_info
@@ -148,5 +148,5 @@ pub fn punch_packet(
     net_packet.set_destination(dest);
     net_packet.set_payload(&bytes)?;
     client_cipher.encrypt_ipv4(&mut net_packet)?;
-    Ok(net_packet.into_buffer())
+    Ok(net_packet)
 }
