@@ -29,7 +29,7 @@ pub fn start(worker: VntWorker, sender: ChannelSender,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
              client_cipher: Cipher, server_cipher: Cipher) {
-    let (buf_sender, buf_receiver) = buf_channel_group(6);
+    let (buf_sender, buf_receiver) = buf_channel_group(thread::available_parallelism().unwrap().get());
     for mut buf_receiver in buf_receiver.0 {
         let sender = sender.clone();
         let device_writer = device_writer.clone();

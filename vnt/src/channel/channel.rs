@@ -440,7 +440,7 @@ impl Channel {
                        symmetric_channel_num: usize,//对称网络，则再加一组监听，提升打洞成功率
                        relay: bool,
     ) {
-        let (buf_sender, buf_receiver) = buf_channel_group(6);
+        let (buf_sender, buf_receiver) = buf_channel_group(std::thread::available_parallelism().unwrap().get());
         for mut buf_receiver in buf_receiver.0 {
             let context = self.context.clone();
             let handler = self.handler.clone();
