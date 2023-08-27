@@ -69,40 +69,54 @@ pub async fn start(worker: VntWorker, sender: ChannelSender,
                    ip_route: Option<ExternalRoute>,
                    ip_proxy_map: Option<IpProxyMap>,
                    client_cipher: Cipher, server_cipher: Cipher, parallel: usize) {
-    let (buf_sender, buf_receiver) = buf_channel_group(parallel);
-    for mut buf_receiver in buf_receiver.0 {
-        let sender = sender.clone();
-        let device_writer = device_writer.clone();
-        let igmp_server = igmp_server.clone();
-        let current_device = current_device.clone();
-        let ip_route = ip_route.clone();
-        let ip_proxy_map = ip_proxy_map.clone();
-        let client_cipher = client_cipher.clone();
-        let server_cipher = server_cipher.clone();
-        tokio::spawn(async move {
-            while let Some((mut buf, start, len)) = buf_receiver.recv().await {
-                match handle(&sender, &mut buf[start..], len, &device_writer, &igmp_server, current_device.load(),
-                             &ip_route, &ip_proxy_map, &client_cipher, &server_cipher).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::warn!("{:?}", e)
+    if parallel == 1 {
+        thread::Builder::new().name("tun_handler".into()).spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap()
+                .block_on(async move {
+                    if let Err(e) = start_simple(sender, device_reader, &device_writer, igmp_server, current_device, ip_route, ip_proxy_map, client_cipher, server_cipher).await {
+                        log::warn!("stop:{}",e);
+                    }
+                    let _ = device_writer.close();
+                    worker.stop_all();
+                })
+        }).unwrap();
+    } else {
+        let (buf_sender, buf_receiver) = buf_channel_group(parallel);
+        for mut buf_receiver in buf_receiver.0 {
+            let sender = sender.clone();
+            let device_writer = device_writer.clone();
+            let igmp_server = igmp_server.clone();
+            let current_device = current_device.clone();
+            let ip_route = ip_route.clone();
+            let ip_proxy_map = ip_proxy_map.clone();
+            let client_cipher = client_cipher.clone();
+            let server_cipher = server_cipher.clone();
+            tokio::spawn(async move {
+                while let Some((mut buf, start, len)) = buf_receiver.recv().await {
+                    match handle(&sender, &mut buf[start..], len, &device_writer, &igmp_server, current_device.load(),
+                                 &ip_route, &ip_proxy_map, &client_cipher, &server_cipher).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::warn!("{:?}", e)
+                        }
                     }
                 }
-            }
-        });
-    }
+            });
+        }
 
-    thread::Builder::new().name("tun_handler".into()).spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all().build().unwrap()
-            .block_on(async move {
-                if let Err(e) = start_(sender, device_reader, buf_sender).await {
-                    log::warn!("stop:{}",e);
-                }
-                let _ = device_writer.close();
-                worker.stop_all();
-            })
-    }).unwrap();
+        thread::Builder::new().name("tun_handler".into()).spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap()
+                .block_on(async move {
+                    if let Err(e) = start_(sender, device_reader, buf_sender).await {
+                        log::warn!("stop:{}",e);
+                    }
+                    let _ = device_writer.close();
+                    worker.stop_all();
+                })
+        }).unwrap();
+    }
 }
 
 async fn start_(sender: ChannelSender, device_reader: DeviceReader, mut buf_sender: BufSenderGroup) -> io::Result<()> {
@@ -117,6 +131,31 @@ async fn start_(sender: ChannelSender, device_reader: DeviceReader, mut buf_send
             let start = 4;
         if !buf_sender.send((buf, start, len)).await {
             return Err(io::Error::new(io::ErrorKind::Other, "tun buf_sender发送失败"));
+        }
+    }
+}
+
+async fn start_simple(sender: ChannelSender,
+                      device_reader: DeviceReader,
+                      device_writer: &DeviceWriter,
+                      igmp_server: Option<IgmpServer>,
+                      current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+                      ip_route: Option<ExternalRoute>,
+                      ip_proxy_map: Option<IpProxyMap>,
+                      client_cipher: Cipher, server_cipher: Cipher) -> io::Result<()> {
+    let mut buf = [0; 4096];
+    loop {
+        if sender.is_close() {
+            return Ok(());
+        }
+        let len = device_reader.read(&mut buf[12..])? + 12;
+        #[cfg(any(target_os = "macos"))]
+            let mut buf = &mut buf[4..];
+        match handle(&sender, &mut buf, len, device_writer, &igmp_server, current_device.load(), &ip_route, &ip_proxy_map, &client_cipher, &server_cipher).await {
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("{:?}", e)
+            }
         }
     }
 }

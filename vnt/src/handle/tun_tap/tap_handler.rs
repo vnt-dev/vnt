@@ -22,6 +22,9 @@ use crate::handle::tun_tap::channel_group::{buf_channel_group, BufSenderGroup};
 use crate::igmp_server::IgmpServer;
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::{DeviceReader, DeviceWriter};
+lazy_static! {
+    static ref POOL:BytePool<Vec<u8>> = BytePool::<Vec<u8>>::new();
+}
 
 pub fn start(worker: VntWorker, sender: ChannelSender,
              device_reader: DeviceReader,
@@ -30,47 +33,59 @@ pub fn start(worker: VntWorker, sender: ChannelSender,
              current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
              ip_route: Option<ExternalRoute>,
              ip_proxy_map: Option<IpProxyMap>,
-             client_cipher: Cipher, server_cipher: Cipher,parallel:usize) {
-    let (buf_sender, buf_receiver) = buf_channel_group(parallel);
-    for mut buf_receiver in buf_receiver.0 {
-        let sender = sender.clone();
-        let device_writer = device_writer.clone();
-        let igmp_server = igmp_server.clone();
-        let current_device = current_device.clone();
-        let ip_route = ip_route.clone();
-        let ip_proxy_map = ip_proxy_map.clone();
-        let client_cipher = client_cipher.clone();
-        let server_cipher = server_cipher.clone();
-        tokio::spawn(async move {
-            while let Some((mut buf, _, len)) = buf_receiver.recv().await {
-                match handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender,
-                             &ip_route, &ip_proxy_map, &client_cipher, &server_cipher).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::warn!("{:?}", e)
+             client_cipher: Cipher, server_cipher: Cipher, parallel: usize) {
+    if parallel == 1 {
+        thread::Builder::new().name("tap_handler".into()).spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap()
+                .block_on(async move {
+                    if let Err(e) = start_simple(sender, device_reader,
+                                                 device_writer, igmp_server,
+                                                 current_device, ip_route, ip_proxy_map, client_cipher, server_cipher).await {
+                        log::warn!("tap:{:?}",e);
+                    }
+                    worker.stop_all();
+                });
+        }).unwrap();
+    } else {
+        let (buf_sender, buf_receiver) = buf_channel_group(parallel);
+        for mut buf_receiver in buf_receiver.0 {
+            let sender = sender.clone();
+            let device_writer = device_writer.clone();
+            let igmp_server = igmp_server.clone();
+            let current_device = current_device.clone();
+            let ip_route = ip_route.clone();
+            let ip_proxy_map = ip_proxy_map.clone();
+            let client_cipher = client_cipher.clone();
+            let server_cipher = server_cipher.clone();
+            tokio::spawn(async move {
+                while let Some((mut buf, _, len)) = buf_receiver.recv().await {
+                    match handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender,
+                                 &ip_route, &ip_proxy_map, &client_cipher, &server_cipher).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::warn!("{:?}", e)
+                        }
                     }
                 }
-            }
-        });
-    }
-    thread::Builder::new().name("tap_handler".into()).spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all().build().unwrap()
-            .block_on(async move {
-                if let Err(e) = start_(sender, device_reader, buf_sender).await {
-                    log::warn!("tap:{:?}",e);
-                }
-                worker.stop_all();
             });
-    }).unwrap();
+        }
+        thread::Builder::new().name("tap_handler".into()).spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all().build().unwrap()
+                .block_on(async move {
+                    if let Err(e) = start_(sender, device_reader, buf_sender).await {
+                        log::warn!("tap:{:?}",e);
+                    }
+                    worker.stop_all();
+                });
+        }).unwrap();
+    }
 }
-lazy_static!{
-    static ref POOL:BytePool<Vec<u8>> = BytePool::<Vec<u8>>::new();
-}
+
 async fn start_(sender: ChannelSender,
                 device_reader: DeviceReader,
                 mut buf_sender: BufSenderGroup) -> io::Result<()> {
-
     loop {
         let mut buf = POOL.alloc(4096);
         if sender.is_close() {
@@ -80,6 +95,23 @@ async fn start_(sender: ChannelSender,
         let len = device_reader.read(&mut buf)?;
         if !buf_sender.send((buf, start, len)).await {
             return Err(io::Error::new(io::ErrorKind::Other, "tap buf_sender发送失败"));
+        }
+    }
+}
+
+async fn start_simple(sender: ChannelSender,
+                      device_reader: DeviceReader,
+                      device_writer: DeviceWriter,
+                      igmp_server: Option<IgmpServer>,
+                      current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+                      ip_route: Option<ExternalRoute>,
+                      ip_proxy_map: Option<IpProxyMap>,
+                      client_cipher: Cipher, server_cipher: Cipher) -> io::Result<()> {
+    let mut buf = [0; 4096];
+    loop {
+        let len = device_reader.read(&mut buf)?;
+        if let Err(e) = handle(&mut buf, len, &igmp_server, &current_device, &device_writer, &sender, &ip_route, &ip_proxy_map, &client_cipher, &server_cipher).await {
+            log::warn!("tap handle{:?}",e);
         }
     }
 }
