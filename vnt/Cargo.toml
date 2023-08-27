@@ -11,7 +11,7 @@ bytes = "1.3.0"
 log = "0.4.17"
 libc = "0.2.137"
 crossbeam-utils = "0.8"
-crossbeam-skiplist = "0.1.1"
+dashmap = "5.5.1"
 parking_lot = "0.12.1"
 rand = "0.8.5"
 sha2 = { version = "0.10.6", features = ["oid"] }

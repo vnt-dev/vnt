@@ -3,8 +3,8 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::atomic::AtomicCell;
+use dashmap::DashMap;
 use parking_lot::Mutex;
 use rand::Rng;
 use tokio::net::{TcpStream, UdpSocket};
@@ -48,7 +48,7 @@ pub struct Vnt {
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     nat_test: NatTest,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
-    peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
+    peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>>,
 }
 
 pub struct VntUtil {
@@ -208,7 +208,7 @@ impl VntUtil {
                                                                     config.server_address, config.token.clone(),
                                                                     config.device_id.clone(), config.name.clone(),config.password.is_some()));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> = Arc::new(Mutex::new((response.epoch, response.device_info_list)));
-        let peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>> = Arc::new(SkipMap::new());
+        let peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>> = Arc::new(DashMap::new());
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
 
 

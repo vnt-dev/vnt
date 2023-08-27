@@ -2,9 +2,8 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::atomic::AtomicCell;
-use parking_lot::Mutex;
+use dashmap::DashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::net::tcp::OwnedReadHalf;
@@ -16,16 +15,15 @@ use crate::handle::CurrentDeviceInfo;
 use crate::handle::recv_handler::ChannelDataHandler;
 
 pub struct ContextInner {
-    pub(crate) lock: Mutex<()>,
     //udp用于打洞、服务端通信(可选)
     pub(crate) main_channel: Arc<UdpSocket>,
     //在udp的基础上，可以选择使用tcp和服务端通信
     pub(crate) main_tcp_channel: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
-    pub(crate) route_table: SkipMap<Ipv4Addr, Vec<Route>>,
-    pub(crate) route_table_time: SkipMap<(RouteKey, Ipv4Addr), AtomicCell<Instant>>,
+    pub(crate) route_table: DashMap<Ipv4Addr, Vec<Route>>,
+    pub(crate) route_table_time: DashMap<(RouteKey, Ipv4Addr), AtomicCell<Instant>>,
     pub(crate) status_receiver: Receiver<Status>,
     pub(crate) status_sender: Sender<Status>,
-    pub(crate) udp_map: SkipMap<usize, Arc<UdpSocket>>,
+    pub(crate) udp_map: DashMap<usize, Arc<UdpSocket>>,
     pub(crate) channel_num: usize,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 }
@@ -41,14 +39,13 @@ impl Context {
         let channel_num = 1;
         let (status_sender, status_receiver) = channel(Status::Cone);
         let inner = Arc::new(ContextInner {
-            lock: Mutex::new(()),
             main_channel,
             main_tcp_channel,
-            route_table: SkipMap::new(),
-            route_table_time: SkipMap::new(),
+            route_table: DashMap::with_capacity(16),
+            route_table_time: DashMap::with_capacity(16),
             status_receiver,
             status_sender,
-            udp_map: SkipMap::new(),
+            udp_map: DashMap::new(),
             channel_num,
             current_device,
         });
@@ -117,8 +114,10 @@ impl Context {
     }
 
     pub(crate) async fn send_all(&self, buf: &[u8], addr: SocketAddr) -> io::Result<()> {
-        for udp in self.inner.udp_map.iter() {
-            udp.value().send_to(buf, addr).await?;
+        for udp_ref in self.inner.udp_map.iter() {
+            let udp = udp_ref.clone();
+            drop(udp_ref);
+            udp.send_to(buf, addr).await?;
         }
         Ok(())
     }
@@ -139,8 +138,10 @@ impl Context {
                 }
             }
 
-            if let Some(udp) = self.inner.udp_map.get(&route.index) {
-                return udp.value().send_to(buf, route.addr).await;
+            if let Some(udp_ref) = self.inner.udp_map.get(&route.index) {
+                let udp = udp_ref.value().clone();
+                drop(udp_ref);
+                return udp.send_to(buf, route.addr).await;
             }
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
@@ -171,8 +172,10 @@ impl Context {
                 };
             }
         }
-        if let Some(udp) = self.inner.udp_map.get(&route_key.index) {
-            return udp.value().send_to(buf, route_key.addr).await;
+        if let Some(udp_ref) = self.inner.udp_map.get(&route_key.index) {
+            let udp = udp_ref.value().clone();
+            drop(udp_ref);
+            return udp.send_to(buf, route_key.addr).await;
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
     }
@@ -201,12 +204,7 @@ impl Context {
     }
     fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) {
         let key = route.route_key();
-        let guard = self.inner.lock.lock();
-        let mut list = if let Some(entry) = self.inner.route_table.get(&id) {
-            entry.value().clone()
-        } else {
-            Vec::with_capacity(4)
-        };
+        let mut list = self.inner.route_table.entry(id).or_insert_with(||Vec::with_capacity(4));
         let mut exist = false;
         for x in list.iter_mut() {
             if x.metric < route.metric {
@@ -237,9 +235,7 @@ impl Context {
                 list.truncate(max_len);
             }
         }
-        self.inner.route_table.insert(id, list);
         self.inner.route_table_time.insert((key, id), AtomicCell::new(Instant::now()));
-        drop(guard);
     }
     pub fn route(&self, id: &Ipv4Addr) -> Option<Vec<Route>> {
         if let Some(v) = self.inner.route_table.get(id) {
@@ -297,16 +293,13 @@ impl Context {
         v
     }
     pub fn remove_route_all(&self, id: &Ipv4Addr) {
-        let guard = self.inner.lock.lock();
-        if let Some(v) = self.inner.route_table.remove(id) {
-            for x in v.value() {
+        if let Some((_,routes)) = self.inner.route_table.remove(id) {
+            for x in routes {
                 self.inner.route_table_time.remove(&(x.route_key(), *id));
             }
         }
-        drop(guard);
     }
     pub fn remove_route(&self, id: &Ipv4Addr, route_key: RouteKey) {
-        let guard = self.inner.lock.lock();
         if let Some(v) = self.inner.route_table.get(id) {
             let mut routes = v.value().clone();
             drop(v);
@@ -314,7 +307,6 @@ impl Context {
             self.inner.route_table.insert(*id, routes);
         }
         self.inner.route_table_time.remove(&(route_key, *id));
-        drop(guard);
     }
     pub fn update_read_time(&self, id: &Ipv4Addr, route_key: &RouteKey) {
         if let Some(time) = self.inner.route_table_time.get(&(*route_key, *id)) {

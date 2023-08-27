@@ -1,17 +1,17 @@
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
+use dashmap::DashMap;
 
-use crossbeam_skiplist::SkipMap;
 use tokio::net::{TcpListener, TcpStream};
 
 pub struct TcpProxy {
     tcp_listener: TcpListener,
-    tcp_proxy_map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>,
+    tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
 }
 
 impl TcpProxy {
-    pub fn new(tcp_listener: TcpListener, tcp_proxy_map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>) -> Self {
+    pub fn new(tcp_listener: TcpListener, tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>) -> Self {
         Self {
             tcp_listener,
             tcp_proxy_map,
@@ -27,6 +27,7 @@ impl TcpProxy {
                         SocketAddr::V4(sender_addr) => {
                             if let Some(entry) = tcp_proxy_map.get(&sender_addr) {
                                 let dest_addr = *entry.value();
+                                drop(entry);
                                 let peer_tcp_stream = match TcpStream::connect(dest_addr).await {
                                     Ok(peer_tcp_stream) => { peer_tcp_stream }
                                     Err(e) => {

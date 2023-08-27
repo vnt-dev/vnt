@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use crossbeam_skiplist::SkipMap;
+use dashmap::DashMap;
 use parking_lot::RwLock;
 use packet::igmp::igmp_v2::IgmpV2Packet;
 use packet::igmp::igmp_v3::{IgmpV3QueryPacket, IgmpV3RecordType, IgmpV3ReportPacket};
@@ -47,12 +47,12 @@ impl Multicast {
 
 #[derive(Clone)]
 pub struct IgmpServer {
-    multicast: Arc<SkipMap<Ipv4Addr, Arc<RwLock<Multicast>>>>,
+    multicast: Arc<DashMap<Ipv4Addr, Arc<RwLock<Multicast>>>>,
 }
 
 impl IgmpServer {
     pub fn new(device_writer: DeviceWriter) -> Self {
-        let multicast: Arc<SkipMap<Ipv4Addr, Arc<RwLock<Multicast>>>> = Arc::new(SkipMap::new());
+        let multicast: Arc<DashMap<Ipv4Addr, Arc<RwLock<Multicast>>>> = Arc::new(DashMap::new());
         std::thread::spawn(move || {
             //预留以太网帧头和ip头
             let mut buf = [0; 14 + 24 + 12];
@@ -124,10 +124,12 @@ impl IgmpServer {
                 if !multicast_addr.is_multicast() {
                     return Ok(());
                 }
-                let multi = self.multicast.get_or_insert_with(multicast_addr, || {
-                    Arc::new(RwLock::new(Multicast::new()))
-                });
-                let mut guard = multi.value().write();
+                let multi = {
+                    self.multicast.entry(multicast_addr).or_insert_with(|| {
+                        Arc::new(RwLock::new(Multicast::new()))
+                    }).value().clone()
+                };
+                let mut guard = multi.write();
                 guard.members.insert(source, Instant::now());
             }
             IgmpType::LeaveV2 => {
@@ -151,10 +153,10 @@ impl IgmpServer {
                         if !multicast_addr.is_multicast() {
                             return Ok(());
                         }
-                        let multi = self.multicast.get_or_insert_with(multicast_addr, || {
+                        let multi = self.multicast.entry(multicast_addr).or_insert_with(|| {
                             Arc::new(RwLock::new(Multicast::new()))
-                        });
-                        let mut guard = multi.value().write();
+                        }).value().clone();
+                        let mut guard = multi.write();
 
                         match group_record.record_type() {
                             IgmpV3RecordType::ModeIsInclude | IgmpV3RecordType::ChangeToIncludeMode => {

@@ -1,8 +1,8 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 
-use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::atomic::AtomicCell;
+use dashmap::DashMap;
 use parking_lot::Mutex;
 use protobuf::Message;
 use tokio::sync::mpsc::Sender;
@@ -41,7 +41,7 @@ pub struct ChannelDataHandler {
     igmp_server: Option<IgmpServer>,
     device_writer: DeviceWriter,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
-    peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
+    peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>>,
     ip_proxy_map: Option<IpProxyMap>,
     out_external_route: AllowExternalRoute,
     cone_sender: Sender<(Ipv4Addr, NatInfo)>,
@@ -61,7 +61,7 @@ impl ChannelDataHandler {
                igmp_server: Option<IgmpServer>,
                device_writer: DeviceWriter,
                connect_status: Arc<AtomicCell<ConnectStatus>>,
-               peer_nat_info_map: Arc<SkipMap<Ipv4Addr, NatInfo>>,
+               peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>>,
                ip_proxy_map: Option<IpProxyMap>,
                out_external_route: AllowExternalRoute,
                cone_sender: Sender<(Ipv4Addr, NatInfo)>,
@@ -196,9 +196,7 @@ impl ChannelDataHandler {
                                             ipv4.update_checksum();
                                             let key = SocketAddrV4::new(source, source_port);
                                             //https://github.com/crossbeam-rs/crossbeam/issues/1023
-                                            if !ip_proxy_map.tcp_proxy_map.contains_key(&key){
-                                                ip_proxy_map.tcp_proxy_map.insert(key, SocketAddrV4::new(dest_ip, dest_port));
-                                            }
+                                            ip_proxy_map.tcp_proxy_map.insert(key, SocketAddrV4::new(dest_ip, dest_port));
                                         }
                                         ipv4::protocol::Protocol::Udp => {
                                             let dest_ip = ipv4.destination_ip();
@@ -211,9 +209,7 @@ impl ChannelDataHandler {
                                             ipv4.set_destination_ip(destination);
                                             ipv4.update_checksum();
                                             let key = SocketAddrV4::new(source, source_port);
-                                            if !ip_proxy_map.udp_proxy_map.contains_key(&key){
-                                                ip_proxy_map.udp_proxy_map.insert(key, SocketAddrV4::new(dest_ip, dest_port));
-                                            }
+                                            ip_proxy_map.udp_proxy_map.insert(key, SocketAddrV4::new(dest_ip, dest_port));
                                         }
                                         ipv4::protocol::Protocol::Icmp => {
                                             let dest_ip = ipv4.destination_ip();

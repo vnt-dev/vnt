@@ -29,7 +29,6 @@ impl Idle {
             for entry in self.context.inner.route_table_time.iter() {
                 let last_read = entry.value().load().elapsed();
                 if last_read >= self.read_idle {
-                    entry.remove();
                     return Ok((entry.key().1.clone(), entry.key().0.clone()));
                 } else {
                     if max < last_read {

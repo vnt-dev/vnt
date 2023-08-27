@@ -3,8 +3,8 @@ use std::mem::MaybeUninit;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use crossbeam_utils::atomic::AtomicCell;
+use dashmap::DashMap;
 
-use crossbeam_skiplist::SkipMap;
 use socket2::{Domain, SockAddr, Socket, Type};
 
 use packet::icmp::icmp;
@@ -19,14 +19,14 @@ use crate::protocol::body::ENCRYPTION_RESERVED;
 pub struct IcmpProxy {
     icmp_socket: Arc<Socket>,
     // 对端-> 真实来源
-    icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
+    icmp_proxy_map: Arc<DashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
     sender: ChannelSender,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
 }
 
 impl IcmpProxy {
-    pub fn new(addr: SocketAddrV4, icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
+    pub fn new(addr: SocketAddrV4, icmp_proxy_map: Arc<DashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
                sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>, client_cipher: Cipher) -> io::Result<IcmpProxy> {
         let icmp_socket = Arc::new(Socket::new(Domain::IPV4, Type::RAW, Some(socket2::Protocol::ICMPV4))?);
         icmp_socket.bind(&SockAddr::from(addr))?;
@@ -60,6 +60,7 @@ impl IcmpProxy {
                                                     if let Some(entry) = self.icmp_proxy_map.get(&(peer_ip, id, seq)) {
                                                         //将数据发送到真实的来源
                                                         let dest_ip = *entry.value();
+                                                        drop(entry);
                                                         ipv4_packet.set_destination_ip(dest_ip);
                                                         ipv4_packet.update_checksum();
                                                         let current_device = self.current_device.load();

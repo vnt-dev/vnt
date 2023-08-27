@@ -2,7 +2,7 @@ use std::{io, thread};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use crossbeam_utils::atomic::AtomicCell;
-use crossbeam_skiplist::SkipMap;
+use dashmap::DashMap;
 use socket2::{SockAddr, Socket};
 use tokio::net::{TcpListener, UdpSocket};
 use crate::channel::sender::ChannelSender;
@@ -28,10 +28,10 @@ pub struct IpProxyMap {
     pub(crate) tcp_proxy_port: u16,
     pub(crate) udp_proxy_port: u16,
     //真实源地址 -> 目的地址
-    pub(crate) tcp_proxy_map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>,
-    pub(crate) udp_proxy_map: Arc<SkipMap<SocketAddrV4, SocketAddrV4>>,
+    pub(crate) tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
+    pub(crate) udp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
     // icmp用Identifier来区分，没有Identifier的一律不转发
-    pub(crate) icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
+    pub(crate) icmp_proxy_map: Arc<DashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
     icmp_socket: Arc<Socket>,
 }
 
@@ -42,9 +42,9 @@ impl IpProxyMap {
 }
 
 pub async fn init_proxy(sender: ChannelSender, current_device: Arc<AtomicCell<CurrentDeviceInfo>>, client_cipher: Cipher,) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
-    let tcp_proxy_map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(SkipMap::new());
-    let udp_proxy_map: Arc<SkipMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(SkipMap::new());
-    let icmp_proxy_map: Arc<SkipMap<(Ipv4Addr, u16, u16), Ipv4Addr>> = Arc::new(SkipMap::new());
+    let tcp_proxy_map: Arc<DashMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(DashMap::new());
+    let udp_proxy_map: Arc<DashMap<SocketAddrV4,  SocketAddrV4>> = Arc::new(DashMap::new());
+    let icmp_proxy_map: Arc<DashMap<(Ipv4Addr, u16, u16), Ipv4Addr>> = Arc::new(DashMap::new());
     let tcp_listener = TcpListener::bind("0.0.0.0:0").await?;
     let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
     let tcp_proxy_port = tcp_listener.local_addr()?.port();
