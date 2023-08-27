@@ -80,7 +80,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, vec![],
-                             vec![], password, false, None, false, None, false);
+                             vec![], password, false, None, false, None, false,false);
     match VntUtilSync::new(config) {
         Ok(vnt_util) => {
             Ok(vnt_util)
@@ -108,22 +108,37 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_new0(
     }
     return 0;
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_connect0(
     mut env: JNIEnv,
     _class: JClass,
     raw_vnt_util: jlong,
-) -> jobject {
+)  {
     let raw_vnt_util = raw_vnt_util as *mut VntUtilSync;
     match (&mut *raw_vnt_util).connect() {
+        Ok(_) => {}
+        Err(e) => {
+            env.throw_new("java/lang/RuntimeException", format!("vnt connect error {}", e))
+                .expect("throw");
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_register0(
+    mut env: JNIEnv,
+    _class: JClass,
+    raw_vnt_util: jlong,
+) -> jobject {
+    let raw_vnt_util = raw_vnt_util as *mut VntUtilSync;
+    match (&mut *raw_vnt_util).register() {
         Ok(response) => {
             match reg_response(&mut env, response) {
                 Ok(res) => {
                     return res;
                 }
                 Err(e) => {
-                    env.throw(format!("vnt connect error {}", e)).expect("throw");
+                    env.throw(format!("vnt register error {}", e)).expect("throw");
                 }
             }
         }
@@ -142,11 +157,11 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_connect0(
                         .expect("throw");
                 }
                 ReqEnum::ServerError(str) => {
-                    env.throw_new("java/lang/RuntimeException", format!("vnt connect error {}", str))
+                    env.throw_new("java/lang/RuntimeException", format!("vnt register error {}", str))
                         .expect("throw");
                 }
                 ReqEnum::Other(str) => {
-                    env.throw_new("java/lang/RuntimeException", format!("vnt connect error {}", str))
+                    env.throw_new("java/lang/RuntimeException", format!("vnt register error {}", str))
                         .expect("throw");
                 }
                 ReqEnum::IpAlreadyExists => {
