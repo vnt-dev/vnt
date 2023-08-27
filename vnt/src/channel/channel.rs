@@ -68,6 +68,9 @@ impl Context {
     pub fn close(&self) {
         let _ = self.inner.status_sender.send(Status::Close);
     }
+    pub fn is_main_tcp(&self)->bool{
+        self.inner.main_tcp_channel.is_some()
+    }
     pub fn switch(&self, nat_type: NatType) {
         match nat_type {
             NatType::Symmetric => {

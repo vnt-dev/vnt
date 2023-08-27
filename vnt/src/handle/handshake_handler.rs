@@ -207,5 +207,8 @@ pub async fn secret_handshake_req(context: &Context,
                                   server_address: SocketAddr, rsa_cipher: &RsaCipher, server_cipher: &Cipher, token: String, ) -> crate::Result<()> {
     let secret_packet = secret_handshake_request_packet(rsa_cipher, token, server_cipher.key().unwrap())?;
     context.send_main(secret_packet.buffer(), server_address).await?;
+    if context.is_main_tcp(){
+        context.send_main_udp(secret_packet.buffer(),server_address).await?;
+    }
     Ok(())
 }
