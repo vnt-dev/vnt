@@ -67,10 +67,7 @@ impl AesGcmCipher {
         let nonce = aead::Nonce::assume_unique_for_key(nonce_raw);
         let mut secret_body = SecretBody::new(net_packet.payload_mut())?;
         let tag = secret_body.tag();
-        if tag.len() != 16 {
-            return Err(io::Error::new(io::ErrorKind::Other, "tag err"));
-        }
-        let finger = self.finger.calculate_finger(&nonce_raw, &secret_body);
+        let finger = self.finger.calculate_finger(&nonce_raw, secret_body.en_body());
         if &finger != secret_body.finger() {
             return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
         }
@@ -122,7 +119,7 @@ impl AesGcmCipher {
                     return Err(io::Error::new(io::ErrorKind::Other, format!("加密tag长度错误:{}", tag.len())));
                 }
                 secret_body.set_tag(tag)?;
-                let finger = self.finger.calculate_finger(&nonce_raw, &secret_body);
+                let finger = self.finger.calculate_finger(&nonce_raw, secret_body.en_body());
                 secret_body.set_finger(&finger)?;
                 net_packet.set_encrypt_flag(true);
                 Ok(())

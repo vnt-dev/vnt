@@ -54,6 +54,11 @@ impl<B: AsRef<[u8]>> SecretBody<B> {
         let end = self.buffer.as_ref().len() - 12;
         &self.buffer.as_ref()[end - 16..end]
     }
+    /// 数据部分+tag部分
+    pub fn en_body(&self) -> &[u8] {
+        let end = self.buffer.as_ref().len() - 12;
+        &self.buffer.as_ref()[..end]
+    }
     pub fn finger(&self) -> &[u8] {
         let end = self.buffer.as_ref().len();
         &self.buffer.as_ref()[end - 12..end]

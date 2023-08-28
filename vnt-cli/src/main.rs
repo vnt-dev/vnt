@@ -195,7 +195,7 @@ fn main() {
     }
     let tcp_channel = matches.opt_present("tcp");
     let relay = matches.opt_present("relay");
-    let parallel = matches.opt_get::<usize>("par").unwrap().unwrap_or(2);
+    let parallel = matches.opt_get::<usize>("par").unwrap().unwrap_or(1);
     if parallel == 0 {
         println!("--par invalid");
         return;
@@ -213,11 +213,11 @@ fn main() {
                              out_ip, password, simulate_multicast, mtu,
                              tcp_channel, virtual_ip, relay, server_encrypt, parallel);
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(thread_num).build().unwrap();
-    runtime.block_on(main0(config,!unused_cmd));
+    runtime.block_on(main0(config, !unused_cmd));
     std::process::exit(0);
 }
 
-async fn main0(config: Config,show_cmd:bool) {
+async fn main0(config: Config, show_cmd: bool) {
     let server_encrypt = config.server_encrypt;
     let mut vnt_util = VntUtil::new(config).await.unwrap();
     let mut conn_count = 0;
@@ -452,7 +452,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
-    println!("  --par <parallel>    任务并行度(必须为正整数),默认值为2");
+    println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
     println!("  --thread <thread>   线程数(必须为正整数),默认为核心数乘2");
     println!();
     println!("  --list              {}", yellow("后台运行时,查看其他设备列表".to_string()));

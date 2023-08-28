@@ -35,12 +35,10 @@ impl TcpProxy {
                                         continue;
                                     }
                                 };
-                                let tcp_proxy_map = tcp_proxy_map.clone();
                                 tokio::spawn(async move {
                                     if let Err(e) = proxy(tcp_stream, peer_tcp_stream).await {
                                         log::warn!("{}->{},{}",sender_addr,dest_addr,e);
                                     }
-                                    tcp_proxy_map.remove(&sender_addr);
                                 });
                             }
                         }

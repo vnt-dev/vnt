@@ -444,22 +444,28 @@ impl Channel {
                        relay: bool,
                        parallel: usize,
     ) {
-        let (buf_sender, buf_receiver) = buf_channel_group(parallel);
-        for mut buf_receiver in buf_receiver.0 {
-            let context = self.context.clone();
-            let handler = self.handler.clone();
-            tokio::spawn(async move {
-                while let Some((mut buf, start, end, route_key)) = buf_receiver.recv().await {
-                    handler.handle(&mut buf, start, end, route_key, &context).await;
-                }
-            });
-        }
+        let handler = self.handler.clone();
         let context = self.context;
         let main_channel = context.inner.main_channel.clone();
+        let buf_sender = if parallel > 1 || tcp.is_some() {
+            let (buf_sender, buf_receiver) = buf_channel_group(parallel);
+            for mut buf_receiver in buf_receiver.0 {
+                let context = context.clone();
+                let handler = handler.clone();
+                tokio::spawn(async move {
+                    while let Some((mut buf, start, end, route_key)) = buf_receiver.recv().await {
+                        handler.handle(&mut buf, start, end, route_key, &context).await;
+                    }
+                });
+            }
+            Some(buf_sender)
+        } else {
+            None
+        };
         if let Some((tcp_stream, receiver)) = tcp {
-            tokio::spawn(Self::start_tcp(worker.worker("main_channel_tcp"), tcp_stream, receiver, context.inner.current_device.clone(), buf_sender.clone(), head_reserve));
+            tokio::spawn(Self::start_tcp(worker.worker("main_channel_tcp"), tcp_stream, receiver, context.inner.current_device.clone(), buf_sender.clone().unwrap(), head_reserve));
         }
-        tokio::spawn(Self::start_(worker.worker("main_channel_1"), context.clone(), main_channel.clone(), buf_sender.clone(), head_reserve, true));
+        tokio::spawn(Self::start_(worker.worker("main_channel_1"), context.clone(), main_channel.clone(), handler.clone(), buf_sender.clone(), head_reserve, true));
         if relay {
             worker.stop_wait().await;
             return;
@@ -489,7 +495,7 @@ impl Channel {
                                             Ok(udp) => {
                                                 let udp = Arc::new(udp);
                                                 let context = context.clone();
-                                                tokio::spawn(Self::start_(worker.worker("symmetric_channel"),context, udp,buf_sender.clone(), head_reserve, false));
+                                                tokio::spawn(Self::start_(worker.worker("symmetric_channel"),context, udp,handler.clone(),buf_sender.clone(), head_reserve, false));
                                             }
                                             Err(e) => {
                                                 log::error!("{}",e);
@@ -513,7 +519,8 @@ impl Channel {
     }
     async fn start_(mut worker: VntWorker, context: Context,
                     udp: Arc<UdpSocket>,
-                    mut buf_sender: BufSenderGroup,
+                    handler: ChannelDataHandler,
+                    buf_sender: Option<BufSenderGroup>,
                     head_reserve: usize,
                     is_core: bool) {
         let mut status_receiver = context.inner.status_receiver.clone();
@@ -526,44 +533,88 @@ impl Channel {
         #[cfg(any(unix))]
             let id = 1 + udp.as_raw_fd() as usize;
         context.inner.udp_map.insert(id, udp.clone());
-        loop {
-            let mut buf = POOL.alloc(4096);
-            tokio::select! {
-                rs=udp.recv_from(&mut buf[head_reserve..])=>{
-                     match rs {
-                        Ok((len, addr)) => {
-                            if !buf_sender.send((buf,head_reserve,head_reserve+len,RouteKey::new(id, addr))).await{
-                                 log::error!("udp buf_sender发送数据失败");
-                                 break;
+        match buf_sender {
+            None => {
+                let mut buf = [0; 4096];
+                loop {
+                    tokio::select! {
+                        rs=udp.recv_from(&mut buf[head_reserve..])=>{
+                              match rs {
+                                Ok((len, addr)) => {
+                                    handler.handle(&mut buf, head_reserve, head_reserve + len, RouteKey::new(id, addr), &context).await;
+                                }
+                                Err(e) => {
+                                    log::error!("{:?}",e)
+                                }
                             }
                         }
-                        Err(e) => {
-                            log::error!("{:?}",e)
+                        changed=status_receiver.changed()=>{
+                                match changed {
+                                    Ok(_) => {
+                                        match *status_receiver.borrow() {
+                                            Status::Cone => {
+                                                if !is_core{
+                                                    break;
+                                                }
+                                            }
+                                            Status::Close=>{
+                                                break;
+                                            }
+                                            Status::Symmetric => {}
+                                        }
+                                    }
+                                    Err(_) => {
+                                        break;
+                                    }
+                                }
+                        }
+                        _=worker.stop_wait()=>{
+                            break;
                         }
                     }
                 }
-                changed=status_receiver.changed()=>{
-                        match changed {
-                            Ok(_) => {
-                                match *status_receiver.borrow() {
-                                    Status::Cone => {
-                                        if !is_core{
-                                            break;
-                                        }
+            }
+            Some(mut buf_sender) => {
+                loop {
+                    let mut buf = POOL.alloc(4096);
+                    tokio::select! {
+                        rs=udp.recv_from(&mut buf[head_reserve..])=>{
+                             match rs {
+                                Ok((len, addr)) => {
+                                    if !buf_sender.send((buf,head_reserve,head_reserve+len,RouteKey::new(id, addr))).await{
+                                         log::error!("udp buf_sender发送数据失败");
+                                         break;
                                     }
-                                    Status::Close=>{
-                                        break;
-                                    }
-                                    Status::Symmetric => {}
+                                }
+                                Err(e) => {
+                                    log::error!("{:?}",e)
                                 }
                             }
-                            Err(_) => {
-                                break;
-                            }
                         }
-                }
-                _=worker.stop_wait()=>{
-                    break;
+                        changed=status_receiver.changed()=>{
+                                match changed {
+                                    Ok(_) => {
+                                        match *status_receiver.borrow() {
+                                            Status::Cone => {
+                                                if !is_core{
+                                                    break;
+                                                }
+                                            }
+                                            Status::Close=>{
+                                                break;
+                                            }
+                                            Status::Symmetric => {}
+                                        }
+                                    }
+                                    Err(_) => {
+                                        break;
+                                    }
+                                }
+                        }
+                        _=worker.stop_wait()=>{
+                            break;
+                        }
+                    }
                 }
             }
         }

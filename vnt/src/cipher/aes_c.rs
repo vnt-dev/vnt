@@ -3,7 +3,7 @@ use crate::cipher::Finger;
 use crate::protocol::NetPacket;
 use sha2::Digest;
 #[cfg(feature = "ring-cipher")]
-use crate::cipher::ring_cipher::AesGcmCipher;
+use crate::cipher::ring_aes_gcm_cipher::AesGcmCipher;
 #[cfg(not(feature = "ring-cipher"))]
 use crate::cipher::aes_gcm_cipher::AesGcmCipher;
 
@@ -15,7 +15,7 @@ pub enum Cipher {
 
 impl Cipher {
     pub fn new_password(password: Option<String>, token: String) -> Self {
-        let finger = Finger::new(token);
+        let finger = Finger::new(&token);
         if let Some(password) = password {
             let mut hasher = sha2::Sha256::new();
             hasher.update(password.as_bytes());
@@ -32,7 +32,7 @@ impl Cipher {
         }
     }
     pub fn new_key(key: [u8; 32], token: String) -> io::Result<Self> {
-        let finger = Finger::new(token);
+        let finger = Finger::new(&token);
         match key.len() {
             16 => {
                 let aes = AesGcmCipher::new_128(key[..16].try_into().unwrap(), finger);
