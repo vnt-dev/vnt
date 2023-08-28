@@ -15,7 +15,7 @@ use crate::channel::channel::{Channel, Context};
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
 use crate::channel::sender::ChannelSender;
-use crate::cipher::{Cipher, RsaCipher};
+use crate::cipher::{Cipher, CipherModel, RsaCipher};
 use crate::core::status::VntStatusManger;
 use crate::error::Error;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
@@ -185,7 +185,7 @@ impl VntUtil {
         };
         let config = self.config.clone();
         let vnt_status_manager = VntStatusManger::new();
-        let client_cipher = Cipher::new_password(config.password.clone(), config.token.clone());
+        let client_cipher = Cipher::new_password(config.cipher_model, config.password.clone(), config.token.clone());
         let virtual_ip = response.virtual_ip;
         let virtual_gateway = response.virtual_gateway;
         let virtual_netmask = response.virtual_netmask;
@@ -238,15 +238,15 @@ impl VntUtil {
         if config.tap {
             tap_handler::start(vnt_status_manager.worker("tap_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
                                igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(),
-                               client_cipher.clone(), self.server_cipher.clone(),config.parallel);
+                               client_cipher.clone(), self.server_cipher.clone(), config.parallel);
         } else {
             tun_handler::start(vnt_status_manager.worker("tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
                                igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(),
-                               client_cipher.clone(), self.server_cipher.clone(),config.parallel).await;
+                               client_cipher.clone(), self.server_cipher.clone(), config.parallel).await;
         }
         #[cfg(any(target_os = "android"))]
         tun_handler::start(vnt_status_manager.worker("android tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone(),config.parallel).await;
+                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone(), config.parallel).await;
 
         //外部数据接收处理
         let channel_recv_handler = ChannelDataHandler::new(current_device.clone(), device_list.clone(),
@@ -266,7 +266,7 @@ impl VntUtil {
                 tokio::spawn(udp_proxy.start());
             }
             tokio::spawn(async move {
-                channel.start(channel_worker, tcp, 14, 65, relay,config.parallel).await
+                channel.start(channel_worker, tcp, 14, 65, relay, config.parallel).await
             });
         }
         {
@@ -390,6 +390,7 @@ pub struct Config {
     pub relay: bool,
     pub server_encrypt: bool,
     pub parallel: usize,
+    pub cipher_model: CipherModel,
 }
 
 
@@ -403,7 +404,7 @@ impl Config {
                in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32)>,
                password: Option<String>, simulate_multicast: bool, mtu: Option<u16>, tcp: bool,
                ip: Option<Ipv4Addr>,
-               relay: bool, server_encrypt: bool, parallel: usize, ) -> Self {
+               relay: bool, server_encrypt: bool, parallel: usize, cipher_model: CipherModel) -> Self {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
                 x.push_str(":3478");
@@ -427,6 +428,7 @@ impl Config {
             relay,
             server_encrypt,
             parallel,
+            cipher_model,
         }
     }
 }

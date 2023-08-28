@@ -16,7 +16,7 @@ use crate::protocol::body::ENCRYPTION_RESERVED;
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   注：e为是否加密标志，s为服务端通信包标志，u未使用
 */
-
+pub const HEAD_LEN: usize = 12;
 
 pub mod body;
 pub mod control_packet;
@@ -244,6 +244,9 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
         }
         self.data_len = data_len;
         Ok(())
+    }
+    pub fn set_data_len_max(&mut self) {
+        self.data_len = self.buffer.as_ref().len();
     }
 }
 

@@ -122,6 +122,7 @@ pub async fn start(worker: VntWorker, sender: ChannelSender,
 async fn start_(sender: ChannelSender, device_reader: DeviceReader, mut buf_sender: BufSenderGroup) -> io::Result<()> {
     loop {
         let mut buf = POOL.alloc(4096);
+        buf[..12].fill(0);
         if sender.is_close() {
             return Ok(());
         }
@@ -148,6 +149,7 @@ async fn start_simple(sender: ChannelSender,
         if sender.is_close() {
             return Ok(());
         }
+        buf[..12].fill(0);
         let len = device_reader.read(&mut buf[12..])? + 12;
         #[cfg(any(target_os = "macos"))]
             let mut buf = &mut buf[4..];

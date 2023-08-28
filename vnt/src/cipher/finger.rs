@@ -2,11 +2,11 @@ use std::io;
 
 use sha2::Digest;
 
-use crate::protocol::{body::ENCRYPTION_RESERVED, NetPacket};
+use crate::protocol::NetPacket;
 
 #[derive(Clone)]
 pub struct Finger {
-    hash: [u8; 32],
+    pub(crate) hash: [u8; 32],
 }
 
 impl Finger {
@@ -22,8 +22,8 @@ impl Finger {
             return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
         }
         let payload_len = net_packet.payload().len();
-        if payload_len < ENCRYPTION_RESERVED {
-            log::error!("数据异常,长度小于{}",ENCRYPTION_RESERVED);
+        if payload_len < 12 {
+            log::error!("数据异常,长度小于{}",12);
             return Err(io::Error::new(io::ErrorKind::Other, "data err"));
         }
         let mut nonce_raw = [0; 12];
@@ -40,9 +40,9 @@ impl Finger {
         }
         Ok(())
     }
-    pub fn calculate_finger(&self, nonce_raw: &[u8; 12], secret_body: &[u8]) -> [u8; 12] {
+    pub fn calculate_finger(&self, nonce: &[u8], secret_body: &[u8]) -> [u8; 12] {
         let mut hasher = sha2::Sha256::new();
-        hasher.update(nonce_raw);
+        hasher.update(nonce);
         hasher.update(secret_body);
         hasher.update(&self.hash);
         let key: [u8; 32] = hasher.finalize().into();

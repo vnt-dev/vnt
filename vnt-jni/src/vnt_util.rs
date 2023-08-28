@@ -7,6 +7,7 @@ use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::jboolean;
 use jni::sys::{jint, jlong, jobject};
 use jni::JNIEnv;
+use vnt::cipher::CipherModel;
 use vnt::core::Config;
 use vnt::core::sync::VntUtilSync;
 use vnt::handle::registration_handler::{RegResponse, ReqEnum};
@@ -80,7 +81,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, vec![],
-                             vec![], password, false, None, false, None, false,false,1);
+                             vec![], password, false, None, false, None, false,false,1,CipherModel::AesGcm);
     match VntUtilSync::new(config) {
         Ok(vnt_util) => {
             Ok(vnt_util)

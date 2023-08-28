@@ -11,6 +11,7 @@ use tokio::signal;
 use tokio::signal::unix::{signal, SignalKind};
 
 use common::args_parse::{ips_parse, out_ips_parse};
+use vnt::cipher::CipherModel;
 use vnt::core::{Config, Vnt, VntUtil};
 use vnt::handle::handshake_handler::HandshakeEnum;
 use vnt::handle::registration_handler::ReqEnum;
@@ -50,6 +51,7 @@ fn main() {
     opts.optflag("", "relay", "仅使用服务器转发");
     opts.optopt("", "par", "任务并行度(必须为正整数)", "<parallel>");
     opts.optopt("", "thread", "线程数(必须为正整数)", "<thread>");
+    opts.optopt("", "model", "加密模式", "<model>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -201,6 +203,7 @@ fn main() {
         return;
     }
     let thread_num = matches.opt_get::<usize>("thread").unwrap().unwrap_or(std::thread::available_parallelism().unwrap().get() * 2);
+    let cipher_model = matches.opt_get::<CipherModel>("model").unwrap().unwrap_or(CipherModel::AesGcm);
     if thread_num == 0 {
         println!("--thread invalid");
         return;
@@ -211,7 +214,7 @@ fn main() {
                              server_address, server_address_str,
                              stun_server, in_ip,
                              out_ip, password, simulate_multicast, mtu,
-                             tcp_channel, virtual_ip, relay, server_encrypt, parallel);
+                             tcp_channel, virtual_ip, relay, server_encrypt, parallel, cipher_model);
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(thread_num).build().unwrap();
     runtime.block_on(main0(config, !unused_cmd));
     std::process::exit(0);
@@ -454,6 +457,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
     println!("  --thread <thread>   线程数(必须为正整数),默认为核心数乘2");
+    println!("  --model <model>     加密模式，可选值 aes_gcm/aes_cbc，默认使用aes_gcm，通常情况使用aes_cbc性能更好");
     println!();
     println!("  --list              {}", yellow("后台运行时,查看其他设备列表".to_string()));
     println!("  --all               {}", yellow("后台运行时,查看其他设备完整信息".to_string()));
