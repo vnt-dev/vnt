@@ -79,7 +79,7 @@ pub fn create_device(device_type: DeviceType,
             config.layer(tun::Layer::L2);
         }
     }
-    let dev = tun::create(&config).unwrap();
+    let dev = tun::create(&config).expect("tun/tap failed to create");
     let packet_information = dev.has_packet_information();
     let queue = dev.queue(0).unwrap();
     let reader = queue.reader();
