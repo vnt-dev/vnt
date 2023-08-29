@@ -208,7 +208,7 @@ fn main() {
         println!("--thread invalid");
         return;
     }
-    println!("version 1.2.0");
+    println!("version {}",vnt::VNT_VERSION);
     let config = Config::new(tap,
                              token, device_id, name,
                              server_address, server_address_str,
@@ -348,7 +348,7 @@ async fn main0(config: Config, show_cmd: bool) {
             #[cfg(unix)]
             tokio::select! {
                 _ = vnt.wait_stop()=>{
-                    break;
+                    return;
                 }
                 _ = signal::ctrl_c()=>{
                     let _ = vnt.stop();
@@ -377,7 +377,7 @@ async fn main0(config: Config, show_cmd: bool) {
             #[cfg(windows)]
             tokio::select! {
                 _ = vnt.wait_stop()=>{
-                    break;
+                    return;
                 }
                 _ = signal::ctrl_c()=>{
                     let _ = vnt.stop();
@@ -399,6 +399,22 @@ async fn main0(config: Config, show_cmd: bool) {
                 }
             }
         }
+        #[cfg(unix)]
+        tokio::select! {
+                _ = vnt.wait_stop()=>{
+                    return;
+                }
+                _ = signal::ctrl_c()=>{
+                    let _ = vnt.stop();
+                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
+                    return;
+                }
+                _ = sigterm.recv()=>{
+                    let _ = vnt.stop();
+                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
+                    return;
+                }
+       }
     }
     vnt.wait_stop().await;
 }
@@ -436,7 +452,7 @@ fn command(cmd: &str, vnt: &Vnt) -> bool {
 
 fn print_usage(program: &str, _opts: Options) {
     println!("Usage: {} [options]", program);
-    println!("version:1.2.0");
+    println!("version:{}",vnt::VNT_VERSION);
     println!("Options:");
     println!("  -k <token>          {}", green("必选,使用相同的token,就能组建一个局域网络".to_string()));
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
