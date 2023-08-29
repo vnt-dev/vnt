@@ -11,7 +11,6 @@ use crate::proto::message::{HandshakeRequest, HandshakeResponse, SecretHandshake
 use crate::protocol::{MAX_TTL, NetPacket, Protocol, service_packet, Version};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 
-const VERSION: &'static str = "1.2.0";
 
 pub enum HandshakeEnum {
     NotSecret,
@@ -24,7 +23,7 @@ pub enum HandshakeEnum {
 fn handshake_request_packet(secret: bool) -> crate::Result<NetPacket<Vec<u8>>> {
     let mut request = HandshakeRequest::new();
     request.secret = secret;
-    request.version = VERSION.to_string();
+    request.version = crate::VNT_VERSION.to_string();
     let bytes = request.write_to_bytes()?;
     let buf = vec![0u8; 12 + bytes.len()];
     let mut net_packet = NetPacket::new(buf)?;

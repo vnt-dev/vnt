@@ -193,7 +193,7 @@ fn registration_request_packet(
     request.virtual_ip = ip.into();
     request.allow_ip_change = allow_ip_change;
     request.is_fast = is_fast;
-    request.version = "1.2.0".to_string();
+    request.version = crate::VNT_VERSION.to_string();
     request.client_secret = client_secret;
     let bytes = request.write_to_bytes()?;
     let buf = vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED];
