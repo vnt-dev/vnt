@@ -1,5 +1,5 @@
 use std::io;
-use std::net::SocketAddrV4;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use packet::ip::ipv4::packet::IpV4Packet;
@@ -121,12 +121,14 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                 }
             }
             Protocol::Udp => {
-                client_cipher.encrypt_ipv4(&mut net_packet)?;
                 let multicast_members = if let Some(igmp_server) = igmp_server {
                     igmp_server.load(&dest_ip)
                 } else {
+                    //当作广播处理
+                    net_packet.set_destination(Ipv4Addr::BROADCAST);
                     None
                 };
+                client_cipher.encrypt_ipv4(&mut net_packet)?;
                 broadcast(server_cipher, multicast_members, sender, &mut net_packet, &current_device).await?;
             }
             _ => {}
@@ -173,8 +175,6 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                     let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
                     ipv4_packet.set_source_ip(source_ip);
                     ipv4_packet.update_checksum();
-                }else{
-                    log::warn!("不存在接口 {:?}",dest_addr);
                 }
             }
             Protocol::Udp => {
