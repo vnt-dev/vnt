@@ -19,7 +19,7 @@ pub struct VntSync {
 
 impl VntUtilSync {
     pub fn new(config: Config) -> io::Result<VntUtilSync> {
-        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
         let vnt_util = runtime.block_on(VntUtil::new(config))?;
         Ok(VntUtilSync {
             vnt_util,

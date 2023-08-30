@@ -1,5 +1,6 @@
 use std::net::ToSocketAddrs;
 use std::ptr;
+use std::str::FromStr;
 
 use jni::errors::Error;
 use jni::objects::{JClass, JObject, JString, JValue};
@@ -17,7 +18,7 @@ use vnt::tun_tap_device::DriverInfo;
 fn to_string_not_null(env: &mut JNIEnv, config: &JObject, name: &'static str) -> Result<String, Error> {
     let value = env.get_field(config, name, "Ljava/lang/String;")?.l()?;
     if value.is_null() {
-        env.throw_new("Ljava/lang/NullPointerException", name)
+        env.throw_new("java/lang/NullPointerException", name)
             .expect("throw");
         return Err(Error::NullPtr(name));
     }
@@ -26,7 +27,7 @@ fn to_string_not_null(env: &mut JNIEnv, config: &JObject, name: &'static str) ->
     match value.to_str() {
         Ok(value) => Ok(value.to_string()),
         Err(_) => {
-            env.throw_new("Ljava/lang/RuntimeException", "not utf-8")
+            env.throw_new("java/lang/RuntimeException", "not utf-8")
                 .expect("throw");
             return Err(Error::JavaException);
         }
@@ -43,7 +44,7 @@ fn to_string(env: &mut JNIEnv, config: &JObject, name: &str) -> Result<Option<St
     match value.to_str() {
         Ok(value) => Ok(Some(value.to_string())),
         Err(_) => {
-            env.throw_new("Ljava/lang/RuntimeException", "not utf-8")
+            env.throw_new("java/lang/RuntimeException", "not utf-8")
                 .expect("throw");
             return Err(Error::JavaException);
         }
@@ -56,38 +57,49 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     let device_id = to_string_not_null(env, &config, "deviceId")?;
     let password = to_string(env, &config, "password")?;
     let server_address_str = to_string_not_null(env, &config, "server")?;
-    // let nat_test_server = to_string_not_null(env, &config, "natTestServer")?;
+    let stun_server_str = to_string_not_null(env, &config, "stunServer")?;
+    let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
+    let is_tcp = env.get_field(&config, "isTcp", "Z")?.z()?;
+
     let server_address = match server_address_str.to_socket_addrs() {
         Ok(mut rs) => {
             if let Some(addr) = rs.next() {
                 addr
             } else {
-                env.throw_new("Ljava/lang/RuntimeException", "server address err")
+                env.throw_new("java/lang/RuntimeException", "server address err")
                     .expect("throw");
                 return Err(Error::JavaException);
             }
         }
         Err(e) => {
-            env.throw_new("Ljava/lang/RuntimeException", format!("server address {}", e))
+            env.throw_new("java/lang/RuntimeException", format!("server address {}", e))
+                .expect("throw");
+            return Err(Error::JavaException);
+        }
+    };
+    let cipher_model = match CipherModel::from_str(&cipher_model) {
+        Ok(cipher_model) => {cipher_model}
+        Err(e) => {
+            env.throw_new("java/lang/RuntimeException", format!("cipher_model {}", e))
                 .expect("throw");
             return Err(Error::JavaException);
         }
     };
     let mut stun_server = Vec::new();
-    stun_server.push("stun1.l.google.com:19302".to_string());
-    stun_server.push("stun2.l.google.com:19302".to_string());
-    stun_server.push("stun.qq.com:3478".to_string());
+    for addr in stun_server_str.split(",") {
+        stun_server.push(addr.trim().to_string());
+    }
     let config = Config::new(false,
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, vec![],
-                             vec![], password, false, None, false, None, false,false,1,CipherModel::AesGcm);
+                             vec![], password, false, None, is_tcp, None, false, false, 1, cipher_model);
     match VntUtilSync::new(config) {
         Ok(vnt_util) => {
             Ok(vnt_util)
         }
         Err(e) => {
-            env.throw_new("Ljava/lang/RuntimeException", format!("vnt start error {}", e))
+            env.throw_new("java/lang/RuntimeException", format!("vnt start error {}", e))
                 .expect("throw");
             return Err(Error::JavaException);
         }
@@ -109,12 +121,13 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_new0(
     }
     return 0;
 }
+
 #[no_mangle]
 pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_connect0(
     mut env: JNIEnv,
     _class: JClass,
     raw_vnt_util: jlong,
-)  {
+) {
     let raw_vnt_util = raw_vnt_util as *mut VntUtilSync;
     match (&mut *raw_vnt_util).connect() {
         Ok(_) => {}

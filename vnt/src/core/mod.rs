@@ -246,7 +246,7 @@ impl VntUtil {
         }
         #[cfg(any(target_os = "android"))]
         tun_handler::start(vnt_status_manager.worker("android tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), cipher.clone(), config.parallel).await;
+                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), client_cipher.clone(),self.server_cipher.clone(), config.parallel).await;
 
         //外部数据接收处理
         let channel_recv_handler = ChannelDataHandler::new(current_device.clone(), device_list.clone(),
