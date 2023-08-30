@@ -71,7 +71,7 @@ A virtual network tool (VPN)
     - 使用tun网卡 依赖wintun.dll([win-tun](https://www.wintun.net/))(将dll放到同目录下，建议使用版本0.14.1)
     - 使用tap网卡 依赖tap-windows([win-tap](https://build.openvpn.net/downloads/releases/))(建议使用版本9.24.7)
 - Android
-    - [SwitchApp](https://github.com/lbl8603/SwitchApp)
+    - [VntApp](https://github.com/lbl8603/VntApp)
 
 ### 特性
 
