@@ -40,6 +40,8 @@ impl TcpProxy {
                                         log::warn!("{}->{},{}",sender_addr,dest_addr,e);
                                     }
                                 });
+                            }else {
+                                log::warn!("tcp代理异常: 来源:{},未找到目标",sender_addr);
                             }
                         }
                         SocketAddr::V6(_) => {}
