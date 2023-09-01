@@ -9,11 +9,10 @@ use crate::cipher::finger::Finger;
 use crate::protocol::{body::ENCRYPTION_RESERVED, body::SecretBody, NetPacket};
 
 
-
 #[derive(Clone)]
 pub struct AesGcmCipher {
     pub(crate) cipher: AesGcmEnum,
-    pub(crate) finger: Finger,
+    pub(crate) finger: Option<Finger>,
 }
 
 #[derive(Clone)]
@@ -23,14 +22,14 @@ pub enum AesGcmEnum {
 }
 
 impl AesGcmCipher {
-    pub fn new_128(key: [u8; 16], finger: Finger) -> Self {
+    pub fn new_128(key: [u8; 16], finger: Option<Finger>) -> Self {
         let key: &Key<Aes128Gcm> = &key.into();
         Self {
             cipher: AesGcmEnum::AES128GCM(Aes128Gcm::new(key)),
             finger,
         }
     }
-    pub fn new_256(key: [u8; 32], finger: Finger) -> Self {
+    pub fn new_256(key: [u8; 32], finger: Option<Finger>) -> Self {
         let key: &Key<Aes256Gcm> = &key.into();
         Self {
             cipher: AesGcmEnum::AES256GCM(Aes256Gcm::new(key)),
@@ -56,11 +55,13 @@ impl AesGcmCipher {
         nonce_raw[11] = net_packet.source_ttl();
         let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce_raw);
 
-        let mut secret_body = SecretBody::new(net_packet.payload_mut())?;
+        let mut secret_body = SecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
         let tag = secret_body.tag();
-        let finger = self.finger.calculate_finger(&nonce_raw, secret_body.en_body());
-        if &finger != secret_body.finger() {
-            return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
+        if let Some(finger) = &self.finger {
+            let finger = finger.calculate_finger(&nonce_raw, secret_body.en_body());
+            if &finger != secret_body.finger() {
+                return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
+            }
         }
         let tag: GenericArray<u8, U16> = Tag::clone_from_slice(tag);
         let rs = match &self.cipher {
@@ -90,7 +91,7 @@ impl AesGcmCipher {
         let nonce: &GenericArray<u8, U12> = Nonce::from_slice(&nonce_raw);
         let data_len = net_packet.data_len() + ENCRYPTION_RESERVED;
         net_packet.set_data_len(data_len)?;
-        let mut secret_body = SecretBody::new(net_packet.payload_mut())?;
+        let mut secret_body = SecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
         secret_body.set_random(rand::thread_rng().next_u32());
         let rs = match &self.cipher {
             AesGcmEnum::AES128GCM(aes_gcm) => { aes_gcm.encrypt_in_place_detached(nonce, &[], secret_body.body_mut()) }
@@ -99,8 +100,10 @@ impl AesGcmCipher {
         return match rs {
             Ok(tag) => {
                 secret_body.set_tag(tag.as_slice())?;
-                let finger = self.finger.calculate_finger(&nonce_raw, secret_body.en_body());
-                secret_body.set_finger(&finger)?;
+                if let Some(finger) = &self.finger {
+                    let finger = finger.calculate_finger(&nonce_raw, secret_body.en_body());
+                    secret_body.set_finger(&finger)?;
+                }
                 net_packet.set_encrypt_flag(true);
                 Ok(())
             }

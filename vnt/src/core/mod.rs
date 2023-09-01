@@ -185,7 +185,12 @@ impl VntUtil {
         };
         let config = self.config.clone();
         let vnt_status_manager = VntStatusManger::new();
-        let client_cipher = Cipher::new_password(config.cipher_model, config.password.clone(), config.token.clone());
+        let finger = if config.finger {
+            Some(config.token.clone())
+        } else {
+            None
+        };
+        let client_cipher = Cipher::new_password(config.cipher_model, config.password.clone(), finger);
         let virtual_ip = response.virtual_ip;
         let virtual_gateway = response.virtual_gateway;
         let virtual_netmask = response.virtual_netmask;
@@ -246,7 +251,7 @@ impl VntUtil {
         }
         #[cfg(any(target_os = "android"))]
         tun_handler::start(vnt_status_manager.worker("android tun_handler"), channel_sender.clone(), device_reader, device_writer.clone(),
-                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), client_cipher.clone(),self.server_cipher.clone(), config.parallel).await;
+                           igmp_server.clone(), current_device.clone(), in_external_route, ip_proxy_map.clone(), client_cipher.clone(), self.server_cipher.clone(), config.parallel).await;
 
         //外部数据接收处理
         let channel_recv_handler = ChannelDataHandler::new(current_device.clone(), device_list.clone(),
@@ -391,6 +396,7 @@ pub struct Config {
     pub server_encrypt: bool,
     pub parallel: usize,
     pub cipher_model: CipherModel,
+    pub finger: bool,
 }
 
 
@@ -404,7 +410,7 @@ impl Config {
                in_ips: Vec<(u32, u32, Ipv4Addr)>, out_ips: Vec<(u32, u32)>,
                password: Option<String>, simulate_multicast: bool, mtu: Option<u16>, tcp: bool,
                ip: Option<Ipv4Addr>,
-               relay: bool, server_encrypt: bool, parallel: usize, cipher_model: CipherModel) -> Self {
+               relay: bool, server_encrypt: bool, parallel: usize, cipher_model: CipherModel, finger: bool, ) -> Self {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
                 x.push_str(":3478");
@@ -429,6 +435,7 @@ impl Config {
             server_encrypt,
             parallel,
             cipher_model,
+            finger,
         }
     }
 }

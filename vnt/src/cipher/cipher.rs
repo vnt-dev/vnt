@@ -8,11 +8,13 @@ use crate::cipher::ring_aes_gcm_cipher::AesGcmCipher;
 #[cfg(not(feature = "ring-cipher"))]
 use crate::cipher::aes_gcm_cipher::AesGcmCipher;
 use aes_cbc::AesCbcCipher;
+use crate::cipher::aes_ecb::AesEcbCipher;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CipherModel {
     AesGcm,
     AesCbc,
+    AesEcb,
 }
 
 impl FromStr for CipherModel {
@@ -24,6 +26,7 @@ impl FromStr for CipherModel {
                 Ok(CipherModel::AesGcm)
             }
             "aes_cbc" => { Ok(CipherModel::AesCbc) }
+            "aes_ecb" => { Ok(CipherModel::AesEcb) }
             _ => {
                 Err(format!("not match '{}'", s))
             }
@@ -35,12 +38,13 @@ impl FromStr for CipherModel {
 pub enum Cipher {
     AesGcm((AesGcmCipher, Vec<u8>)),
     AesCbc(AesCbcCipher),
+    AesEcb(AesEcbCipher),
     None,
 }
 
 impl Cipher {
-    pub fn new_password(model: CipherModel, password: Option<String>, token: String) -> Self {
-        let finger = Finger::new(&token);
+    pub fn new_password(model: CipherModel, password: Option<String>, token: Option<String>) -> Self {
+        let finger = token.map(|token| Finger::new(&token));
         if let Some(password) = password {
             let mut hasher = sha2::Sha256::new();
             hasher.update(password.as_bytes());
@@ -64,13 +68,22 @@ impl Cipher {
                         Cipher::AesCbc(aes)
                     }
                 }
+                CipherModel::AesEcb => {
+                    if password.len() < 8 {
+                        let aes = AesEcbCipher::new_128(key[..16].try_into().unwrap(), finger);
+                        Cipher::AesEcb(aes)
+                    } else {
+                        let aes = AesEcbCipher::new_256(key, finger);
+                        Cipher::AesEcb(aes)
+                    }
+                }
             }
         } else {
             Cipher::None
         }
     }
     pub fn new_key(key: [u8; 32], token: String) -> io::Result<Self> {
-        let finger = Finger::new(&token);
+        let finger = Some(Finger::new(&token));
         match key.len() {
             16 => {
                 let aes = AesGcmCipher::new_128(key[..16].try_into().unwrap(), finger);
@@ -91,8 +104,10 @@ impl Cipher {
                 aes_gcm.decrypt_ipv4(net_packet)
             }
             Cipher::AesCbc(aes_cbc) => {
-                aes_cbc.decrypt_ipv4(net_packet).unwrap();
-                Ok(())
+                aes_cbc.decrypt_ipv4(net_packet)
+            }
+            Cipher::AesEcb(aes_ecb) => {
+                aes_ecb.decrypt_ipv4(net_packet)
             }
             Cipher::None => {
                 if net_packet.is_encrypt() {
@@ -108,8 +123,10 @@ impl Cipher {
                 aes_gcm.encrypt_ipv4(net_packet)
             }
             Cipher::AesCbc(aes_cbc) => {
-                aes_cbc.encrypt_ipv4(net_packet).unwrap();
-                Ok(())
+                aes_cbc.encrypt_ipv4(net_packet)
+            }
+            Cipher::AesEcb(aes_ecb) => {
+                aes_ecb.encrypt_ipv4(net_packet)
             }
             Cipher::None => {
                 Ok(())
@@ -117,16 +134,24 @@ impl Cipher {
         }
     }
     pub fn check_finger<B: AsRef<[u8]>>(&self, net_packet: &NetPacket<B>) -> io::Result<()> {
-        match self {
+        let finger = match self {
             Cipher::AesGcm((aes_gcm, _)) => {
-                aes_gcm.finger.check_finger(net_packet)
+                aes_gcm.finger.as_ref()
             }
             Cipher::AesCbc(aes_cbc) => {
-                aes_cbc.finger.check_finger(net_packet)
+                aes_cbc.finger.as_ref()
+            }
+            Cipher::AesEcb(aes_ecb) => {
+                aes_ecb.finger.as_ref()
             }
             Cipher::None => {
-                Ok(())
+                None
             }
+        };
+        if let Some(finger) = finger {
+            finger.check_finger(net_packet)
+        } else {
+            Ok(())
         }
     }
     pub fn key(&self) -> Option<&[u8]> {
@@ -136,6 +161,9 @@ impl Cipher {
             }
             Cipher::AesCbc(aes_cbc) => {
                 Some(aes_cbc.key())
+            }
+            Cipher::AesEcb(aes_ecb) => {
+                Some(aes_ecb.key())
             }
             Cipher::None => {
                 None

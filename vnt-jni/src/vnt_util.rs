@@ -59,7 +59,8 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     let server_address_str = to_string_not_null(env, &config, "server")?;
     let stun_server_str = to_string_not_null(env, &config, "stunServer")?;
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
-    let is_tcp = env.get_field(&config, "isTcp", "Z")?.z()?;
+    let tcp = env.get_field(&config, "tcp", "Z")?.z()?;
+    let finger = env.get_field(&config, "finger", "Z")?.z()?;
 
     let server_address = match server_address_str.to_socket_addrs() {
         Ok(mut rs) => {
@@ -93,7 +94,9 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, vec![],
-                             vec![], password, false, None, is_tcp, None, false, false, 1, cipher_model);
+                             vec![], password,
+                             false, None, tcp, None,
+                             false, false, 1, cipher_model,finger);
     match VntUtilSync::new(config) {
         Ok(vnt_util) => {
             Ok(vnt_util)

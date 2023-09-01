@@ -4,6 +4,7 @@ mod ring_aes_gcm_cipher;
 mod aes_gcm_cipher;
 mod rsa_cipher;
 mod aes_cbc;
+mod aes_ecb;
 mod finger;
 mod cipher;
 

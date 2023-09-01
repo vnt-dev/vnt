@@ -71,13 +71,12 @@ pub fn start_heartbeat(
 }
 
 
-fn heartbeat_packet(device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>, client_cipher: &Cipher, server_cipher: &Cipher, gateway: bool, src: Ipv4Addr, dest: Ipv4Addr) -> NetPacket<[u8; 48]> {
+fn heartbeat_packet(ttl: u8, device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>, client_cipher: &Cipher, server_cipher: &Cipher, gateway: bool, src: Ipv4Addr, dest: Ipv4Addr) -> NetPacket<[u8; 48]> {
     let mut net_packet = NetPacket::new_encrypt([0u8; 12 + 4 + ENCRYPTION_RESERVED]).unwrap();
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::Control);
     net_packet.set_transport_protocol(control_packet::Protocol::Ping.into());
-    //只寻找两跳以内能到的目标
-    net_packet.first_set_ttl(2);
+    net_packet.first_set_ttl(ttl);
     net_packet.set_source(src);
     net_packet.set_destination(dest);
     {
@@ -138,7 +137,7 @@ async fn start_heartbeat_(
             }
         }
         let src = current_dev.virtual_ip();
-        let server_packet = heartbeat_packet(&device_list, &client_cipher, &server_cipher, true, src, current_dev.virtual_gateway);
+        let server_packet = heartbeat_packet(MAX_TTL, &device_list, &client_cipher, &server_cipher, true, src, current_dev.virtual_gateway);
         if let Err(e) = sender.send_main(server_packet.buffer(), current_dev.connect_server).await
         {
             log::warn!(
@@ -154,7 +153,7 @@ async fn start_heartbeat_(
                 if peer.virtual_ip == current_dev.virtual_ip {
                     continue;
                 }
-                let client_packet = heartbeat_packet(&device_list, &client_cipher, &server_cipher, false, src, peer.virtual_ip);
+                let client_packet = heartbeat_packet(MAX_TTL, &device_list, &client_cipher, &server_cipher, false, src, peer.virtual_ip);
                 if let Some(route) = sender.route_one(&peer.virtual_ip) {
                     let _ = sender.send_by_key(client_packet.buffer(), &route.route_key()).await;
                     if route.is_p2p() {
@@ -191,7 +190,7 @@ async fn start_heartbeat_(
                 if peer_ip == &current_dev.virtual_gateway {
                     continue;
                 }
-                let client_packet = heartbeat_packet(&device_list, &client_cipher, &server_cipher, false, src, *peer_ip);
+                let client_packet = heartbeat_packet(MAX_TTL, &device_list, &client_cipher, &server_cipher, false, src, *peer_ip);
                 for route in route_list {
                     if let Err(e) = sender.send_by_key(client_packet.buffer(), &route.route_key()).await {
                         log::warn!("peer_ip:{:?},route:{:?},e:{:?}", peer_ip, route, e);

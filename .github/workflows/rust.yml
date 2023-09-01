@@ -110,40 +110,40 @@ jobs:
           # some additional configuration for cross-compilation on linux
           cat >>~/.cargo/config <<EOF
           [target.x86_64-unknown-linux-musl]
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.aarch64-unknown-linux-gnu]
           linker = "aarch64-linux-gnu-gcc"
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.aarch64-unknown-linux-musl]
           linker = "aarch64-linux-gnu-gcc"
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.armv7-unknown-linux-gnueabihf]
           linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.armv7-unknown-linux-musleabihf]
           linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.arm-unknown-linux-gnueabihf]
           linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.arm-unknown-linux-musleabihf]
           linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.mipsel-unknown-linux-musl]
           linker = "mipsel-linux-gnu-gcc"
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           [target.x86_64-pc-windows-msvc]
-          rustflags = ["-C", "target-feature=+crt-static"]    
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]    
           [target.i686-pc-windows-msvc]
-          rustflags = ["-C", "target-feature=+crt-static"]      
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]      
           [target.x86_64-apple-darwin]
-          rustflags = ["-C", "target-feature=+crt-static"] 
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"] 
           [target.aarch64-apple-darwin]
-          rustflags = ["-C", "target-feature=+crt-static"]     
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]     
           [target.i686-unknown-linux-musl]
-          rustflags = ["-C", "target-feature=+crt-static"]    
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]    
           [target.x86_64-unknown-linux-gnu]
-          rustflags = ["-C", "target-feature=+crt-static"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "target-feature=+aes","--cfg","aes_armv8"]
           EOF
       - name: Install rust target
         run: rustup target add $TARGET

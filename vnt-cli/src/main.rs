@@ -52,6 +52,7 @@ fn main() {
     opts.optopt("", "par", "任务并行度(必须为正整数)", "<parallel>");
     opts.optopt("", "thread", "线程数(必须为正整数)", "<thread>");
     opts.optopt("", "model", "加密模式", "<model>");
+    opts.optflag("", "finger", "指纹校验", );
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -208,13 +209,14 @@ fn main() {
         println!("--thread invalid");
         return;
     }
+    let finger = matches.opt_present("finger");
     println!("version {}",vnt::VNT_VERSION);
     let config = Config::new(tap,
                              token, device_id, name,
                              server_address, server_address_str,
                              stun_server, in_ip,
                              out_ip, password, simulate_multicast, mtu,
-                             tcp_channel, virtual_ip, relay, server_encrypt, parallel, cipher_model);
+                             tcp_channel, virtual_ip, relay, server_encrypt, parallel, cipher_model,finger);
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(thread_num).build().unwrap();
     runtime.block_on(main0(config, !unused_cmd));
     std::process::exit(0);
@@ -473,7 +475,8 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
     println!("  --thread <thread>   线程数(必须为正整数),默认为核心数乘2");
-    println!("  --model <model>     加密模式，可选值 aes_gcm/aes_cbc，默认使用aes_gcm，通常情况使用aes_cbc性能更好");
+    println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb，通常性能aes_ecb>aes_cbc>aes_gcm,安全性则相反");
+    println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
     println!();
     println!("  --list              {}", yellow("后台运行时,查看其他设备列表".to_string()));
     println!("  --all               {}", yellow("后台运行时,查看其他设备完整信息".to_string()));

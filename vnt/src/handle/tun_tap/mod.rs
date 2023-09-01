@@ -61,7 +61,8 @@ async fn broadcast(server_cipher: &Cipher, multicast_members: Option<Arc<RwLock<
         server_packet.set_gateway_flag(true);
         server_packet.first_set_ttl(MAX_TTL);
         server_packet.set_source(net_packet.source());
-        server_packet.set_destination(current_device.virtual_gateway);
+        //使用对应的目的地址
+        server_packet.set_destination(net_packet.destination());
         server_packet.set_protocol(protocol::Protocol::IpTurn);
         server_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4Broadcast.into());
 
