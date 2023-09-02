@@ -54,6 +54,7 @@ pub struct Vnt {
 pub struct VntUtil {
     config: Config,
     main_channel: UdpSocket,
+    main_channel_ipv6: Option<UdpSocket>,
     main_tcp_channel: Option<TcpStream>,
     response: Option<RegResponse>,
     iface: Option<(DeviceWriter, DeviceReader)>,
@@ -64,6 +65,15 @@ pub struct VntUtil {
 impl VntUtil {
     pub async fn new(config: Config) -> io::Result<VntUtil> {
         let main_channel = UdpSocket::bind("0.0.0.0:0").await?;
+        let main_channel_ipv6 = match UdpSocket::bind("[::]:0").await {
+            Ok(main_channel_ipv6) => {
+                Some(main_channel_ipv6)
+            }
+            Err(e) => {
+                log::warn!("绑定ipv6地址失败:{}",e);
+                None
+            }
+        };
         let server_cipher = if config.server_encrypt {
             let mut key = [0 as u8; 32];
             rand::thread_rng().fill(&mut key);
@@ -74,6 +84,7 @@ impl VntUtil {
         Ok(VntUtil {
             config,
             main_channel,
+            main_channel_ipv6,
             main_tcp_channel: None,
             response: None,
             iface: None,
@@ -150,9 +161,9 @@ impl VntUtil {
         let mtu = match self.config.mtu {
             None => {
                 if self.config.password.is_none() {
-                    1430
+                    1450
                 } else {
-                    1410
+                    1420
                 }
             }
             Some(mtu) => {
@@ -204,7 +215,9 @@ impl VntUtil {
         } else {
             (None, None)
         };
-        let context = Context::new(Arc::new(self.main_channel), tcp_sender, current_device.clone(), 1);
+        let context = Context::new(Arc::new(self.main_channel),
+                                   self.main_channel_ipv6.map(|v| Arc::new(v)),
+                                   tcp_sender, current_device.clone(), 1);
         let punch = Punch::new(context.clone());
         let idle = Idle::new(Duration::from_secs(16), context.clone());
         let channel_sender = ChannelSender::new(context.clone());
@@ -216,11 +229,14 @@ impl VntUtil {
         let peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>> = Arc::new(DashMap::new());
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
 
+        let local_port = context.main_local_ipv4_port().unwrap_or(0);
 
-        let local_ip = crate::nat::local_ip()?;
-        let local_port = context.main_local_port()?;
+        let local_ipv4_addr = crate::nat::local_ipv4_addr(local_port);
+        let ipv6_port = context.main_local_ipv6_port().unwrap_or(0);
+        let ipv6_addr = crate::nat::local_ipv6_addr(ipv6_port);
         // NAT检测
-        let nat_test = NatTest::new(config.stun_server.clone(), response.public_ip, response.public_port, local_ip, local_port).await;
+        let nat_test = NatTest::new(config.stun_server.clone(), response.public_ip,
+                                    response.public_port, local_ipv4_addr, ipv6_addr).await;
         let in_external_route = if config.in_ips.is_empty() {
             None
         } else {

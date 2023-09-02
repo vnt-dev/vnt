@@ -27,7 +27,7 @@ impl Idle {
         loop {
             let mut max = Duration::from_secs(0);
             for entry in self.context.inner.route_table_time.iter() {
-                let last_read = entry.value().load().elapsed();
+                let last_read = entry.value().elapsed();
                 if last_read >= self.read_idle {
                     return Ok((entry.key().1.clone(), entry.key().0.clone()));
                 } else {

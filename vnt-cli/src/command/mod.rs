@@ -83,7 +83,7 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
             let nat_type = format!("{:?}", nat_info.nat_type);
             let public_ips: Vec<String> = nat_info.public_ips.iter().map(|v| v.to_string()).collect();
             let public_ips = public_ips.join(",");
-            let local_ip = nat_info.local_ip.to_string();
+            let local_ip = nat_info.local_ipv4_addr.ip().to_string();
             (nat_type, public_ips, local_ip)
         } else {
             ("".to_string(), "".to_string(), "".to_string())
@@ -136,7 +136,12 @@ pub fn command_info(vnt: &Vnt) -> Info {
     let nat_type = format!("{:?}", nat_info.nat_type);
     let public_ips: Vec<String> = nat_info.public_ips.iter().map(|v| v.to_string()).collect();
     let public_ips = public_ips.join(",");
-    let local_ip = nat_info.local_ip.to_string();
+    let local_addr = nat_info.local_ipv4_addr.to_string();
+    let ipv6_addr = if nat_info.ipv6_addr.ip().is_unspecified() {
+        "None".to_string()
+    } else {
+        nat_info.ipv6_addr.ip().to_string()
+    };
     Info {
         name,
         virtual_ip,
@@ -146,7 +151,8 @@ pub fn command_info(vnt: &Vnt) -> Info {
         relay_server,
         nat_type,
         public_ips,
-        local_ip,
+        local_addr,
+        ipv6_addr,
     }
 }
 

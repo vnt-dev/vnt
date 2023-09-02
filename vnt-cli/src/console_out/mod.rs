@@ -13,7 +13,8 @@ pub fn console_info(status: Info) {
     println!("NAT type: {}", style(status.nat_type).green());
     println!("Relay server: {}", style(status.relay_server).green());
     println!("Public ips: {}", style(status.public_ips).green());
-    println!("Local ip: {}", style(status.local_ip).green());
+    println!("Local addr: {}", style(status.local_addr).green());
+    println!("IPv6: {}", style(status.ipv6_addr).green());
 }
 
 pub fn console_route_table(mut list: Vec<RouteItem>) {

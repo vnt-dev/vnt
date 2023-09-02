@@ -35,6 +35,7 @@ pub fn start_idle(mut worker: VntWorker, idle: Idle, sender: ChannelSender) {
 }
 
 async fn start_idle_(idle: Idle, sender: ChannelSender) -> io::Result<()> {
+    log::info!("启动空闲检查任务");
     loop {
         let (peer_ip, route) = idle.next_idle().await?;
         log::info!(
@@ -103,6 +104,7 @@ async fn start_heartbeat_(
     server_cipher: Cipher,
 ) -> io::Result<()> {
     let mut count = 0;
+    log::info!("启动心跳任务");
     loop {
         if sender.is_close() {
             return Ok(());
@@ -129,6 +131,7 @@ async fn start_heartbeat_(
                     if addr != current_dev.connect_server {
                         let mut tmp = current_dev.clone();
                         tmp.connect_server = addr;
+                        log::info!("服务端地址变化,旧地址:{}，新地址:{}",current_dev.connect_server,addr);
                         if current_device.compare_exchange(current_dev, tmp).is_ok() {
                             current_dev.connect_server = addr;
                         }

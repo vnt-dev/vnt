@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
 
 use rand::prelude::SliceRandom;
@@ -12,8 +12,8 @@ pub struct NatInfo {
     pub public_ips: Vec<Ipv4Addr>,
     pub public_port: u16,
     pub public_port_range: u16,
-    pub local_ip: Ipv4Addr,
-    pub local_port: u16,
+    pub local_ipv4_addr: SocketAddrV4,
+    pub ipv6_addr: SocketAddrV6,
     pub nat_type: NatType,
 }
 
@@ -27,8 +27,8 @@ impl NatInfo {
     pub fn new(mut public_ips: Vec<Ipv4Addr>,
                public_port: u16,
                public_port_range: u16,
-               local_ip: Ipv4Addr,
-               local_port: u16,
+               local_ipv4_addr: SocketAddrV4,
+               ipv6_addr: SocketAddrV6,
                nat_type: NatType, ) -> Self {
         public_ips.retain(|ip| {
             !ip.is_loopback() && !ip.is_private()
@@ -37,8 +37,8 @@ impl NatInfo {
             public_ips,
             public_port,
             public_port_range,
-            local_ip,
-            local_port,
+            local_ipv4_addr,
+            ipv6_addr,
             nat_type,
         }
     }
@@ -70,8 +70,11 @@ impl Punch {
         if !self.context.need_punch(&id) {
             return Ok(());
         }
-        if !nat_info.local_ip.is_unspecified() || nat_info.local_port != 0 {
-            let _ = self.context.send_main_udp(buf, SocketAddr::V4(SocketAddrV4::new(nat_info.local_ip, nat_info.local_port))).await;
+        if !nat_info.local_ipv4_addr.ip().is_unspecified() && nat_info.local_ipv4_addr.port() != 0 {
+            let _ = self.context.send_main_udp(buf, SocketAddr::V4(nat_info.local_ipv4_addr)).await;
+        }
+        if !nat_info.ipv6_addr.ip().is_unspecified() && nat_info.ipv6_addr.port() != 0 {
+            let _ = self.context.send_main_udp(buf, SocketAddr::V6(nat_info.ipv6_addr)).await;
         }
         match nat_info.nat_type {
             NatType::Symmetric => {

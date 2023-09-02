@@ -2,28 +2,32 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use byte_pool::{Block, BytePool};
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::sync::watch::{channel, Receiver, Sender};
+
 use crate::channel::{Route, RouteKey, Status};
 use crate::channel::punch::NatType;
 use crate::core::status::VntWorker;
 use crate::handle::CurrentDeviceInfo;
 use crate::handle::recv_handler::ChannelDataHandler;
-use byte_pool::{Block, BytePool};
+
 lazy_static::lazy_static! {
     static ref POOL:BytePool = BytePool::new();
 }
 pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
     pub(crate) main_channel: Arc<UdpSocket>,
+    pub(crate) main_channel_ipv6: Option<Arc<UdpSocket>>,
     //在udp的基础上，可以选择使用tcp和服务端通信
     pub(crate) main_tcp_channel: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
     pub(crate) route_table: DashMap<Ipv4Addr, Vec<Route>>,
-    pub(crate) route_table_time: DashMap<(RouteKey, Ipv4Addr), AtomicCell<Instant>>,
+    pub(crate) route_table_time: DashMap<(RouteKey, Ipv4Addr), Instant>,
     pub(crate) status_receiver: Receiver<Status>,
     pub(crate) status_sender: Sender<Status>,
     pub(crate) udp_map: DashMap<usize, Arc<UdpSocket>>,
@@ -37,12 +41,13 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(main_channel: Arc<UdpSocket>, main_tcp_channel: Option<tokio::sync::mpsc::Sender<Vec<u8>>>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>, _channel_num: usize) -> Self {
+    pub fn new(main_channel: Arc<UdpSocket>, main_channel_ipv6: Option<Arc<UdpSocket>>, main_tcp_channel: Option<tokio::sync::mpsc::Sender<Vec<u8>>>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>, _channel_num: usize) -> Self {
         //当前版本只支持一个通道
         let channel_num = 1;
         let (status_sender, status_receiver) = channel(Status::Cone);
         let inner = Arc::new(ContextInner {
             main_channel,
+            main_channel_ipv6,
             main_tcp_channel,
             route_table: DashMap::with_capacity(16),
             route_table_time: DashMap::with_capacity(16),
@@ -87,11 +92,37 @@ impl Context {
     pub fn switch_to_symmetric(&self) {
         let _ = self.inner.status_sender.send(Status::Symmetric);
     }
-    pub fn main_local_port(&self) -> io::Result<u16> {
+    pub fn main_local_ipv4_port(&self) -> io::Result<u16> {
         self.inner.main_channel.local_addr().map(|k| k.port())
     }
+    pub fn main_local_ipv6_port(&self) -> io::Result<u16> {
+        if let Some(ipv6) = &self.inner.main_channel_ipv6{
+            ipv6.local_addr().map(|k| k.port())
+        }else{
+            Err(io::Error::new(io::ErrorKind::Other, "not ipv6"))
+        }
+    }
     pub async fn send_main_udp(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
-        self.inner.main_channel.send_to(buf, addr).await
+        if addr.is_ipv6() {
+            if let Some(udp_ipv6) = &self.inner.main_channel_ipv6 {
+                udp_ipv6.send_to(buf, addr).await
+            } else {
+                Err(io::Error::new(io::ErrorKind::Other, "not ipv6"))
+            }
+        } else {
+            self.inner.main_channel.send_to(buf, addr).await
+        }
+    }
+    pub fn try_send_main_udp(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
+        if addr.is_ipv6() {
+            if let Some(udp_ipv6) = &self.inner.main_channel_ipv6 {
+                udp_ipv6.try_send_to(buf, addr)
+            } else {
+                Err(io::Error::new(io::ErrorKind::Other, "not ipv6"))
+            }
+        } else {
+            self.inner.main_channel.try_send_to(buf, addr)
+        }
     }
     pub async fn send_main(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
         if let Some(sender) = &self.inner.main_tcp_channel {
@@ -101,7 +132,7 @@ impl Context {
                 Err(io::Error::new(io::ErrorKind::Other, "send_main err"))
             }
         } else {
-            self.inner.main_channel.send_to(buf, addr).await
+            self.send_main_udp(buf, addr).await
         }
     }
     pub fn try_send_main(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
@@ -112,7 +143,7 @@ impl Context {
                 Err(io::Error::new(io::ErrorKind::Other, "try_send_main err"))
             }
         } else {
-            self.inner.main_channel.try_send_to(buf, addr)
+            self.try_send_main_udp(buf, addr)
         }
     }
 
@@ -120,7 +151,8 @@ impl Context {
         for udp_ref in self.inner.udp_map.iter() {
             let udp = udp_ref.clone();
             drop(udp_ref);
-            udp.send_to(buf, addr).await?;
+            //使用ipv6的udp发送ipv4报文会出错
+            let _ = udp.send_to(buf, addr).await;
         }
         Ok(())
     }
@@ -135,17 +167,12 @@ impl Context {
             if !route.is_p2p() {
                 if let Some(time) = self.inner.route_table_time.get(&(route.route_key(), *id)) {
                     //借道传输时，长时间不通信的通道不使用
-                    if time.value().load().elapsed() > Duration::from_secs(6) {
+                    if time.value().elapsed() > Duration::from_secs(6) {
                         return Err(io::Error::new(io::ErrorKind::NotFound, "route time out"));
                     }
                 }
             }
-
-            if let Some(udp_ref) = self.inner.udp_map.get(&route.index) {
-                let udp = udp_ref.value().clone();
-                drop(udp_ref);
-                return udp.send_to(buf, route.addr).await;
-            }
+            return self.send_by_key(buf,&route.route_key()).await;
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
     }
@@ -238,7 +265,7 @@ impl Context {
                 list.truncate(max_len);
             }
         }
-        self.inner.route_table_time.insert((key, id), AtomicCell::new(Instant::now()));
+        self.inner.route_table_time.insert((key, id), Instant::now());
     }
     pub fn route(&self, id: &Ipv4Addr) -> Option<Vec<Route>> {
         if let Some(v) = self.inner.route_table.get(id) {
@@ -312,8 +339,8 @@ impl Context {
         self.inner.route_table_time.remove(&(route_key, *id));
     }
     pub fn update_read_time(&self, id: &Ipv4Addr, route_key: &RouteKey) {
-        if let Some(time) = self.inner.route_table_time.get(&(*route_key, *id)) {
-            time.value().store(Instant::now());
+        if let Some(mut time) = self.inner.route_table_time.get_mut(&(*route_key, *id)) {
+            *time.value_mut() = Instant::now();
         }
     }
 }
@@ -464,6 +491,9 @@ impl Channel {
         };
         if let Some((tcp_stream, receiver)) = tcp {
             tokio::spawn(Self::start_tcp(worker.worker("main_channel_tcp"), tcp_stream, receiver, context.inner.current_device.clone(), buf_sender.clone().unwrap(), head_reserve));
+        }
+        if let Some(main_channel_ipv6) = &context.inner.main_channel_ipv6 {
+            tokio::spawn(Self::start_(worker.worker("main_channel_ipv6"), context.clone(), main_channel_ipv6.clone(), handler.clone(), buf_sender.clone(), head_reserve, true));
         }
         tokio::spawn(Self::start_(worker.worker("main_channel_1"), context.clone(), main_channel.clone(), handler.clone(), buf_sender.clone(), head_reserve, true));
         if relay {

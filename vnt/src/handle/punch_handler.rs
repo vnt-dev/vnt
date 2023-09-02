@@ -34,6 +34,7 @@ pub fn start(mut worker: VntWorker, receiver: Receiver<(Ipv4Addr, NatInfo)>,
 pub async fn start0(mut receiver: Receiver<(Ipv4Addr, NatInfo)>,
                     mut punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
                     client_cipher: Cipher, ) {
+    log::info!("启动打洞任务");
     while let Some((peer_ip, nat_info)) = receiver.recv().await {
         if let Err(e) = start_(&client_cipher, &mut punch, &current_device, peer_ip, nat_info).await {
             log::warn!("网络打洞异常 {:?}", e);
@@ -70,6 +71,7 @@ pub async fn start_punch(
 ) {
     let mut num = 0;
     let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
+    log::info!("启动发起打洞请求任务");
     loop {
         if sender.is_close() {
             break;
@@ -135,8 +137,12 @@ pub fn punch_packet(
         .collect();
     punch_reply.public_port = nat_info.public_port as u32;
     punch_reply.public_port_range = nat_info.public_port_range as u32;
-    punch_reply.local_ip = u32::from_be_bytes(nat_info.local_ip.octets());
-    punch_reply.local_port = nat_info.local_port as u32;
+    punch_reply.local_ip = u32::from_be_bytes(nat_info.local_ipv4_addr.ip().octets());
+    punch_reply.local_port = nat_info.local_ipv4_addr.port() as u32;
+    if !nat_info.ipv6_addr.ip().is_unspecified() {
+        punch_reply.ipv6_port = nat_info.ipv6_addr.port() as u32;
+        punch_reply.ipv6 = nat_info.ipv6_addr.ip().octets().to_vec();
+    }
     punch_reply.nat_type = protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
     let bytes = punch_reply.write_to_bytes()?;
     let mut net_packet = NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;

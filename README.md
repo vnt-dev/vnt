@@ -118,7 +118,7 @@ A virtual network tool (VPN)
 ### Todo
 
 - 桌面UI(测试中)
-- 支持Ipv6
+- 支持Ipv6(1.2.2已支持客户端之间的ipv6，待支持客户端和服务端之间的ipv6通信)
 
 ### 常见问题
 <details> <summary>展开</summary>
