@@ -96,17 +96,31 @@ impl NatTest {
     ) -> NatTest {
         let server = stun_server[0].clone();
         stun_server.resize(3, server);
-        let info = NatTest::re_test_(
-            &stun_server,
-            public_ip,
+        let nat_info = NatInfo::new(
+            vec![public_ip],
             public_port,
+            0,
             local_ipv4_addr,
             ipv6_addr,
-        ).await;
-        NatTest {
+            NatType::Cone,
+        );
+        let info = Arc::new(Mutex::new(nat_info));
+        let nat_test = NatTest {
             stun_server,
-            info: Arc::new(Mutex::new(info)),
+            info,
+        };
+        {
+            let nat_test = nat_test.clone();
+            tokio::spawn(async move {
+                let _ = nat_test.re_test(
+                    public_ip,
+                    public_port,
+                    local_ipv4_addr,
+                    ipv6_addr,
+                ).await;
+            });
         }
+        nat_test
     }
     pub fn nat_info(&self) -> NatInfo {
         self.info.lock().clone()

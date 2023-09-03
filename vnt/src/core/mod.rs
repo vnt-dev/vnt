@@ -280,32 +280,34 @@ impl VntUtil {
             let channel = Channel::new(context.clone(), channel_recv_handler);
             let channel_worker = vnt_status_manager.worker("channel_worker");
             let relay = config.relay;
-            if let Some(tcp_proxy) = tcp_proxy {
-                tokio::spawn(tcp_proxy.start());
-            }
-            if let Some(udp_proxy) = udp_proxy {
-                tokio::spawn(udp_proxy.start());
-            }
             tokio::spawn(async move {
                 channel.start(channel_worker, tcp, 14, 65, relay, config.parallel).await
             });
         }
         {
-            let other_worker = vnt_status_manager.worker("punch_handler");
             let nat_test = nat_test.clone();
             let device_list = device_list.clone();
             let current_device = current_device.clone();
             // 定时心跳
-            heartbeat_handler::start_heartbeat(other_worker.worker("heartbeat"), channel_sender.clone(), device_list.clone(),
+            heartbeat_handler::start_heartbeat(vnt_status_manager.worker("heartbeat"), channel_sender.clone(), device_list.clone(),
                                                current_device.clone(), config.server_address_str, client_cipher.clone(), self.server_cipher.clone());
             // 空闲检查
-            heartbeat_handler::start_idle(other_worker.worker("idle"), idle, channel_sender.clone());
+            heartbeat_handler::start_idle(vnt_status_manager.worker("idle"), idle, channel_sender.clone());
             if !config.relay {
                 // 打洞处理
-                punch_handler::start(other_worker.worker("cone_receiver"), cone_receiver, punch.clone(), current_device.clone(), client_cipher.clone());
-                punch_handler::start(other_worker.worker("symmetric_receiver"), symmetric_receiver, punch, current_device.clone(), client_cipher.clone());
-                tokio::spawn(punch_handler::start_punch(other_worker, nat_test,
+                punch_handler::start(vnt_status_manager.worker("cone_receiver"), cone_receiver, punch.clone(), current_device.clone(), client_cipher.clone());
+                punch_handler::start(vnt_status_manager.worker("symmetric_receiver"), symmetric_receiver, punch, current_device.clone(), client_cipher.clone());
+                tokio::spawn(punch_handler::start_punch(vnt_status_manager.worker("punch_handler"), nat_test,
                                                         device_list, channel_sender, current_device, client_cipher.clone()));
+            }
+        }
+        {
+            //代理
+            if let Some(tcp_proxy) = tcp_proxy {
+                tokio::spawn(tcp_proxy.start());
+            }
+            if let Some(udp_proxy) = udp_proxy {
+                tokio::spawn(udp_proxy.start());
             }
         }
         context.switch(nat_test.nat_info().nat_type);
