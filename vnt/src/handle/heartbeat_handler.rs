@@ -178,17 +178,28 @@ async fn start_heartbeat_(
                     peer.virtual_ip,
                 );
                 if let Some(route) = sender.route_one(&peer.virtual_ip) {
-                    let _ = sender
+                    if let Err(e) = sender
                         .send_by_key(client_packet.buffer(), &route.route_key())
-                        .await;
+                        .await
+                    {
+                        log::warn!("virtual_ip:{},route:{:?},e:{:?}", peer.virtual_ip, route, e);
+                    }
                     if route.is_p2p() {
                         continue;
                     }
                 } else {
                     //没有直连路由则发送到网关
-                    let _ = sender
+                    if let Err(e) = sender
                         .send_main(client_packet.buffer(), current_dev.connect_server)
-                        .await;
+                        .await
+                    {
+                        log::warn!(
+                            "virtual_ip:{},connect_server:{:?},e:{:?}",
+                            peer.virtual_ip,
+                            current_dev.connect_server,
+                            e
+                        );
+                    }
                 }
 
                 //再随机发送到其他地址，看有没有客户端符合转发条件
@@ -201,8 +212,16 @@ async fn start_heartbeat_(
                 'a: for (peer_ip, route_list) in route_list.iter() {
                     for route in route_list {
                         if peer_ip != &peer.virtual_ip && route.is_p2p() {
-                            let _ =
-                                sender.try_send_by_key(client_packet.buffer(), &route.route_key());
+                            if let Err(e) =
+                                sender.try_send_by_key(client_packet.buffer(), &route.route_key())
+                            {
+                                log::warn!(
+                                    "virtual_ip:{},route:{:?},e:{:?}",
+                                    peer.virtual_ip,
+                                    route,
+                                    e
+                                );
+                            }
                             num += 1;
                             break;
                         }

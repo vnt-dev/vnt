@@ -81,16 +81,17 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
     for peer in device_list {
         let name = peer.name;
         let virtual_ip = peer.virtual_ip.to_string();
-        let (nat_type, public_ips, local_ip) =
+        let (nat_type, public_ips, local_ip,ipv6) =
             if let Some(nat_info) = vnt.peer_nat_info(&peer.virtual_ip) {
                 let nat_type = format!("{:?}", nat_info.nat_type);
                 let public_ips: Vec<String> =
                     nat_info.public_ips.iter().map(|v| v.to_string()).collect();
                 let public_ips = public_ips.join(",");
                 let local_ip = nat_info.local_ipv4_addr.ip().to_string();
-                (nat_type, public_ips, local_ip)
+                let ipv6 = nat_info.ipv6_addr.ip().to_string();
+                (nat_type, public_ips, local_ip,ipv6)
             } else {
-                ("".to_string(), "".to_string(), "".to_string())
+                ("".to_string(), "".to_string(), "".to_string(), "".to_string())
             };
         let (nat_traversal_type, rt) = if let Some(route) = vnt.route(&peer.virtual_ip) {
             let nat_traversal_type = if route.metric == 1 {
@@ -118,6 +119,7 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
             nat_type,
             public_ips,
             local_ip,
+            ipv6,
             nat_traversal_type,
             rt,
             status,

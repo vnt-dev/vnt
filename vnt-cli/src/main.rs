@@ -424,8 +424,9 @@ async fn main0(config: Config, show_cmd: bool) {
                 }
             }
         }
-        #[cfg(unix)]
-        tokio::select! {
+    }
+    #[cfg(unix)]
+    tokio::select! {
                  _ = vnt.wait_stop()=>{
                      return;
                  }
@@ -439,8 +440,8 @@ async fn main0(config: Config, show_cmd: bool) {
                      vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
                      return;
                  }
-        }
     }
+    #[cfg(windows)]
     vnt.wait_stop().await;
 }
 

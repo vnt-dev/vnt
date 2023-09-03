@@ -29,6 +29,7 @@ pub struct DeviceItem {
     pub nat_type: String,
     pub public_ips: String,
     pub local_ip: String,
+    pub ipv6: String,
     pub nat_traversal_type: String,
     pub rt: String,
     pub status: String,

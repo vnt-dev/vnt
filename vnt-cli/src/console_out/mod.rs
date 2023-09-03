@@ -125,6 +125,7 @@ pub fn console_device_list_all(mut list: Vec<DeviceItem>) {
         ("NAT Type".to_string(), Style::new()),
         ("Public Ips".to_string(), Style::new()),
         ("Local Ip".to_string(), Style::new()),
+        ("IPv6".to_string(), Style::new()),
     ]);
     for item in list {
         if &item.status == "Online" {
@@ -138,6 +139,7 @@ pub fn console_device_list_all(mut list: Vec<DeviceItem>) {
                     (item.nat_type, Style::new().green()),
                     (item.public_ips, Style::new().green()),
                     (item.local_ip, Style::new().green()),
+                    (item.ipv6, Style::new().green()),
                 ]);
             } else {
                 out_list.push(vec![
@@ -149,6 +151,7 @@ pub fn console_device_list_all(mut list: Vec<DeviceItem>) {
                     (item.nat_type, Style::new().yellow()),
                     (item.public_ips, Style::new().yellow()),
                     (item.local_ip, Style::new().yellow()),
+                    (item.ipv6, Style::new().yellow()),
                 ]);
             }
         } else {
@@ -156,6 +159,7 @@ pub fn console_device_list_all(mut list: Vec<DeviceItem>) {
                 (item.name, Style::new().color256(102)),
                 (item.virtual_ip, Style::new().color256(102)),
                 (item.status, Style::new().color256(102)),
+                ("".to_string(), Style::new().color256(102)),
                 ("".to_string(), Style::new().color256(102)),
                 ("".to_string(), Style::new().color256(102)),
                 ("".to_string(), Style::new().color256(102)),

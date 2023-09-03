@@ -10,7 +10,7 @@ pub enum VntStatus {
 }
 
 pub struct VntWorker {
-    _name: String,
+    name: String,
     wg: WaitGroup,
     status_s: Arc<Sender<VntStatus>>,
     status_r: Receiver<VntStatus>,
@@ -20,7 +20,7 @@ impl VntWorker {
     pub fn worker(&self, name: &str) -> Self {
         self.wg.add();
         VntWorker {
-            _name: name.to_string(),
+            name: name.to_string(),
             wg: self.wg.clone(),
             status_s: self.status_s.clone(),
             status_r: self.status_r.clone(),
@@ -30,6 +30,7 @@ impl VntWorker {
 
 impl Drop for VntWorker {
     fn drop(&mut self) {
+        log::info!("任务停止:{}", self.name);
         self.wg.done();
     }
 }
@@ -82,7 +83,7 @@ impl VntStatusManger {
     pub fn worker(&self, name: &str) -> VntWorker {
         self.wg.add();
         VntWorker {
-            _name: name.to_string(),
+            name: name.to_string(),
             wg: self.wg.clone(),
             status_s: self.status_s.clone(),
             status_r: self.status_r.clone(),
