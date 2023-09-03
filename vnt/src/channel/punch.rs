@@ -77,10 +77,11 @@ impl Punch {
                 .await;
         }
         if !nat_info.ipv6_addr.ip().is_unspecified() && nat_info.ipv6_addr.port() != 0 {
-            let _ = self
+            let rs = self
                 .context
                 .send_main_udp(buf, SocketAddr::V6(nat_info.ipv6_addr))
                 .await;
+            log::info!("发送到ipv6地址:{:?},rs={:?}", nat_info.ipv6_addr, rs);
         }
         match nat_info.nat_type {
             NatType::Symmetric => {

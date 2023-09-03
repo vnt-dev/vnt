@@ -439,8 +439,14 @@ impl VntUtil {
             if let Some(udp_proxy) = udp_proxy {
                 tokio::spawn(udp_proxy.start());
             }
+            let context = context.clone();
+            let nat_test = nat_test.clone();
+            //延迟切换类型,避免无效流量
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(15)).await;
+                context.switch(nat_test.nat_info().nat_type);
+            });
         }
-        context.switch(nat_test.nat_info().nat_type);
         Ok(Vnt {
             config: self.config,
             current_device,
