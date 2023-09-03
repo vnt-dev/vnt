@@ -4,7 +4,6 @@ use tokio::net::UdpSocket;
 
 use vnt::core::Vnt;
 
-
 pub struct CommandServer {}
 
 impl CommandServer {
@@ -41,39 +40,26 @@ impl CommandServer {
     }
 }
 
-
 fn command(cmd: &str, vnt: &Vnt) -> io::Result<String> {
     let out_str = match cmd {
-        "route" => {
-            match serde_json::to_string(&crate::command::command_route(vnt)) {
-                Ok(str) => {
-                    str
-                }
-                Err(e) => {
-                    format!("{:?}", e)
-                }
+        "route" => match serde_json::to_string(&crate::command::command_route(vnt)) {
+            Ok(str) => str,
+            Err(e) => {
+                format!("{:?}", e)
             }
-        }
-        "list" => {
-            match serde_json::to_string(&crate::command::command_list(vnt)) {
-                Ok(str) => {
-                    str
-                }
-                Err(e) => {
-                    format!("{:?}", e)
-                }
+        },
+        "list" => match serde_json::to_string(&crate::command::command_list(vnt)) {
+            Ok(str) => str,
+            Err(e) => {
+                format!("{:?}", e)
             }
-        }
-        "info" => {
-            match serde_json::to_string(&crate::command::command_info(vnt)) {
-                Ok(str) => {
-                    str
-                }
-                Err(e) => {
-                    format!("{:?}", e)
-                }
+        },
+        "info" => match serde_json::to_string(&crate::command::command_info(vnt)) {
+            Ok(str) => str,
+            Err(e) => {
+                format!("{:?}", e)
             }
-        }
+        },
         "stop" => {
             vnt.stop()?;
             "stopped".to_string()

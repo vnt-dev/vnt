@@ -31,17 +31,17 @@ pub struct PeerDeviceInfo {
 }
 
 impl PeerDeviceInfo {
-    pub fn new(virtual_ip: Ipv4Addr, name: String, status: u8,client_secret: bool) -> Self {
+    pub fn new(virtual_ip: Ipv4Addr, name: String, status: u8, client_secret: bool) -> Self {
         Self {
             virtual_ip,
             name,
             status: PeerDeviceStatus::from(status),
-            client_secret
+            client_secret,
         }
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq,Ord, PartialOrd)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum PeerDeviceStatus {
     Online,
     Offline,
@@ -82,7 +82,6 @@ pub struct CurrentDeviceInfo {
     pub broadcast_address: Ipv4Addr,
     //链接的服务器地址
     pub connect_server: SocketAddr,
-
 }
 
 impl CurrentDeviceInfo {

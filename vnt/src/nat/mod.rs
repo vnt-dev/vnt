@@ -1,6 +1,6 @@
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::net::UdpSocket;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -15,12 +15,8 @@ pub fn local_ipv4() -> io::Result<Ipv4Addr> {
     socket.connect("8.8.8.8:80")?;
     let addr = socket.local_addr()?;
     match addr.ip() {
-        IpAddr::V4(ip) => {
-            Ok(ip)
-        }
-        IpAddr::V6(_) => {
-            Ok(Ipv4Addr::UNSPECIFIED)
-        }
+        IpAddr::V4(ip) => Ok(ip),
+        IpAddr::V6(_) => Ok(Ipv4Addr::UNSPECIFIED),
     }
 }
 
@@ -29,22 +25,16 @@ pub fn local_ipv6() -> io::Result<Ipv6Addr> {
     socket.connect("[2001:4860:4860::8888]:80")?;
     let addr = socket.local_addr()?;
     match addr.ip() {
-        IpAddr::V4(_) => {
-            Ok(Ipv6Addr::UNSPECIFIED)
-        }
-        IpAddr::V6(ip) => {
-            Ok(ip)
-        }
+        IpAddr::V4(_) => Ok(Ipv6Addr::UNSPECIFIED),
+        IpAddr::V6(ip) => Ok(ip),
     }
 }
 
 pub fn local_ipv4_addr(port: u16) -> SocketAddrV4 {
     match local_ipv4() {
-        Ok(ipv4) => {
-            SocketAddrV4::new(ipv4, port)
-        }
+        Ok(ipv4) => SocketAddrV4::new(ipv4, port),
         Err(e) => {
-            log::warn!("获取本地ipv4地址失败:{}",e);
+            log::warn!("获取本地ipv4地址失败:{}", e);
             SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)
         }
     }
@@ -52,11 +42,9 @@ pub fn local_ipv4_addr(port: u16) -> SocketAddrV4 {
 
 pub fn local_ipv6_addr(port: u16) -> SocketAddrV6 {
     match local_ipv6() {
-        Ok(ipv6) => {
-            SocketAddrV6::new(ipv6, port, 0, 0)
-        }
+        Ok(ipv6) => SocketAddrV6::new(ipv6, port, 0, 0),
         Err(e) => {
-            log::warn!("获取本地ipv6地址失败:{}",e);
+            log::warn!("获取本地ipv6地址失败:{}", e);
             SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)
         }
     }
@@ -105,19 +93,13 @@ impl NatTest {
             NatType::Cone,
         );
         let info = Arc::new(Mutex::new(nat_info));
-        let nat_test = NatTest {
-            stun_server,
-            info,
-        };
+        let nat_test = NatTest { stun_server, info };
         {
             let nat_test = nat_test.clone();
             tokio::spawn(async move {
-                let _ = nat_test.re_test(
-                    public_ip,
-                    public_port,
-                    local_ipv4_addr,
-                    ipv6_addr,
-                ).await;
+                let _ = nat_test
+                    .re_test(public_ip, public_port, local_ipv4_addr, ipv6_addr)
+                    .await;
             });
         }
         nat_test
@@ -145,7 +127,8 @@ impl NatTest {
             public_port,
             local_ipv4_addr,
             ipv6_addr,
-        ).await;
+        )
+        .await;
         *self.info.lock() = info.clone();
         info
     }

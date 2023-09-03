@@ -1,11 +1,11 @@
+use crate::command::entity::{DeviceItem, Info, RouteItem};
+use crate::console_out;
 use std::io;
 use vnt::core::Vnt;
-use crate::command::entity::{DeviceItem, RouteItem, Info};
-use crate::console_out;
 
 pub mod client;
-pub mod server;
 pub mod entity;
+pub mod server;
 
 pub enum CommandEnum {
     Route,
@@ -51,7 +51,9 @@ pub fn command_route(vnt: &Vnt) -> Vec<RouteItem> {
     let route_table = vnt.route_table();
     let mut route_list = Vec::with_capacity(route_table.len());
     for (destination, route) in route_table {
-        let next_hop = vnt.route_key(&route.route_key()).map_or(String::new(), |v| v.to_string());
+        let next_hop = vnt
+            .route_key(&route.route_key())
+            .map_or(String::new(), |v| v.to_string());
         let metric = route.metric.to_string();
         let rt = if route.rt < 0 {
             "".to_string()
@@ -79,15 +81,17 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
     for peer in device_list {
         let name = peer.name;
         let virtual_ip = peer.virtual_ip.to_string();
-        let (nat_type, public_ips, local_ip) = if let Some(nat_info) = vnt.peer_nat_info(&peer.virtual_ip) {
-            let nat_type = format!("{:?}", nat_info.nat_type);
-            let public_ips: Vec<String> = nat_info.public_ips.iter().map(|v| v.to_string()).collect();
-            let public_ips = public_ips.join(",");
-            let local_ip = nat_info.local_ipv4_addr.ip().to_string();
-            (nat_type, public_ips, local_ip)
-        } else {
-            ("".to_string(), "".to_string(), "".to_string())
-        };
+        let (nat_type, public_ips, local_ip) =
+            if let Some(nat_info) = vnt.peer_nat_info(&peer.virtual_ip) {
+                let nat_type = format!("{:?}", nat_info.nat_type);
+                let public_ips: Vec<String> =
+                    nat_info.public_ips.iter().map(|v| v.to_string()).collect();
+                let public_ips = public_ips.join(",");
+                let local_ip = nat_info.local_ipv4_addr.ip().to_string();
+                (nat_type, public_ips, local_ip)
+            } else {
+                ("".to_string(), "".to_string(), "".to_string())
+            };
         let (nat_traversal_type, rt) = if let Some(route) = vnt.route(&peer.virtual_ip) {
             let nat_traversal_type = if route.metric == 1 {
                 "p2p"
@@ -95,7 +99,8 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
                 "server-relay"
             } else {
                 "client-relay"
-            }.to_string();
+            }
+            .to_string();
             let rt = if route.rt < 0 {
                 "".to_string()
             } else {
@@ -155,4 +160,3 @@ pub fn command_info(vnt: &Vnt) -> Info {
         ipv6_addr,
     }
 }
-

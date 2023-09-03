@@ -1,10 +1,9 @@
+use crate::channel::channel::Context;
+use crate::channel::RouteKey;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::Ipv4Addr;
 use std::time::Duration;
-use crate::channel::channel::Context;
-use crate::channel::RouteKey;
-
 
 pub struct Idle {
     read_idle: Duration,
@@ -12,12 +11,8 @@ pub struct Idle {
 }
 
 impl Idle {
-    pub fn new(read_idle: Duration,
-               context: Context, ) -> Self {
-        Self {
-            read_idle,
-            context,
-        }
+    pub fn new(read_idle: Duration, context: Context) -> Self {
+        Self { read_idle, context }
     }
 }
 

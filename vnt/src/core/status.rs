@@ -1,7 +1,7 @@
+use crate::util::wait::WaitGroup;
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
-use crate::util::wait::WaitGroup;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum VntStatus {
@@ -49,7 +49,9 @@ impl VntWorker {
                         return;
                     }
                 }
-                Err(_) => { return; }
+                Err(_) => {
+                    return;
+                }
             }
         }
     }

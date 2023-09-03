@@ -23,7 +23,7 @@ impl Finger {
         }
         let payload_len = net_packet.payload().len();
         if payload_len < 12 {
-            log::error!("数据异常,长度小于{}",12);
+            log::error!("数据异常,长度小于{}", 12);
             return Err(io::Error::new(io::ErrorKind::Other, "data err"));
         }
         let mut nonce_raw = [0; 12];

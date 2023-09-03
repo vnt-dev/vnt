@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
 pub mod channel;
-pub mod punch;
 pub mod idle;
+pub mod punch;
 pub mod sender;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -27,8 +27,7 @@ pub struct RouteSortKey {
 }
 
 impl Route {
-    pub fn new(index: usize,
-               addr: SocketAddr, metric: u8, rt: i64, ) -> Self {
+    pub fn new(index: usize, addr: SocketAddr, metric: u8, rt: i64) -> Self {
         Self {
             index,
             addr,
@@ -68,11 +67,7 @@ pub struct RouteKey {
 }
 
 impl RouteKey {
-    pub(crate) fn new(index: usize,
-                      addr: SocketAddr, ) -> Self {
-        Self {
-            index,
-            addr,
-        }
+    pub(crate) fn new(index: usize, addr: SocketAddr) -> Self {
+        Self { index, addr }
     }
 }

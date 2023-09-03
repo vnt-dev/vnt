@@ -14,7 +14,7 @@
 
 use std::io;
 use std::mem;
-use std::os::unix::io::{AsRawFd,RawFd};
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::Arc;
 
 use crate::platform::posix::Fd;
@@ -71,7 +71,6 @@ impl Writer {
             Ok(amount as usize)
         }
     }
-
 
     pub fn write_vectored(&self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
         unsafe {

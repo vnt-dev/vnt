@@ -8,9 +8,8 @@ use tokio::net::{TcpStream, UdpSocket};
 use crate::channel::channel::Context;
 use crate::cipher::{Cipher, RsaCipher};
 use crate::proto::message::{HandshakeRequest, HandshakeResponse, SecretHandshakeRequest};
-use crate::protocol::{MAX_TTL, NetPacket, Protocol, service_packet, Version};
 use crate::protocol::body::ENCRYPTION_RESERVED;
-
+use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
 
 pub enum HandshakeEnum {
     NotSecret,
@@ -36,7 +35,11 @@ fn handshake_request_packet(secret: bool) -> crate::Result<NetPacket<Vec<u8>>> {
     Ok(net_packet)
 }
 
-fn secret_handshake_request_packet(rsa_cipher: &RsaCipher, token: String, key: &[u8]) -> crate::Result<NetPacket<Vec<u8>>> {
+fn secret_handshake_request_packet(
+    rsa_cipher: &RsaCipher,
+    token: String,
+    key: &[u8],
+) -> crate::Result<NetPacket<Vec<u8>>> {
     let mut request = SecretHandshakeRequest::new();
     request.token = token;
     request.key = key.to_vec();
@@ -52,16 +55,25 @@ fn secret_handshake_request_packet(rsa_cipher: &RsaCipher, token: String, key: &
 }
 
 /// 第一次握手，拿到公钥
-pub async fn handshake(main_channel: &UdpSocket, main_tcp_channel: Option<&mut TcpStream>,
-                       server_address: SocketAddr, secret: bool) -> Result<Option<RsaCipher>, HandshakeEnum> {
+pub async fn handshake(
+    main_channel: &UdpSocket,
+    main_tcp_channel: Option<&mut TcpStream>,
+    server_address: SocketAddr,
+    secret: bool,
+) -> Result<Option<RsaCipher>, HandshakeEnum> {
     let request_packet = handshake_request_packet(secret).unwrap();
     let send_buf = request_packet.buffer();
     let mut recv_buf = [0u8; 10240];
-    let len = send_recv(main_channel, main_tcp_channel, server_address, send_buf, &mut recv_buf).await?;
+    let len = send_recv(
+        main_channel,
+        main_tcp_channel,
+        server_address,
+        send_buf,
+        &mut recv_buf,
+    )
+    .await?;
     let net_packet = match NetPacket::new(&recv_buf[..len]) {
-        Ok(net_packet) => {
-            net_packet
-        }
+        Ok(net_packet) => net_packet,
         Err(e) => {
             return Err(HandshakeEnum::Other(format!("net_packet {}", e)));
         }
@@ -77,23 +89,31 @@ pub async fn handshake(main_channel: &UdpSocket, main_tcp_channel: Option<&mut T
                                 return Err(HandshakeEnum::NotSecret);
                             }
                             if secret {
-                                //转换公钥 
+                                //转换公钥
                                 match RsaCipher::new(&response.public_key) {
                                     Ok(rsa) => {
                                         match rsa.finger() {
                                             Ok(finger) => {
                                                 if finger != response.key_finger {
-                                                    return Err(HandshakeEnum::Other("finger error".to_string()));
+                                                    return Err(HandshakeEnum::Other(
+                                                        "finger error".to_string(),
+                                                    ));
                                                 }
                                             }
                                             Err(e) => {
-                                                return Err(HandshakeEnum::Other(format!("finger {}", e)));
+                                                return Err(HandshakeEnum::Other(format!(
+                                                    "finger {}",
+                                                    e
+                                                )));
                                             }
                                         }
                                         Ok(Some(rsa))
                                     }
                                     Err(e) => {
-                                        return Err(HandshakeEnum::Other(format!("RsaCipher {}", e)));
+                                        return Err(HandshakeEnum::Other(format!(
+                                            "RsaCipher {}",
+                                            e
+                                        )));
                                     }
                                 }
                             } else {
@@ -116,8 +136,13 @@ pub async fn handshake(main_channel: &UdpSocket, main_tcp_channel: Option<&mut T
     }
 }
 
-async fn send_recv(main_channel: &UdpSocket, main_tcp_channel: Option<&mut TcpStream>,
-                   server_address: SocketAddr, send_buf: &[u8], recv_buf: &mut [u8]) -> Result<usize, HandshakeEnum> {
+async fn send_recv(
+    main_channel: &UdpSocket,
+    main_tcp_channel: Option<&mut TcpStream>,
+    server_address: SocketAddr,
+    send_buf: &[u8],
+    recv_buf: &mut [u8],
+) -> Result<usize, HandshakeEnum> {
     if let Some(main_tcp_channel) = main_tcp_channel {
         let mut head = [0; 4];
         let len = send_buf.len();
@@ -144,20 +169,20 @@ async fn send_recv(main_channel: &UdpSocket, main_tcp_channel: Option<&mut TcpSt
         if let Err(e) = main_channel.send_to(send_buf, server_address).await {
             return Err(HandshakeEnum::Other(format!("send error:{}", e)));
         }
-        match tokio::time::timeout(Duration::from_millis(300), main_channel.recv_from(recv_buf)).await {
-            Ok(rs) => {
-                match rs {
-                    Ok((len, addr)) => {
-                        if server_address != addr {
-                            return Err(HandshakeEnum::Other(format!("invalid data,from {}", addr)));
-                        }
-                        Ok(len)
+        match tokio::time::timeout(Duration::from_millis(300), main_channel.recv_from(recv_buf))
+            .await
+        {
+            Ok(rs) => match rs {
+                Ok((len, addr)) => {
+                    if server_address != addr {
+                        return Err(HandshakeEnum::Other(format!("invalid data,from {}", addr)));
                     }
-                    Err(e) => {
-                        return Err(HandshakeEnum::Other(format!("receiver error:{}", e)));
-                    }
+                    Ok(len)
                 }
-            }
+                Err(e) => {
+                    return Err(HandshakeEnum::Other(format!("receiver error:{}", e)));
+                }
+            },
             Err(_) => {
                 return Err(HandshakeEnum::Timeout);
             }
@@ -166,48 +191,72 @@ async fn send_recv(main_channel: &UdpSocket, main_tcp_channel: Option<&mut TcpSt
 }
 
 /// 第二次握手，同步对称密钥，后续将使用对称加密
-pub async fn secret_handshake(main_channel: &UdpSocket, main_tcp_channel: Option<&mut TcpStream>,
-                              server_address: SocketAddr, rsa_cipher: &RsaCipher, server_cipher: &Cipher, token: String)
-                              -> Result<(), HandshakeEnum> {
-    let secret_packet = match secret_handshake_request_packet(rsa_cipher, token, server_cipher.key().unwrap()) {
-        Ok(secret_packet) => {
-            secret_packet
-        }
-        Err(e) => {
-            return Err(HandshakeEnum::Other(format!("secret_handshake_request_packet {}", e)));
-        }
-    };
+pub async fn secret_handshake(
+    main_channel: &UdpSocket,
+    main_tcp_channel: Option<&mut TcpStream>,
+    server_address: SocketAddr,
+    rsa_cipher: &RsaCipher,
+    server_cipher: &Cipher,
+    token: String,
+) -> Result<(), HandshakeEnum> {
+    let secret_packet =
+        match secret_handshake_request_packet(rsa_cipher, token, server_cipher.key().unwrap()) {
+            Ok(secret_packet) => secret_packet,
+            Err(e) => {
+                return Err(HandshakeEnum::Other(format!(
+                    "secret_handshake_request_packet {}",
+                    e
+                )));
+            }
+        };
     let send_buf = secret_packet.buffer();
     let mut recv_buf = [0u8; 10240];
-    let len = send_recv(main_channel, main_tcp_channel, server_address, send_buf, &mut recv_buf).await?;
+    let len = send_recv(
+        main_channel,
+        main_tcp_channel,
+        server_address,
+        send_buf,
+        &mut recv_buf,
+    )
+    .await?;
     let mut net_packet = match NetPacket::new(&mut recv_buf[..len]) {
-        Ok(net_packet) => { net_packet }
+        Ok(net_packet) => net_packet,
         Err(e) => {
             return Err(HandshakeEnum::Other(format!("secret_net_packet {}", e)));
         }
     };
     match server_cipher.decrypt_ipv4(&mut net_packet) {
         Ok(_) => {
-            if net_packet.is_gateway() && net_packet.protocol() == Protocol::Service
-                && service_packet::Protocol::from(net_packet.transport_protocol()) ==
-                service_packet::Protocol::SecretHandshakeResponse {
+            if net_packet.is_gateway()
+                && net_packet.protocol() == Protocol::Service
+                && service_packet::Protocol::from(net_packet.transport_protocol())
+                    == service_packet::Protocol::SecretHandshakeResponse
+            {
                 Ok(())
             } else {
                 Err(HandshakeEnum::Other("not match".to_string()))
             }
         }
-        Err(e) => {
-            Err(HandshakeEnum::Other(format!("decrypt_ipv4 {}", e)))
-        }
+        Err(e) => Err(HandshakeEnum::Other(format!("decrypt_ipv4 {}", e))),
     }
 }
 
-pub async fn secret_handshake_req(context: &Context,
-                                  server_address: SocketAddr, rsa_cipher: &RsaCipher, server_cipher: &Cipher, token: String, ) -> crate::Result<()> {
-    let secret_packet = secret_handshake_request_packet(rsa_cipher, token, server_cipher.key().unwrap())?;
-    context.send_main(secret_packet.buffer(), server_address).await?;
-    if context.is_main_tcp(){
-        context.send_main_udp(secret_packet.buffer(),server_address).await?;
+pub async fn secret_handshake_req(
+    context: &Context,
+    server_address: SocketAddr,
+    rsa_cipher: &RsaCipher,
+    server_cipher: &Cipher,
+    token: String,
+) -> crate::Result<()> {
+    let secret_packet =
+        secret_handshake_request_packet(rsa_cipher, token, server_cipher.key().unwrap())?;
+    context
+        .send_main(secret_packet.buffer(), server_address)
+        .await?;
+    if context.is_main_tcp() {
+        context
+            .send_main_udp(secret_packet.buffer(), server_address)
+            .await?;
     }
     Ok(())
 }

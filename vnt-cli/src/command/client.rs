@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::str::FromStr;
 use std::time::Duration;
 
-use crate::command::entity::{DeviceItem, RouteItem, Info};
+use crate::command::entity::{DeviceItem, Info, RouteItem};
 
 pub struct CommandClient {
     udp: UdpSocket,
@@ -17,9 +17,12 @@ impl CommandClient {
         }
         let port = std::fs::read_to_string(path_buf)?;
         let port = match u16::from_str(&port) {
-            Ok(port) => { port }
+            Ok(port) => port,
             Err(_) => {
-                return Err(io::Error::new(io::ErrorKind::Other, "'command-port' file error"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "'command-port' file error",
+                ));
             }
         };
         let udp = UdpSocket::bind("127.0.0.1:0")?;
@@ -38,11 +41,9 @@ impl CommandClient {
         let mut buf = [0; 10240];
         let len = self.udp.recv(&mut buf)?;
         match serde_json::from_slice::<Vec<DeviceItem>>(&buf[..len]) {
-            Ok(val) => {
-                Ok(val)
-            }
+            Ok(val) => Ok(val),
             Err(e) => {
-                log::error!("{:?}",e);
+                log::error!("{:?}", e);
                 Err(io::Error::new(io::ErrorKind::Other, "data error"))
             }
         }
@@ -52,11 +53,9 @@ impl CommandClient {
         let mut buf = [0; 10240];
         let len = self.udp.recv(&mut buf)?;
         match serde_json::from_slice::<Vec<RouteItem>>(&buf[..len]) {
-            Ok(val) => {
-                Ok(val)
-            }
+            Ok(val) => Ok(val),
             Err(e) => {
-                log::error!("{:?}",e);
+                log::error!("{:?}", e);
                 Err(io::Error::new(io::ErrorKind::Other, "data error"))
             }
         }
@@ -66,11 +65,9 @@ impl CommandClient {
         let mut buf = [0; 10240];
         let len = self.udp.recv(&mut buf)?;
         match serde_json::from_slice::<Info>(&buf[..len]) {
-            Ok(val) => {
-                Ok(val)
-            }
+            Ok(val) => Ok(val),
             Err(e) => {
-                log::error!("{:?},{:?}",&buf[..len],e);
+                log::error!("{:?},{:?}", &buf[..len], e);
                 Err(io::Error::new(io::ErrorKind::Other, "data error"))
             }
         }

@@ -11,8 +11,8 @@ impl<Storage> __BindgenBitfieldUnit<Storage> {
     }
 }
 impl<Storage> __BindgenBitfieldUnit<Storage>
-    where
-        Storage: AsRef<[u8]> + AsMut<[u8]>,
+where
+    Storage: AsRef<[u8]> + AsMut<[u8]>,
 {
     #[inline]
     pub fn get_bit(&self, index: usize) -> bool {
@@ -112,40 +112,40 @@ fn bindgen_test_layout__GUID() {
         unsafe { &(*(::std::ptr::null::<_GUID>())).Data1 as *const _ as usize },
         0usize,
         concat!(
-        "Offset of field: ",
-        stringify!(_GUID),
-        "::",
-        stringify!(Data1)
+            "Offset of field: ",
+            stringify!(_GUID),
+            "::",
+            stringify!(Data1)
         )
     );
     assert_eq!(
         unsafe { &(*(::std::ptr::null::<_GUID>())).Data2 as *const _ as usize },
         4usize,
         concat!(
-        "Offset of field: ",
-        stringify!(_GUID),
-        "::",
-        stringify!(Data2)
+            "Offset of field: ",
+            stringify!(_GUID),
+            "::",
+            stringify!(Data2)
         )
     );
     assert_eq!(
         unsafe { &(*(::std::ptr::null::<_GUID>())).Data3 as *const _ as usize },
         6usize,
         concat!(
-        "Offset of field: ",
-        stringify!(_GUID),
-        "::",
-        stringify!(Data3)
+            "Offset of field: ",
+            stringify!(_GUID),
+            "::",
+            stringify!(Data3)
         )
     );
     assert_eq!(
         unsafe { &(*(::std::ptr::null::<_GUID>())).Data4 as *const _ as usize },
         8usize,
         concat!(
-        "Offset of field: ",
-        stringify!(_GUID),
-        "::",
-        stringify!(Data4)
+            "Offset of field: ",
+            stringify!(_GUID),
+            "::",
+            stringify!(Data4)
         )
     );
 }
@@ -248,20 +248,20 @@ fn bindgen_test_layout__NET_LUID_LH() {
         unsafe { &(*(::std::ptr::null::<_NET_LUID_LH>())).Value as *const _ as usize },
         0usize,
         concat!(
-        "Offset of field: ",
-        stringify!(_NET_LUID_LH),
-        "::",
-        stringify!(Value)
+            "Offset of field: ",
+            stringify!(_NET_LUID_LH),
+            "::",
+            stringify!(Value)
         )
     );
     assert_eq!(
         unsafe { &(*(::std::ptr::null::<_NET_LUID_LH>())).Info as *const _ as usize },
         0usize,
         concat!(
-        "Offset of field: ",
-        stringify!(_NET_LUID_LH),
-        "::",
-        stringify!(Info)
+            "Offset of field: ",
+            stringify!(_NET_LUID_LH),
+            "::",
+            stringify!(Info)
         )
     );
 }
@@ -310,33 +310,33 @@ pub struct wintun {
     pub WintunCloseAdapter: unsafe extern "C" fn(arg1: WINTUN_ADAPTER_HANDLE),
     pub WintunOpenAdapter: unsafe extern "C" fn(arg1: LPCWSTR) -> WINTUN_ADAPTER_HANDLE,
     pub WintunGetAdapterLUID:
-    unsafe extern "C" fn(arg1: WINTUN_ADAPTER_HANDLE, arg2: *mut NET_LUID),
+        unsafe extern "C" fn(arg1: WINTUN_ADAPTER_HANDLE, arg2: *mut NET_LUID),
     pub WintunGetRunningDriverVersion: unsafe extern "C" fn() -> DWORD,
     pub WintunDeleteDriver: unsafe extern "C" fn() -> BOOL,
     pub WintunSetLogger: unsafe extern "C" fn(arg1: WINTUN_LOGGER_CALLBACK),
     pub WintunStartSession:
-    unsafe extern "C" fn(arg1: WINTUN_ADAPTER_HANDLE, arg2: DWORD) -> WINTUN_SESSION_HANDLE,
+        unsafe extern "C" fn(arg1: WINTUN_ADAPTER_HANDLE, arg2: DWORD) -> WINTUN_SESSION_HANDLE,
     pub WintunEndSession: unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE),
     pub WintunGetReadWaitEvent: unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE) -> HANDLE,
     pub WintunReceivePacket:
-    unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE, arg2: *mut DWORD) -> *mut BYTE,
+        unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE, arg2: *mut DWORD) -> *mut BYTE,
     pub WintunReleaseReceivePacket:
-    unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE, arg2: *const BYTE),
+        unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE, arg2: *const BYTE),
     pub WintunAllocateSendPacket:
-    unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE, arg2: DWORD) -> *mut BYTE,
+        unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE, arg2: DWORD) -> *mut BYTE,
     pub WintunSendPacket: unsafe extern "C" fn(arg1: WINTUN_SESSION_HANDLE, arg2: *const BYTE),
 }
 impl wintun {
     pub unsafe fn new<P>(path: P) -> Result<Self, ::libloading::Error>
-        where
-            P: AsRef<::std::ffi::OsStr>,
+    where
+        P: AsRef<::std::ffi::OsStr>,
     {
         let library = ::libloading::Library::new(path)?;
         Self::from_library(library)
     }
     pub unsafe fn from_library<L>(library: L) -> Result<Self, ::libloading::Error>
-        where
-            L: Into<::libloading::Library>,
+    where
+        L: Into<::libloading::Library>,
     {
         let __library = library.into();
         let WintunCreateAdapter = __library.get(b"WintunCreateAdapter\0").map(|sym| *sym)?;

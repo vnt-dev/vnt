@@ -1,13 +1,13 @@
-use std::{fmt, io};
 use crate::ethernet::protocol::Protocol;
+use std::{fmt, io};
 
 /// 以太网帧协议
 /// https://www.ietf.org/rfc/rfc894.txt
 /*
-   0                      6                      12    14 (字节)
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |        目的地址         |         源地址         | 类型 |
- */
+  0                      6                      12    14 (字节)
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |        目的地址         |         源地址         | 类型 |
+*/
 pub struct EthernetPacket<B> {
     pub buffer: B,
 }

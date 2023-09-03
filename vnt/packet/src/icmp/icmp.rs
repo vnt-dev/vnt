@@ -1,8 +1,8 @@
-use std::{fmt, io};
-use byteorder::{BigEndian, ReadBytesExt};
 use crate::cal_checksum;
 use crate::icmp::{Code, Kind};
 use crate::ip::ipv4::packet::IpV4Packet;
+use byteorder::{BigEndian, ReadBytesExt};
+use std::{fmt, io};
 
 /// icmp 协议
 /*  https://www.rfc-editor.org/rfc/rfc792
@@ -67,7 +67,7 @@ impl<B: AsRef<[u8]>> IcmpPacket<B> {
             | Kind::TimestampReply
             | Kind::InformationRequest
             | Kind::InformationReply => {
-                let ide =u16::from_be_bytes(self.buffer.as_ref()[4..6].try_into().unwrap());
+                let ide = u16::from_be_bytes(self.buffer.as_ref()[4..6].try_into().unwrap());
                 let seq = u16::from_be_bytes(self.buffer.as_ref()[6..8].try_into().unwrap());
                 HeaderOther::Identifier(ide, seq)
             }
@@ -121,11 +121,11 @@ impl<B: AsRef<[u8]>> fmt::Debug for IcmpPacket<B> {
         } else {
             "icmp::Packet!"
         })
-            .field("kind", &self.kind())
-            .field("code", &self.code())
-            .field("checksum", &self.checksum())
-            .field("payload", &self.payload())
-            .finish()
+        .field("kind", &self.kind())
+        .field("code", &self.code())
+        .field("checksum", &self.checksum())
+        .field("payload", &self.payload())
+        .finish()
     }
 }
 

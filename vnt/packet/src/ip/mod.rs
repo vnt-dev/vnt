@@ -1,5 +1,5 @@
-use std::io;
 use ipv4::packet::IpV4Packet;
+use std::io;
 
 pub mod ipv4;
 

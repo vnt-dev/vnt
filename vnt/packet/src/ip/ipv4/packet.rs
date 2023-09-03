@@ -1,6 +1,5 @@
-use std::{fmt, io};
 use std::net::Ipv4Addr;
-
+use std::{fmt, io};
 
 use crate::cal_checksum;
 use crate::ip::ipv4::protocol::Protocol;

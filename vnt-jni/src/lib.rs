@@ -1,2 +1,2 @@
-pub mod vnt_util;
 pub mod vnt;
+pub mod vnt_util;

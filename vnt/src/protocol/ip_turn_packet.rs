@@ -40,7 +40,10 @@ impl<B: AsRef<[u8]>> BroadcastPacket<B> {
         let len = buffer.as_ref().len();
         let packet = Self::unchecked(buffer);
         if len < 2 + 4 || packet.addr_num() == 0 {
-            Err(io::Error::new(io::ErrorKind::InvalidData, "BroadcastPacket InvalidData"))
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "BroadcastPacket InvalidData",
+            ))
         } else {
             Ok(packet)
         }

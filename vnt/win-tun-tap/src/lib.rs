@@ -1,11 +1,11 @@
 #![cfg(windows)]
 
-mod tap;
-mod tun;
 mod ffi;
 mod netsh;
 mod route;
-use std::{io, net};
+mod tap;
+mod tun;
+use std::io;
 use std::net::Ipv4Addr;
 pub use tap::TapDevice;
 pub use tun::*;
@@ -33,13 +33,15 @@ pub trait IFace {
     /// 设置ip
     fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()>;
     /// 设置路由
-    fn add_route(&self, dest: Ipv4Addr,
-                     netmask: Ipv4Addr,
-                     gateway: Ipv4Addr, metric: u16) -> io::Result<()>;
+    fn add_route(
+        &self,
+        dest: Ipv4Addr,
+        netmask: Ipv4Addr,
+        gateway: Ipv4Addr,
+        metric: u16,
+    ) -> io::Result<()>;
     /// 删除路由
-    fn delete_route(&self, dest: Ipv4Addr,
-                        netmask: Ipv4Addr,
-                        gateway: Ipv4Addr, ) -> io::Result<()>;
+    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()>;
     /// 设置最大传输单元
     fn set_mtu(&self, mtu: u16) -> io::Result<()>;
     /// 设置跃点

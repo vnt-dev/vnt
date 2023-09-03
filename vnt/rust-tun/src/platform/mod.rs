@@ -27,7 +27,6 @@ pub mod macos;
 #[cfg(target_os = "macos")]
 pub use self::macos::{create, Configuration, Device, Queue};
 
-
 #[cfg(test)]
 mod test {
     use crate::configuration::Configuration;

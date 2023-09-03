@@ -2,7 +2,7 @@ pub mod igmp_v1;
 pub mod igmp_v2;
 pub mod igmp_v3;
 
-#[derive(Debug,Copy, Clone,Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum IgmpType {
     /// 0x11 所有组224.0.0.1或者特定组
     Query,
@@ -40,7 +40,7 @@ impl Into<u8> for IgmpType {
             IgmpType::ReportV2 => 0x16,
             IgmpType::ReportV3 => 0x22,
             IgmpType::LeaveV2 => 0x17,
-            IgmpType::Unknown(v) => v
+            IgmpType::Unknown(v) => v,
         }
     }
 }

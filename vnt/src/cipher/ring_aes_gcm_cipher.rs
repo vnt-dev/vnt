@@ -1,11 +1,11 @@
-use std::io;
+use crate::cipher::Finger;
 use rand::RngCore;
 use ring::aead;
 use ring::aead::{LessSafeKey, UnboundKey};
-use crate::cipher::Finger;
+use std::io;
 
+use crate::protocol::body::{SecretBody, ENCRYPTION_RESERVED};
 use crate::protocol::NetPacket;
-use crate::protocol::body::{ENCRYPTION_RESERVED, SecretBody};
 
 #[derive(Clone)]
 pub struct AesGcmCipher {
@@ -22,11 +22,13 @@ impl Clone for AesGcmEnum {
     fn clone(&self) -> Self {
         match &self {
             AesGcmEnum::AesGCM128(_, key) => {
-                let c = LessSafeKey::new(UnboundKey::new(&aead::AES_128_GCM, key.as_slice()).unwrap());
+                let c =
+                    LessSafeKey::new(UnboundKey::new(&aead::AES_128_GCM, key.as_slice()).unwrap());
                 AesGcmEnum::AesGCM128(c, *key)
             }
             AesGcmEnum::AesGCM256(_, key) => {
-                let c = LessSafeKey::new(UnboundKey::new(&aead::AES_256_GCM, key.as_slice()).unwrap());
+                let c =
+                    LessSafeKey::new(UnboundKey::new(&aead::AES_256_GCM, key.as_slice()).unwrap());
                 AesGcmEnum::AesGCM256(c, *key)
             }
         }
@@ -48,13 +50,16 @@ impl AesGcmCipher {
             finger,
         }
     }
-    pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
+    pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        net_packet: &mut NetPacket<B>,
+    ) -> io::Result<()> {
         if !net_packet.is_encrypt() {
             //未加密的数据直接丢弃
             return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
         }
         if net_packet.payload().len() < ENCRYPTION_RESERVED {
-            log::error!("数据异常,长度小于{}",ENCRYPTION_RESERVED);
+            log::error!("数据异常,长度小于{}", ENCRYPTION_RESERVED);
             return Err(io::Error::new(io::ErrorKind::Other, "data err"));
         }
         let mut nonce_raw = [0; 12];
@@ -82,7 +87,10 @@ impl AesGcmCipher {
             }
         };
         if let Err(e) = rs {
-            return Err(io::Error::new(io::ErrorKind::Other, format!("解密失败:{}", e)));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("解密失败:{}", e),
+            ));
         }
         net_packet.set_encrypt_flag(false);
         net_packet.set_data_len(net_packet.data_len() - ENCRYPTION_RESERVED)?;
@@ -91,7 +99,10 @@ impl AesGcmCipher {
     /// net_packet 必须预留足够长度
     /// data_len是有效载荷的长度
     /// 返回加密后载荷的长度
-    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
+    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        net_packet: &mut NetPacket<B>,
+    ) -> io::Result<()> {
         let mut nonce_raw = [0; 12];
         nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
         nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
@@ -117,7 +128,10 @@ impl AesGcmCipher {
             Ok(tag) => {
                 let tag = tag.as_ref();
                 if tag.len() != 16 {
-                    return Err(io::Error::new(io::ErrorKind::Other, format!("加密tag长度错误:{}", tag.len())));
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("加密tag长度错误:{}", tag.len()),
+                    ));
                 }
                 secret_body.set_tag(tag)?;
                 if let Some(finger) = &self.finger {
@@ -127,9 +141,10 @@ impl AesGcmCipher {
                 net_packet.set_encrypt_flag(true);
                 Ok(())
             }
-            Err(e) => {
-                Err(io::Error::new(io::ErrorKind::Other, format!("加密失败:{}", e)))
-            }
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("加密失败:{}", e),
+            )),
         };
     }
 }

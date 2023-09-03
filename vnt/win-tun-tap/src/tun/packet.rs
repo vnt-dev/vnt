@@ -1,4 +1,3 @@
-
 use crate::TunDevice;
 
 pub(crate) enum Kind {
@@ -12,7 +11,7 @@ pub(crate) enum Kind {
 /// Represents a wintun packet
 pub struct TunPacket<'a> {
     pub(crate) kind: Kind,
-    pub(crate) size:usize,
+    pub(crate) size: usize,
     pub(crate) bytes_ptr: *const u8,
 
     //Share ownership of session to prevent the session from being dropped before packets that
@@ -20,7 +19,7 @@ pub struct TunPacket<'a> {
     pub(crate) tun_device: Option<&'a TunDevice>,
 }
 
-impl <'a>TunPacket<'a> {
+impl<'a> TunPacket<'a> {
     /// Returns the bytes this packet holds as &mut.
     /// The lifetime of the bytes is tied to the lifetime of this packet.
     pub fn bytes_mut(&mut self) -> &mut [u8] {
@@ -30,11 +29,11 @@ impl <'a>TunPacket<'a> {
     /// Returns an immutable reference to the bytes this packet holds.
     /// The lifetime of the bytes is tied to the lifetime of this packet.
     pub fn bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.bytes_ptr,self.size) }
+        unsafe { std::slice::from_raw_parts(self.bytes_ptr, self.size) }
     }
 }
 
-impl <'a>Drop for TunPacket<'a> {
+impl<'a> Drop for TunPacket<'a> {
     fn drop(&mut self) {
         match self.kind {
             Kind::ReceivePacket => {
@@ -46,7 +45,8 @@ impl <'a>Drop for TunPacket<'a> {
                     //     ring buffer that the wintun session owns. We return that region of
                     //     memory back to wintun here
                     let tun_device = self.tun_device.unwrap();
-                    tun_device.win_tun
+                    tun_device
+                        .win_tun
                         .WintunReleaseReceivePacket(tun_device.session, self.bytes_ptr)
                 };
             }

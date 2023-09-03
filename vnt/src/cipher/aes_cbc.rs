@@ -5,7 +5,7 @@ use rand::RngCore;
 
 use crate::cipher::Finger;
 use crate::protocol::body::AesCbcSecretBody;
-use crate::protocol::{HEAD_LEN, NetPacket};
+use crate::protocol::{NetPacket, HEAD_LEN};
 
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
@@ -27,8 +27,8 @@ pub enum AesCbcEnum {
 impl AesCbcCipher {
     pub fn key(&self) -> &[u8] {
         match &self.cipher {
-            AesCbcEnum::AES128CBC(key) => { key }
-            AesCbcEnum::AES256CBC(key) => { key }
+            AesCbcEnum::AES128CBC(key) => key,
+            AesCbcEnum::AES256CBC(key) => key,
         }
     }
 }
@@ -47,13 +47,16 @@ impl AesCbcCipher {
         }
     }
 
-    pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
+    pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        net_packet: &mut NetPacket<B>,
+    ) -> io::Result<()> {
         if !net_packet.is_encrypt() {
             //未加密的数据直接丢弃
             return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
         }
         if net_packet.payload().len() < 16 {
-            log::error!("数据异常,长度{}小于{}",net_packet.payload().len(),16);
+            log::error!("数据异常,长度{}小于{}", net_packet.payload().len(), 16);
             return Err(io::Error::new(io::ErrorKind::Other, "data err"));
         }
         let mut iv = [0; 16];
@@ -67,7 +70,8 @@ impl AesCbcCipher {
             iv[12..16].copy_from_slice(&finger.hash[0..4]);
         }
 
-        let mut secret_body = AesCbcSecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
+        let mut secret_body =
+            AesCbcSecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
         if let Some(finger) = &self.finger {
             let finger = finger.calculate_finger(&iv[..12], secret_body.en_body());
             if &finger != secret_body.finger() {
@@ -75,8 +79,10 @@ impl AesCbcCipher {
             }
         }
         let rs = match &self.cipher {
-            AesCbcEnum::AES128CBC(key) => { Aes128CbcDec::new(&(*key).into(), &iv.into()).decrypt_padded_mut::<Pkcs7>(secret_body.en_body_mut()) }
-            AesCbcEnum::AES256CBC(key) => { Aes256CbcDec::new(&(*key).into(), &iv.into()).decrypt_padded_mut::<Pkcs7>(secret_body.en_body_mut()) }
+            AesCbcEnum::AES128CBC(key) => Aes128CbcDec::new(&(*key).into(), &iv.into())
+                .decrypt_padded_mut::<Pkcs7>(secret_body.en_body_mut()),
+            AesCbcEnum::AES256CBC(key) => Aes256CbcDec::new(&(*key).into(), &iv.into())
+                .decrypt_padded_mut::<Pkcs7>(secret_body.en_body_mut()),
         };
         match rs {
             Ok(buf) => {
@@ -86,14 +92,18 @@ impl AesCbcCipher {
                 net_packet.set_data_len(HEAD_LEN + len - 4)?;
                 Ok(())
             }
-            Err(e) => {
-                Err(io::Error::new(io::ErrorKind::Other, format!("解密失败:{}", e)))
-            }
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("解密失败:{}", e),
+            )),
         }
     }
     /// net_packet 必须预留足够长度
     /// data_len是有效载荷的长度
-    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
+    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        net_packet: &mut NetPacket<B>,
+    ) -> io::Result<()> {
         let data_len = net_packet.data_len();
         let mut iv = [0; 16];
         iv[0..4].copy_from_slice(&net_packet.source().octets());
@@ -105,17 +115,20 @@ impl AesCbcCipher {
         if let Some(finger) = &self.finger {
             iv[12..16].copy_from_slice(&finger.hash[0..4]);
             net_packet.set_data_len(data_len + 16)?;
-        }else{
+        } else {
             net_packet.set_data_len(data_len + 4)?;
         }
         //先扩充随机数
-        let mut secret_body = AesCbcSecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
+        let mut secret_body =
+            AesCbcSecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
         secret_body.set_random(rand::thread_rng().next_u32());
         let p_len = secret_body.en_body().len();
         net_packet.set_data_len_max();
         let rs = match &self.cipher {
-            AesCbcEnum::AES128CBC(key) => { Aes128CbcEnc::new(&(*key).into(), &iv.into()).encrypt_padded_mut::<Pkcs7>(net_packet.payload_mut(), p_len) }
-            AesCbcEnum::AES256CBC(key) => { Aes256CbcEnc::new(&(*key).into(), &iv.into()).encrypt_padded_mut::<Pkcs7>(net_packet.payload_mut(), p_len) }
+            AesCbcEnum::AES128CBC(key) => Aes128CbcEnc::new(&(*key).into(), &iv.into())
+                .encrypt_padded_mut::<Pkcs7>(net_packet.payload_mut(), p_len),
+            AesCbcEnum::AES256CBC(key) => Aes256CbcEnc::new(&(*key).into(), &iv.into())
+                .encrypt_padded_mut::<Pkcs7>(net_packet.payload_mut(), p_len),
         };
         return match rs {
             Ok(buf) => {
@@ -133,9 +146,10 @@ impl AesCbcCipher {
                 net_packet.set_encrypt_flag(true);
                 Ok(())
             }
-            Err(e) => {
-                Err(io::Error::new(io::ErrorKind::Other, format!("加密失败:{}", e)))
-            }
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("加密失败:{}", e),
+            )),
         };
     }
 }

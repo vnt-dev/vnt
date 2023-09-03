@@ -1,14 +1,14 @@
-use std::io;
-use std::str::FromStr;
-use crate::cipher::{aes_cbc, Finger};
-use crate::protocol::NetPacket;
-use sha2::Digest;
-#[cfg(feature = "ring-cipher")]
-use crate::cipher::ring_aes_gcm_cipher::AesGcmCipher;
+use crate::cipher::aes_ecb::AesEcbCipher;
 #[cfg(not(feature = "ring-cipher"))]
 use crate::cipher::aes_gcm_cipher::AesGcmCipher;
+#[cfg(feature = "ring-cipher")]
+use crate::cipher::ring_aes_gcm_cipher::AesGcmCipher;
+use crate::cipher::{aes_cbc, Finger};
+use crate::protocol::NetPacket;
 use aes_cbc::AesCbcCipher;
-use crate::cipher::aes_ecb::AesEcbCipher;
+use sha2::Digest;
+use std::io;
+use std::str::FromStr;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CipherModel {
@@ -22,14 +22,10 @@ impl FromStr for CipherModel {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "aes_gcm" => {
-                Ok(CipherModel::AesGcm)
-            }
-            "aes_cbc" => { Ok(CipherModel::AesCbc) }
-            "aes_ecb" => { Ok(CipherModel::AesEcb) }
-            _ => {
-                Err(format!("not match '{}'", s))
-            }
+            "aes_gcm" => Ok(CipherModel::AesGcm),
+            "aes_cbc" => Ok(CipherModel::AesCbc),
+            "aes_ecb" => Ok(CipherModel::AesEcb),
+            _ => Err(format!("not match '{}'", s)),
         }
     }
 }
@@ -43,7 +39,11 @@ pub enum Cipher {
 }
 
 impl Cipher {
-    pub fn new_password(model: CipherModel, password: Option<String>, token: Option<String>) -> Self {
+    pub fn new_password(
+        model: CipherModel,
+        password: Option<String>,
+        token: Option<String>,
+    ) -> Self {
         let finger = token.map(|token| Finger::new(&token));
         if let Some(password) = password {
             let mut hasher = sha2::Sha256::new();
@@ -93,22 +93,17 @@ impl Cipher {
                 let aes = AesGcmCipher::new_256(key, finger);
                 Ok(Cipher::AesGcm((aes, key.to_vec())))
             }
-            _ => {
-                Err(io::Error::new(io::ErrorKind::Other, "key error"))
-            }
+            _ => Err(io::Error::new(io::ErrorKind::Other, "key error")),
         }
     }
-    pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
+    pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        net_packet: &mut NetPacket<B>,
+    ) -> io::Result<()> {
         match self {
-            Cipher::AesGcm((aes_gcm, _)) => {
-                aes_gcm.decrypt_ipv4(net_packet)
-            }
-            Cipher::AesCbc(aes_cbc) => {
-                aes_cbc.decrypt_ipv4(net_packet)
-            }
-            Cipher::AesEcb(aes_ecb) => {
-                aes_ecb.decrypt_ipv4(net_packet)
-            }
+            Cipher::AesGcm((aes_gcm, _)) => aes_gcm.decrypt_ipv4(net_packet),
+            Cipher::AesCbc(aes_cbc) => aes_cbc.decrypt_ipv4(net_packet),
+            Cipher::AesEcb(aes_ecb) => aes_ecb.decrypt_ipv4(net_packet),
             Cipher::None => {
                 if net_packet.is_encrypt() {
                     return Err(io::Error::new(io::ErrorKind::Other, "not key"));
@@ -117,36 +112,23 @@ impl Cipher {
             }
         }
     }
-    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(&self, net_packet: &mut NetPacket<B>) -> io::Result<()> {
+    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        net_packet: &mut NetPacket<B>,
+    ) -> io::Result<()> {
         match self {
-            Cipher::AesGcm((aes_gcm, _)) => {
-                aes_gcm.encrypt_ipv4(net_packet)
-            }
-            Cipher::AesCbc(aes_cbc) => {
-                aes_cbc.encrypt_ipv4(net_packet)
-            }
-            Cipher::AesEcb(aes_ecb) => {
-                aes_ecb.encrypt_ipv4(net_packet)
-            }
-            Cipher::None => {
-                Ok(())
-            }
+            Cipher::AesGcm((aes_gcm, _)) => aes_gcm.encrypt_ipv4(net_packet),
+            Cipher::AesCbc(aes_cbc) => aes_cbc.encrypt_ipv4(net_packet),
+            Cipher::AesEcb(aes_ecb) => aes_ecb.encrypt_ipv4(net_packet),
+            Cipher::None => Ok(()),
         }
     }
     pub fn check_finger<B: AsRef<[u8]>>(&self, net_packet: &NetPacket<B>) -> io::Result<()> {
         let finger = match self {
-            Cipher::AesGcm((aes_gcm, _)) => {
-                aes_gcm.finger.as_ref()
-            }
-            Cipher::AesCbc(aes_cbc) => {
-                aes_cbc.finger.as_ref()
-            }
-            Cipher::AesEcb(aes_ecb) => {
-                aes_ecb.finger.as_ref()
-            }
-            Cipher::None => {
-                None
-            }
+            Cipher::AesGcm((aes_gcm, _)) => aes_gcm.finger.as_ref(),
+            Cipher::AesCbc(aes_cbc) => aes_cbc.finger.as_ref(),
+            Cipher::AesEcb(aes_ecb) => aes_ecb.finger.as_ref(),
+            Cipher::None => None,
         };
         if let Some(finger) = finger {
             finger.check_finger(net_packet)
@@ -156,18 +138,10 @@ impl Cipher {
     }
     pub fn key(&self) -> Option<&[u8]> {
         match self {
-            Cipher::AesGcm((_, key)) => {
-                Some(key)
-            }
-            Cipher::AesCbc(aes_cbc) => {
-                Some(aes_cbc.key())
-            }
-            Cipher::AesEcb(aes_ecb) => {
-                Some(aes_ecb.key())
-            }
-            Cipher::None => {
-                None
-            }
+            Cipher::AesGcm((_, key)) => Some(key),
+            Cipher::AesCbc(aes_cbc) => Some(aes_cbc.key()),
+            Cipher::AesEcb(aes_ecb) => Some(aes_ecb.key()),
+            Cipher::None => None,
         }
     }
 }

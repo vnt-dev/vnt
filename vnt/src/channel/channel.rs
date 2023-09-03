@@ -7,15 +7,15 @@ use byte_pool::{Block, BytePool};
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UdpSocket};
 use tokio::net::tcp::OwnedReadHalf;
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::watch::{channel, Receiver, Sender};
 
-use crate::channel::{Route, RouteKey, Status};
 use crate::channel::punch::NatType;
+use crate::channel::{Route, RouteKey, Status};
 use crate::core::status::VntWorker;
-use crate::handle::CurrentDeviceInfo;
 use crate::handle::recv_handler::ChannelDataHandler;
+use crate::handle::CurrentDeviceInfo;
 
 lazy_static::lazy_static! {
     static ref POOL:BytePool = BytePool::new();
@@ -41,7 +41,13 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(main_channel: Arc<UdpSocket>, main_channel_ipv6: Option<Arc<UdpSocket>>, main_tcp_channel: Option<tokio::sync::mpsc::Sender<Vec<u8>>>, current_device: Arc<AtomicCell<CurrentDeviceInfo>>, _channel_num: usize) -> Self {
+    pub fn new(
+        main_channel: Arc<UdpSocket>,
+        main_channel_ipv6: Option<Arc<UdpSocket>>,
+        main_tcp_channel: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+        current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+        _channel_num: usize,
+    ) -> Self {
         //当前版本只支持一个通道
         let channel_num = 1;
         let (status_sender, status_receiver) = channel(Status::Cone);
@@ -57,9 +63,7 @@ impl Context {
             channel_num,
             current_device,
         });
-        Self {
-            inner
-        }
+        Self { inner }
     }
 }
 
@@ -96,9 +100,9 @@ impl Context {
         self.inner.main_channel.local_addr().map(|k| k.port())
     }
     pub fn main_local_ipv6_port(&self) -> io::Result<u16> {
-        if let Some(ipv6) = &self.inner.main_channel_ipv6{
+        if let Some(ipv6) = &self.inner.main_channel_ipv6 {
             ipv6.local_addr().map(|k| k.port())
-        }else{
+        } else {
             Err(io::Error::new(io::ErrorKind::Other, "not ipv6"))
         }
     }
@@ -172,7 +176,7 @@ impl Context {
                     }
                 }
             }
-            return self.send_by_key(buf,&route.route_key()).await;
+            return self.send_by_key(buf, &route.route_key()).await;
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
     }
@@ -234,7 +238,11 @@ impl Context {
     }
     fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) {
         let key = route.route_key();
-        let mut list = self.inner.route_table.entry(id).or_insert_with(|| Vec::with_capacity(4));
+        let mut list = self
+            .inner
+            .route_table
+            .entry(id)
+            .or_insert_with(|| Vec::with_capacity(4));
         let mut exist = false;
         for x in list.iter_mut() {
             if x.metric < route.metric {
@@ -265,7 +273,9 @@ impl Context {
                 list.truncate(max_len);
             }
         }
-        self.inner.route_table_time.insert((key, id), Instant::now());
+        self.inner
+            .route_table_time
+            .insert((key, id), Instant::now());
     }
     pub fn route(&self, id: &Ipv4Addr) -> Option<Vec<Route>> {
         if let Some(v) = self.inner.route_table.get(id) {
@@ -300,7 +310,11 @@ impl Context {
         true
     }
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Vec<Route>)> {
-        self.inner.route_table.iter().map(|k| (k.key().clone(), k.value().clone())).collect()
+        self.inner
+            .route_table
+            .iter()
+            .map(|k| (k.key().clone(), k.value().clone()))
+            .collect()
     }
     pub fn route_table_one(&self) -> Vec<(Ipv4Addr, Route)> {
         let mut v = Vec::with_capacity(8);
@@ -351,17 +365,16 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn new(context: Context,
-               handler: ChannelDataHandler, ) -> Self {
-        Self {
-            context,
-            handler,
-        }
+    pub fn new(context: Context, handler: ChannelDataHandler) -> Self {
+        Self { context, handler }
     }
 }
 
 #[derive(Clone)]
-struct BufSenderGroup(usize, Vec<tokio::sync::mpsc::Sender<(Block<'static>, usize, usize, RouteKey)>>);
+struct BufSenderGroup(
+    usize,
+    Vec<tokio::sync::mpsc::Sender<(Block<'static>, usize, usize, RouteKey)>>,
+);
 
 struct BufReceiverGroup(Vec<tokio::sync::mpsc::Receiver<(Block<'static>, usize, usize, RouteKey)>>);
 
@@ -377,15 +390,23 @@ fn buf_channel_group(size: usize) -> (BufSenderGroup, BufReceiverGroup) {
     let mut buf_sender_group = Vec::with_capacity(size);
     let mut buf_receiver_group = Vec::with_capacity(size);
     for _ in 0..size {
-        let (buf_sender, buf_receiver) = tokio::sync::mpsc::channel::<(Block<'static, Vec<u8>>, usize, usize, RouteKey)>(10);
+        let (buf_sender, buf_receiver) =
+            tokio::sync::mpsc::channel::<(Block<'static, Vec<u8>>, usize, usize, RouteKey)>(10);
         buf_sender_group.push(buf_sender);
         buf_receiver_group.push(buf_receiver);
     }
-    (BufSenderGroup(0, buf_sender_group), BufReceiverGroup(buf_receiver_group))
+    (
+        BufSenderGroup(0, buf_sender_group),
+        BufReceiverGroup(buf_receiver_group),
+    )
 }
 
 impl Channel {
-    async fn tcp_handle(mut tcp_r: OwnedReadHalf, mut buf_sender: BufSenderGroup, head_reserve: usize) -> io::Result<()> {
+    async fn tcp_handle(
+        mut tcp_r: OwnedReadHalf,
+        mut buf_sender: BufSenderGroup,
+        head_reserve: usize,
+    ) -> io::Result<()> {
         let mut head = [0; 4];
         let addr = tcp_r.peer_addr()?;
         let key = RouteKey::new(0, addr);
@@ -399,21 +420,34 @@ impl Channel {
                     "length overflow",
                 ));
             }
-            tcp_r.read_exact(&mut buf[head_reserve..head_reserve + len]).await?;
-            if !buf_sender.send((buf, head_reserve, head_reserve + len, key)).await {
-                return Err(io::Error::new(io::ErrorKind::Other, "buf_sender发送数据失败"));
+            tcp_r
+                .read_exact(&mut buf[head_reserve..head_reserve + len])
+                .await?;
+            if !buf_sender
+                .send((buf, head_reserve, head_reserve + len, key))
+                .await
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "buf_sender发送数据失败",
+                ));
             }
         }
     }
-    async fn start_tcp(mut worker: VntWorker, tcp_stream: TcpStream, mut receiver: tokio::sync::mpsc::Receiver<Vec<u8>>,
-                       current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-                       buf_sender: BufSenderGroup, head_reserve: usize) {
+    async fn start_tcp(
+        mut worker: VntWorker,
+        tcp_stream: TcpStream,
+        mut receiver: tokio::sync::mpsc::Receiver<Vec<u8>>,
+        current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+        buf_sender: BufSenderGroup,
+        head_reserve: usize,
+    ) {
         let (tcp_r, mut tcp_w) = tcp_stream.into_split();
         {
             let buf_sender = buf_sender.clone();
             tokio::spawn(async move {
                 if let Err(e) = Self::tcp_handle(tcp_r, buf_sender, head_reserve).await {
-                    log::info!("tcp链接断开:{:?}",e);
+                    log::info!("tcp链接断开:{:?}", e);
                 }
             });
         }
@@ -463,13 +497,14 @@ impl Channel {
         worker.stop_all();
     }
 
-    pub async fn start(self,
-                       mut worker: VntWorker,
-                       tcp: Option<(TcpStream, tokio::sync::mpsc::Receiver<Vec<u8>>)>,
-                       head_reserve: usize,//头部预留字节
-                       symmetric_channel_num: usize,//对称网络，则再加一组监听，提升打洞成功率
-                       relay: bool,
-                       parallel: usize,
+    pub async fn start(
+        self,
+        mut worker: VntWorker,
+        tcp: Option<(TcpStream, tokio::sync::mpsc::Receiver<Vec<u8>>)>,
+        head_reserve: usize,          //头部预留字节
+        symmetric_channel_num: usize, //对称网络，则再加一组监听，提升打洞成功率
+        relay: bool,
+        parallel: usize,
     ) {
         let handler = self.handler.clone();
         let context = self.context;
@@ -481,7 +516,9 @@ impl Channel {
                 let handler = handler.clone();
                 tokio::spawn(async move {
                     while let Some((mut buf, start, end, route_key)) = buf_receiver.recv().await {
-                        handler.handle(&mut buf, start, end, route_key, &context).await;
+                        handler
+                            .handle(&mut buf, start, end, route_key, &context)
+                            .await;
                     }
                 });
             }
@@ -490,12 +527,35 @@ impl Channel {
             None
         };
         if let Some((tcp_stream, receiver)) = tcp {
-            tokio::spawn(Self::start_tcp(worker.worker("main_channel_tcp"), tcp_stream, receiver, context.inner.current_device.clone(), buf_sender.clone().unwrap(), head_reserve));
+            tokio::spawn(Self::start_tcp(
+                worker.worker("main_channel_tcp"),
+                tcp_stream,
+                receiver,
+                context.inner.current_device.clone(),
+                buf_sender.clone().unwrap(),
+                head_reserve,
+            ));
         }
         if let Some(main_channel_ipv6) = &context.inner.main_channel_ipv6 {
-            tokio::spawn(Self::start_(worker.worker("main_channel_ipv6"), context.clone(), main_channel_ipv6.clone(), handler.clone(), buf_sender.clone(), head_reserve, true));
+            tokio::spawn(Self::start_(
+                worker.worker("main_channel_ipv6"),
+                context.clone(),
+                main_channel_ipv6.clone(),
+                handler.clone(),
+                buf_sender.clone(),
+                head_reserve,
+                true,
+            ));
         }
-        tokio::spawn(Self::start_(worker.worker("main_channel_1"), context.clone(), main_channel.clone(), handler.clone(), buf_sender.clone(), head_reserve, true));
+        tokio::spawn(Self::start_(
+            worker.worker("main_channel_1"),
+            context.clone(),
+            main_channel.clone(),
+            handler.clone(),
+            buf_sender.clone(),
+            head_reserve,
+            true,
+        ));
         if relay {
             worker.stop_wait().await;
             return;
@@ -547,21 +607,24 @@ impl Channel {
         }
         worker.stop_all();
     }
-    async fn start_(mut worker: VntWorker, context: Context,
-                    udp: Arc<UdpSocket>,
-                    handler: ChannelDataHandler,
-                    buf_sender: Option<BufSenderGroup>,
-                    head_reserve: usize,
-                    is_core: bool) {
+    async fn start_(
+        mut worker: VntWorker,
+        context: Context,
+        udp: Arc<UdpSocket>,
+        handler: ChannelDataHandler,
+        buf_sender: Option<BufSenderGroup>,
+        head_reserve: usize,
+        is_core: bool,
+    ) {
         let mut status_receiver = context.inner.status_receiver.clone();
         #[cfg(target_os = "windows")]
         use std::os::windows::io::AsRawSocket;
         #[cfg(target_os = "windows")]
-            let id = 1 + udp.as_raw_socket() as usize;
+        let id = 1 + udp.as_raw_socket() as usize;
         #[cfg(any(unix))]
         use std::os::fd::AsRawFd;
         #[cfg(any(unix))]
-            let id = 1 + udp.as_raw_fd() as usize;
+        let id = 1 + udp.as_raw_fd() as usize;
         context.inner.udp_map.insert(id, udp.clone());
         match buf_sender {
             None => {
@@ -604,49 +667,47 @@ impl Channel {
                     }
                 }
             }
-            Some(mut buf_sender) => {
-                loop {
-                    let mut buf = POOL.alloc(4096);
-                    tokio::select! {
-                        rs=udp.recv_from(&mut buf[head_reserve..])=>{
-                             match rs {
-                                Ok((len, addr)) => {
-                                    if !buf_sender.send((buf,head_reserve,head_reserve+len,RouteKey::new(id, addr))).await{
-                                         log::error!("udp buf_sender发送数据失败");
-                                         break;
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!("{:?}",e)
+            Some(mut buf_sender) => loop {
+                let mut buf = POOL.alloc(4096);
+                tokio::select! {
+                    rs=udp.recv_from(&mut buf[head_reserve..])=>{
+                         match rs {
+                            Ok((len, addr)) => {
+                                if !buf_sender.send((buf,head_reserve,head_reserve+len,RouteKey::new(id, addr))).await{
+                                     log::error!("udp buf_sender发送数据失败");
+                                     break;
                                 }
                             }
-                        }
-                        changed=status_receiver.changed()=>{
-                                match changed {
-                                    Ok(_) => {
-                                        match *status_receiver.borrow() {
-                                            Status::Cone => {
-                                                if !is_core{
-                                                    break;
-                                                }
-                                            }
-                                            Status::Close=>{
-                                                break;
-                                            }
-                                            Status::Symmetric => {}
-                                        }
-                                    }
-                                    Err(_) => {
-                                        break;
-                                    }
-                                }
-                        }
-                        _=worker.stop_wait()=>{
-                            break;
+                            Err(e) => {
+                                log::error!("{:?}",e)
+                            }
                         }
                     }
+                    changed=status_receiver.changed()=>{
+                            match changed {
+                                Ok(_) => {
+                                    match *status_receiver.borrow() {
+                                        Status::Cone => {
+                                            if !is_core{
+                                                break;
+                                            }
+                                        }
+                                        Status::Close=>{
+                                            break;
+                                        }
+                                        Status::Symmetric => {}
+                                    }
+                                }
+                                Err(_) => {
+                                    break;
+                                }
+                            }
+                    }
+                    _=worker.stop_wait()=>{
+                        break;
+                    }
                 }
-            }
+            },
         }
         context.inner.udp_map.remove(&id);
         if is_core {

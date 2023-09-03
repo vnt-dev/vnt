@@ -51,22 +51,15 @@ pub fn create_interface() -> io::Result<NET_LUID> {
     ffi::build_driver_info_list(devinfo, &devinfo_data, SPDIT_COMPATDRIVER)?;
 
     let _guard = guard((), |_| {
-        let _ = ffi::destroy_driver_info_list(
-            devinfo,
-            &devinfo_data,
-            SPDIT_COMPATDRIVER,
-        );
+        let _ = ffi::destroy_driver_info_list(devinfo, &devinfo_data, SPDIT_COMPATDRIVER);
     });
 
     let mut driver_version = 0;
     let mut member_index = 0;
 
-    while let Some(drvinfo_data) = ffi::enum_driver_info(
-        devinfo,
-        &devinfo_data,
-        SPDIT_COMPATDRIVER,
-        member_index,
-    ) {
+    while let Some(drvinfo_data) =
+        ffi::enum_driver_info(devinfo, &devinfo_data, SPDIT_COMPATDRIVER, member_index)
+    {
         member_index += 1;
 
         let drvinfo_data = match drvinfo_data {
@@ -78,14 +71,11 @@ pub fn create_interface() -> io::Result<NET_LUID> {
             continue;
         }
 
-        let drvinfo_detail = match ffi::get_driver_info_detail(
-            devinfo,
-            &devinfo_data,
-            &drvinfo_data,
-        ) {
-            Ok(drvinfo_detail) => drvinfo_detail,
-            _ => continue,
-        };
+        let drvinfo_detail =
+            match ffi::get_driver_info_detail(devinfo, &devinfo_data, &drvinfo_data) {
+                Ok(drvinfo_detail) => drvinfo_detail,
+                _ => continue,
+            };
 
         let is_compatible = drvinfo_detail
             .HardwareID
@@ -115,16 +105,8 @@ pub fn create_interface() -> io::Result<NET_LUID> {
 
     ffi::call_class_installer(devinfo, &devinfo_data, DIF_REGISTERDEVICE)?;
 
-    let _ = ffi::call_class_installer(
-        devinfo,
-        &devinfo_data,
-        DIF_REGISTER_COINSTALLERS,
-    );
-    let _ = ffi::call_class_installer(
-        devinfo,
-        &devinfo_data,
-        DIF_INSTALLINTERFACES,
-    );
+    let _ = ffi::call_class_installer(devinfo, &devinfo_data, DIF_REGISTER_COINSTALLERS);
+    let _ = ffi::call_class_installer(devinfo, &devinfo_data, DIF_INSTALLINTERFACES);
 
     ffi::call_class_installer(devinfo, &devinfo_data, DIF_INSTALLDEVICE)?;
 
@@ -140,21 +122,11 @@ pub fn create_interface() -> io::Result<NET_LUID> {
     let key = RegKey::predef(key);
 
     while let Err(_) = key.get_value::<DWORD, &str>("*IfType") {
-        ffi::notify_change_key_value(
-            key.raw_handle(),
-            TRUE,
-            REG_NOTIFY_CHANGE_NAME,
-            2000,
-        )?;
+        ffi::notify_change_key_value(key.raw_handle(), TRUE, REG_NOTIFY_CHANGE_NAME, 2000)?;
     }
 
     while let Err(_) = key.get_value::<DWORD, &str>("NetLuidIndex") {
-        ffi::notify_change_key_value(
-            key.raw_handle(),
-            TRUE,
-            REG_NOTIFY_CHANGE_NAME,
-            2000,
-        )?;
+        ffi::notify_change_key_value(key.raw_handle(), TRUE, REG_NOTIFY_CHANGE_NAME, 2000)?;
     }
 
     let if_type: DWORD = key.get_value("*IfType")?;
@@ -181,8 +153,7 @@ pub fn check_interface(luid: &NET_LUID) -> io::Result<()> {
 
     let mut member_index = 0;
 
-    while let Some(devinfo_data) = ffi::enum_device_info(devinfo, member_index)
-    {
+    while let Some(devinfo_data) = ffi::enum_device_info(devinfo, member_index) {
         member_index += 1;
 
         let devinfo_data = match devinfo_data {
@@ -190,14 +161,11 @@ pub fn check_interface(luid: &NET_LUID) -> io::Result<()> {
             Err(_) => continue,
         };
 
-        let hardware_id = match ffi::get_device_registry_property(
-            devinfo,
-            &devinfo_data,
-            SPDRP_HARDWAREID,
-        ) {
-            Ok(hardware_id) => hardware_id,
-            Err(_) => continue,
-        };
+        let hardware_id =
+            match ffi::get_device_registry_property(devinfo, &devinfo_data, SPDRP_HARDWAREID) {
+                Ok(hardware_id) => hardware_id,
+                Err(_) => continue,
+            };
 
         if !decode_utf16(&hardware_id).eq_ignore_ascii_case(HARDWARE_ID) {
             continue;
@@ -238,7 +206,10 @@ pub fn check_interface(luid: &NET_LUID) -> io::Result<()> {
         return Ok(());
     }
 
-    Err(io::Error::new(io::ErrorKind::NotFound, "TAP Device not found"))
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "TAP Device not found",
+    ))
 }
 
 /// Deletes an existing interface
@@ -251,8 +222,7 @@ pub fn delete_interface(luid: &NET_LUID) -> io::Result<()> {
 
     let mut member_index = 0;
 
-    while let Some(devinfo_data) = ffi::enum_device_info(devinfo, member_index)
-    {
+    while let Some(devinfo_data) = ffi::enum_device_info(devinfo, member_index) {
         member_index += 1;
 
         let devinfo_data = match devinfo_data {
@@ -260,14 +230,11 @@ pub fn delete_interface(luid: &NET_LUID) -> io::Result<()> {
             Err(_) => continue,
         };
 
-        let hardware_id = match ffi::get_device_registry_property(
-            devinfo,
-            &devinfo_data,
-            SPDRP_HARDWAREID,
-        ) {
-            Ok(hardware_id) => hardware_id,
-            Err(_) => continue,
-        };
+        let hardware_id =
+            match ffi::get_device_registry_property(devinfo, &devinfo_data, SPDRP_HARDWAREID) {
+                Ok(hardware_id) => hardware_id,
+                Err(_) => continue,
+            };
 
         if !decode_utf16(&hardware_id).eq_ignore_ascii_case(HARDWARE_ID) {
             continue;
@@ -308,13 +275,15 @@ pub fn delete_interface(luid: &NET_LUID) -> io::Result<()> {
         return ffi::call_class_installer(devinfo, &devinfo_data, DIF_REMOVE);
     }
 
-    Err(io::Error::new(io::ErrorKind::NotFound, "TAP Device not found"))
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "TAP Device not found",
+    ))
 }
 
 /// Open an handle to an interface
 pub fn open_interface(luid: &NET_LUID) -> io::Result<HANDLE> {
-    let guid = ffi::luid_to_guid(luid)
-        .and_then(|guid| ffi::string_from_guid(&guid))?;
+    let guid = ffi::luid_to_guid(luid).and_then(|guid| ffi::string_from_guid(&guid))?;
 
     let path = format!(r"\\.\Global\{}.tap", &decode_utf16(&guid));
 
@@ -323,6 +292,6 @@ pub fn open_interface(luid: &NET_LUID) -> io::Result<HANDLE> {
         GENERIC_READ | GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         OPEN_EXISTING,
-        FILE_ATTRIBUTE_SYSTEM | FILE_FLAG_OVERLAPPED,//FILE_ATTRIBUTE_SYSTEM,
+        FILE_ATTRIBUTE_SYSTEM | FILE_FLAG_OVERLAPPED, //FILE_ATTRIBUTE_SYSTEM,
     )
 }

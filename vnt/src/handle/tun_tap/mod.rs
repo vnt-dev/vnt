@@ -1,28 +1,34 @@
-use std::io;
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::sync::Arc;
-use parking_lot::RwLock;
+use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
+use crate::error::*;
+use crate::external_route::ExternalRoute;
+use crate::handle::{check_dest, CurrentDeviceInfo};
+use crate::igmp_server::{IgmpServer, Multicast};
+use crate::ip_proxy::IpProxyMap;
+use crate::protocol;
+use crate::protocol::body::ENCRYPTION_RESERVED;
+use crate::protocol::ip_turn_packet::BroadcastPacket;
+use crate::protocol::{ip_turn_packet, NetPacket, Version, MAX_TTL};
 use packet::ip::ipv4::packet::IpV4Packet;
 use packet::ip::ipv4::protocol::Protocol;
 use packet::tcp::tcp::TcpPacket;
 use packet::udp::udp::UdpPacket;
-use crate::channel::sender::ChannelSender;
-use crate::cipher::Cipher;
-use crate::external_route::ExternalRoute;
-use crate::handle::{check_dest, CurrentDeviceInfo};
-use crate::ip_proxy::IpProxyMap;
-use crate::protocol::{ip_turn_packet, MAX_TTL, NetPacket, Version};
-use crate::error::*;
-use crate::igmp_server::{IgmpServer, Multicast};
-use crate::protocol;
-use crate::protocol::body::ENCRYPTION_RESERVED;
-use crate::protocol::ip_turn_packet::BroadcastPacket;
+use parking_lot::RwLock;
+use std::io;
+use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
 pub mod channel_group;
-pub mod tun_handler;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub mod tap_handler;
+pub mod tun_handler;
 
-async fn broadcast(server_cipher: &Cipher, multicast_members: Option<Arc<RwLock<Multicast>>>, sender: &ChannelSender, net_packet: &mut NetPacket<&mut [u8]>, current_device: &CurrentDeviceInfo) -> Result<()> {
+async fn broadcast(
+    server_cipher: &Cipher,
+    multicast_members: Option<Arc<RwLock<Multicast>>>,
+    sender: &ChannelSender,
+    net_packet: &mut NetPacket<&mut [u8]>,
+    current_device: &CurrentDeviceInfo,
+) -> Result<()> {
     let mut peer_ips = Vec::with_capacity(8);
     let vec = sender.route_table_one();
     let mut relay_count = 0;
@@ -40,7 +46,11 @@ async fn broadcast(server_cipher: &Cipher, multicast_members: Option<Arc<RwLock<
             }
         }
         if route.is_p2p()
-            && sender.send_by_key(net_packet.buffer(), &route.route_key()).await.is_ok() {
+            && sender
+                .send_by_key(net_packet.buffer(), &route.route_key())
+                .await
+                .is_ok()
+        {
             peer_ips.push(peer_ip);
         } else {
             relay_count += 1;
@@ -52,9 +62,14 @@ async fn broadcast(server_cipher: &Cipher, multicast_members: Option<Arc<RwLock<
     }
     //转发到服务端的可选择广播，还要进行服务端加密
     if peer_ips.is_empty() {
-        sender.send_main(net_packet.buffer(), current_device.connect_server).await?;
+        sender
+            .send_main(net_packet.buffer(), current_device.connect_server)
+            .await?;
     } else {
-        let buf = vec![0 as u8; 12 + 1 + peer_ips.len() * 4 + net_packet.data_len() + ENCRYPTION_RESERVED];
+        let buf = vec![
+            0 as u8;
+            12 + 1 + peer_ips.len() * 4 + net_packet.data_len() + ENCRYPTION_RESERVED
+        ];
         //剩余的发送到服务端，需要告知哪些已发送过
         let mut server_packet = NetPacket::new_encrypt(buf)?;
         server_packet.set_version(Version::V1);
@@ -70,7 +85,9 @@ async fn broadcast(server_cipher: &Cipher, multicast_members: Option<Arc<RwLock<
         broadcast.set_address(&peer_ips)?;
         broadcast.set_data(net_packet.buffer())?;
         server_cipher.encrypt_ipv4(&mut server_packet)?;
-        sender.send_main(server_packet.buffer(), current_device.connect_server).await?;
+        sender
+            .send_main(server_packet.buffer(), current_device.connect_server)
+            .await?;
     }
     Ok(())
 }
@@ -79,14 +96,17 @@ async fn broadcast(server_cipher: &Cipher, multicast_members: Option<Arc<RwLock<
 /// |12字节开头|ip报文|至少1024字节结尾|
 ///
 #[inline]
-pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
-                         data_len: usize,//数据总长度=12+ip包长度
-                         igmp_server: &Option<IgmpServer>,
-                         current_device: CurrentDeviceInfo,
-                         ip_route: &Option<ExternalRoute>,
-                         proxy_map: &Option<IpProxyMap>,
-                         client_cipher: &Cipher,
-                         server_cipher: &Cipher) -> Result<()> {
+pub async fn base_handle(
+    sender: &ChannelSender,
+    buf: &mut [u8],
+    data_len: usize, //数据总长度=12+ip包长度
+    igmp_server: &Option<IgmpServer>,
+    current_device: CurrentDeviceInfo,
+    ip_route: &Option<ExternalRoute>,
+    proxy_map: &Option<IpProxyMap>,
+    client_cipher: &Cipher,
+    server_cipher: &Cipher,
+) -> Result<()> {
     let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
     let protocol = ipv4_packet.protocol();
     let ip_head_len = ipv4_packet.header_len() as usize * 4;
@@ -106,7 +126,9 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
         if protocol == Protocol::Icmp {
             net_packet.set_gateway_flag(true);
             server_cipher.encrypt_ipv4(&mut net_packet)?;
-            sender.send_main(net_packet.buffer(), current_device.connect_server).await?;
+            sender
+                .send_main(net_packet.buffer(), current_device.connect_server)
+                .await?;
         }
         return Ok(());
     }
@@ -118,7 +140,9 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                     net_packet.set_destination(current_device.virtual_gateway);
                     net_packet.set_gateway_flag(true);
                     server_cipher.encrypt_ipv4(&mut net_packet)?;
-                    sender.send_main(net_packet.buffer(), current_device.connect_server).await?;
+                    sender
+                        .send_main(net_packet.buffer(), current_device.connect_server)
+                        .await?;
                 }
             }
             Protocol::Udp => {
@@ -130,7 +154,14 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
                     None
                 };
                 client_cipher.encrypt_ipv4(&mut net_packet)?;
-                broadcast(server_cipher, multicast_members, sender, &mut net_packet, &current_device).await?;
+                broadcast(
+                    server_cipher,
+                    multicast_members,
+                    sender,
+                    &mut net_packet,
+                    &current_device,
+                )
+                .await?;
             }
             _ => {}
         }
@@ -139,10 +170,21 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
     if dest_ip.is_broadcast() || current_device.broadcast_address == dest_ip {
         // 广播 发送到直连目标
         client_cipher.encrypt_ipv4(&mut net_packet)?;
-        broadcast(server_cipher, None, sender, &mut net_packet, &current_device).await?;
+        broadcast(
+            server_cipher,
+            None,
+            sender,
+            &mut net_packet,
+            &current_device,
+        )
+        .await?;
         return Ok(());
     }
-    if !check_dest(dest_ip, current_device.virtual_netmask, current_device.virtual_network) {
+    if !check_dest(
+        dest_ip,
+        current_device.virtual_netmask,
+        current_device.virtual_network,
+    ) {
         if let Some(ip_route) = ip_route {
             if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
                 //路由的目标不能是自己
@@ -162,15 +204,21 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
         match protocol {
             Protocol::Tcp => {
                 let dest_addr = {
-                    let tcp_packet = TcpPacket::new(src_ip, dest_ip,
-                                                    &mut net_packet.payload_mut()[ip_head_len..])?;
+                    let tcp_packet = TcpPacket::new(
+                        src_ip,
+                        dest_ip,
+                        &mut net_packet.payload_mut()[ip_head_len..],
+                    )?;
                     SocketAddrV4::new(dest_ip, tcp_packet.destination_port())
                 };
                 if let Some(entry) = proxy_map.tcp_proxy_map.get(&dest_addr) {
                     let source_addr = entry.value();
                     let source_ip = *source_addr.ip();
-                    let mut tcp_packet = TcpPacket::new(source_ip, dest_ip,
-                                                        &mut net_packet.payload_mut()[ip_head_len..])?;
+                    let mut tcp_packet = TcpPacket::new(
+                        source_ip,
+                        dest_ip,
+                        &mut net_packet.payload_mut()[ip_head_len..],
+                    )?;
                     tcp_packet.set_source_port(source_addr.port());
                     tcp_packet.update_checksum();
                     let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
@@ -180,15 +228,21 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
             }
             Protocol::Udp => {
                 let dest_addr = {
-                    let udp_packet = UdpPacket::new(src_ip, dest_ip,
-                                                    &mut net_packet.payload_mut()[ip_head_len..])?;
+                    let udp_packet = UdpPacket::new(
+                        src_ip,
+                        dest_ip,
+                        &mut net_packet.payload_mut()[ip_head_len..],
+                    )?;
                     SocketAddrV4::new(dest_ip, udp_packet.destination_port())
                 };
                 if let Some(entry) = proxy_map.udp_proxy_map.get(&dest_addr) {
                     let source_addr = entry.value();
                     let source_ip = *source_addr.ip();
-                    let mut udp_packet = UdpPacket::new(source_ip, dest_ip,
-                                                        &mut net_packet.payload_mut()[ip_head_len..])?;
+                    let mut udp_packet = UdpPacket::new(
+                        source_ip,
+                        dest_ip,
+                        &mut net_packet.payload_mut()[ip_head_len..],
+                    )?;
                     udp_packet.set_source_port(source_addr.port());
                     udp_packet.update_checksum();
                     let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
@@ -201,8 +255,14 @@ pub async fn base_handle(sender: &ChannelSender, buf: &mut [u8],
     }
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     //优先发到直连到地址
-    if sender.send_by_id(net_packet.buffer(), &dest_ip).await.is_err() {
-        sender.send_main(net_packet.buffer(), current_device.connect_server).await?;
+    if sender
+        .send_by_id(net_packet.buffer(), &dest_ip)
+        .await
+        .is_err()
+    {
+        sender
+            .send_main(net_packet.buffer(), current_device.connect_server)
+            .await?;
     }
     return Ok(());
 }

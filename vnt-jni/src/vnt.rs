@@ -1,8 +1,8 @@
-use std::ptr;
 use jni::errors::Error;
-use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JValue};
 use jni::sys::{jboolean, jbyte, jint, jlong, jobject, jobjectArray, jsize};
+use jni::JNIEnv;
+use std::ptr;
 use vnt::channel::Route;
 use vnt::core::sync::VntSync;
 use vnt::handle::PeerDeviceInfo;
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_list0(
         "top/wherewego/vnt/jni/PeerDeviceInfo",
         JObject::null(),
     ) {
-        Ok(arr) => { arr }
+        Ok(arr) => arr,
         Err(e) => {
             env.throw_new("java/lang/RuntimeException", format!("error:{:?}", e))
                 .expect("throw");
@@ -77,12 +77,8 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_list0(
     for (index, peer) in list.into_iter().enumerate() {
         let route = if let Some(route) = vnt.route(&peer.virtual_ip) {
             match route_parse(&mut env, route) {
-                Ok(route) => {
-                    JObject::from_raw(route)
-                }
-                Err(_) => {
-                    JObject::null()
-                }
+                Ok(route) => JObject::from_raw(route),
+                Err(_) => JObject::null(),
             }
         } else {
             JObject::null()
@@ -115,24 +111,32 @@ fn route_parse(env: &mut JNIEnv, route: Route) -> Result<jobject, Error> {
     let rs = env.new_object(
         "top/wherewego/vnt/jni/Route",
         "(Ljava/lang/String;BI)V",
-        &[JValue::Object(&env.new_string(address)?.into()),
+        &[
+            JValue::Object(&env.new_string(address)?.into()),
             JValue::Byte(metric as jbyte),
-            JValue::Int(rt as jint)],
+            JValue::Int(rt as jint),
+        ],
     )?;
     Ok(rs.as_raw())
 }
 
-fn peer_device_info_parse(env: &mut JNIEnv, peer: PeerDeviceInfo, route: JObject) -> Result<jobject, Error> {
+fn peer_device_info_parse(
+    env: &mut JNIEnv,
+    peer: PeerDeviceInfo,
+    route: JObject,
+) -> Result<jobject, Error> {
     let virtual_ip = u32::from(peer.virtual_ip);
     let name = peer.name.to_string();
     let status = format!("{:?}", peer.status);
     let rs = env.new_object(
         "top/wherewego/vnt/jni/PeerDeviceInfo",
         "(ILjava/lang/String;Ljava/lang/String;Ltop/wherewego/vnt/jni/Route;)V",
-        &[JValue::Int(virtual_ip as jint),
+        &[
+            JValue::Int(virtual_ip as jint),
             JValue::Object(&env.new_string(name)?.into()),
             JValue::Object(&env.new_string(status)?.into()),
-            JValue::Object(&route)],
+            JValue::Object(&route),
+        ],
     )?;
     Ok(rs.as_raw())
 }

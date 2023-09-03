@@ -22,7 +22,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use libc;
-use libc::{AF_INET, c_char, c_uint, c_void, SOCK_DGRAM, sockaddr, socklen_t};
+use libc::{c_char, c_uint, c_void, sockaddr, socklen_t, AF_INET, SOCK_DGRAM};
 
 use crate::configuration::{Configuration, Layer};
 use crate::device::Device as D;

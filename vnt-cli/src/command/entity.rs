@@ -33,5 +33,5 @@ pub struct DeviceItem {
     pub rt: String,
     pub status: String,
     pub client_secret: bool,
-    pub current_client_secret:bool,
+    pub current_client_secret: bool,
 }

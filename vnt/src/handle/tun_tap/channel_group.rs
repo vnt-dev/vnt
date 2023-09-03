@@ -1,7 +1,10 @@
 use byte_pool::Block;
 
 #[derive(Clone)]
-pub struct BufSenderGroup(usize, Vec<tokio::sync::mpsc::Sender<(Block<'static>, usize, usize)>>);
+pub struct BufSenderGroup(
+    usize,
+    Vec<tokio::sync::mpsc::Sender<(Block<'static>, usize, usize)>>,
+);
 
 pub struct BufReceiverGroup(pub Vec<tokio::sync::mpsc::Receiver<(Block<'static>, usize, usize)>>);
 
@@ -17,9 +20,13 @@ pub fn buf_channel_group(size: usize) -> (BufSenderGroup, BufReceiverGroup) {
     let mut buf_sender_group = Vec::with_capacity(size);
     let mut buf_receiver_group = Vec::with_capacity(size);
     for _ in 0..size {
-        let (buf_sender, buf_receiver) = tokio::sync::mpsc::channel::<(Block<'static>, usize, usize)>(10);
+        let (buf_sender, buf_receiver) =
+            tokio::sync::mpsc::channel::<(Block<'static>, usize, usize)>(10);
         buf_sender_group.push(buf_sender);
         buf_receiver_group.push(buf_receiver);
     }
-    (BufSenderGroup(0, buf_sender_group), BufReceiverGroup(buf_receiver_group))
+    (
+        BufSenderGroup(0, buf_sender_group),
+        BufReceiverGroup(buf_receiver_group),
+    )
 }

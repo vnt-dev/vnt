@@ -9,13 +9,17 @@ use jni::sys::jboolean;
 use jni::sys::{jint, jlong, jobject};
 use jni::JNIEnv;
 use vnt::cipher::CipherModel;
-use vnt::core::Config;
 use vnt::core::sync::VntUtilSync;
+use vnt::core::Config;
 use vnt::handle::registration_handler::{RegResponse, ReqEnum};
 #[cfg(not(target_os = "android"))]
 use vnt::tun_tap_device::DriverInfo;
 
-fn to_string_not_null(env: &mut JNIEnv, config: &JObject, name: &'static str) -> Result<String, Error> {
+fn to_string_not_null(
+    env: &mut JNIEnv,
+    config: &JObject,
+    name: &'static str,
+) -> Result<String, Error> {
     let value = env.get_field(config, name, "Ljava/lang/String;")?.l()?;
     if value.is_null() {
         env.throw_new("java/lang/NullPointerException", name)
@@ -73,13 +77,16 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
             }
         }
         Err(e) => {
-            env.throw_new("java/lang/RuntimeException", format!("server address {}", e))
-                .expect("throw");
+            env.throw_new(
+                "java/lang/RuntimeException",
+                format!("server address {}", e),
+            )
+            .expect("throw");
             return Err(Error::JavaException);
         }
     };
     let cipher_model = match CipherModel::from_str(&cipher_model) {
-        Ok(cipher_model) => {cipher_model}
+        Ok(cipher_model) => cipher_model,
         Err(e) => {
             env.throw_new("java/lang/RuntimeException", format!("cipher_model {}", e))
                 .expect("throw");
@@ -90,20 +97,35 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     for addr in stun_server_str.split(",") {
         stun_server.push(addr.trim().to_string());
     }
-    let config = Config::new(false,
-                             token, device_id, name,
-                             server_address, server_address_str,
-                             stun_server, vec![],
-                             vec![], password,
-                             false, None, tcp, None,
-                             false, false, 1, cipher_model,finger);
+    let config = Config::new(
+        false,
+        token,
+        device_id,
+        name,
+        server_address,
+        server_address_str,
+        stun_server,
+        vec![],
+        vec![],
+        password,
+        false,
+        None,
+        tcp,
+        None,
+        false,
+        false,
+        1,
+        cipher_model,
+        finger,
+    );
     match VntUtilSync::new(config) {
-        Ok(vnt_util) => {
-            Ok(vnt_util)
-        }
+        Ok(vnt_util) => Ok(vnt_util),
         Err(e) => {
-            env.throw_new("java/lang/RuntimeException", format!("vnt start error {}", e))
-                .expect("throw");
+            env.throw_new(
+                "java/lang/RuntimeException",
+                format!("vnt start error {}", e),
+            )
+            .expect("throw");
             return Err(Error::JavaException);
         }
     }
@@ -135,8 +157,11 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_connect0(
     match (&mut *raw_vnt_util).connect() {
         Ok(_) => {}
         Err(e) => {
-            env.throw_new("java/lang/RuntimeException", format!("vnt connect error {}", e))
-                .expect("throw");
+            env.throw_new(
+                "java/lang/RuntimeException",
+                format!("vnt connect error {}", e),
+            )
+            .expect("throw");
         }
     }
 }
@@ -149,48 +174,66 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_register0(
 ) -> jobject {
     let raw_vnt_util = raw_vnt_util as *mut VntUtilSync;
     match (&mut *raw_vnt_util).register() {
-        Ok(response) => {
-            match reg_response(&mut env, response) {
-                Ok(res) => {
-                    return res;
-                }
-                Err(e) => {
-                    env.throw(format!("vnt register error {}", e)).expect("throw");
-                }
+        Ok(response) => match reg_response(&mut env, response) {
+            Ok(res) => {
+                return res;
             }
-        }
-        Err(e) => {
-            match e {
-                ReqEnum::TokenError => {
-                    env.throw_new("top/wherewego/vnt/jni/exception/TokenErrorException", "TokenError")
-                        .expect("throw");
-                }
-                ReqEnum::AddressExhausted => {
-                    env.throw_new("top/wherewego/vnt/jni/exception/AddressExhaustedException", "AddressExhausted")
-                        .expect("throw");
-                }
-                ReqEnum::Timeout => {
-                    env.throw_new("top/wherewego/vnt/jni/exception/TimeoutException", "Timeout")
-                        .expect("throw");
-                }
-                ReqEnum::ServerError(str) => {
-                    env.throw_new("java/lang/RuntimeException", format!("vnt register error {}", str))
-                        .expect("throw");
-                }
-                ReqEnum::Other(str) => {
-                    env.throw_new("java/lang/RuntimeException", format!("vnt register error {}", str))
-                        .expect("throw");
-                }
-                ReqEnum::IpAlreadyExists => {
-                    env.throw_new("top/wherewego/vnt/jni/exception/IpAlreadyExistsException", "IpAlreadyExists")
-                        .expect("throw");
-                }
-                ReqEnum::InvalidIp => {
-                    env.throw_new("top/wherewego/vnt/jni/exception/InvalidIpException", "InvalidIp")
-                        .expect("throw");
-                }
+            Err(e) => {
+                env.throw(format!("vnt register error {}", e))
+                    .expect("throw");
             }
-        }
+        },
+        Err(e) => match e {
+            ReqEnum::TokenError => {
+                env.throw_new(
+                    "top/wherewego/vnt/jni/exception/TokenErrorException",
+                    "TokenError",
+                )
+                .expect("throw");
+            }
+            ReqEnum::AddressExhausted => {
+                env.throw_new(
+                    "top/wherewego/vnt/jni/exception/AddressExhaustedException",
+                    "AddressExhausted",
+                )
+                .expect("throw");
+            }
+            ReqEnum::Timeout => {
+                env.throw_new(
+                    "top/wherewego/vnt/jni/exception/TimeoutException",
+                    "Timeout",
+                )
+                .expect("throw");
+            }
+            ReqEnum::ServerError(str) => {
+                env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("vnt register error {}", str),
+                )
+                .expect("throw");
+            }
+            ReqEnum::Other(str) => {
+                env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("vnt register error {}", str),
+                )
+                .expect("throw");
+            }
+            ReqEnum::IpAlreadyExists => {
+                env.throw_new(
+                    "top/wherewego/vnt/jni/exception/IpAlreadyExistsException",
+                    "IpAlreadyExists",
+                )
+                .expect("throw");
+            }
+            ReqEnum::InvalidIp => {
+                env.throw_new(
+                    "top/wherewego/vnt/jni/exception/InvalidIpException",
+                    "InvalidIp",
+                )
+                .expect("throw");
+            }
+        },
     }
     return ptr::null_mut();
 }
@@ -218,19 +261,21 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_createIface0(
     let raw_vnt_util = raw_vnt_util as *mut VntUtilSync;
     let rs = (&mut *raw_vnt_util).create_iface();
     match rs {
-        Ok(driver_info) => {
-            match driver_info_e(&mut env, driver_info) {
-                Ok(res) => {
-                    return res;
-                }
-                Err(e) => {
-                    env.throw(format!("vnt create iface  error {}", e)).expect("throw");
-                }
+        Ok(driver_info) => match driver_info_e(&mut env, driver_info) {
+            Ok(res) => {
+                return res;
             }
-        }
+            Err(e) => {
+                env.throw(format!("vnt create iface  error {}", e))
+                    .expect("throw");
+            }
+        },
         Err(e) => {
-            env.throw_new("java/lang/RuntimeException", format!("vnt create iface error {}", e))
-                .expect("throw");
+            env.throw_new(
+                "java/lang/RuntimeException",
+                format!("vnt create iface error {}", e),
+            )
+            .expect("throw");
         }
     }
     return ptr::null_mut();
@@ -248,8 +293,11 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_VntUtil_build0(
             return Box::into_raw(Box::new(rs)) as jlong;
         }
         Err(e) => {
-            env.throw_new("java/lang/RuntimeException", format!("vnt start error:{:?}", e))
-                .expect("throw");
+            env.throw_new(
+                "java/lang/RuntimeException",
+                format!("vnt start error:{:?}", e),
+            )
+            .expect("throw");
         }
     }
     return 0;
@@ -262,9 +310,11 @@ fn reg_response(env: &mut JNIEnv, response: RegResponse) -> Result<jobject, Erro
     let response = env.new_object(
         "top/wherewego/vnt/jni/RegResponse",
         "(III)V",
-        &[JValue::Int(virtual_ip as jint),
+        &[
+            JValue::Int(virtual_ip as jint),
             JValue::Int(virtual_gateway as jint),
-            JValue::Int(virtual_netmask as jint)],
+            JValue::Int(virtual_netmask as jint),
+        ],
     )?;
     Ok(response.into_raw())
 }
@@ -278,10 +328,12 @@ fn driver_info_e(env: &mut JNIEnv, driver_info: DriverInfo) -> Result<jobject, E
     let response = env.new_object(
         "top/wherewego/vnt/jni/DriverInfo",
         "(ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
-        &[JValue::Bool(is_tun as jboolean),
+        &[
+            JValue::Bool(is_tun as jboolean),
             JValue::Object(&env.new_string(name)?.into()),
             JValue::Object(&env.new_string(version)?.into()),
-            JValue::Object(&env.new_string(mac)?.into()), ],
+            JValue::Object(&env.new_string(mac)?.into()),
+        ],
     )?;
     Ok(response.into_raw())
 }

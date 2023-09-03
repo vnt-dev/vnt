@@ -1,11 +1,11 @@
-use std::{io, time};
 use std::net::Ipv4Addr;
+use std::{io, time};
 
 use winapi::shared::ifdef::NET_LUID;
 use winapi::um::winioctl::*;
 use winapi::um::winnt::HANDLE;
 
-use crate::{decode_utf16, encode_utf16, ffi, IFace, netsh, route};
+use crate::{decode_utf16, encode_utf16, ffi, netsh, route, IFace};
 
 mod iface;
 
@@ -13,7 +13,6 @@ pub struct TapDevice {
     index: u32,
     luid: NET_LUID,
     handle: HANDLE,
-
 }
 
 unsafe impl Send for TapDevice {}
@@ -31,7 +30,7 @@ impl TapDevice {
             &(),
             &mut mac,
         )
-            .map(|_| mac)
+        .map(|_| mac)
     }
 
     /// Retrieve the version of the driver
@@ -44,7 +43,7 @@ impl TapDevice {
             &(),
             &mut version,
         )
-            .map(|_| version)
+        .map(|_| version)
     }
 
     /// Retieve the mtu of the interface
@@ -57,9 +56,8 @@ impl TapDevice {
             &(),
             &mut mtu,
         )
-            .map(|_| mtu)
+        .map(|_| mtu)
     }
-
 
     /// Set the status of the interface, true for connected,
     /// false for disconnected.
@@ -98,7 +96,11 @@ impl TapDevice {
             };
         };
         let index = ffi::luid_to_index(&luid).map(|index| index as u32)?;
-        Ok(Self { index, luid, handle })
+        Ok(Self {
+            index,
+            luid,
+            handle,
+        })
     }
 
     pub fn open(name: &str) -> io::Result<Self> {
@@ -109,7 +111,11 @@ impl TapDevice {
 
         let handle = iface::open_interface(&luid)?;
         let index = ffi::luid_to_index(&luid).map(|index| index as u32)?;
-        Ok(Self { index, luid, handle })
+        Ok(Self {
+            index,
+            luid,
+            handle,
+        })
     }
 
     pub fn delete(self) -> io::Result<()> {
@@ -140,12 +146,18 @@ impl IFace for TapDevice {
         netsh::set_interface_ip(index, &address, &mask)
     }
 
-    fn add_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr, metric: u16) -> io::Result<()>  {
+    fn add_route(
+        &self,
+        dest: Ipv4Addr,
+        netmask: Ipv4Addr,
+        gateway: Ipv4Addr,
+        metric: u16,
+    ) -> io::Result<()> {
         let index = self.get_index()?;
-        route::add_route(index, dest, netmask, gateway,metric)
+        route::add_route(index, dest, netmask, gateway, metric)
     }
 
-    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()>  {
+    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {
         let index = self.get_index()?;
         route::delete_route(index, dest, netmask, gateway)
     }
@@ -160,7 +172,6 @@ impl IFace for TapDevice {
         netsh::set_interface_metric(index, metric)
     }
 }
-
 
 impl TapDevice {
     pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
@@ -177,6 +188,3 @@ impl Drop for TapDevice {
         let _ = iface::delete_interface(&self.luid);
     }
 }
-
-
-
