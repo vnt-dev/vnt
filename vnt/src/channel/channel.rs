@@ -168,6 +168,10 @@ impl Context {
             }
             let route = v.value()[0];
             drop(v);
+            if route.rt == 199 {
+                //这通常是刚加入路由，直接放弃使用,避免抖动
+                return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
+            }
             if !route.is_p2p() {
                 if let Some(time) = self.inner.route_table_time.get(&(route.route_key(), *id)) {
                     //借道传输时，长时间不通信的通道不使用
