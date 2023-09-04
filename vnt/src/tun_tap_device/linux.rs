@@ -7,6 +7,9 @@ use std::process::Command;
 use std::sync::Arc;
 use tun::Device;
 
+pub const TUN_INTERFACE_NAME: &str = "vnt-tun";
+pub const TAP_INTERFACE_NAME: &str = "vnt-tap";
+
 impl DeviceWriter {
     pub fn change_ip(
         &self,
@@ -88,8 +91,11 @@ pub fn create_device(
         // .queues(2) 用多个队列有兼容性问题
         .up();
     match device_type {
-        DeviceType::Tun => {}
+        DeviceType::Tun => {
+            config.name(TUN_INTERFACE_NAME);
+        }
         DeviceType::Tap => {
+            config.name(TAP_INTERFACE_NAME);
             config.layer(tun::Layer::L2);
         }
     }
@@ -154,4 +160,16 @@ pub fn create_device(
     ))
 }
 
-pub fn delete_device(_device_type: DeviceType) {}
+pub fn delete_device(_device_type: DeviceType) {
+    for name in [TUN_INTERFACE_NAME, TAP_INTERFACE_NAME] {
+        let cmd = format!("sudo ip link delete {}", name);
+        let delete_tun = Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .output()
+            .expect("sh exec error!");
+        if !delete_tun.status.success() {
+            log::warn!("删除网卡失败:{:?}",delete_tun);
+        }
+    }
+}
