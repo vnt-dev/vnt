@@ -162,7 +162,7 @@ pub fn create_device(
 
 pub fn delete_device(_device_type: DeviceType) {
     for name in [TUN_INTERFACE_NAME, TAP_INTERFACE_NAME] {
-        let cmd = format!("sudo ip link delete {}", name);
+        let cmd = format!("ip link delete {}", name);
         let delete_tun = Command::new("sh")
             .arg("-c")
             .arg(&cmd)
