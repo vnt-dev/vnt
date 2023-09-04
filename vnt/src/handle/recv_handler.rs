@@ -668,20 +668,26 @@ impl ChannelDataHandler {
             service_packet::Protocol::RegistrationRequest => {}
             service_packet::Protocol::RegistrationResponse => {
                 let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
-                let local_port = context.main_local_ipv4_port().unwrap_or(0);
-                let local_ipv4_addr = nat::local_ipv4_addr(local_port);
-                let local_port = context.main_local_ipv6_port().unwrap_or(0);
-                let ipv6_addr = nat::local_ipv6_addr(local_port);
-                let nat_info = self
-                    .nat_test
-                    .re_test(
-                        Ipv4Addr::from(response.public_ip),
-                        response.public_port as u16,
-                        local_ipv4_addr,
-                        ipv6_addr,
-                    )
-                    .await;
-                context.switch(nat_info.nat_type);
+
+                {
+                    let context = context.clone();
+                    let nat_test = self.nat_test.clone();
+                    tokio::spawn(async move {
+                        let local_port = context.main_local_ipv4_port().unwrap_or(0);
+                        let local_ipv4_addr = nat::local_ipv4_addr(local_port);
+                        let local_port = context.main_local_ipv6_port().unwrap_or(0);
+                        let ipv6_addr = nat::local_ipv6_addr(local_port);
+                       let nat_info =  nat_test
+                            .re_test(
+                                Ipv4Addr::from(response.public_ip),
+                                response.public_port as u16,
+                                local_ipv4_addr,
+                                ipv6_addr,
+                            )
+                            .await;
+                        context.switch(nat_info.nat_type);
+                    });
+                }
                 let new_ip = Ipv4Addr::from(response.virtual_ip);
                 let current_ip = current_device.virtual_ip();
                 if current_ip != new_ip {
@@ -732,7 +738,7 @@ impl ChannelDataHandler {
                         )
                     })
                     .collect();
-                let route = Route::from(*route_key, 2, 99);
+                let route = Route::from(*route_key, 2, 199);
                 for x in &ip_list {
                     if x.status == PeerDeviceStatus::Online {
                         context.add_route_if_absent(x.virtual_ip, route);

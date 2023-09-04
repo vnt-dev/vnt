@@ -21,7 +21,7 @@ impl FromStr for CipherModel {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_lowercase().trim() {
             "aes_gcm" => Ok(CipherModel::AesGcm),
             "aes_cbc" => Ok(CipherModel::AesCbc),
             "aes_ecb" => Ok(CipherModel::AesEcb),

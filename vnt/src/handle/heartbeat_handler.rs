@@ -37,7 +37,7 @@ async fn start_idle_(idle: Idle, sender: ChannelSender) -> io::Result<()> {
     log::info!("启动空闲检查任务");
     loop {
         let (peer_ip, route) = idle.next_idle().await?;
-        log::info!("peer_ip:{:?},route:{:?}", peer_ip, route);
+        log::info!("路由空闲 peer_ip:{:?},route:{:?}", peer_ip, route);
         sender.remove_route(&peer_ip, route);
     }
 }
