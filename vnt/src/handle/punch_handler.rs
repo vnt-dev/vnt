@@ -135,7 +135,8 @@ async fn start_punch_(
             current_device.virtual_ip(),
             &nat_info,
             info.virtual_ip,
-        )?;
+        )
+        .unwrap();
         let _ = sender
             .send_main(packet.buffer(), current_device.connect_server)
             .await;

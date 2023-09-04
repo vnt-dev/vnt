@@ -1,11 +1,31 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::str::FromStr;
 use std::time::Duration;
 
 use rand::prelude::SliceRandom;
 
 use crate::channel::channel::Context;
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum PunchModel {
+    IPv4,
+    IPv6,
+    All,
+}
+
+impl FromStr for PunchModel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().trim() {
+            "ipv4" => Ok(PunchModel::IPv4),
+            "ipv6" => Ok(PunchModel::IPv6),
+            _ => Ok(PunchModel::All),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct NatInfo {
@@ -49,10 +69,11 @@ pub struct Punch {
     context: Context,
     port_vec: Vec<u16>,
     port_index: HashMap<Ipv4Addr, usize>,
+    punch_model: PunchModel,
 }
 
 impl Punch {
-    pub fn new(context: Context) -> Self {
+    pub fn new(context: Context, punch_model: PunchModel) -> Self {
         let mut port_vec: Vec<u16> = (1..65535).collect();
         port_vec.push(65535);
         let mut rng = rand::thread_rng();
@@ -61,6 +82,7 @@ impl Punch {
             context,
             port_vec,
             port_index: HashMap::new(),
+            punch_model,
         }
     }
 }
@@ -76,12 +98,18 @@ impl Punch {
                 .send_main_udp(buf, SocketAddr::V4(nat_info.local_ipv4_addr))
                 .await;
         }
-        if !nat_info.ipv6_addr.ip().is_unspecified() && nat_info.ipv6_addr.port() != 0 {
+        if self.punch_model != PunchModel::IPv4
+            && !nat_info.ipv6_addr.ip().is_unspecified()
+            && nat_info.ipv6_addr.port() != 0
+        {
             let rs = self
                 .context
                 .send_main_udp(buf, SocketAddr::V6(nat_info.ipv6_addr))
                 .await;
             log::info!("发送到ipv6地址:{:?},rs={:?}", nat_info.ipv6_addr, rs);
+            if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
+                return Ok(());
+            }
         }
         match nat_info.nat_type {
             NatType::Symmetric => {

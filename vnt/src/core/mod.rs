@@ -12,7 +12,7 @@ use tokio::sync::mpsc::channel;
 
 use crate::channel::channel::{Channel, Context};
 use crate::channel::idle::Idle;
-use crate::channel::punch::{NatInfo, Punch};
+use crate::channel::punch::{NatInfo, Punch, PunchModel};
 use crate::channel::sender::ChannelSender;
 use crate::channel::{Route, RouteKey};
 use crate::cipher::{Cipher, CipherModel, RsaCipher};
@@ -164,14 +164,12 @@ impl VntUtil {
             Some(res) => res,
         };
         let device_type = if self.config.tap {
-            #[cfg(windows)]
             {
                 //删除tun网卡避免ip冲突，因为非正常退出会保留网卡
                 tun_tap_device::delete_device(tun_tap_device::DeviceType::Tun);
             }
             tun_tap_device::DeviceType::Tap
         } else {
-            #[cfg(windows)]
             {
                 //删除tap网卡避免ip冲突，非正常退出会保留网卡
                 tun_tap_device::delete_device(tun_tap_device::DeviceType::Tap);
@@ -253,7 +251,7 @@ impl VntUtil {
             current_device.clone(),
             1,
         );
-        let punch = Punch::new(context.clone());
+        let punch = Punch::new(context.clone(), config.punch_model);
         let idle = Idle::new(Duration::from_secs(16), context.clone());
         let channel_sender = ChannelSender::new(context.clone());
 
@@ -553,6 +551,7 @@ pub struct Config {
     pub parallel: usize,
     pub cipher_model: CipherModel,
     pub finger: bool,
+    pub punch_model: PunchModel,
 }
 
 impl Config {
@@ -576,6 +575,7 @@ impl Config {
         parallel: usize,
         cipher_model: CipherModel,
         finger: bool,
+        punch_model: PunchModel,
     ) -> Self {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -602,6 +602,7 @@ impl Config {
             parallel,
             cipher_model,
             finger,
+            punch_model,
         }
     }
 }

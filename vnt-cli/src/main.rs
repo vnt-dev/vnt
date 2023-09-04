@@ -11,6 +11,7 @@ use tokio::signal;
 use tokio::signal::unix::{signal, SignalKind};
 
 use common::args_parse::{ips_parse, out_ips_parse};
+use vnt::channel::punch::PunchModel;
 use vnt::cipher::CipherModel;
 use vnt::core::{Config, Vnt, VntUtil};
 use vnt::handle::handshake_handler::HandshakeEnum;
@@ -55,6 +56,12 @@ fn main() {
     opts.optopt("", "thread", "线程数(必须为正整数)", "<thread>");
     opts.optopt("", "model", "加密模式", "<model>");
     opts.optflag("", "finger", "指纹校验");
+    opts.optopt(
+        "",
+        "punch",
+        "取值ipv4/ipv6，表示仅使用ipv4或ipv6打洞",
+        "<punch>",
+    );
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -220,6 +227,10 @@ fn main() {
         return;
     }
     let finger = matches.opt_present("finger");
+    let punch_model = matches
+        .opt_get::<PunchModel>("punch")
+        .unwrap()
+        .unwrap_or(PunchModel::All);
     println!("version {}", vnt::VNT_VERSION);
     let config = Config::new(
         tap,
@@ -241,6 +252,7 @@ fn main() {
         parallel,
         cipher_model,
         finger,
+        punch_model,
     );
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -361,12 +373,12 @@ async fn main0(config: Config, show_cmd: bool) {
             println!("command error :{}", e);
         }
     });
+    #[cfg(unix)]
+    let mut sigterm = signal(SignalKind::terminate()).expect("Error setting SIGTERM handler");
     if show_cmd {
         let stdin = tokio::io::stdin();
         let mut cmd = String::new();
         let mut reader = BufReader::new(stdin);
-        #[cfg(unix)]
-        let mut sigterm = signal(SignalKind::terminate()).expect("Error setting SIGTERM handler");
         loop {
             cmd.clear();
             println!("input:list,info,route,all,stop");
@@ -504,6 +516,8 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --thread <thread>   线程数(必须为正整数),默认为核心数乘2");
     println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb，通常性能aes_ecb>aes_cbc>aes_gcm,安全性则相反");
     println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
+    println!("  --punch <punch>     取值ipv4/ipv6，ipv4表示仅使用ipv4打洞");
+
     println!();
     println!(
         "  --list              {}",

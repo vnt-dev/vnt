@@ -8,6 +8,7 @@ use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::jboolean;
 use jni::sys::{jint, jlong, jobject};
 use jni::JNIEnv;
+use vnt::channel::punch::PunchModel;
 use vnt::cipher::CipherModel;
 use vnt::core::sync::VntUtilSync;
 use vnt::core::Config;
@@ -117,6 +118,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
         1,
         cipher_model,
         finger,
+        PunchModel::All,
     );
     match VntUtilSync::new(config) {
         Ok(vnt_util) => Ok(vnt_util),
