@@ -1,22 +1,21 @@
+use std::io;
 use std::net::{Ipv4Addr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
-use std::io;
 
+use crate::channel::idle::Idle;
+use crate::channel::sender::ChannelSender;
+use crate::channel::Route;
+use crate::cipher::Cipher;
+use crate::core::status::VntWorker;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
-use crate::channel::idle::Idle;
-use crate::channel::Route;
-use crate::channel::sender::ChannelSender;
-use crate::cipher::Cipher;
-use crate::core::status::VntWorker;
-
 
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
-use crate::protocol::control_packet::PingPacket;
-use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
 use crate::protocol::body::ENCRYPTION_RESERVED;
+use crate::protocol::control_packet::PingPacket;
+use crate::protocol::{control_packet, NetPacket, Protocol, Version, MAX_TTL};
 
 pub fn start_idle(mut worker: VntWorker, idle: Idle, sender: ChannelSender) {
     tokio::spawn(async move {
@@ -35,13 +34,10 @@ pub fn start_idle(mut worker: VntWorker, idle: Idle, sender: ChannelSender) {
 }
 
 async fn start_idle_(idle: Idle, sender: ChannelSender) -> io::Result<()> {
+    log::info!("启动空闲检查任务");
     loop {
         let (peer_ip, route) = idle.next_idle().await?;
-        log::info!(
-            "peer_ip:{:?},route:{:?}",
-            peer_ip,
-            route
-        );
+        log::info!("路由空闲 peer_ip:{:?},route:{:?}", peer_ip, route);
         sender.remove_route(&peer_ip, route);
     }
 }
@@ -70,14 +66,20 @@ pub fn start_heartbeat(
     });
 }
 
-
-fn heartbeat_packet(device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>, client_cipher: &Cipher, server_cipher: &Cipher, gateway: bool, src: Ipv4Addr, dest: Ipv4Addr) -> NetPacket<[u8; 48]> {
+fn heartbeat_packet(
+    ttl: u8,
+    device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
+    client_cipher: &Cipher,
+    server_cipher: &Cipher,
+    gateway: bool,
+    src: Ipv4Addr,
+    dest: Ipv4Addr,
+) -> NetPacket<[u8; 48]> {
     let mut net_packet = NetPacket::new_encrypt([0u8; 12 + 4 + ENCRYPTION_RESERVED]).unwrap();
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::Control);
     net_packet.set_transport_protocol(control_packet::Protocol::Ping.into());
-    //只寻找两跳以内能到的目标
-    net_packet.first_set_ttl(2);
+    net_packet.first_set_ttl(ttl);
     net_packet.set_source(src);
     net_packet.set_destination(dest);
     {
@@ -104,6 +106,7 @@ async fn start_heartbeat_(
     server_cipher: Cipher,
 ) -> io::Result<()> {
     let mut count = 0;
+    log::info!("启动心跳任务");
     loop {
         if sender.is_close() {
             return Ok(());
@@ -115,14 +118,14 @@ async fn start_heartbeat_(
             packet.set_version(Version::V1);
             packet.set_gateway_flag(true);
             packet.set_protocol(Protocol::Control);
-            packet.set_transport_protocol(
-                control_packet::Protocol::AddrRequest.into(),
-            );
+            packet.set_transport_protocol(control_packet::Protocol::AddrRequest.into());
             packet.first_set_ttl(MAX_TTL);
             packet.set_source(current_dev.virtual_ip());
             packet.set_destination(current_dev.virtual_gateway);
             server_cipher.encrypt_ipv4(&mut packet)?;
-            let _ = sender.send_main_udp(packet.buffer(), current_dev.connect_server).await;
+            let _ = sender
+                .send_main_udp(packet.buffer(), current_dev.connect_server)
+                .await;
         }
         if count % 20 == 19 {
             if let Ok(mut addr) = server_address_str.to_socket_addrs() {
@@ -130,6 +133,11 @@ async fn start_heartbeat_(
                     if addr != current_dev.connect_server {
                         let mut tmp = current_dev.clone();
                         tmp.connect_server = addr;
+                        log::info!(
+                            "服务端地址变化,旧地址:{}，新地址:{}",
+                            current_dev.connect_server,
+                            addr
+                        );
                         if current_device.compare_exchange(current_dev, tmp).is_ok() {
                             current_dev.connect_server = addr;
                         }
@@ -138,14 +146,20 @@ async fn start_heartbeat_(
             }
         }
         let src = current_dev.virtual_ip();
-        let server_packet = heartbeat_packet(&device_list, &client_cipher, &server_cipher, true, src, current_dev.virtual_gateway);
-        if let Err(e) = sender.send_main(server_packet.buffer(), current_dev.connect_server).await
+        let server_packet = heartbeat_packet(
+            MAX_TTL,
+            &device_list,
+            &client_cipher,
+            &server_cipher,
+            true,
+            src,
+            current_dev.virtual_gateway,
+        );
+        if let Err(e) = sender
+            .send_main(server_packet.buffer(), current_dev.connect_server)
+            .await
         {
-            log::warn!(
-                    "connect_server:{:?},e:{:?}",
-                    current_dev.connect_server,
-                    e
-                );
+            log::warn!("connect_server:{:?},e:{:?}", current_dev.connect_server, e);
         }
         if count < 7 || count % 7 == 0 {
             let mut route_list: Option<Vec<(Ipv4Addr, Vec<Route>)>> = None;
@@ -154,15 +168,38 @@ async fn start_heartbeat_(
                 if peer.virtual_ip == current_dev.virtual_ip {
                     continue;
                 }
-                let client_packet = heartbeat_packet(&device_list, &client_cipher, &server_cipher, false, src, peer.virtual_ip);
+                let client_packet = heartbeat_packet(
+                    MAX_TTL,
+                    &device_list,
+                    &client_cipher,
+                    &server_cipher,
+                    false,
+                    src,
+                    peer.virtual_ip,
+                );
                 if let Some(route) = sender.route_one(&peer.virtual_ip) {
-                    let _ = sender.send_by_key(client_packet.buffer(), &route.route_key()).await;
+                    if let Err(e) = sender
+                        .send_by_key(client_packet.buffer(), &route.route_key())
+                        .await
+                    {
+                        log::warn!("virtual_ip:{},route:{:?},e:{:?}", peer.virtual_ip, route, e);
+                    }
                     if route.is_p2p() {
                         continue;
                     }
                 } else {
                     //没有直连路由则发送到网关
-                    let _ = sender.send_main(client_packet.buffer(), current_dev.connect_server).await;
+                    if let Err(e) = sender
+                        .send_main(client_packet.buffer(), current_dev.connect_server)
+                        .await
+                    {
+                        log::warn!(
+                            "virtual_ip:{},connect_server:{:?},e:{:?}",
+                            peer.virtual_ip,
+                            current_dev.connect_server,
+                            e
+                        );
+                    }
                 }
 
                 //再随机发送到其他地址，看有没有客户端符合转发条件
@@ -175,7 +212,16 @@ async fn start_heartbeat_(
                 'a: for (peer_ip, route_list) in route_list.iter() {
                     for route in route_list {
                         if peer_ip != &peer.virtual_ip && route.is_p2p() {
-                            let _ = sender.try_send_by_key(client_packet.buffer(), &route.route_key());
+                            if let Err(e) =
+                                sender.try_send_by_key(client_packet.buffer(), &route.route_key())
+                            {
+                                log::warn!(
+                                    "virtual_ip:{},route:{:?},e:{:?}",
+                                    peer.virtual_ip,
+                                    route,
+                                    e
+                                );
+                            }
                             num += 1;
                             break;
                         }
@@ -191,9 +237,20 @@ async fn start_heartbeat_(
                 if peer_ip == &current_dev.virtual_gateway {
                     continue;
                 }
-                let client_packet = heartbeat_packet(&device_list, &client_cipher, &server_cipher, false, src, *peer_ip);
+                let client_packet = heartbeat_packet(
+                    MAX_TTL,
+                    &device_list,
+                    &client_cipher,
+                    &server_cipher,
+                    false,
+                    src,
+                    *peer_ip,
+                );
                 for route in route_list {
-                    if let Err(e) = sender.send_by_key(client_packet.buffer(), &route.route_key()).await {
+                    if let Err(e) = sender
+                        .send_by_key(client_packet.buffer(), &route.route_key())
+                        .await
+                    {
                         log::warn!("peer_ip:{:?},route:{:?},e:{:?}", peer_ip, route, e);
                     }
                     tokio::time::sleep(Duration::from_millis(2)).await;

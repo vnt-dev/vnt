@@ -42,7 +42,7 @@ impl<B: AsRef<[u8]>> BroadcastPacket<B> {
         if len < 2 + 4 || packet.addr_num() == 0 {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "InvalidData",
+                "BroadcastPacket InvalidData",
             ))
         } else {
             Ok(packet)
@@ -52,7 +52,7 @@ impl<B: AsRef<[u8]>> BroadcastPacket<B> {
 
 impl<B: AsRef<[u8]>> BroadcastPacket<B> {
     pub fn addr_num(&self) -> u8 {
-        self.buffer.as_ref()[1]
+        self.buffer.as_ref()[0]
     }
     /// 已经发送给了这些地址
     pub fn addresses(&self) -> Vec<Ipv4Addr> {
@@ -61,7 +61,12 @@ impl<B: AsRef<[u8]>> BroadcastPacket<B> {
         let buf = self.buffer.as_ref();
         let mut offset = 1;
         for _ in 0..num {
-            list.push(Ipv4Addr::new(buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3]));
+            list.push(Ipv4Addr::new(
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ));
             offset += 4;
         }
         list
@@ -69,10 +74,7 @@ impl<B: AsRef<[u8]>> BroadcastPacket<B> {
     pub fn data(&self) -> io::Result<&[u8]> {
         let start = 1 + self.addr_num() as usize * 4;
         if start > self.buffer.as_ref().len() {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "InvalidData",
-            ))
+            Err(io::Error::new(io::ErrorKind::InvalidData, "InvalidData"))
         } else {
             Ok(&self.buffer.as_ref()[start..])
         }
@@ -85,7 +87,7 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> BroadcastPacket<B> {
         if buf.len() < 1 + addr.len() * 4 || addr.len() > u8::MAX as usize {
             Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "InvalidData",
+                "addr invalid data",
             ))
         } else {
             buf[0] = addr.len() as u8;
@@ -101,17 +103,13 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> BroadcastPacket<B> {
         let num = self.addr_num() as usize;
         let start = 1 + 4 * num;
         let buf = self.buffer.as_mut();
-        if start > buf.len() || start + data.len() != buf.len() {
+        if start >= buf.len() || start + data.len() != buf.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "InvalidData",
+                "data invalid data",
             ));
         }
         buf[start..].copy_from_slice(data);
         Ok(())
     }
 }
-
-
-
-

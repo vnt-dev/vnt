@@ -1,25 +1,29 @@
+use crate::channel::punch::{NatInfo, Punch};
+use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
+use crate::core::status::VntWorker;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
 use crate::proto::message::{PunchInfo, PunchNatType};
+use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::{control_packet, other_turn_packet, NetPacket, Protocol, Version, MAX_TTL};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use protobuf::Message;
 use rand::prelude::SliceRandom;
+use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::io;
 use tokio::sync::mpsc::Receiver;
-use crate::channel::punch::{NatInfo, Punch};
-use crate::channel::sender::ChannelSender;
-use crate::cipher::Cipher;
-use crate::core::status::VntWorker;
-use crate::protocol::body::ENCRYPTION_RESERVED;
 
-pub fn start(mut worker: VntWorker, receiver: Receiver<(Ipv4Addr, NatInfo)>,
-             punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-             client_cipher: Cipher, ) {
+pub fn start(
+    mut worker: VntWorker,
+    receiver: Receiver<(Ipv4Addr, NatInfo)>,
+    punch: Punch,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
+) {
     tokio::spawn(async move {
         tokio::select! {
             _=start0(receiver, punch, current_device,client_cipher)=>{}
@@ -31,11 +35,23 @@ pub fn start(mut worker: VntWorker, receiver: Receiver<(Ipv4Addr, NatInfo)>,
     });
 }
 
-pub async fn start0(mut receiver: Receiver<(Ipv4Addr, NatInfo)>,
-                    mut punch: Punch, current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-                    client_cipher: Cipher, ) {
+pub async fn start0(
+    mut receiver: Receiver<(Ipv4Addr, NatInfo)>,
+    mut punch: Punch,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
+) {
+    log::info!("启动打洞任务");
     while let Some((peer_ip, nat_info)) = receiver.recv().await {
-        if let Err(e) = start_(&client_cipher, &mut punch, &current_device, peer_ip, nat_info).await {
+        if let Err(e) = start_(
+            &client_cipher,
+            &mut punch,
+            &current_device,
+            peer_ip,
+            nat_info,
+        )
+        .await
+        {
             log::warn!("网络打洞异常 {:?}", e);
         }
     }
@@ -70,6 +86,7 @@ pub async fn start_punch(
 ) {
     let mut num = 0;
     let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
+    log::info!("启动发起打洞请求任务");
     loop {
         if sender.is_close() {
             break;
@@ -113,8 +130,16 @@ async fn start_punch_(
         if count > 2 {
             break;
         }
-        let packet = punch_packet(client_cipher, current_device.virtual_ip(), &nat_info, info.virtual_ip)?;
-        let _ = sender.send_main(packet.buffer(), current_device.connect_server).await;
+        let packet = punch_packet(
+            client_cipher,
+            current_device.virtual_ip(),
+            &nat_info,
+            info.virtual_ip,
+        )
+        .unwrap();
+        let _ = sender
+            .send_main(packet.buffer(), current_device.connect_server)
+            .await;
     }
     tokio::time::sleep(sleep_time).await;
     Ok(())
@@ -135,8 +160,12 @@ pub fn punch_packet(
         .collect();
     punch_reply.public_port = nat_info.public_port as u32;
     punch_reply.public_port_range = nat_info.public_port_range as u32;
-    punch_reply.local_ip = u32::from_be_bytes(nat_info.local_ip.octets());
-    punch_reply.local_port = nat_info.local_port as u32;
+    punch_reply.local_ip = u32::from_be_bytes(nat_info.local_ipv4_addr.ip().octets());
+    punch_reply.local_port = nat_info.local_ipv4_addr.port() as u32;
+    if !nat_info.ipv6_addr.ip().is_unspecified() {
+        punch_reply.ipv6_port = nat_info.ipv6_addr.port() as u32;
+        punch_reply.ipv6 = nat_info.ipv6_addr.ip().octets().to_vec();
+    }
     punch_reply.nat_type = protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
     let bytes = punch_reply.write_to_bytes()?;
     let mut net_packet = NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;

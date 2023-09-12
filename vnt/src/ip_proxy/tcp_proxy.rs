@@ -1,7 +1,7 @@
+use dashmap::DashMap;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
-use dashmap::DashMap;
 
 use tokio::net::{TcpListener, TcpStream};
 
@@ -11,7 +11,10 @@ pub struct TcpProxy {
 }
 
 impl TcpProxy {
-    pub fn new(tcp_listener: TcpListener, tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>) -> Self {
+    pub fn new(
+        tcp_listener: TcpListener,
+        tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
+    ) -> Self {
         Self {
             tcp_listener,
             tcp_proxy_map,
@@ -22,31 +25,36 @@ impl TcpProxy {
         let tcp_proxy_map = self.tcp_proxy_map;
         loop {
             match tcp_listener.accept().await {
-                Ok((tcp_stream, sender_addr)) => {
-                    match sender_addr {
-                        SocketAddr::V4(sender_addr) => {
-                            if let Some(entry) = tcp_proxy_map.get(&sender_addr) {
-                                let dest_addr = *entry.value();
-                                drop(entry);
-                                let peer_tcp_stream = match TcpStream::connect(dest_addr).await {
-                                    Ok(peer_tcp_stream) => { peer_tcp_stream }
-                                    Err(e) => {
-                                        log::warn!("tcp代理异常:{:?},来源:{},目标：{}",e,sender_addr,dest_addr);
-                                        continue;
-                                    }
-                                };
-                                tokio::spawn(async move {
-                                    if let Err(e) = proxy(tcp_stream, peer_tcp_stream).await {
-                                        log::warn!("{}->{},{}",sender_addr,dest_addr,e);
-                                    }
-                                });
-                            }
+                Ok((tcp_stream, sender_addr)) => match sender_addr {
+                    SocketAddr::V4(sender_addr) => {
+                        if let Some(entry) = tcp_proxy_map.get(&sender_addr) {
+                            let dest_addr = *entry.value();
+                            drop(entry);
+                            let peer_tcp_stream = match TcpStream::connect(dest_addr).await {
+                                Ok(peer_tcp_stream) => peer_tcp_stream,
+                                Err(e) => {
+                                    log::warn!(
+                                        "tcp代理异常:{:?},来源:{},目标：{}",
+                                        e,
+                                        sender_addr,
+                                        dest_addr
+                                    );
+                                    continue;
+                                }
+                            };
+                            tokio::spawn(async move {
+                                if let Err(e) = proxy(tcp_stream, peer_tcp_stream).await {
+                                    log::warn!("{}->{},{}", sender_addr, dest_addr, e);
+                                }
+                            });
+                        } else {
+                            log::warn!("tcp代理异常: 来源:{},未找到目标", sender_addr);
                         }
-                        SocketAddr::V6(_) => {}
                     }
-                }
+                    SocketAddr::V6(_) => {}
+                },
                 Err(e) => {
-                    log::warn!("tcp代理监听:{:?}",e);
+                    log::warn!("tcp代理监听:{:?}", e);
                 }
             }
         }

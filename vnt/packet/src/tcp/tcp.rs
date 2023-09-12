@@ -1,5 +1,5 @@
-use std::{fmt, io};
 use std::net::Ipv4Addr;
+use std::{fmt, io};
 
 use crate::tcp::Flags;
 
@@ -58,7 +58,11 @@ impl<B: AsRef<[u8]>> TcpPacket<B> {
             buffer,
         }
     }
-    pub fn new(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> io::Result<TcpPacket<B>> {
+    pub fn new(
+        source_ip: Ipv4Addr,
+        destination_ip: Ipv4Addr,
+        buffer: B,
+    ) -> io::Result<TcpPacket<B>> {
         let packet = TcpPacket::unchecked(source_ip, destination_ip, buffer);
 
         if packet.buffer.as_ref().len() < 20 {

@@ -1,5 +1,5 @@
-use std::{fmt, io};
 use std::net::Ipv4Addr;
+use std::{fmt, io};
 
 use crate::cal_checksum;
 
@@ -116,7 +116,7 @@ impl Into<u8> for IgmpV3Type {
         match self {
             IgmpV3Type::Query => 0x11,
             IgmpV3Type::ReportV3 => 0x22,
-            IgmpV3Type::Unknown(v) => v
+            IgmpV3Type::Unknown(v) => v,
         }
     }
 }
@@ -203,7 +203,7 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> IgmpV3QueryPacket<B> {
         self.buffer.as_mut()[2..4].copy_from_slice(&checksum.to_be_bytes())
     }
     pub fn set_qrv(&mut self, qrv: u8) {
-        self.buffer.as_mut()[8] = (self.buffer.as_ref()[8]&(!0x07)) | (qrv & 0x07)
+        self.buffer.as_mut()[8] = (self.buffer.as_ref()[8] & (!0x07)) | (qrv & 0x07)
     }
     pub fn set_qqic(&mut self, qqic: u8) {
         self.buffer.as_mut()[9] = qqic
@@ -349,7 +349,10 @@ impl<B: AsRef<[u8]>> IgmpV3ReportPacket<B> {
                     return None;
                 }
                 if let Ok(record) = IgmpV3RecordPacket::new(&buf[start..]) {
-                    let end = start + 8 + record.aux_data_len() as usize * 4 + record.source_number() as usize * 4;
+                    let end = start
+                        + 8
+                        + record.aux_data_len() as usize * 4
+                        + record.source_number() as usize * 4;
                     if end > len {
                         return None;
                     }
@@ -363,7 +366,6 @@ impl<B: AsRef<[u8]>> IgmpV3ReportPacket<B> {
         }
     }
 }
-
 
 /// group record
 pub struct IgmpV3RecordPacket<B> {

@@ -1,18 +1,27 @@
+use crate::tun_tap_device::linux_mac::DeviceW;
+use crate::tun_tap_device::{DeviceReader, DeviceType, DeviceWriter, DriverInfo};
+use parking_lot::Mutex;
 use std::io;
 use std::net::Ipv4Addr;
-use crate::tun_tap_device::{DeviceReader, DeviceType, DeviceWriter, DriverInfo};
-use tun::Device;
-use parking_lot::Mutex;
 use std::process::Command;
 use std::sync::Arc;
-use crate::tun_tap_device::linux_mac::DeviceW;
+use tun::Device;
+
+pub const TUN_INTERFACE_NAME: &str = "vnt-tun";
+pub const TAP_INTERFACE_NAME: &str = "vnt-tap";
 
 impl DeviceWriter {
-    pub fn change_ip(&self, address: Ipv4Addr, netmask: Ipv4Addr,
-                     gateway: Ipv4Addr, _old_netmask: Ipv4Addr, _old_gateway: Ipv4Addr) -> io::Result<()> {
+    pub fn change_ip(
+        &self,
+        address: Ipv4Addr,
+        netmask: Ipv4Addr,
+        gateway: Ipv4Addr,
+        _old_netmask: Ipv4Addr,
+        _old_gateway: Ipv4Addr,
+    ) -> io::Result<()> {
         let mut config = tun::Configuration::default();
-        let broadcast_address = (!u32::from_be_bytes(netmask.octets()))
-            | u32::from_be_bytes(gateway.octets());
+        let broadcast_address =
+            (!u32::from_be_bytes(netmask.octets())) | u32::from_be_bytes(gateway.octets());
         let broadcast_address = Ipv4Addr::from(broadcast_address);
         config
             .destination(gateway)
@@ -33,37 +42,45 @@ impl DeviceWriter {
         // add_route(name, address, netmask)?;
         // 广播和组播路由
         add_route(name, Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST)?;
-        add_route(name, Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]))?;
+        add_route(
+            name,
+            Ipv4Addr::from([224, 0, 0, 0]),
+            Ipv4Addr::from([240, 0, 0, 0]),
+        )?;
         return Ok(());
     }
 }
 
 pub fn add_route(name: &str, address: Ipv4Addr, netmask: Ipv4Addr) -> io::Result<()> {
-    let route_add_str: String = format!(
-        "ip route add {:?}/{:?} dev {}",
-        address, netmask, name
-    );
+    let route_add_str: String = format!("ip route add {:?}/{:?} dev {}", address, netmask, name);
     let route_add_out = Command::new("sh")
         .arg("-c")
         .arg(&route_add_str)
         .output()
         .expect("sh exec error!");
     if !route_add_out.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("添加路由失败: cmd:{},out:{:?}", route_add_str, route_add_out)));
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "添加路由失败: cmd:{},out:{:?}",
+                route_add_str, route_add_out
+            ),
+        ));
     }
     Ok(())
 }
 
-pub fn create_device(device_type: DeviceType,
-                     address: Ipv4Addr,
-                     netmask: Ipv4Addr,
-                     gateway: Ipv4Addr,
-                     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-                     mtu: u16,
-) -> io::Result<(DeviceWriter, DeviceReader,DriverInfo)> {
+pub fn create_device(
+    device_type: DeviceType,
+    address: Ipv4Addr,
+    netmask: Ipv4Addr,
+    gateway: Ipv4Addr,
+    in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
+    mtu: u16,
+) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     let mut config = tun::Configuration::default();
-    let broadcast_address = (!u32::from_be_bytes(netmask.octets()))
-        | u32::from_be_bytes(gateway.octets());
+    let broadcast_address =
+        (!u32::from_be_bytes(netmask.octets())) | u32::from_be_bytes(gateway.octets());
     let broadcast_address = Ipv4Addr::from(broadcast_address);
     config
         .destination(gateway)
@@ -74,8 +91,11 @@ pub fn create_device(device_type: DeviceType,
         // .queues(2) 用多个队列有兼容性问题
         .up();
     match device_type {
-        DeviceType::Tun => {}
+        DeviceType::Tun => {
+            config.name(TUN_INTERFACE_NAME);
+        }
         DeviceType::Tap => {
+            config.name(TAP_INTERFACE_NAME);
             config.layer(tun::Layer::L2);
         }
     }
@@ -92,11 +112,13 @@ pub fn create_device(device_type: DeviceType,
     // add_route(name, address, netmask)?;
     // 广播和组播路由
     add_route(name, Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST)?;
-    add_route(name, Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]))?;
+    add_route(
+        name,
+        Ipv4Addr::from([224, 0, 0, 0]),
+        Ipv4Addr::from([240, 0, 0, 0]),
+    )?;
     let device_w = match device_type {
-        DeviceType::Tun => {
-            DeviceW::Tun(writer)
-        }
+        DeviceType::Tun => DeviceW::Tun(writer),
         DeviceType::Tap => {
             let get_mac_cmd = format!("cat /sys/class/net/{}/address", name);
             let mac_out = Command::new("sh")
@@ -105,7 +127,10 @@ pub fn create_device(device_type: DeviceType,
                 .output()
                 .expect("sh exec error!");
             if !mac_out.status.success() {
-                return Err(io::Error::new(io::ErrorKind::Other, format!("获取mac地址错误: {:?}", mac_out)));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("获取mac地址错误: {:?}", mac_out),
+                ));
             }
             let mac_str = String::from_utf8(mac_out.stdout).unwrap();
             let mut mac = [0; 6];
@@ -118,15 +143,33 @@ pub fn create_device(device_type: DeviceType,
     };
     let driver_info = DriverInfo {
         device_type,
-        name:name.to_string(),
-        version:String::new(),
+        name: name.to_string(),
+        version: String::new(),
         mac: None,
     };
     Ok((
-        DeviceWriter::new(device_w, Arc::new(Mutex::new(dev)), in_ips, address, packet_information),
+        DeviceWriter::new(
+            device_w,
+            Arc::new(Mutex::new(dev)),
+            in_ips,
+            address,
+            packet_information,
+        ),
         DeviceReader::new(reader),
         driver_info,
     ))
 }
 
-pub fn delete_device(_device_type: DeviceType) {}
+pub fn delete_device(_device_type: DeviceType) {
+    for name in [TUN_INTERFACE_NAME, TAP_INTERFACE_NAME] {
+        let cmd = format!("ip link delete {}", name);
+        let delete_tun = Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .output()
+            .expect("sh exec error!");
+        if !delete_tun.status.success() {
+            log::warn!("删除网卡失败:{:?}",delete_tun);
+        }
+    }
+}

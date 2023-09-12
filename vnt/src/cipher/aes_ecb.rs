@@ -1,48 +1,46 @@
-use std::io;
-
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
-use rand::RngCore;
-
 use crate::cipher::Finger;
 use crate::protocol::body::AesCbcSecretBody;
 use crate::protocol::{NetPacket, HEAD_LEN};
+use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyInit};
+use rand::RngCore;
+use std::io;
 
-type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
-type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
-type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+type Aes128EcbEnc = ecb::Encryptor<aes::Aes128>;
+type Aes128EcbDec = ecb::Decryptor<aes::Aes128>;
+type Aes256EcbEnc = ecb::Encryptor<aes::Aes256>;
+type Aes256EcbDec = ecb::Decryptor<aes::Aes256>;
 
 #[derive(Clone)]
-pub struct AesCbcCipher {
-    pub(crate) cipher: AesCbcEnum,
+pub struct AesEcbCipher {
+    pub(crate) cipher: AesEcbEnum,
     pub(crate) finger: Option<Finger>,
 }
 
 #[derive(Clone)]
-pub enum AesCbcEnum {
-    AES128CBC([u8; 16]),
-    AES256CBC([u8; 32]),
+pub enum AesEcbEnum {
+    AES128ECB([u8; 16]),
+    AES256ECB([u8; 32]),
 }
 
-impl AesCbcCipher {
+impl AesEcbCipher {
     pub fn key(&self) -> &[u8] {
         match &self.cipher {
-            AesCbcEnum::AES128CBC(key) => key,
-            AesCbcEnum::AES256CBC(key) => key,
+            AesEcbEnum::AES128ECB(key) => key,
+            AesEcbEnum::AES256ECB(key) => key,
         }
     }
 }
 
-impl AesCbcCipher {
+impl AesEcbCipher {
     pub fn new_128(key: [u8; 16], finger: Option<Finger>) -> Self {
         Self {
-            cipher: AesCbcEnum::AES128CBC(key),
+            cipher: AesEcbEnum::AES128ECB(key),
             finger,
         }
     }
     pub fn new_256(key: [u8; 32], finger: Option<Finger>) -> Self {
         Self {
-            cipher: AesCbcEnum::AES256CBC(key),
+            cipher: AesEcbEnum::AES256ECB(key),
             finger,
         }
     }
@@ -79,9 +77,9 @@ impl AesCbcCipher {
             }
         }
         let rs = match &self.cipher {
-            AesCbcEnum::AES128CBC(key) => Aes128CbcDec::new(&(*key).into(), &iv.into())
+            AesEcbEnum::AES128ECB(key) => Aes128EcbDec::new(&(*key).into())
                 .decrypt_padded_mut::<Pkcs7>(secret_body.en_body_mut()),
-            AesCbcEnum::AES256CBC(key) => Aes256CbcDec::new(&(*key).into(), &iv.into())
+            AesEcbEnum::AES256ECB(key) => Aes256EcbDec::new(&(*key).into())
                 .decrypt_padded_mut::<Pkcs7>(secret_body.en_body_mut()),
         };
         match rs {
@@ -119,15 +117,16 @@ impl AesCbcCipher {
             net_packet.set_data_len(data_len + 4)?;
         }
         //先扩充随机数
+
         let mut secret_body =
             AesCbcSecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
         secret_body.set_random(rand::thread_rng().next_u32());
         let p_len = secret_body.en_body().len();
         net_packet.set_data_len_max();
         let rs = match &self.cipher {
-            AesCbcEnum::AES128CBC(key) => Aes128CbcEnc::new(&(*key).into(), &iv.into())
+            AesEcbEnum::AES128ECB(key) => Aes128EcbEnc::new(&(*key).into())
                 .encrypt_padded_mut::<Pkcs7>(net_packet.payload_mut(), p_len),
-            AesCbcEnum::AES256CBC(key) => Aes256CbcEnc::new(&(*key).into(), &iv.into())
+            AesEcbEnum::AES256ECB(key) => Aes256EcbEnc::new(&(*key).into())
                 .encrypt_padded_mut::<Pkcs7>(net_packet.payload_mut(), p_len),
         };
         return match rs {

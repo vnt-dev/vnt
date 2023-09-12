@@ -1,6 +1,6 @@
-use std::{fmt, io};
-use std::net::Ipv4Addr;
 use crate::protocol::body::ENCRYPTION_RESERVED;
+use std::net::Ipv4Addr;
+use std::{fmt, io};
 
 /*
    0                                            15                                              31
@@ -21,9 +21,9 @@ pub const HEAD_LEN: usize = 12;
 pub mod body;
 pub mod control_packet;
 pub mod error_packet;
-pub mod service_packet;
 pub mod ip_turn_packet;
 pub mod other_turn_packet;
+pub mod service_packet;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Version {
@@ -230,7 +230,10 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_payload(&mut self, payload: &[u8]) -> io::Result<()> {
         if self.data_len - 12 != payload.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "data_len - 12 != payload.len"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "data_len - 12 != payload.len",
+            ));
         }
         self.buffer.as_mut()[12..self.data_len].copy_from_slice(payload);
         Ok(())
@@ -240,7 +243,10 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_data_len(&mut self, data_len: usize) -> io::Result<()> {
         if data_len > self.buffer.as_ref().len() || data_len < 12 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "data_len invalid"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "data_len invalid",
+            ));
         }
         self.data_len = data_len;
         Ok(())

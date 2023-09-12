@@ -1,5 +1,5 @@
-use std::{fmt, io};
 use std::net::Ipv4Addr;
+use std::{fmt, io};
 
 /// udp协议
 ///
@@ -60,7 +60,11 @@ impl<B: AsRef<[u8]>> UdpPacket<B> {
             buffer,
         }
     }
-    pub fn new(source_ip: Ipv4Addr, destination_ip: Ipv4Addr, buffer: B) -> io::Result<UdpPacket<B>> {
+    pub fn new(
+        source_ip: Ipv4Addr,
+        destination_ip: Ipv4Addr,
+        buffer: B,
+    ) -> io::Result<UdpPacket<B>> {
         if buffer.as_ref().len() < 8 {
             Err(io::Error::from(io::ErrorKind::InvalidData))?;
         }

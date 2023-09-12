@@ -1,7 +1,7 @@
+use crate::util::wait::WaitGroup;
 use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
-use crate::util::wait::WaitGroup;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum VntStatus {
@@ -10,7 +10,7 @@ pub enum VntStatus {
 }
 
 pub struct VntWorker {
-    _name: String,
+    name: String,
     wg: WaitGroup,
     status_s: Arc<Sender<VntStatus>>,
     status_r: Receiver<VntStatus>,
@@ -20,7 +20,7 @@ impl VntWorker {
     pub fn worker(&self, name: &str) -> Self {
         self.wg.add();
         VntWorker {
-            _name: name.to_string(),
+            name: name.to_string(),
             wg: self.wg.clone(),
             status_s: self.status_s.clone(),
             status_r: self.status_r.clone(),
@@ -30,6 +30,7 @@ impl VntWorker {
 
 impl Drop for VntWorker {
     fn drop(&mut self) {
+        log::info!("任务停止:{}", self.name);
         self.wg.done();
     }
 }
@@ -49,7 +50,9 @@ impl VntWorker {
                         return;
                     }
                 }
-                Err(_) => { return; }
+                Err(_) => {
+                    return;
+                }
             }
         }
     }
@@ -80,7 +83,7 @@ impl VntStatusManger {
     pub fn worker(&self, name: &str) -> VntWorker {
         self.wg.add();
         VntWorker {
-            _name: name.to_string(),
+            name: name.to_string(),
             wg: self.wg.clone(),
             status_s: self.status_s.clone(),
             status_r: self.status_r.clone(),

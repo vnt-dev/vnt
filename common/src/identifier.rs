@@ -1,4 +1,3 @@
-
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
@@ -7,8 +6,9 @@ pub fn get_unique_identifier() -> Option<String> {
     let output = match Command::new("wmic")
         .creation_flags(0x08000000)
         .args(&["csproduct", "get", "UUID"])
-        .output() {
-        Ok(output) => { output }
+        .output()
+    {
+        Ok(output) => output,
         Err(_) => {
             return None;
         }
@@ -27,8 +27,9 @@ pub fn get_unique_identifier() -> Option<String> {
 pub fn get_unique_identifier() -> Option<String> {
     let output = match Command::new("ioreg")
         .args(&["-rd1", "-c", "IOPlatformExpertDevice"])
-        .output() {
-        Ok(output) => { output }
+        .output()
+    {
+        Ok(output) => output,
         Err(_) => {
             return None;
         }
@@ -38,7 +39,8 @@ pub fn get_unique_identifier() -> Option<String> {
     let identifier = result
         .lines()
         .find(|line| line.contains("IOPlatformUUID"))
-        .unwrap_or("").trim();
+        .unwrap_or("")
+        .trim();
     if identifier.is_empty() {
         None
     } else {
@@ -51,8 +53,9 @@ pub fn get_unique_identifier() -> Option<String> {
     let output = match Command::new("dmidecode")
         .arg("-s")
         .arg("system-uuid")
-        .output() {
-        Ok(output) => { output }
+        .output()
+    {
+        Ok(output) => output,
         Err(_) => {
             return None;
         }

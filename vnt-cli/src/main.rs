@@ -11,6 +11,7 @@ use tokio::signal;
 use tokio::signal::unix::{signal, SignalKind};
 
 use common::args_parse::{ips_parse, out_ips_parse};
+use vnt::channel::punch::PunchModel;
 use vnt::cipher::CipherModel;
 use vnt::core::{Config, Vnt, VntUtil};
 use vnt::handle::handshake_handler::HandshakeEnum;
@@ -21,7 +22,9 @@ mod console_out;
 mod root_check;
 
 pub fn app_home() -> io::Result<PathBuf> {
-    let path = dirs::home_dir().ok_or(io::Error::new(io::ErrorKind::Other, "not home"))?.join(".vnt-cli");
+    let path = dirs::home_dir()
+        .ok_or(io::Error::new(io::ErrorKind::Other, "not home"))?
+        .join(".vnt-cli");
     if !path.exists() {
         std::fs::create_dir_all(&path)?;
     }
@@ -52,6 +55,13 @@ fn main() {
     opts.optopt("", "par", "任务并行度(必须为正整数)", "<parallel>");
     opts.optopt("", "thread", "线程数(必须为正整数)", "<thread>");
     opts.optopt("", "model", "加密模式", "<model>");
+    opts.optflag("", "finger", "指纹校验");
+    opts.optopt(
+        "",
+        "punch",
+        "取值ipv4/ipv6，表示仅使用ipv4或ipv6打洞",
+        "<punch>",
+    );
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -60,7 +70,7 @@ fn main() {
     opts.optflag("", "stop", "停止后台运行");
     opts.optflag("h", "help", "帮助");
     let matches = match opts.parse(&args[1..]) {
-        Ok(m) => { m }
+        Ok(m) => m,
         Err(f) => {
             print_usage(&program, opts);
             println!("{}", f.to_string());
@@ -122,8 +132,12 @@ fn main() {
         println!("parameter -d not found .");
         return;
     }
-    let name = matches.opt_get_default("n", os_info::get().to_string()).unwrap();
-    let server_address_str = matches.opt_get_default("s", "nat1.wherewego.top:29872".to_string()).unwrap();
+    let name = matches
+        .opt_get_default("n", os_info::get().to_string())
+        .unwrap();
+    let server_address_str = matches
+        .opt_get_default("s", "nat1.wherewego.top:29872".to_string())
+        .unwrap();
     let server_address = match server_address_str.to_socket_addrs() {
         Ok(mut addr) => {
             if let Some(addr) = addr.next() {
@@ -147,7 +161,7 @@ fn main() {
 
     let in_ip = matches.opt_strs("i");
     let in_ip = match ips_parse(&in_ip) {
-        Ok(in_ip) => { in_ip }
+        Ok(in_ip) => in_ip,
         Err(e) => {
             print_usage(&program, opts);
             println!();
@@ -158,7 +172,7 @@ fn main() {
     };
     let out_ip = matches.opt_strs("o");
     let out_ip = match out_ips_parse(&out_ip) {
-        Ok(out_ip) => { out_ip }
+        Ok(out_ip) => out_ip,
         Err(e) => {
             print_usage(&program, opts);
             println!();
@@ -174,9 +188,7 @@ fn main() {
     let mtu: Option<String> = matches.opt_get("u").unwrap();
     let mtu = if let Some(mtu) = mtu {
         match u16::from_str(&mtu) {
-            Ok(mtu) => {
-                Some(mtu)
-            }
+            Ok(mtu) => Some(mtu),
             Err(e) => {
                 print_usage(&program, opts);
                 println!();
@@ -202,20 +214,51 @@ fn main() {
         println!("--par invalid");
         return;
     }
-    let thread_num = matches.opt_get::<usize>("thread").unwrap().unwrap_or(std::thread::available_parallelism().unwrap().get() * 2);
-    let cipher_model = matches.opt_get::<CipherModel>("model").unwrap().unwrap_or(CipherModel::AesGcm);
+    let thread_num = matches
+        .opt_get::<usize>("thread")
+        .unwrap()
+        .unwrap_or(std::thread::available_parallelism().unwrap().get() * 2);
+    let cipher_model = matches
+        .opt_get::<CipherModel>("model")
+        .unwrap()
+        .unwrap_or(CipherModel::AesGcm);
     if thread_num == 0 {
         println!("--thread invalid");
         return;
     }
-    println!("version {}",vnt::VNT_VERSION);
-    let config = Config::new(tap,
-                             token, device_id, name,
-                             server_address, server_address_str,
-                             stun_server, in_ip,
-                             out_ip, password, simulate_multicast, mtu,
-                             tcp_channel, virtual_ip, relay, server_encrypt, parallel, cipher_model);
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().worker_threads(thread_num).build().unwrap();
+    let finger = matches.opt_present("finger");
+    let punch_model = matches
+        .opt_get::<PunchModel>("punch")
+        .unwrap()
+        .unwrap_or(PunchModel::All);
+    println!("version {}", vnt::VNT_VERSION);
+    let config = Config::new(
+        tap,
+        token,
+        device_id,
+        name,
+        server_address,
+        server_address_str,
+        stun_server,
+        in_ip,
+        out_ip,
+        password,
+        simulate_multicast,
+        mtu,
+        tcp_channel,
+        virtual_ip,
+        relay,
+        server_encrypt,
+        parallel,
+        cipher_model,
+        finger,
+        punch_model,
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(thread_num)
+        .build()
+        .unwrap();
     runtime.block_on(main0(config, !unused_cmd));
     std::process::exit(0);
 }
@@ -262,55 +305,51 @@ async fn main0(config: Config, show_cmd: bool) {
                     Ok(response) => {
                         break response;
                     }
-                    Err(e) => {
-                        match e {
-                            ReqEnum::TokenError => {
-                                println!("token error");
-                                return;
-                            }
-                            ReqEnum::AddressExhausted => {
-                                println!("address exhausted");
-                                return;
-                            }
-                            ReqEnum::Timeout => {
-                                println!("timeout...");
-                            }
-                            ReqEnum::ServerError(str) => {
-                                println!("error:{}", str);
-                            }
-                            ReqEnum::Other(str) => {
-                                println!("error:{}", str);
-                            }
-                            ReqEnum::IpAlreadyExists => {
-                                println!("ip already exists");
-                                return;
-                            }
-                            ReqEnum::InvalidIp => {
-                                println!("invalid ip");
-                                return;
-                            }
+                    Err(e) => match e {
+                        ReqEnum::TokenError => {
+                            println!("token error");
+                            return;
                         }
-                    }
+                        ReqEnum::AddressExhausted => {
+                            println!("address exhausted");
+                            return;
+                        }
+                        ReqEnum::Timeout => {
+                            println!("timeout...");
+                        }
+                        ReqEnum::ServerError(str) => {
+                            println!("error:{}", str);
+                        }
+                        ReqEnum::Other(str) => {
+                            println!("error:{}", str);
+                        }
+                        ReqEnum::IpAlreadyExists => {
+                            println!("ip already exists");
+                            return;
+                        }
+                        ReqEnum::InvalidIp => {
+                            println!("invalid ip");
+                            return;
+                        }
+                    },
                 }
             }
-            Err(e) => {
-                match e {
-                    HandshakeEnum::NotSecret => {
-                        println!("The server does not support encryption");
-                        return;
-                    }
-                    HandshakeEnum::KeyError => {}
-                    HandshakeEnum::Timeout => {
-                        println!("handshake timeout")
-                    }
-                    HandshakeEnum::ServerError(str) => {
-                        println!("error:{}", str);
-                    }
-                    HandshakeEnum::Other(str) => {
-                        println!("error:{}", str);
-                    }
+            Err(e) => match e {
+                HandshakeEnum::NotSecret => {
+                    println!("The server does not support encryption");
+                    return;
                 }
-            }
+                HandshakeEnum::KeyError => {}
+                HandshakeEnum::Timeout => {
+                    println!("handshake timeout")
+                }
+                HandshakeEnum::ServerError(str) => {
+                    println!("error:{}", str);
+                }
+                HandshakeEnum::Other(str) => {
+                    println!("error:{}", str);
+                }
+            },
         }
     };
     println!(" ====== Connect Successfully ====== ");
@@ -321,9 +360,7 @@ async fn main0(config: Config, show_cmd: bool) {
     println!("name:{}", driver_info.name);
     println!("version:{}", driver_info.version);
     let mut vnt = match vnt_util.build().await {
-        Ok(vnt) => {
-            vnt
-        }
+        Ok(vnt) => vnt,
         Err(e) => {
             println!("error:{}", e);
             return;
@@ -336,12 +373,12 @@ async fn main0(config: Config, show_cmd: bool) {
             println!("command error :{}", e);
         }
     });
+    #[cfg(unix)]
+    let mut sigterm = signal(SignalKind::terminate()).expect("Error setting SIGTERM handler");
     if show_cmd {
         let stdin = tokio::io::stdin();
         let mut cmd = String::new();
         let mut reader = BufReader::new(stdin);
-        #[cfg(unix)]
-            let mut sigterm = signal(SignalKind::terminate()).expect("Error setting SIGTERM handler");
         loop {
             cmd.clear();
             println!("input:list,info,route,all,stop");
@@ -399,23 +436,24 @@ async fn main0(config: Config, show_cmd: bool) {
                 }
             }
         }
-        #[cfg(unix)]
-        tokio::select! {
-                _ = vnt.wait_stop()=>{
-                    return;
-                }
-                _ = signal::ctrl_c()=>{
-                    let _ = vnt.stop();
-                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                    return;
-                }
-                _ = sigterm.recv()=>{
-                    let _ = vnt.stop();
-                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                    return;
-                }
-       }
     }
+    #[cfg(unix)]
+    tokio::select! {
+                 _ = vnt.wait_stop()=>{
+                     return;
+                 }
+                 _ = signal::ctrl_c()=>{
+                     let _ = vnt.stop();
+                     vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
+                     return;
+                 }
+                 _ = sigterm.recv()=>{
+                     let _ = vnt.stop();
+                     vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
+                     return;
+                 }
+    }
+    #[cfg(windows)]
     vnt.wait_stop().await;
 }
 
@@ -452,9 +490,12 @@ fn command(cmd: &str, vnt: &Vnt) -> bool {
 
 fn print_usage(program: &str, _opts: Options) {
     println!("Usage: {} [options]", program);
-    println!("version:{}",vnt::VNT_VERSION);
+    println!("version:{}", vnt::VNT_VERSION);
     println!("Options:");
-    println!("  -k <token>          {}", green("必选,使用相同的token,就能组建一个局域网络".to_string()));
+    println!(
+        "  -k <token>          {}",
+        green("必选,使用相同的token,就能组建一个局域网络".to_string())
+    );
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip");
     println!("  -c                  关闭交互式命令,使用此参数禁用控制台输入");
@@ -473,13 +514,31 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
     println!("  --thread <thread>   线程数(必须为正整数),默认为核心数乘2");
-    println!("  --model <model>     加密模式，可选值 aes_gcm/aes_cbc，默认使用aes_gcm，通常情况使用aes_cbc性能更好");
+    println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb，通常性能aes_ecb>aes_cbc>aes_gcm,安全性则相反");
+    println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
+    println!("  --punch <punch>     取值ipv4/ipv6，ipv4表示仅使用ipv4打洞");
+
     println!();
-    println!("  --list              {}", yellow("后台运行时,查看其他设备列表".to_string()));
-    println!("  --all               {}", yellow("后台运行时,查看其他设备完整信息".to_string()));
-    println!("  --info              {}", yellow("后台运行时,查看当前设备信息".to_string()));
-    println!("  --route             {}", yellow("后台运行时,查看数据转发路径".to_string()));
-    println!("  --stop              {}", yellow("停止后台运行".to_string()));
+    println!(
+        "  --list              {}",
+        yellow("后台运行时,查看其他设备列表".to_string())
+    );
+    println!(
+        "  --all               {}",
+        yellow("后台运行时,查看其他设备完整信息".to_string())
+    );
+    println!(
+        "  --info              {}",
+        yellow("后台运行时,查看当前设备信息".to_string())
+    );
+    println!(
+        "  --route             {}",
+        yellow("后台运行时,查看数据转发路径".to_string())
+    );
+    println!(
+        "  --stop              {}",
+        yellow("停止后台运行".to_string())
+    );
     println!("  -h, --help          帮助");
 }
 
@@ -490,4 +549,3 @@ fn green(str: String) -> impl std::fmt::Display {
 fn yellow(str: String) -> impl std::fmt::Display {
     style(str).yellow()
 }
-

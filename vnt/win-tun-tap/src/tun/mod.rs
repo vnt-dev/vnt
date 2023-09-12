@@ -3,11 +3,11 @@ use std::net::Ipv4Addr;
 
 use winapi::um::{handleapi, synchapi, winbase, winnt};
 
-use crate::{decode_utf16, encode_utf16, ffi, IFace, netsh, route};
+use crate::{decode_utf16, encode_utf16, ffi, netsh, route, IFace};
 use rand::Rng;
-mod wintun_raw;
 mod log;
 pub mod packet;
+mod wintun_raw;
 
 /// The maximum size of wintun's internal ring buffer (in bytes)
 pub const MAX_RING_CAPACITY: u32 = 0x400_0000;
@@ -17,7 +17,6 @@ pub const MIN_RING_CAPACITY: u32 = 0x2_0000;
 
 /// Maximum pool name length including zero terminator
 pub const MAX_POOL: usize = 256;
-
 
 pub struct TunDevice {
     pub(crate) luid: u64,
@@ -38,7 +37,6 @@ pub struct TunDevice {
 
     /// The adapter that owns this session
     pub(crate) adapter: wintun_raw::WINTUN_ADAPTER_HANDLE,
-
 }
 
 unsafe impl Send for TunDevice {}
@@ -47,20 +45,31 @@ unsafe impl Sync for TunDevice {}
 
 impl TunDevice {
     pub unsafe fn create<L>(library: L, pool: &str, name: &str) -> io::Result<Self>
-        where L: Into<libloading::Library>, {
+    where
+        L: Into<libloading::Library>,
+    {
         let win_tun = match wintun_raw::wintun::from_library(library) {
-            Ok(win_tun) => { win_tun }
+            Ok(win_tun) => win_tun,
             Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::Other, format!("library error {:?} ", e)));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("library error {:?} ", e),
+                ));
             }
         };
         let pool_utf16 = encode_utf16(pool);
         if pool_utf16.len() > MAX_POOL {
-            return Err(io::Error::new(io::ErrorKind::Other, format!("长度大于{}:{:?}", MAX_POOL, pool)));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("长度大于{}:{:?}", MAX_POOL, pool),
+            ));
         }
         let name_utf16 = encode_utf16(name);
         if name_utf16.len() > MAX_POOL {
-            return Err(io::Error::new(io::ErrorKind::Other, format!("长度大于{}:{:?}", MAX_POOL, pool)));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("长度大于{}:{:?}", MAX_POOL, pool),
+            ));
         }
         let mut guid_bytes: [u8; 16] = [0u8; 16];
         rand::thread_rng().fill(&mut guid_bytes);
@@ -76,22 +85,32 @@ impl TunDevice {
         //SAFETY: the function is loaded from the wintun dll properly, we are providing valid
         //pointers, and all the strings are correct null terminated UTF-16. This safety rationale
         //applies for all Wintun* functions below
-        let adapter = win_tun.WintunCreateAdapter(pool_utf16.as_ptr(), name_utf16.as_ptr(), guid_ptr);
+        let adapter =
+            win_tun.WintunCreateAdapter(pool_utf16.as_ptr(), name_utf16.as_ptr(), guid_ptr);
         if adapter.is_null() {
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to crate adapter"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to crate adapter",
+            ));
         }
         Self::init(win_tun, adapter)
     }
-    pub unsafe fn init(win_tun: wintun_raw::wintun, adapter: wintun_raw::WINTUN_ADAPTER_HANDLE) -> io::Result<Self> {
+    pub unsafe fn init(
+        win_tun: wintun_raw::wintun,
+        adapter: wintun_raw::WINTUN_ADAPTER_HANDLE,
+    ) -> io::Result<Self> {
         // 开启session
         let session = win_tun.WintunStartSession(adapter, 128 * 1024);
         if session.is_null() {
-            return Err(io::Error::new(io::ErrorKind::Other, "WintunStartSession failed"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "WintunStartSession failed",
+            ));
         }
         //SAFETY: We follow the contract required by CreateEventA. See MSDN
         //(the pointers are allowed to be null, and 0 is okay for the others)
-        let shutdown_event = synchapi::CreateEventA(std::ptr::null_mut(),
-                                                    0, 0, std::ptr::null_mut());
+        let shutdown_event =
+            synchapi::CreateEventA(std::ptr::null_mut(), 0, 0, std::ptr::null_mut());
         let read_event = win_tun.WintunGetReadWaitEvent(session) as winnt::HANDLE;
         let mut luid: wintun_raw::NET_LUID = std::mem::zeroed();
         win_tun.WintunGetAdapterLUID(adapter, &mut luid as *mut wintun_raw::NET_LUID);
@@ -107,18 +126,26 @@ impl TunDevice {
         })
     }
     pub unsafe fn delete_for_name<L>(library: L, name: &str) -> io::Result<()>
-        where L: Into<libloading::Library>, {
+    where
+        L: Into<libloading::Library>,
+    {
         let win_tun = match wintun_raw::wintun::from_library(library) {
             Ok(win_tun) => win_tun,
             Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::Other, format!("library error {:?} ", e)));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("library error {:?} ", e),
+                ));
             }
         };
         log::set_default_logger_if_unset(&win_tun);
         let name_utf16 = encode_utf16(name);
         let adapter = win_tun.WintunOpenAdapter(name_utf16.as_ptr());
         if adapter.is_null() {
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to open adapter"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to open adapter",
+            ));
         }
         win_tun.WintunCloseAdapter(adapter);
         win_tun.WintunDeleteDriver();
@@ -131,7 +158,10 @@ impl TunDevice {
     pub fn version(&self) -> io::Result<Version> {
         let version = unsafe { self.win_tun.WintunGetRunningDriverVersion() };
         if version == 0 {
-            return Err(io::Error::new(io::ErrorKind::Other, "WintunGetRunningDriverVersion"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "WintunGetRunningDriverVersion",
+            ));
         } else {
             Ok(Version {
                 major: ((version >> 16) & 0xFF) as u16,
@@ -155,7 +185,6 @@ pub struct Version {
 //     }
 // }
 
-
 impl IFace for TunDevice {
     fn shutdown(&self) -> io::Result<()> {
         let _ = unsafe { synchapi::SetEvent(self.shutdown_event) };
@@ -169,9 +198,7 @@ impl IFace for TunDevice {
 
     fn get_name(&self) -> io::Result<String> {
         let luid = self.luid;
-        ffi::luid_to_alias(&unsafe { std::mem::transmute(luid) }).map(|name| {
-            decode_utf16(&name)
-        })
+        ffi::luid_to_alias(&unsafe { std::mem::transmute(luid) }).map(|name| decode_utf16(&name))
     }
 
     fn set_name(&self, new_name: &str) -> io::Result<()> {
@@ -179,15 +206,21 @@ impl IFace for TunDevice {
         netsh::set_interface_name(&name, new_name)
     }
 
-    fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()>{
+    fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()> {
         netsh::set_interface_ip(self.get_index()?, &address, &mask)
     }
 
-    fn add_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr, metric: u16) -> io::Result<()>  {
+    fn add_route(
+        &self,
+        dest: Ipv4Addr,
+        netmask: Ipv4Addr,
+        gateway: Ipv4Addr,
+        metric: u16,
+    ) -> io::Result<()> {
         route::add_route(self.get_index()?, dest, netmask, gateway, metric)
     }
 
-    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()>  {
+    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {
         route::delete_route(self.get_index()?, dest, netmask, gateway)
     }
 
@@ -257,14 +290,19 @@ impl TunDevice {
                 )
             };
             match result {
-                winbase::WAIT_FAILED => return Err(io::Error::new(io::ErrorKind::Other, "WAIT_FAILED")),
+                winbase::WAIT_FAILED => {
+                    return Err(io::Error::new(io::ErrorKind::Other, "WAIT_FAILED"))
+                }
                 _ => {
                     if result == winbase::WAIT_OBJECT_0 {
                         //We have data!
                         continue;
                     } else if result == winbase::WAIT_OBJECT_0 + 1 {
                         //Shutdown event triggered
-                        return Err(io::Error::new(io::ErrorKind::Other, "Shutdown event triggered"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            "Shutdown event triggered",
+                        ));
                     }
                 }
             }
@@ -275,10 +313,14 @@ impl TunDevice {
 impl TunDevice {
     pub fn allocate_send_packet(&self, size: u16) -> io::Result<packet::TunPacket> {
         let bytes_ptr = unsafe {
-            self.win_tun.WintunAllocateSendPacket(self.session, size as u32)
+            self.win_tun
+                .WintunAllocateSendPacket(self.session, size as u32)
         };
         if bytes_ptr.is_null() {
-            Err(io::Error::new(io::ErrorKind::Other, "allocate_send_packet failed"))
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "allocate_send_packet failed",
+            ))
         } else {
             Ok(packet::TunPacket {
                 kind: packet::Kind::SendPacketPending,
@@ -301,7 +343,6 @@ impl TunDevice {
         packet.kind = packet::Kind::SendPacketSent;
     }
 }
-
 
 impl Drop for TunDevice {
     fn drop(&mut self) {

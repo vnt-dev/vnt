@@ -1,10 +1,9 @@
+use crate::channel::channel::Context;
+use crate::channel::RouteKey;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::Ipv4Addr;
 use std::time::Duration;
-use crate::channel::channel::Context;
-use crate::channel::RouteKey;
-
 
 pub struct Idle {
     read_idle: Duration,
@@ -12,12 +11,8 @@ pub struct Idle {
 }
 
 impl Idle {
-    pub fn new(read_idle: Duration,
-               context: Context, ) -> Self {
-        Self {
-            read_idle,
-            context,
-        }
+    pub fn new(read_idle: Duration, context: Context) -> Self {
+        Self { read_idle, context }
     }
 }
 
@@ -27,7 +22,7 @@ impl Idle {
         loop {
             let mut max = Duration::from_secs(0);
             for entry in self.context.inner.route_table_time.iter() {
-                let last_read = entry.value().load().elapsed();
+                let last_read = entry.value().elapsed();
                 if last_read >= self.read_idle {
                     return Ok((entry.key().1.clone(), entry.key().0.clone()));
                 } else {

@@ -1,8 +1,8 @@
 use log::*;
 
+use crate::tun::wintun_raw;
 use std::sync::atomic::{AtomicBool, Ordering};
 use widestring::U16CStr;
-use crate::tun::wintun_raw;
 
 /// Sets the logger wintun will use when logging. Maps to the WintunSetLogger C function
 pub fn set_logger(win_tun: &wintun_raw::wintun, f: wintun_raw::WINTUN_LOGGER_CALLBACK) {

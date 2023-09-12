@@ -3,13 +3,13 @@ use std::net::Ipv4Addr;
 use byteorder::BigEndian;
 use byteorder::ReadBytesExt;
 
+pub mod arp;
+pub mod ethernet;
 pub mod icmp;
 pub mod igmp;
 pub mod ip;
 pub mod tcp;
 pub mod udp;
-pub mod ethernet;
-pub mod arp;
 // pub enum IpUpperLayer<B> {
 //     UDP(UdpPacket<B>),
 //     Unknown(B),

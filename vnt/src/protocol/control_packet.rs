@@ -1,5 +1,5 @@
-use std::{fmt, io};
 use std::net::Ipv4Addr;
+use std::{fmt, io};
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Protocol {

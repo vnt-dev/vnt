@@ -2,15 +2,15 @@ use std::io;
 use std::sync::Arc;
 
 use bytes::BufMut;
-use tun::platform::posix::{Reader, Writer};
+use packet::ethernet;
+use parking_lot::Mutex;
 use std::net::Ipv4Addr;
 use std::os::unix::io::AsRawFd;
 #[cfg(any(target_os = "linux"))]
 use tun::platform::linux::Device;
 #[cfg(any(target_os = "macos"))]
 use tun::platform::macos::Device;
-use parking_lot::Mutex;
-use packet::ethernet;
+use tun::platform::posix::{Reader, Writer};
 
 use packet::ethernet::packet::EthernetPacket;
 #[derive(Clone)]
@@ -22,12 +22,8 @@ pub enum DeviceW {
 impl DeviceW {
     pub fn is_tun(&self) -> bool {
         match self {
-            DeviceW::Tun(_) => {
-                true
-            }
-            DeviceW::Tap(_) => {
-                false
-            }
+            DeviceW::Tun(_) => true,
+            DeviceW::Tap(_) => false,
         }
     }
 }
@@ -41,7 +37,13 @@ pub struct DeviceWriter {
 }
 
 impl DeviceWriter {
-    pub fn new(writer: DeviceW,lock: Arc<Mutex<Device>>, in_ips: Vec<(Ipv4Addr, Ipv4Addr)>, _ip: Ipv4Addr, packet_information: bool) -> Self {
+    pub fn new(
+        writer: DeviceW,
+        lock: Arc<Mutex<Device>>,
+        in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
+        _ip: Ipv4Addr,
+        packet_information: bool,
+    ) -> Self {
         Self {
             writer,
             lock,
@@ -69,33 +71,30 @@ impl DeviceWriter {
     ///tun网卡写入ipv4数据
     pub fn write_ipv4_tun(&self, buf: &[u8]) -> io::Result<()> {
         match &self.writer {
-            DeviceW::Tun(writer) => {
-                Self::write(self.packet_information, writer, buf)
-            }
-            DeviceW::Tap(_) => {
-                Err(io::Error::from(io::ErrorKind::Unsupported))
-            }
+            DeviceW::Tun(writer) => Self::write(self.packet_information, writer, buf),
+            DeviceW::Tap(_) => Err(io::Error::from(io::ErrorKind::Unsupported)),
         }
     }
     /// tap网卡写入以太网帧
     pub fn write_ethernet_tap(&self, buf: &[u8]) -> io::Result<()> {
         match &self.writer {
-            DeviceW::Tun(_) => {
-                Err(io::Error::from(io::ErrorKind::Unsupported))
-            }
-            DeviceW::Tap((writer, _)) => {
-                Self::write(self.packet_information, writer, buf)
-            }
+            DeviceW::Tun(_) => Err(io::Error::from(io::ErrorKind::Unsupported)),
+            DeviceW::Tap((writer, _)) => Self::write(self.packet_information, writer, buf),
         }
     }
     ///写入ipv4数据，头部必须留14字节，给tap写入以太网帧头
     pub fn write_ipv4(&self, buf: &mut [u8]) -> io::Result<()> {
         match &self.writer {
-            DeviceW::Tun(writer) => {
-                Self::write(self.packet_information, writer, &buf[14..])
-            }
+            DeviceW::Tun(writer) => Self::write(self.packet_information, writer, &buf[14..]),
             DeviceW::Tap((writer, mac)) => {
-                let source_mac = [buf[14 + 12], buf[14 + 13], buf[14 + 14], buf[14 + 15], !mac[5], 234];
+                let source_mac = [
+                    buf[14 + 12],
+                    buf[14 + 13],
+                    buf[14 + 14],
+                    buf[14 + 15],
+                    !mac[5],
+                    234,
+                ];
                 let mut ethernet_packet = EthernetPacket::unchecked(buf);
                 ethernet_packet.set_source(&source_mac);
                 ethernet_packet.set_destination(mac);

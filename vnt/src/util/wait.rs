@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::Arc;
 use tokio::sync::watch::{channel, Receiver, Sender};
 
 #[derive(Clone)]

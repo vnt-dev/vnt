@@ -21,8 +21,8 @@ use winapi::um::winioctl::*;
 use winapi::um::winnt::*;
 use winapi::um::winreg::*;
 
-use std::{io, mem, ptr};
 use std::error::Error;
+use std::{io, mem, ptr};
 use winapi::um::minwinbase::OVERLAPPED_u;
 
 #[allow(non_camel_case_types)]
@@ -46,9 +46,7 @@ pub fn string_from_guid(guid: &GUID) -> io::Result<Vec<WCHAR>> {
     // GUID_STRING_CHARACTERS + 1
     let mut string = vec![0; 39];
 
-    match unsafe {
-        StringFromGUID2(guid, string.as_mut_ptr(), string.len() as _)
-    } {
+    match unsafe { StringFromGUID2(guid, string.as_mut_ptr(), string.len() as _) } {
         0 => Err(io::Error::new(io::ErrorKind::Other, "Insufficent buffer")),
         _ => Ok(string),
     }
@@ -85,12 +83,8 @@ pub fn luid_to_alias(luid: &NET_LUID) -> io::Result<Vec<WCHAR>> {
     // IF_MAX_STRING_SIZE + 1
     let mut alias = vec![0; 257];
 
-    match unsafe {
-        ConvertInterfaceLuidToAlias(luid, alias.as_mut_ptr(), alias.len())
-    } {
-        0 => {
-            Ok(alias)
-        }
+    match unsafe { ConvertInterfaceLuidToAlias(luid, alias.as_mut_ptr(), alias.len()) } {
+        0 => Ok(alias),
         err => Err(io::Error::from_raw_os_error(err as _)),
     }
 }
@@ -140,7 +134,8 @@ pub fn read_file(handle: HANDLE, buffer: &mut [u8]) -> io::Result<DWORD> {
             buffer.as_mut_ptr() as _,
             buffer.len() as _,
             &mut ret,
-            &mut ip_overlapped, ) {
+            &mut ip_overlapped,
+        ) {
             let e = io::Error::last_os_error();
             if e.raw_os_error().unwrap_or(0) == 997 {
                 if 0 == GetOverlappedResult(handle, &mut ip_overlapped, &mut ret, 1) {
@@ -191,9 +186,7 @@ pub fn create_device_info_list(guid: &GUID) -> io::Result<HDEVINFO> {
 }
 
 pub fn get_class_devs(guid: &GUID, flags: DWORD) -> io::Result<HDEVINFO> {
-    match unsafe {
-        SetupDiGetClassDevsW(guid, ptr::null(), ptr::null_mut(), flags)
-    } {
+    match unsafe { SetupDiGetClassDevsW(guid, ptr::null(), ptr::null_mut(), flags) } {
         INVALID_HANDLE_VALUE => Err(io::Error::last_os_error()),
         devinfo => Ok(devinfo),
     }
@@ -248,13 +241,8 @@ pub fn create_device_info(
     }
 }
 
-pub fn set_selected_device(
-    devinfo: HDEVINFO,
-    devinfo_data: &SP_DEVINFO_DATA,
-) -> io::Result<()> {
-    match unsafe {
-        SetupDiSetSelectedDevice(devinfo, devinfo_data as *const _ as _)
-    } {
+pub fn set_selected_device(devinfo: HDEVINFO, devinfo_data: &SP_DEVINFO_DATA) -> io::Result<()> {
+    match unsafe { SetupDiSetSelectedDevice(devinfo, devinfo_data as *const _ as _) } {
         0 => Err(io::Error::last_os_error()),
         _ => Ok(()),
     }
@@ -308,13 +296,8 @@ pub fn build_driver_info_list(
     devinfo_data: &SP_DEVINFO_DATA,
     driver_type: DWORD,
 ) -> io::Result<()> {
-    match unsafe {
-        SetupDiBuildDriverInfoList(
-            devinfo,
-            devinfo_data as *const _ as _,
-            driver_type,
-        )
-    } {
+    match unsafe { SetupDiBuildDriverInfoList(devinfo, devinfo_data as *const _ as _, driver_type) }
+    {
         0 => Err(io::Error::last_os_error()),
         _ => Ok(()),
     }
@@ -326,11 +309,7 @@ pub fn destroy_driver_info_list(
     driver_type: DWORD,
 ) -> io::Result<()> {
     match unsafe {
-        SetupDiDestroyDriverInfoList(
-            devinfo,
-            devinfo_data as *const _ as _,
-            driver_type,
-        )
+        SetupDiDestroyDriverInfoList(devinfo, devinfo_data as *const _ as _, driver_type)
     } {
         0 => Err(io::Error::last_os_error()),
         _ => Ok(()),
@@ -342,8 +321,7 @@ pub fn get_driver_info_detail(
     devinfo_data: &SP_DEVINFO_DATA,
     drvinfo_data: &SP_DRVINFO_DATA_W,
 ) -> io::Result<SP_DRVINFO_DETAIL_DATA_W2> {
-    let mut drvinfo_detail: SP_DRVINFO_DETAIL_DATA_W2 =
-        unsafe { mem::zeroed() };
+    let mut drvinfo_detail: SP_DRVINFO_DETAIL_DATA_W2 = unsafe { mem::zeroed() };
     drvinfo_detail.cbSize = mem::size_of::<SP_DRVINFO_DETAIL_DATA_W>() as _;
 
     match unsafe {
@@ -402,11 +380,7 @@ pub fn call_class_installer(
     install_function: DI_FUNCTION,
 ) -> io::Result<()> {
     match unsafe {
-        SetupDiCallClassInstaller(
-            install_function,
-            devinfo,
-            devinfo_data as *const _ as _,
-        )
+        SetupDiCallClassInstaller(install_function, devinfo, devinfo_data as *const _ as _)
     } {
         0 => Err(io::Error::last_os_error()),
         _ => Ok(()),
@@ -444,16 +418,12 @@ pub fn notify_change_key_value(
     notify_filter: DWORD,
     milliseconds: DWORD,
 ) -> io::Result<()> {
-    let event = match unsafe {
-        CreateEventW(ptr::null_mut(), FALSE, FALSE, ptr::null())
-    } {
+    let event = match unsafe { CreateEventW(ptr::null_mut(), FALSE, FALSE, ptr::null()) } {
         INVALID_HANDLE_VALUE => Err(io::Error::last_os_error()),
         event => Ok(event),
     }?;
 
-    match unsafe {
-        RegNotifyChangeKeyValue(key, watch_subtree, notify_filter, event, TRUE)
-    } {
+    match unsafe { RegNotifyChangeKeyValue(key, watch_subtree, notify_filter, event, TRUE) } {
         0 => Ok(()),
         err => Err(io::Error::from_raw_os_error(err)),
     }?;
@@ -499,9 +469,7 @@ pub fn enum_device_info(
     let mut devinfo_data: SP_DEVINFO_DATA = unsafe { mem::zeroed() };
     devinfo_data.cbSize = mem::size_of_val(&devinfo_data) as _;
 
-    match unsafe {
-        SetupDiEnumDeviceInfo(devinfo, member_index, &mut devinfo_data)
-    } {
+    match unsafe { SetupDiEnumDeviceInfo(devinfo, member_index, &mut devinfo_data) } {
         0 if unsafe { GetLastError() == ERROR_NO_MORE_ITEMS } => None,
         0 => Some(Err(io::Error::last_os_error())),
         _ => Some(Ok(devinfo_data)),

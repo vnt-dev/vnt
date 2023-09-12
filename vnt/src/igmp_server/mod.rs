@@ -1,14 +1,14 @@
-use std::collections::{HashMap, HashSet};
-use std::net::Ipv4Addr;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use crate::tun_tap_device::DeviceWriter;
 use dashmap::DashMap;
-use parking_lot::RwLock;
 use packet::igmp::igmp_v2::IgmpV2Packet;
 use packet::igmp::igmp_v3::{IgmpV3QueryPacket, IgmpV3RecordType, IgmpV3ReportPacket};
 use packet::igmp::IgmpType;
 use packet::ip::ipv4::protocol::Protocol;
-use crate::tun_tap_device::DeviceWriter;
+use parking_lot::RwLock;
+use std::collections::{HashMap, HashSet};
+use std::net::Ipv4Addr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 //1. 定时发送query，启动时20秒一次，连发3次，之后8分钟一次
 //2. 接收网关的igmp report 维护组播源信息
@@ -90,9 +90,7 @@ impl IgmpServer {
                 std::thread::sleep(Duration::from_secs(20))
             }
         });
-        Self {
-            multicast,
-        }
+        Self { multicast }
     }
     pub fn load(&self, multicast_addr: &Ipv4Addr) -> Option<Arc<RwLock<Multicast>>> {
         if let Some(entry) = self.multicast.get(multicast_addr) {
@@ -125,9 +123,11 @@ impl IgmpServer {
                     return Ok(());
                 }
                 let multi = {
-                    self.multicast.entry(multicast_addr).or_insert_with(|| {
-                        Arc::new(RwLock::new(Multicast::new()))
-                    }).value().clone()
+                    self.multicast
+                        .entry(multicast_addr)
+                        .or_insert_with(|| Arc::new(RwLock::new(Multicast::new())))
+                        .value()
+                        .clone()
                 };
                 let mut guard = multi.write();
                 guard.members.insert(source, Instant::now());
@@ -153,13 +153,17 @@ impl IgmpServer {
                         if !multicast_addr.is_multicast() {
                             return Ok(());
                         }
-                        let multi = self.multicast.entry(multicast_addr).or_insert_with(|| {
-                            Arc::new(RwLock::new(Multicast::new()))
-                        }).value().clone();
+                        let multi = self
+                            .multicast
+                            .entry(multicast_addr)
+                            .or_insert_with(|| Arc::new(RwLock::new(Multicast::new())))
+                            .value()
+                            .clone();
                         let mut guard = multi.write();
 
                         match group_record.record_type() {
-                            IgmpV3RecordType::ModeIsInclude | IgmpV3RecordType::ChangeToIncludeMode => {
+                            IgmpV3RecordType::ModeIsInclude
+                            | IgmpV3RecordType::ChangeToIncludeMode => {
                                 match group_record.source_addresses() {
                                     None => {
                                         //不接收所有
@@ -173,7 +177,8 @@ impl IgmpServer {
                                 }
                             }
 
-                            IgmpV3RecordType::ModeIsExclude | IgmpV3RecordType::ChangeToExcludeMode => {
+                            IgmpV3RecordType::ModeIsExclude
+                            | IgmpV3RecordType::ChangeToExcludeMode => {
                                 match group_record.source_addresses() {
                                     None => {
                                         //接收所有
@@ -190,40 +195,36 @@ impl IgmpServer {
                                 //在已有源的基础上，接收目标源，如果是排除模式，则删除；是包含模式则添加
                                 match group_record.source_addresses() {
                                     None => {}
-                                    Some(src) => {
-                                        match guard.map.get_mut(&source) {
-                                            None => {}
-                                            Some((is_include, set)) => {
-                                                for ip in src {
-                                                    if *is_include {
-                                                        set.insert(ip);
-                                                    } else {
-                                                        set.remove(&ip);
-                                                    }
+                                    Some(src) => match guard.map.get_mut(&source) {
+                                        None => {}
+                                        Some((is_include, set)) => {
+                                            for ip in src {
+                                                if *is_include {
+                                                    set.insert(ip);
+                                                } else {
+                                                    set.remove(&ip);
                                                 }
                                             }
                                         }
-                                    }
+                                    },
                                 }
                             }
                             IgmpV3RecordType::BlockOldSources => {
                                 //在已有源的基础上，不接收目标源
                                 match group_record.source_addresses() {
                                     None => {}
-                                    Some(src) => {
-                                        match guard.map.get_mut(&source) {
-                                            None => {}
-                                            Some((is_include, set)) => {
-                                                for ip in src {
-                                                    if *is_include {
-                                                        set.remove(&ip);
-                                                    } else {
-                                                        set.insert(ip);
-                                                    }
+                                    Some(src) => match guard.map.get_mut(&source) {
+                                        None => {}
+                                        Some((is_include, set)) => {
+                                            for ip in src {
+                                                if *is_include {
+                                                    set.remove(&ip);
+                                                } else {
+                                                    set.insert(ip);
                                                 }
                                             }
                                         }
-                                    }
+                                    },
                                 }
                             }
                             IgmpV3RecordType::Unknown(_) => {}

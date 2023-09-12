@@ -1,14 +1,14 @@
-use std::{io, thread};
+use crate::tun_tap_device::{DeviceType, DriverInfo};
+use libloading::Library;
+use packet::ethernet;
+use packet::ethernet::packet::EthernetPacket;
+use parking_lot::Mutex;
 use std::net::Ipv4Addr;
 use std::os::windows::process::CommandExt;
 use std::sync::Arc;
 use std::time::Duration;
-use libloading::Library;
-use parking_lot::Mutex;
-use packet::ethernet;
-use packet::ethernet::packet::EthernetPacket;
+use std::{io, thread};
 use win_tun_tap::{IFace, TapDevice, TunDevice};
-use crate::tun_tap_device::{DriverInfo, DeviceType};
 
 pub const TUN_INTERFACE_NAME: &str = "Vnt-Tun-V1";
 pub const TUN_POOL_NAME: &str = "Vnt-Tun-V1";
@@ -22,12 +22,8 @@ pub enum Device {
 impl Device {
     pub fn is_tun(&self) -> bool {
         match self {
-            Device::Tun(_) => {
-                true
-            }
-            Device::Tap(_) => {
-                false
-            }
+            Device::Tun(_) => true,
+            Device::Tap(_) => false,
         }
     }
 }
@@ -59,17 +55,13 @@ impl DeviceWriter {
                 dev.send_packet(packet);
                 Ok(())
             }
-            Device::Tap(_) => {
-                Err(io::Error::from(io::ErrorKind::Unsupported))
-            }
+            Device::Tap(_) => Err(io::Error::from(io::ErrorKind::Unsupported)),
         }
     }
     /// tap网卡写入以太网帧
     pub fn write_ethernet_tap(&self, buf: &[u8]) -> io::Result<()> {
         match self.device.as_ref() {
-            Device::Tun(_) => {
-                Err(io::Error::from(io::ErrorKind::Unsupported))
-            }
+            Device::Tun(_) => Err(io::Error::from(io::ErrorKind::Unsupported)),
             Device::Tap((dev, _)) => {
                 dev.write(buf)?;
                 Ok(())
@@ -85,7 +77,14 @@ impl DeviceWriter {
                 dev.send_packet(packet);
             }
             Device::Tap((dev, mac)) => {
-                let source_mac = [buf[14 + 12], buf[14 + 13], buf[14 + 14], buf[14 + 15], !mac[5], 234];
+                let source_mac = [
+                    buf[14 + 12],
+                    buf[14 + 13],
+                    buf[14 + 14],
+                    buf[14 + 15],
+                    !mac[5],
+                    234,
+                ];
                 let mut ethernet_packet = EthernetPacket::unchecked(buf);
                 ethernet_packet.set_source(&source_mac);
                 ethernet_packet.set_destination(mac);
@@ -105,16 +104,10 @@ impl DeviceWriter {
     ) -> io::Result<()> {
         let _guard = self.lock.lock();
         let dev: &dyn IFace = match self.device.as_ref() {
-            Device::Tun(dev) => {
-                dev as &dyn IFace
-            }
-            Device::Tap((dev, _)) => {
-                dev as &dyn IFace
-            }
+            Device::Tun(dev) => dev as &dyn IFace,
+            Device::Tap((dev, _)) => dev as &dyn IFace,
         };
-        if let Err(e) =
-            dev.delete_route(dest(old_gateway, old_gateway), old_netmask, old_gateway)
-        {
+        if let Err(e) = dev.delete_route(dest(old_gateway, old_gateway), old_netmask, old_gateway) {
             log::warn!("{:?}", e);
         }
         dev.set_ip(address, netmask)?;
@@ -125,18 +118,19 @@ impl DeviceWriter {
         dev.add_route(address, netmask, gateway, 1)?;
         // 广播和组播路由
         dev.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
-        dev.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
+        dev.add_route(
+            Ipv4Addr::from([224, 0, 0, 0]),
+            Ipv4Addr::from([240, 0, 0, 0]),
+            gateway,
+            1,
+        )?;
         delete_cache();
         Ok(())
     }
     pub fn close(&self) -> io::Result<()> {
         match self.device.as_ref() {
-            Device::Tun(dev) => {
-                dev.shutdown()
-            }
-            Device::Tap((dev, _)) => {
-                dev.shutdown()
-            }
+            Device::Tun(dev) => dev.shutdown(),
+            Device::Tap((dev, _)) => dev.shutdown(),
         }
     }
     pub fn is_tun(&self) -> bool {
@@ -161,9 +155,7 @@ pub struct DeviceReader {
 
 impl DeviceReader {
     pub fn new(device: Arc<Device>) -> Self {
-        Self {
-            device,
-        }
+        Self { device }
     }
 }
 
@@ -180,9 +172,7 @@ impl DeviceReader {
                 buf[..len].copy_from_slice(packet);
                 Ok(len)
             }
-            Device::Tap((dev, _)) => {
-                dev.read(buf)
-            }
+            Device::Tap((dev, _)) => dev.read(buf),
         }
     }
 }
@@ -224,10 +214,7 @@ fn create_tun(
                 ) {
                     Ok(tun_device) => tun_device,
                     Err(e) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("{:?}", e),
-                        ));
+                        return Err(io::Error::new(io::ErrorKind::Other, format!("{:?}", e)));
                     }
                 }
             }
@@ -245,7 +232,12 @@ fn create_tun(
         tun_device.add_route(address, netmask, gateway, 1)?;
         // 广播和组播路由
         tun_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
-        tun_device.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
+        tun_device.add_route(
+            Ipv4Addr::from([224, 0, 0, 0]),
+            Ipv4Addr::from([240, 0, 0, 0]),
+            gateway,
+            1,
+        )?;
         delete_cache();
         let device = Arc::new(Device::Tun(tun_device));
         let driver_info = DriverInfo {
@@ -257,7 +249,7 @@ fn create_tun(
         Ok((
             DeviceWriter::new(device.clone(), in_ips, address),
             DeviceReader::new(device),
-            driver_info
+            driver_info,
         ))
     }
 }
@@ -272,7 +264,7 @@ fn delete_cache() {
         .output()
         .unwrap();
     if !out.status.success() {
-        log::warn!("删除缓存失败:{:?}",out);
+        log::warn!("删除缓存失败:{:?}", out);
     }
 }
 
@@ -318,7 +310,12 @@ fn create_tap(
     }
     // 广播和组播路由
     tap_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
-    tap_device.add_route(Ipv4Addr::from([224, 0, 0, 0]), Ipv4Addr::from([240, 0, 0, 0]), gateway, 1)?;
+    tap_device.add_route(
+        Ipv4Addr::from([224, 0, 0, 0]),
+        Ipv4Addr::from([240, 0, 0, 0]),
+        gateway,
+        1,
+    )?;
     delete_cache();
     let tap = Arc::new(Device::Tap((tap_device, mac)));
     let driver_info = DriverInfo {
@@ -330,7 +327,7 @@ fn create_tap(
     Ok((
         DeviceWriter::new(tap.clone(), in_ips, address),
         DeviceReader::new(tap),
-        driver_info
+        driver_info,
     ))
 }
 
@@ -344,29 +341,23 @@ fn delete_tap() {
     let _ = tap_device.delete();
 }
 
-pub fn create_device(device_type: DeviceType, address: Ipv4Addr,
-                     netmask: Ipv4Addr,
-                     gateway: Ipv4Addr,
-                     in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
-                     mtu: u16) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
+pub fn create_device(
+    device_type: DeviceType,
+    address: Ipv4Addr,
+    netmask: Ipv4Addr,
+    gateway: Ipv4Addr,
+    in_ips: Vec<(Ipv4Addr, Ipv4Addr)>,
+    mtu: u16,
+) -> io::Result<(DeviceWriter, DeviceReader, DriverInfo)> {
     match device_type {
-        DeviceType::Tun => {
-            create_tun(address, netmask, gateway, in_ips, mtu)
-        }
-        DeviceType::Tap => {
-            create_tap(address, netmask, gateway, in_ips, mtu)
-        }
+        DeviceType::Tun => create_tun(address, netmask, gateway, in_ips, mtu),
+        DeviceType::Tap => create_tap(address, netmask, gateway, in_ips, mtu),
     }
 }
 
 pub fn delete_device(device_type: DeviceType) {
     match device_type {
-        DeviceType::Tun => {
-            delete_tun()
-        }
-        DeviceType::Tap => {
-            delete_tap()
-        }
+        DeviceType::Tun => delete_tun(),
+        DeviceType::Tap => delete_tap(),
     }
 }
-

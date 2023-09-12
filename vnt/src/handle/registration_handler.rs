@@ -1,18 +1,18 @@
+use crossbeam_utils::atomic::AtomicCell;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
-use crossbeam_utils::atomic::AtomicCell;
 
-use protobuf::Message;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UdpSocket};
 use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
 use crate::handle::PeerDeviceInfo;
+use protobuf::Message;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpStream, UdpSocket};
 
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
+use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
-use crate::protocol::body::ENCRYPTION_RESERVED;
 
 pub enum ReqEnum {
     TokenError,
@@ -47,8 +47,17 @@ pub async fn registration(
     ip: Ipv4Addr,
     client_secret: bool,
 ) -> Result<RegResponse, ReqEnum> {
-    let request_packet =
-        registration_request_packet(server_cipher, token.clone(), device_id.clone(), name.clone(), ip, false, false, client_secret).unwrap();
+    let request_packet = registration_request_packet(
+        server_cipher,
+        token.clone(),
+        device_id.clone(),
+        name.clone(),
+        ip,
+        false,
+        false,
+        client_secret,
+    )
+    .unwrap();
     let buf = request_packet.buffer();
     let mut recv_buf = [0u8; 10240];
     let recv_buf = if let Some(main_tcp_channel) = main_tcp_channel {
@@ -75,29 +84,30 @@ pub async fn registration(
         if let Err(e) = main_channel.send_to(buf, server_address).await {
             return Err(ReqEnum::Other(format!("send error:{}", e)));
         }
-        match tokio::time::timeout(Duration::from_millis(300), main_channel.recv_from(&mut recv_buf)).await {
-            Ok(rs) => {
-                match rs {
-                    Ok((len, addr)) => {
-                        if server_address != addr {
-                            return Err(ReqEnum::Other(format!("invalid data,from {}", addr)));
-                        }
-                        &mut recv_buf[..len]
+        match tokio::time::timeout(
+            Duration::from_millis(300),
+            main_channel.recv_from(&mut recv_buf),
+        )
+        .await
+        {
+            Ok(rs) => match rs {
+                Ok((len, addr)) => {
+                    if server_address != addr {
+                        return Err(ReqEnum::Other(format!("invalid data,from {}", addr)));
                     }
-                    Err(e) => {
-                        return Err(ReqEnum::Other(format!("receiver error:{}", e)));
-                    }
+                    &mut recv_buf[..len]
                 }
-            }
+                Err(e) => {
+                    return Err(ReqEnum::Other(format!("receiver error:{}", e)));
+                }
+            },
             Err(_) => {
                 return Err(ReqEnum::Timeout);
             }
         }
     };
     let mut net_packet = match NetPacket::new(recv_buf) {
-        Ok(net_packet) => {
-            net_packet
-        }
+        Ok(net_packet) => net_packet,
         Err(e) => {
             return Err(ReqEnum::ServerError(format!("{}", e)));
         }
@@ -133,14 +143,10 @@ pub async fn registration(
                                 public_port: response.public_port as u16,
                             })
                         }
-                        Err(_) => {
-                            Err(ReqEnum::ServerError("invalid data".to_string()))
-                        }
+                        Err(_) => Err(ReqEnum::ServerError("invalid data".to_string())),
                     }
                 }
-                _ => {
-                    Err(ReqEnum::ServerError("invalid data".to_string()))
-                }
+                _ => Err(ReqEnum::ServerError("invalid data".to_string())),
             }
         }
         Protocol::Error => {
@@ -150,24 +156,14 @@ pub async fn registration(
                     InErrorPacket::Disconnect => {
                         Err(ReqEnum::ServerError("disconnect".to_string()))
                     }
-                    InErrorPacket::AddressExhausted => {
-                        Err(ReqEnum::AddressExhausted)
-                    }
+                    InErrorPacket::AddressExhausted => Err(ReqEnum::AddressExhausted),
                     InErrorPacket::OtherError(e) => match e.message() {
-                        Ok(str) => {
-                            Err(ReqEnum::ServerError(str))
-                        }
+                        Ok(str) => Err(ReqEnum::ServerError(str)),
                         Err(e) => Err(ReqEnum::Other(format!("{}", e))),
                     },
-                    InErrorPacket::IpAlreadyExists => {
-                        Err(ReqEnum::IpAlreadyExists)
-                    }
-                    InErrorPacket::InvalidIp => {
-                        Err(ReqEnum::InvalidIp)
-                    }
-                    InErrorPacket::NoKey => {
-                        Err(ReqEnum::ServerError("no key".to_string()))
-                    }
+                    InErrorPacket::IpAlreadyExists => Err(ReqEnum::IpAlreadyExists),
+                    InErrorPacket::InvalidIp => Err(ReqEnum::InvalidIp),
+                    InErrorPacket::NoKey => Err(ReqEnum::ServerError("no key".to_string())),
                 },
                 Err(e) => Err(ReqEnum::Other(format!("{}", e))),
             }
@@ -243,10 +239,7 @@ impl Register {
     pub async fn fast_register(&self, ip: Ipv4Addr) -> crate::Result<()> {
         let last = self.time.load();
         if last.elapsed() < Duration::from_secs(2)
-            || self
-            .time
-            .compare_exchange(last, Instant::now())
-            .is_err()
+            || self.time.compare_exchange(last, Instant::now()).is_err()
         {
             //短时间不重复注册
             return Ok(());

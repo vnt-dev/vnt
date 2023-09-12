@@ -1,5 +1,5 @@
-use std::ops::Deref;
 use crate::channel::channel::Context;
+use std::ops::Deref;
 
 #[derive(Clone)]
 pub struct ChannelSender {
@@ -8,9 +8,7 @@ pub struct ChannelSender {
 
 impl ChannelSender {
     pub fn new(context: Context) -> Self {
-        Self {
-            context,
-        }
+        Self { context }
     }
 }
 

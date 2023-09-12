@@ -1,11 +1,11 @@
-use std::io;
-use std::ops::Deref;
-use std::time::Duration;
-use tokio::runtime::Runtime;
 use crate::cipher::RsaCipher;
 use crate::core::{Config, Vnt, VntUtil};
 use crate::handle::handshake_handler::HandshakeEnum;
 use crate::handle::registration_handler::{RegResponse, ReqEnum};
+use std::io;
+use std::ops::Deref;
+use std::time::Duration;
+use tokio::runtime::Runtime;
 
 pub struct VntUtilSync {
     vnt_util: VntUtil,
@@ -19,12 +19,11 @@ pub struct VntSync {
 
 impl VntUtilSync {
     pub fn new(config: Config) -> io::Result<VntUtilSync> {
-        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
         let vnt_util = runtime.block_on(VntUtil::new(config))?;
-        Ok(VntUtilSync {
-            vnt_util,
-            runtime,
-        })
+        Ok(VntUtilSync { vnt_util, runtime })
     }
     pub fn connect(&mut self) -> io::Result<()> {
         self.runtime.block_on(self.vnt_util.connect())
@@ -51,13 +50,14 @@ impl VntUtilSync {
         let vnt = runtime.block_on(self.vnt_util.build())?;
         {
             let mut vnt = vnt.clone();
-            std::thread::spawn(move || {
-                runtime.block_on(vnt.wait_stop())
-            });
+            std::thread::spawn(move || runtime.block_on(vnt.wait_stop()));
         }
         Ok(VntSync {
             vnt,
-            runtime: tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap(),
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
         })
     }
 }
@@ -67,7 +67,8 @@ impl VntSync {
         self.runtime.block_on(self.vnt.wait_stop())
     }
     pub fn wait_stop_ms(&mut self, ms: u64) -> bool {
-        self.runtime.block_on(self.vnt.wait_stop_ms(Duration::from_millis(ms)))
+        self.runtime
+            .block_on(self.vnt.wait_stop_ms(Duration::from_millis(ms)))
     }
 }
 

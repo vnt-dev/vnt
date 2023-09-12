@@ -11,7 +11,7 @@ pub struct ExternalRoute {
 impl ExternalRoute {
     pub fn new(route_table: Vec<(u32, u32, Ipv4Addr)>) -> Self {
         Self {
-            route_table: Arc::new(route_table)
+            route_table: Arc::new(route_table),
         }
     }
     pub fn route(&self, ip: &Ipv4Addr) -> Option<Ipv4Addr> {
@@ -33,7 +33,7 @@ pub struct AllowExternalRoute {
 impl AllowExternalRoute {
     pub fn new(route_table: Vec<(u32, u32)>) -> Self {
         Self {
-            route_table: Arc::new(route_table)
+            route_table: Arc::new(route_table),
         }
     }
     pub fn allow(&self, ip: &Ipv4Addr) -> bool {

@@ -9,7 +9,8 @@ pub struct Info {
     pub relay_server: String,
     pub nat_type: String,
     pub public_ips: String,
-    pub local_ip: String,
+    pub local_addr: String,
+    pub ipv6_addr: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -28,9 +29,10 @@ pub struct DeviceItem {
     pub nat_type: String,
     pub public_ips: String,
     pub local_ip: String,
+    pub ipv6: String,
     pub nat_traversal_type: String,
     pub rt: String,
     pub status: String,
     pub client_secret: bool,
-    pub current_client_secret:bool,
+    pub current_client_secret: bool,
 }

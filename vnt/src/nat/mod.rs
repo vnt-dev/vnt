@@ -1,6 +1,6 @@
 use std::io;
-use std::net::{IpAddr, Ipv4Addr};
 use std::net::UdpSocket;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -10,16 +10,42 @@ use crate::proto::message::PunchNatType;
 
 mod stun_test;
 
-pub fn local_ip() -> io::Result<Ipv4Addr> {
+pub fn local_ipv4() -> io::Result<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
     let addr = socket.local_addr()?;
     match addr.ip() {
-        IpAddr::V4(ip) => {
-            Ok(ip)
+        IpAddr::V4(ip) => Ok(ip),
+        IpAddr::V6(_) => Ok(Ipv4Addr::UNSPECIFIED),
+    }
+}
+
+pub fn local_ipv6() -> io::Result<Ipv6Addr> {
+    let socket = UdpSocket::bind("[::]:0")?;
+    socket.connect("[2001:4860:4860::8888]:80")?;
+    let addr = socket.local_addr()?;
+    match addr.ip() {
+        IpAddr::V4(_) => Ok(Ipv6Addr::UNSPECIFIED),
+        IpAddr::V6(ip) => Ok(ip),
+    }
+}
+
+pub fn local_ipv4_addr(port: u16) -> SocketAddrV4 {
+    match local_ipv4() {
+        Ok(ipv4) => SocketAddrV4::new(ipv4, port),
+        Err(e) => {
+            log::warn!("获取本地ipv4地址失败:{}", e);
+            SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)
         }
-        IpAddr::V6(_) => {
-            Ok(Ipv4Addr::UNSPECIFIED)
+    }
+}
+
+pub fn local_ipv6_addr(port: u16) -> SocketAddrV6 {
+    match local_ipv6() {
+        Ok(ipv6) => SocketAddrV6::new(ipv6, port, 0, 0),
+        Err(e) => {
+            log::warn!("获取本地ipv6地址失败:{}", e);
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)
         }
     }
 }
@@ -53,22 +79,21 @@ impl NatTest {
         mut stun_server: Vec<String>,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ip: Ipv4Addr,
-        local_port: u16,
+        local_ipv4_addr: SocketAddrV4,
+        ipv6_addr: SocketAddrV6,
     ) -> NatTest {
         let server = stun_server[0].clone();
         stun_server.resize(3, server);
-        let info = NatTest::re_test_(
+        let nat_info = Self::re_test_(
             &stun_server,
             public_ip,
             public_port,
-            local_ip,
-            local_port,
-        ).await;
-        NatTest {
-            stun_server,
-            info: Arc::new(Mutex::new(info)),
-        }
+            local_ipv4_addr,
+            ipv6_addr,
+        )
+        .await;
+        let info = Arc::new(Mutex::new(nat_info));
+        NatTest { stun_server, info }
     }
     pub fn nat_info(&self) -> NatInfo {
         self.info.lock().clone()
@@ -84,16 +109,17 @@ impl NatTest {
         &self,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ip: Ipv4Addr,
-        local_port: u16,
+        local_ipv4_addr: SocketAddrV4,
+        ipv6_addr: SocketAddrV6,
     ) -> NatInfo {
         let info = NatTest::re_test_(
             &self.stun_server,
             public_ip,
             public_port,
-            local_ip,
-            local_port,
-        ).await;
+            local_ipv4_addr,
+            ipv6_addr,
+        )
+        .await;
         *self.info.lock() = info.clone();
         info
     }
@@ -101,8 +127,8 @@ impl NatTest {
         stun_server: &Vec<String>,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ip: Ipv4Addr,
-        local_port: u16,
+        local_ipv4_addr: SocketAddrV4,
+        ipv6_addr: SocketAddrV6,
     ) -> NatInfo {
         return match stun_test::stun_test_nat(stun_server.clone()).await {
             Ok((nat_type, ips, port_range)) => {
@@ -117,8 +143,8 @@ impl NatTest {
                     public_ips,
                     public_port,
                     port_range,
-                    local_ip,
-                    local_port,
+                    local_ipv4_addr,
+                    ipv6_addr,
                     nat_type,
                 )
             }
@@ -128,8 +154,8 @@ impl NatTest {
                     vec![public_ip],
                     public_port,
                     0,
-                    local_ip,
-                    local_port,
+                    local_ipv4_addr,
+                    ipv6_addr,
                     NatType::Cone,
                 )
             }

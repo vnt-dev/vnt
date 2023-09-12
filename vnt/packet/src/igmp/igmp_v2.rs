@@ -1,18 +1,18 @@
-use std::{fmt, io};
-use std::net::Ipv4Addr;
 use crate::cal_checksum;
+use std::net::Ipv4Addr;
+use std::{fmt, io};
 
 /// igmp v2
 /* https://www.rfc-editor.org/rfc/rfc2236.html
 
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |      Type     | Max Resp Time |           Checksum            |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                         Group Address                         |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- */
+   0                   1                   2                   3
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |      Type     | Max Resp Time |           Checksum            |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |                         Group Address                         |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+*/
 
 /// v2版本的报文
 pub struct IgmpV2Packet<B> {
@@ -48,7 +48,7 @@ impl Into<u8> for IgmpV2Type {
             IgmpV2Type::Query => 0x11,
             IgmpV2Type::ReportV2 => 0x16,
             IgmpV2Type::LeaveV2 => 0x17,
-            IgmpV2Type::Unknown(v) => v
+            IgmpV2Type::Unknown(v) => v,
         }
     }
 }

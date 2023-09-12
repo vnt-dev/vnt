@@ -19,7 +19,7 @@ use crate::error::*;
 
 /// A TUN device.
 pub trait Device {
-    type Queue ;
+    type Queue;
 
     /// Reconfigure the device.
     fn configure(&mut self, config: &Configuration) -> Result<()> {

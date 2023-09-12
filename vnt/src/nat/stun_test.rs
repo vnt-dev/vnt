@@ -3,9 +3,9 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
 
+use crate::channel::punch::NatType;
 use stun_format::Attr;
 use tokio::net::UdpSocket;
-use crate::channel::punch::NatType;
 
 pub async fn stun_test_nat(stun_servers: Vec<String>) -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
     let mut h = Vec::new();
@@ -68,21 +68,30 @@ async fn test_nat(stun_server: String) -> io::Result<(NatType, Vec<Ipv4Addr>, u1
     Ok((nat_type, hash_set.into_iter().collect(), port_range))
 }
 
-async fn test_nat_(udp: &UdpSocket, change_ip: bool, change_port: bool) -> io::Result<(SocketAddr, SocketAddr)> {
+async fn test_nat_(
+    udp: &UdpSocket,
+    change_ip: bool,
+    change_port: bool,
+) -> io::Result<(SocketAddr, SocketAddr)> {
     for _ in 0..2 {
         let mut buf = [0u8; 28];
         let mut msg = stun_format::MsgBuilder::from(buf.as_mut_slice());
         msg.typ(stun_format::MsgType::BindingRequest).unwrap();
         msg.tid(1).unwrap();
-        msg.add_attr(Attr::ChangeRequest { change_ip, change_port }).unwrap();
+        msg.add_attr(Attr::ChangeRequest {
+            change_ip,
+            change_port,
+        })
+        .unwrap();
         udp.send(msg.as_bytes()).await?;
         let mut buf = [0; 10240];
-        let (len, addr) = match tokio::time::timeout(Duration::from_millis(300), udp.recv_from(&mut buf)).await {
-            Ok(rs) => { rs? }
-            Err(_) => {
-                continue;
-            }
-        };
+        let (len, addr) =
+            match tokio::time::timeout(Duration::from_millis(300), udp.recv_from(&mut buf)).await {
+                Ok(rs) => rs?,
+                Err(_) => {
+                    continue;
+                }
+            };
         let msg = stun_format::Msg::from(&buf[..len]);
         let mut mapped_addr = None;
         let mut changed_addr = None;
@@ -126,4 +135,3 @@ fn stun_addr(addr: stun_format::SocketAddr) -> SocketAddr {
         }
     }
 }
-

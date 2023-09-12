@@ -3,9 +3,13 @@ use std::net::Ipv4Addr;
 use std::os::windows::process::CommandExt;
 
 /// 添加路由
-pub fn add_route(index: u32, dest: Ipv4Addr,
-                 netmask: Ipv4Addr,
-                 gateway: Ipv4Addr, metric: u16) -> io::Result<()> {
+pub fn add_route(
+    index: u32,
+    dest: Ipv4Addr,
+    netmask: Ipv4Addr,
+    gateway: Ipv4Addr,
+    metric: u16,
+) -> io::Result<()> {
     let set_route = format!(
         "route add {:?} mask {:?} {:?} metric {} if {}",
         dest, netmask, gateway, metric, index
@@ -18,16 +22,27 @@ pub fn add_route(index: u32, dest: Ipv4Addr,
         .output()
         .unwrap();
     if !out.status.success() {
-        log::error!("cmd={:?},out={:?}",set_route,out);
-        return Err(io::Error::new(io::ErrorKind::Other, format!("添加路由失败: {:?}", out)));
+        log::error!("cmd={:?},out={:?}", set_route, out);
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("添加路由失败: {:?}", out),
+        ));
     }
     Ok(())
 }
 
 /// 删除路由
-pub fn delete_route(index: u32, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4Addr) -> io::Result<()> {
+pub fn delete_route(
+    index: u32,
+    dest: Ipv4Addr,
+    netmask: Ipv4Addr,
+    gateway: Ipv4Addr,
+) -> io::Result<()> {
     if index == 0 {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("网络接口索引错误: {:?}", index)));
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("网络接口索引错误: {:?}", index),
+        ));
     }
     let delete_route = format!(
         "route delete  {:?} mask {:?} {:?} if {}",
@@ -41,7 +56,10 @@ pub fn delete_route(index: u32, dest: Ipv4Addr, netmask: Ipv4Addr, gateway: Ipv4
         .output()
         .unwrap();
     if !out.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("删除路由失败: {:?}", out)));
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("删除路由失败: {:?}", out),
+        ));
     }
     Ok(())
 }

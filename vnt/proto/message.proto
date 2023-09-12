@@ -54,7 +54,8 @@ message PunchInfo{
   bool reply = 6;
   fixed32 local_ip = 7;
   uint32 local_port = 8;
-  repeated bytes public_ipv6_list = 9;
+  bytes ipv6 = 9;
+  uint32 ipv6_port = 10;
 }
 enum PunchNatType{
   Symmetric = 0;

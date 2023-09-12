@@ -1,17 +1,17 @@
-use std::{fmt, io};
-use std::net::Ipv4Addr;
 use crate::cal_checksum;
+use std::net::Ipv4Addr;
+use std::{fmt, io};
 
 /// igmp v1
 /* https://datatracker.ietf.org/doc/html/rfc1112
-       0                   1                   2                   3
-       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |Version| Type  |    Unused     |           Checksum            |
-      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-      |                         Group Address                         |
-      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- */
+      0                   1                   2                   3
+      0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |Version| Type  |    Unused     |           Checksum            |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+     |                         Group Address                         |
+     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+*/
 /// v1版本的报文
 pub struct IgmpV1Packet<B> {
     pub buffer: B,
@@ -43,7 +43,7 @@ impl Into<u8> for IgmpV1Type {
         match self {
             IgmpV1Type::Query => 0x11,
             IgmpV1Type::ReportV1 => 0x12,
-            IgmpV1Type::Unknown(v) => v
+            IgmpV1Type::Unknown(v) => v,
         }
     }
 }
