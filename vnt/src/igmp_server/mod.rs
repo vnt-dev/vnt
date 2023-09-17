@@ -1,14 +1,18 @@
-use crate::tun_tap_device::DeviceWriter;
-use dashmap::DashMap;
-use packet::igmp::igmp_v2::IgmpV2Packet;
-use packet::igmp::igmp_v3::{IgmpV3QueryPacket, IgmpV3RecordType, IgmpV3ReportPacket};
-use packet::igmp::IgmpType;
-use packet::ip::ipv4::protocol::Protocol;
-use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use dashmap::DashMap;
+use parking_lot::RwLock;
+
+use packet::igmp::igmp_v2::IgmpV2Packet;
+use packet::igmp::igmp_v3::{IgmpV3QueryPacket, IgmpV3RecordType, IgmpV3ReportPacket};
+use packet::igmp::IgmpType;
+use packet::ip::ipv4::protocol::Protocol;
+
+use crate::ip_proxy::DashMapNew;
+use crate::tun_tap_device::DeviceWriter;
 
 //1. 定时发送query，启动时20秒一次，连发3次，之后8分钟一次
 //2. 接收网关的igmp report 维护组播源信息
@@ -52,7 +56,7 @@ pub struct IgmpServer {
 
 impl IgmpServer {
     pub fn new(device_writer: DeviceWriter) -> Self {
-        let multicast: Arc<DashMap<Ipv4Addr, Arc<RwLock<Multicast>>>> = Arc::new(DashMap::new());
+        let multicast: Arc<DashMap<Ipv4Addr, Arc<RwLock<Multicast>>>> = Arc::new(DashMap::new0());
         std::thread::spawn(move || {
             //预留以太网帧头和ip头
             let mut buf = [0; 14 + 24 + 12];

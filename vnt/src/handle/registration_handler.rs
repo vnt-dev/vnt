@@ -6,8 +6,9 @@ use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
 use crate::handle::PeerDeviceInfo;
 use protobuf::Message;
+use std::net::UdpSocket;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::TcpStream;
 
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
 use crate::protocol::body::ENCRYPTION_RESERVED;
@@ -81,28 +82,18 @@ pub async fn registration(
         }
         &mut recv_buf[4..len]
     } else {
-        if let Err(e) = main_channel.send_to(buf, server_address).await {
+        if let Err(e) = main_channel.send_to(buf, server_address) {
             return Err(ReqEnum::Other(format!("send error:{}", e)));
         }
-        match tokio::time::timeout(
-            Duration::from_millis(300),
-            main_channel.recv_from(&mut recv_buf),
-        )
-        .await
-        {
-            Ok(rs) => match rs {
-                Ok((len, addr)) => {
-                    if server_address != addr {
-                        return Err(ReqEnum::Other(format!("invalid data,from {}", addr)));
-                    }
-                    &mut recv_buf[..len]
+        match main_channel.recv_from(&mut recv_buf) {
+            Ok((len, addr)) => {
+                if server_address != addr {
+                    return Err(ReqEnum::Other(format!("invalid data,from {}", addr)));
                 }
-                Err(e) => {
-                    return Err(ReqEnum::Other(format!("receiver error:{}", e)));
-                }
-            },
-            Err(_) => {
-                return Err(ReqEnum::Timeout);
+                &mut recv_buf[..len]
+            }
+            Err(e) => {
+                return Err(ReqEnum::Other(format!("receiver error:{}", e)));
             }
         }
     };
@@ -236,7 +227,7 @@ impl Register {
             client_secret,
         }
     }
-    pub async fn fast_register(&self, ip: Ipv4Addr) -> crate::Result<()> {
+    pub fn fast_register(&self, ip: Ipv4Addr) -> crate::Result<()> {
         let last = self.time.load();
         if last.elapsed() < Duration::from_secs(2)
             || self.time.compare_exchange(last, Instant::now()).is_err()
@@ -256,7 +247,7 @@ impl Register {
             self.client_secret,
         )?;
         let buf = request_packet.buffer();
-        self.sender.send_main(buf, self.server_address).await?;
+        self.sender.send_main(buf, self.server_address)?;
         Ok(())
     }
 }

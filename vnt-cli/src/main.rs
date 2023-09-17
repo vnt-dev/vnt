@@ -7,8 +7,6 @@ use console::style;
 use getopts::Options;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::signal;
-#[cfg(unix)]
-use tokio::signal::unix::{signal, SignalKind};
 
 use common::args_parse::{ips_parse, out_ips_parse};
 use vnt::channel::punch::PunchModel;
@@ -143,12 +141,12 @@ fn main() {
             if let Some(addr) = addr.next() {
                 addr
             } else {
-                println!("parameter -s error .");
+                println!("parameter '-s {}' error .", server_address_str);
                 return;
             }
         }
         Err(e) => {
-            println!("parameter -s error {}.", e);
+            println!("parameter '-s {}' error {}.", server_address_str, e);
             return;
         }
     };
@@ -165,7 +163,7 @@ fn main() {
         Err(e) => {
             print_usage(&program, opts);
             println!();
-            println!("-i {}", e);
+            println!("-i: {:?} {}", in_ip, e);
             println!("example: -i 192.168.0.0/24,10.26.0.3");
             return;
         }
@@ -176,7 +174,7 @@ fn main() {
         Err(e) => {
             print_usage(&program, opts);
             println!();
-            println!("-o {}", e);
+            println!("-o: {:?} {}", out_ip, e);
             println!("example: -o 0.0.0.0/0");
             return;
         }
@@ -192,7 +190,7 @@ fn main() {
             Err(e) => {
                 print_usage(&program, opts);
                 println!();
-                println!("-u {}", e);
+                println!("'-u {}' {}", mtu, e);
                 return;
             }
         }
@@ -200,10 +198,11 @@ fn main() {
         None
     };
     let virtual_ip: Option<String> = matches.opt_get("ip").unwrap();
-    let virtual_ip = virtual_ip.map(|v| Ipv4Addr::from_str(&v).expect("--ip error"));
+    let virtual_ip =
+        virtual_ip.map(|v| Ipv4Addr::from_str(&v).expect(&format!("'--ip {}' error", v)));
     if let Some(virtual_ip) = virtual_ip {
         if virtual_ip.is_unspecified() || virtual_ip.is_broadcast() || virtual_ip.is_multicast() {
-            println!("--ip invalid");
+            println!("'--ip {}' invalid", virtual_ip);
             return;
         }
     }
@@ -211,21 +210,15 @@ fn main() {
     let relay = matches.opt_present("relay");
     let parallel = matches.opt_get::<usize>("par").unwrap().unwrap_or(1);
     if parallel == 0 {
-        println!("--par invalid");
+        println!("'--par {}' invalid", parallel);
         return;
     }
-    let thread_num = matches
-        .opt_get::<usize>("thread")
-        .unwrap()
-        .unwrap_or(std::thread::available_parallelism().unwrap().get() * 2);
+
     let cipher_model = matches
         .opt_get::<CipherModel>("model")
         .unwrap()
         .unwrap_or(CipherModel::AesGcm);
-    if thread_num == 0 {
-        println!("--thread invalid");
-        return;
-    }
+
     let finger = matches.opt_present("finger");
     let punch_model = matches
         .opt_get::<PunchModel>("punch")
@@ -254,15 +247,10 @@ fn main() {
         finger,
         punch_model,
     );
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .worker_threads(thread_num)
-        .build()
-        .unwrap();
-    runtime.block_on(main0(config, !unused_cmd));
+    main0(config, !unused_cmd);
     std::process::exit(0);
 }
-
+#[tokio::main]
 async fn main0(config: Config, show_cmd: bool) {
     let server_encrypt = config.server_encrypt;
     let mut vnt_util = VntUtil::new(config).await.unwrap();
@@ -373,8 +361,6 @@ async fn main0(config: Config, show_cmd: bool) {
             println!("command error :{}", e);
         }
     });
-    #[cfg(unix)]
-    let mut sigterm = signal(SignalKind::terminate()).expect("Error setting SIGTERM handler");
     if show_cmd {
         let stdin = tokio::io::stdin();
         let mut cmd = String::new();
@@ -382,7 +368,6 @@ async fn main0(config: Config, show_cmd: bool) {
         loop {
             cmd.clear();
             println!("input:list,info,route,all,stop");
-            #[cfg(unix)]
             tokio::select! {
                 _ = vnt.wait_stop()=>{
                     return;
@@ -390,36 +375,7 @@ async fn main0(config: Config, show_cmd: bool) {
                 _ = signal::ctrl_c()=>{
                     let _ = vnt.stop();
                     vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                    return;
-                }
-                _ = sigterm.recv()=>{
-                    let _ = vnt.stop();
-                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                    return;
-                }
-                rs = reader.read_line(&mut cmd)=>{
-                     match rs {
-                        Ok(len) => {
-                            if !command(&cmd[..len],&vnt){
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            println!("input err:{}",e);
-                            break;
-                        }
-                    }
-                }
-            }
-            #[cfg(windows)]
-            tokio::select! {
-                _ = vnt.wait_stop()=>{
-                    return;
-                }
-                _ = signal::ctrl_c()=>{
-                    let _ = vnt.stop();
-                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                    return;
+                    std::process::exit(0);
                 }
                 rs = reader.read_line(&mut cmd)=>{
                      match rs {
@@ -437,23 +393,6 @@ async fn main0(config: Config, show_cmd: bool) {
             }
         }
     }
-    #[cfg(unix)]
-    tokio::select! {
-                 _ = vnt.wait_stop()=>{
-                     return;
-                 }
-                 _ = signal::ctrl_c()=>{
-                     let _ = vnt.stop();
-                     vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                     return;
-                 }
-                 _ = sigterm.recv()=>{
-                     let _ = vnt.stop();
-                     vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                     return;
-                 }
-    }
-    #[cfg(windows)]
     vnt.wait_stop().await;
 }
 
@@ -508,13 +447,12 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
     println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
     println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
-    println!("  -u <mtu>            自定义mtu(不加密默认为1430，加密默认为1410)");
+    println!("  -u <mtu>            自定义mtu(不加密默认为1450，加密默认为1410)");
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
-    println!("  --thread <thread>   线程数(必须为正整数),默认为核心数乘2");
-    println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb，通常性能aes_ecb>aes_cbc>aes_gcm,安全性则相反");
+    println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb，一般来说性能:aes_ecb>aes_cbc>aes_gcm");
     println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
     println!("  --punch <punch>     取值ipv4/ipv6，ipv4表示仅使用ipv4打洞");
 

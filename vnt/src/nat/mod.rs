@@ -75,7 +75,7 @@ impl Into<NatType> for PunchNatType {
 }
 
 impl NatTest {
-    pub async fn new(
+    pub fn new(
         mut stun_server: Vec<String>,
         public_ip: Ipv4Addr,
         public_port: u16,
@@ -84,14 +84,14 @@ impl NatTest {
     ) -> NatTest {
         let server = stun_server[0].clone();
         stun_server.resize(3, server);
-        let nat_info = Self::re_test_(
-            &stun_server,
-            public_ip,
+        let nat_info = NatInfo::new(
+            vec![public_ip],
             public_port,
+            0,
             local_ipv4_addr,
             ipv6_addr,
-        )
-        .await;
+            NatType::Cone,
+        );
         let info = Arc::new(Mutex::new(nat_info));
         NatTest { stun_server, info }
     }

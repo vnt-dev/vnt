@@ -40,7 +40,7 @@ fn icmp(device_writer: &DeviceWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) ->
 
 /// 接收tun数据，并且转发到udp上
 #[inline]
-async fn handle(
+fn handle(
     sender: &ChannelSender,
     data: &mut [u8],
     len: usize,
@@ -75,11 +75,10 @@ async fn handle(
         proxy_map,
         client_cipher,
         server_cipher,
-    )
-    .await;
+    );
 }
 
-pub async fn start(
+pub fn start(
     worker: VntWorker,
     sender: ChannelSender,
     device_reader: DeviceReader,
@@ -96,34 +95,27 @@ pub async fn start(
         thread::Builder::new()
             .name("tun_handler".into())
             .spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-                    .block_on(async move {
-                        if let Err(e) = start_simple(
-                            sender,
-                            device_reader,
-                            &device_writer,
-                            igmp_server,
-                            current_device,
-                            ip_route,
-                            ip_proxy_map,
-                            client_cipher,
-                            server_cipher,
-                        )
-                        .await
-                        {
-                            log::warn!("stop:{}", e);
-                        }
-                        let _ = device_writer.close();
-                        worker.stop_all();
-                    })
+                if let Err(e) = start_simple(
+                    &sender,
+                    device_reader,
+                    &device_writer,
+                    igmp_server,
+                    current_device,
+                    ip_route,
+                    ip_proxy_map,
+                    client_cipher,
+                    server_cipher,
+                ) {
+                    log::warn!("stop:{}", e);
+                }
+                let _ = sender.close();
+                let _ = device_writer.close();
+                worker.stop_all();
             })
             .unwrap();
     } else {
         let (buf_sender, buf_receiver) = buf_channel_group(parallel);
-        for mut buf_receiver in buf_receiver.0 {
+        for buf_receiver in buf_receiver.0 {
             let sender = sender.clone();
             let device_writer = device_writer.clone();
             let igmp_server = igmp_server.clone();
@@ -132,8 +124,8 @@ pub async fn start(
             let ip_proxy_map = ip_proxy_map.clone();
             let client_cipher = client_cipher.clone();
             let server_cipher = server_cipher.clone();
-            tokio::spawn(async move {
-                while let Some((mut buf, start, len)) = buf_receiver.recv().await {
+            thread::spawn(move || {
+                while let Ok((mut buf, start, len)) = buf_receiver.recv() {
                     match handle(
                         &sender,
                         &mut buf[start..],
@@ -145,39 +137,34 @@ pub async fn start(
                         &ip_proxy_map,
                         &client_cipher,
                         &server_cipher,
-                    )
-                    .await
-                    {
+                    ) {
                         Ok(_) => {}
                         Err(e) => {
                             log::warn!("{:?}", e)
                         }
                     }
                 }
+                let _ = sender.close();
+                let _ = device_writer.close();
             });
         }
 
         thread::Builder::new()
             .name("tun_handler".into())
             .spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-                    .block_on(async move {
-                        if let Err(e) = start_(sender, device_reader, buf_sender).await {
-                            log::warn!("stop:{}", e);
-                        }
-                        let _ = device_writer.close();
-                        worker.stop_all();
-                    })
+                if let Err(e) = start_(&sender, device_reader, buf_sender) {
+                    log::warn!("stop:{}", e);
+                }
+                let _ = sender.close();
+                let _ = device_writer.close();
+                worker.stop_all();
             })
             .unwrap();
     }
 }
 
-async fn start_(
-    sender: ChannelSender,
+fn start_(
+    sender: &ChannelSender,
     device_reader: DeviceReader,
     mut buf_sender: BufSenderGroup,
 ) -> io::Result<()> {
@@ -191,7 +178,7 @@ async fn start_(
         let len = device_reader.read(&mut buf[12..])? + 12;
         #[cfg(any(target_os = "macos"))]
         let start = 4;
-        if !buf_sender.send((buf, start, len)).await {
+        if !buf_sender.send((buf, start, len)) {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "tun buf_sender发送失败",
@@ -200,8 +187,8 @@ async fn start_(
     }
 }
 
-async fn start_simple(
-    sender: ChannelSender,
+fn start_simple(
+    sender: &ChannelSender,
     device_reader: DeviceReader,
     device_writer: &DeviceWriter,
     igmp_server: Option<IgmpServer>,
@@ -221,7 +208,7 @@ async fn start_simple(
         #[cfg(any(target_os = "macos"))]
         let mut buf = &mut buf[4..];
         match handle(
-            &sender,
+            sender,
             &mut buf,
             len,
             device_writer,
@@ -231,9 +218,7 @@ async fn start_simple(
             &ip_proxy_map,
             &client_cipher,
             &server_cipher,
-        )
-        .await
-        {
+        ) {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("{:?}", e)

@@ -37,49 +37,41 @@ jobs:
       fail-fast: false
       matrix:
         # a list of all the targets
+        # 选择使用openssl或者ring，并不是所有平台都支持
         include:
           - TARGET: i686-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
-            FEATURES: normal
-          - TARGET: x86_64-unknown-linux-gnu # tested in a debian container on a mac
-            OS: ubuntu-latest
-            FEATURES: ring-cipher
+            FEATURES: default
           - TARGET: x86_64-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
-            FEATURES: ring-cipher
-          - TARGET: aarch64-unknown-linux-gnu # tested on aws t4g.nano
-            OS: ubuntu-latest
-            FEATURES: ring-cipher
+            FEATURES: ring-cipher,openssl-vendored
           - TARGET: aarch64-unknown-linux-musl # tested on aws t4g.nano in alpine container
             OS: ubuntu-latest
-            FEATURES: normal
-          - TARGET: armv7-unknown-linux-gnueabihf # raspberry pi 2-3-4, not tested
-            OS: ubuntu-latest
-            FEATURES: ring-cipher
+            FEATURES: default
           - TARGET: armv7-unknown-linux-musleabihf # raspberry pi 2-3-4, not tested
             OS: ubuntu-latest
-            FEATURES: normal
-          - TARGET: arm-unknown-linux-gnueabihf # raspberry pi 0-1, not tested
-            OS: ubuntu-latest
-            FEATURES: ring-cipher
+            FEATURES: openssl-vendored
           - TARGET: arm-unknown-linux-musleabihf # raspberry pi 0-1, not tested
             OS: ubuntu-latest
-            FEATURES: normal
+            FEATURES: openssl-vendored
           - TARGET: x86_64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
-            FEATURES: ring-cipher
+            FEATURES: ring-cipher,openssl-vendored
           - TARGET: aarch64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
-            FEATURES: ring-cipher
+            FEATURES: ring-cipher,openssl-vendored
           - TARGET: i686-pc-windows-msvc # tested on a windows machine
-            OS: windows-latest
-            FEATURES: ring-cipher
+            OS: windows-2019
+            FEATURES: ring-cipher,openssl-vendored
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
             OS: windows-latest
-            FEATURES: ring-cipher
+            FEATURES: ring-cipher,openssl-vendored
           - TARGET: mipsel-unknown-linux-musl # openwrt
             OS: ubuntu-latest
-            FEATURES: normal
+            FEATURES: openssl-vendored
+          - TARGET: mips-unknown-linux-musl # openwrt
+            OS: ubuntu-latest
+            FEATURES: openssl-vendored
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:
@@ -98,6 +90,9 @@ jobs:
             ~/.cargo/registry
             ./target
           key: build-cargo-registry-${{matrix.TARGET}}
+      - name: Use strawberry perl
+        if: startsWith(matrix.os, 'windows')
+        run: echo OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl >> $GITHUB_ENV
       - name: List
         run: find ./
       - name: Install and configure dependencies
@@ -105,45 +100,64 @@ jobs:
           # dependencies are only needed on ubuntu as that's the only place where
           # we make cross-compilation
           if [[ $OS =~ ^ubuntu.*$ ]]; then
-            sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools gcc-mipsel-linux-gnu
+            sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools
+            #  curl -s musl.cc | grep mipsel
+            case $TARGET in 
+              mipsel-unknown-linux-musl)
+                MUSL_URI=mipsel-linux-musl-cross
+                ;;
+              aarch64-unknown-linux-musl)
+                MUSL_URI=aarch64-linux-musl-cross
+                ;;
+              armv7-unknown-linux-musleabihf)
+                MUSL_URI=armv7l-linux-musleabihf-cross
+                ;;   
+              arm-unknown-linux-musleabihf)
+                MUSL_URI=arm-linux-musleabihf-cross
+                ;;        
+              mips-unknown-linux-musl)
+                MUSL_URI=mips-linux-musl-cross
+                ;;
+            esac
+          
+            if [  -n "$MUSL_URI" ]; then
+              mkdir -p ./musl_gcc 
+              wget -c https://musl.cc/$MUSL_URI.tgz -P ./musl_gcc/
+              tar zxf ./musl_gcc/$MUSL_URI.tgz -C ./musl_gcc/
+              sudo ln -s $(pwd)/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
+            fi
           fi
+          
+          
           # some additional configuration for cross-compilation on linux
           cat >>~/.cargo/config <<EOF
           [target.x86_64-unknown-linux-musl]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.aarch64-unknown-linux-musl]
-          linker = "aarch64-linux-gnu-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
-          [target.armv7-unknown-linux-gnueabihf]
-          linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
+          linker = "aarch64-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.armv7-unknown-linux-musleabihf]
-          linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
-          [target.arm-unknown-linux-gnueabihf]
-          linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
+          linker = "armv7l-linux-musleabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.arm-unknown-linux-musleabihf]
-          linker = "arm-linux-gnueabihf-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
+          linker = "arm-linux-musleabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.mipsel-unknown-linux-musl]
-          linker = "mipsel-linux-gnu-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
+          linker = "mipsel-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.mips-unknown-linux-musl]
+          linker = "mips-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.x86_64-pc-windows-msvc]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]    
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]    
           [target.i686-pc-windows-msvc]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]      
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]      
           [target.x86_64-apple-darwin]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"] 
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"] 
           [target.aarch64-apple-darwin]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]     
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]     
           [target.i686-unknown-linux-musl]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]    
-          [target.x86_64-unknown-linux-gnu]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","--cfg","aes_armv8"]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]    
           EOF
       - name: Install rust target
         run: rustup target add $TARGET

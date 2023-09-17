@@ -66,6 +66,36 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
     let tcp = env.get_field(&config, "tcp", "Z")?.z()?;
     let finger = env.get_field(&config, "finger", "Z")?.z()?;
+    let in_ips = to_string(env, &config, "inIps")?;
+    let out_ips = to_string(env, &config, "outIps")?;
+    let in_ips = if let Some(in_ips) = in_ips {
+        let in_ips: Vec<&str> = in_ips.split("\n").collect();
+        let in_ips = in_ips.iter().map(|v| v.to_string()).collect();
+        match common::args_parse::ips_parse(&in_ips) {
+            Ok(in_ips) => in_ips,
+            Err(e) => {
+                env.throw_new("java/lang/RuntimeException", format!("in_ips {}", e))
+                    .expect("throw");
+                return Err(Error::JavaException);
+            }
+        }
+    } else {
+        vec![]
+    };
+    let out_ips = if let Some(out_ips) = out_ips {
+        let out_ips: Vec<&str> = out_ips.split("\n").collect();
+        let out_ips = out_ips.iter().map(|v| v.to_string()).collect();
+        match common::args_parse::out_ips_parse(&out_ips) {
+            Ok(out_ips) => out_ips,
+            Err(e) => {
+                env.throw_new("java/lang/RuntimeException", format!("out_ips {}", e))
+                    .expect("throw");
+                return Err(Error::JavaException);
+            }
+        }
+    } else {
+        vec![]
+    };
 
     let server_address = match server_address_str.to_socket_addrs() {
         Ok(mut rs) => {
@@ -106,8 +136,8 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
         server_address,
         server_address_str,
         stun_server,
-        vec![],
-        vec![],
+        in_ips,
+        out_ips,
         password,
         false,
         None,

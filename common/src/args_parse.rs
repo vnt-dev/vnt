@@ -68,6 +68,9 @@ pub fn out_ips_parse(ips: &Vec<String>) -> Result<Vec<(u32, u32)>, String> {
 
 pub fn to_ip(mask: &str) -> Result<u32, String> {
     if let Ok(m) = mask.parse::<u32>() {
+        if m >= 32 {
+            return Err("not netmask".to_string());
+        }
         let mut mask = 0 as u32;
         for i in 0..m {
             mask = mask | (1 << (31 - i));

@@ -169,7 +169,7 @@ pub fn delete_device(_device_type: DeviceType) {
             .output()
             .expect("sh exec error!");
         if !delete_tun.status.success() {
-            log::warn!("删除网卡失败:{:?}",delete_tun);
+            log::warn!("删除网卡失败:{:?}", delete_tun);
         }
     }
 }

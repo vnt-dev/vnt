@@ -5,6 +5,10 @@ pub mod idle;
 pub mod punch;
 pub mod sender;
 
+const TCP_ID: usize = 0;
+const UDP_ID: usize = 1;
+const UDP_V6_ID: usize = 2;
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Status {
     Cone,
@@ -69,5 +73,8 @@ pub struct RouteKey {
 impl RouteKey {
     pub(crate) fn new(index: usize, addr: SocketAddr) -> Self {
         Self { index, addr }
+    }
+    pub fn is_tcp(&self) -> bool {
+        self.index == TCP_ID
     }
 }

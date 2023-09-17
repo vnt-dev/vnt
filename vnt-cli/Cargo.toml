@@ -1,6 +1,6 @@
 [package]
 name = "vnt-cli"
-version = "1.2.2"
+version = "1.2.3"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 vnt = { path = "../vnt", package = "vnt", optional = true }
 common = { path = "../common" }
-tokio = { version = "1.28.1", features = ["full"] }
+tokio = { version = "1.32.0", features = ["full"] }
 getopts = "0.2.21"
 console = "0.15.2"
 os_info = "3.7.0"
@@ -30,8 +30,9 @@ sudo = "0.6.0"
 winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
 
 [features]
-default = ["normal"]
-normal = ["vnt"]
+default = ["vnt"]
+openssl = ["vnt/openssl"]
+openssl-vendored = ["vnt/openssl-vendored"]
 ring-cipher = ["vnt/ring-cipher"]
 
 

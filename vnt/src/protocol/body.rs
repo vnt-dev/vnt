@@ -1,6 +1,9 @@
 use std::{fmt, io};
 
-pub const ENCRYPTION_RESERVED: usize = 32;
+pub const ENCRYPTION_RESERVED: usize = 32 + 12;
+pub const AES_GCM_ENCRYPTION_RESERVED: usize = 32;
+pub const RSA_ENCRYPTION_RESERVED: usize = 32;
+
 /* aes_gcm加密数据体
   0                                            15                                              31
   0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1

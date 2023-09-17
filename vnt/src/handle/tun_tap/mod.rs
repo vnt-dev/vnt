@@ -17,12 +17,13 @@ use parking_lot::RwLock;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
+
 pub mod channel_group;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub mod tap_handler;
 pub mod tun_handler;
 
-async fn broadcast(
+fn broadcast(
     server_cipher: &Cipher,
     multicast_members: Option<Arc<RwLock<Multicast>>>,
     sender: &ChannelSender,
@@ -47,8 +48,7 @@ async fn broadcast(
         }
         if route.is_p2p()
             && sender
-                .send_by_key(net_packet.buffer(), &route.route_key())
-                .await
+                .try_send_by_key(net_packet.buffer(), &route.route_key())
                 .is_ok()
         {
             peer_ips.push(peer_ip);
@@ -62,9 +62,7 @@ async fn broadcast(
     }
     //转发到服务端的可选择广播，还要进行服务端加密
     if peer_ips.is_empty() {
-        sender
-            .send_main(net_packet.buffer(), current_device.connect_server)
-            .await?;
+        sender.send_main(net_packet.buffer(), current_device.connect_server)?;
     } else {
         let buf = vec![
             0 as u8;
@@ -85,9 +83,7 @@ async fn broadcast(
         broadcast.set_address(&peer_ips)?;
         broadcast.set_data(net_packet.buffer())?;
         server_cipher.encrypt_ipv4(&mut server_packet)?;
-        sender
-            .send_main(server_packet.buffer(), current_device.connect_server)
-            .await?;
+        sender.send_main(server_packet.buffer(), current_device.connect_server)?;
     }
     Ok(())
 }
@@ -96,7 +92,7 @@ async fn broadcast(
 /// |12字节开头|ip报文|至少1024字节结尾|
 ///
 #[inline]
-pub async fn base_handle(
+pub fn base_handle(
     sender: &ChannelSender,
     buf: &mut [u8],
     data_len: usize, //数据总长度=12+ip包长度
@@ -126,9 +122,7 @@ pub async fn base_handle(
         if protocol == Protocol::Icmp {
             net_packet.set_gateway_flag(true);
             server_cipher.encrypt_ipv4(&mut net_packet)?;
-            sender
-                .send_main(net_packet.buffer(), current_device.connect_server)
-                .await?;
+            sender.send_main(net_packet.buffer(), current_device.connect_server)?;
         }
         return Ok(());
     }
@@ -140,9 +134,7 @@ pub async fn base_handle(
                     net_packet.set_destination(current_device.virtual_gateway);
                     net_packet.set_gateway_flag(true);
                     server_cipher.encrypt_ipv4(&mut net_packet)?;
-                    sender
-                        .send_main(net_packet.buffer(), current_device.connect_server)
-                        .await?;
+                    sender.send_main(net_packet.buffer(), current_device.connect_server)?;
                 }
             }
             Protocol::Udp => {
@@ -160,8 +152,7 @@ pub async fn base_handle(
                     sender,
                     &mut net_packet,
                     &current_device,
-                )
-                .await?;
+                )?;
             }
             _ => {}
         }
@@ -176,8 +167,7 @@ pub async fn base_handle(
             sender,
             &mut net_packet,
             &current_device,
-        )
-        .await?;
+        )?;
         return Ok(());
     }
     if !check_dest(
@@ -256,13 +246,10 @@ pub async fn base_handle(
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     //优先发到直连到地址
     if sender
-        .send_by_id(net_packet.buffer(), &dest_ip)
-        .await
+        .try_send_by_id(net_packet.buffer(), &dest_ip)
         .is_err()
     {
-        sender
-            .send_main(net_packet.buffer(), current_device.connect_server)
-            .await?;
+        sender.send_main(net_packet.buffer(), current_device.connect_server)?;
     }
     return Ok(());
 }

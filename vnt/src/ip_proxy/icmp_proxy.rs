@@ -109,7 +109,7 @@ impl IcmpProxy {
                                                             )
                                                             .is_err()
                                                         {
-                                                            let _ = self.sender.try_send_main(
+                                                            let _ = self.sender.send_main(
                                                                 net_packet.buffer(),
                                                                 connect_server,
                                                             );

@@ -13,6 +13,7 @@ use tun::platform::macos::Device;
 use tun::platform::posix::{Reader, Writer};
 
 use packet::ethernet::packet::EthernetPacket;
+
 #[derive(Clone)]
 pub enum DeviceW {
     Tun(Writer),
@@ -63,10 +64,17 @@ impl DeviceWriter {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             buf.put_u16(libc::ETH_P_IP as u16);
             buf.extend_from_slice(packet);
-            writer.write_all(&buf)
+            let len = writer.write(&buf)?;
+            if len != buf.len() {
+                log::error!("tun write error");
+            }
         } else {
-            writer.write_all(packet)
+            let len = writer.write(packet)?;
+            if len != packet.len() {
+                log::error!("tun write error");
+            }
         }
+        Ok(())
     }
     ///tun网卡写入ipv4数据
     pub fn write_ipv4_tun(&self, buf: &[u8]) -> io::Result<()> {

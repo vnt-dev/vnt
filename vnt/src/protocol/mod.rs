@@ -111,7 +111,7 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
                 "length overflow",
             ));
         }
-        //加密需要预留32字节
+        //加密需要预留ENCRYPTION_RESERVED字节
         let data_len = buffer.as_ref().len() - ENCRYPTION_RESERVED;
         Self::new0(data_len, buffer)
     }
@@ -187,7 +187,7 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     pub fn buffer_mut(&mut self) -> &mut [u8] {
-        self.buffer.as_mut()
+        &mut self.buffer.as_mut()[..self.data_len]
     }
     pub fn set_encrypt_flag(&mut self, is_encrypt: bool) {
         if is_encrypt {

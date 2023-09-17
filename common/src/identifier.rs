@@ -1,8 +1,7 @@
-use std::process::Command;
-
 #[cfg(target_os = "windows")]
 pub fn get_unique_identifier() -> Option<String> {
     use std::os::windows::process::CommandExt;
+    use std::process::Command;
     let output = match Command::new("wmic")
         .creation_flags(0x08000000)
         .args(&["csproduct", "get", "UUID"])
@@ -25,6 +24,7 @@ pub fn get_unique_identifier() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 pub fn get_unique_identifier() -> Option<String> {
+    use std::process::Command;
     let output = match Command::new("ioreg")
         .args(&["-rd1", "-c", "IOPlatformExpertDevice"])
         .output()
@@ -50,6 +50,7 @@ pub fn get_unique_identifier() -> Option<String> {
 
 #[cfg(target_os = "linux")]
 pub fn get_unique_identifier() -> Option<String> {
+    use std::process::Command;
     let output = match Command::new("dmidecode")
         .arg("-s")
         .arg("system-uuid")

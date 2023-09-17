@@ -7,7 +7,8 @@ use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use rand::Rng;
-use tokio::net::{TcpStream, UdpSocket};
+use std::net::UdpSocket;
+use tokio::net::TcpStream;
 use tokio::sync::mpsc::channel;
 
 use crate::channel::channel::{Channel, Context};
@@ -30,6 +31,7 @@ use crate::handle::{
     CurrentDeviceInfo, PeerDeviceInfo,
 };
 use crate::igmp_server::IgmpServer;
+use crate::ip_proxy::DashMapNew;
 use crate::nat::NatTest;
 use crate::tun_tap_device;
 use crate::tun_tap_device::{DeviceReader, DeviceWriter};
@@ -66,13 +68,23 @@ pub struct VntUtil {
 
 impl VntUtil {
     pub async fn new(config: Config) -> io::Result<VntUtil> {
-        let main_channel = UdpSocket::bind("0.0.0.0:0").await?;
-        let main_channel_ipv6 = match UdpSocket::bind("[::]:0").await {
-            Ok(main_channel_ipv6) => Some(main_channel_ipv6),
-            Err(e) => {
-                log::warn!("绑定ipv6地址失败:{}", e);
-                None
+        //单个udp用同步的性能更好，但是代理和多端口监听用异步更方便，这里将两者结合起来
+        let main_channel = UdpSocket::bind("0.0.0.0:0")?;
+        main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
+        main_channel.set_read_timeout(Some(Duration::from_secs(2)))?;
+        let main_channel_ipv6 = if config.punch_model != PunchModel::IPv4 {
+            match UdpSocket::bind("[::]:0") {
+                Ok(main_channel_ipv6) => {
+                    main_channel_ipv6.set_write_timeout(Some(Duration::from_secs(5)))?;
+                    Some(main_channel_ipv6)
+                }
+                Err(e) => {
+                    log::warn!("绑定ipv6地址失败:{}", e);
+                    None
+                }
             }
+        } else {
+            None
         };
         let server_cipher = if config.server_encrypt {
             let mut key = [0 as u8; 32];
@@ -181,7 +193,7 @@ impl VntUtil {
                 if self.config.password.is_none() {
                     1450
                 } else {
-                    1420
+                    1410
                 }
             }
             Some(mtu) => mtu,
@@ -205,6 +217,8 @@ impl VntUtil {
         Ok(driver_info)
     }
     pub async fn build(self) -> crate::Result<Vnt> {
+        //将读的超时时间清空
+        self.main_channel.set_read_timeout(None)?;
         let response = match self.response {
             None => {
                 return Err(Error::Stop("response None".to_string()));
@@ -266,9 +280,10 @@ impl VntUtil {
         ));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> =
             Arc::new(Mutex::new((response.epoch, response.device_info_list)));
-        let peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>> = Arc::new(DashMap::new());
+        let peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>> = Arc::new(DashMap::new0());
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
-
+        let public_ip = response.public_ip;
+        let public_port = response.public_port;
         let local_port = context.main_local_ipv4_port().unwrap_or(0);
 
         let local_ipv4_addr = crate::nat::local_ipv4_addr(local_port);
@@ -277,12 +292,11 @@ impl VntUtil {
         // NAT检测
         let nat_test = NatTest::new(
             config.stun_server.clone(),
-            response.public_ip,
-            response.public_port,
+            public_ip,
+            public_port,
             local_ipv4_addr,
             ipv6_addr,
-        )
-        .await;
+        );
         let in_external_route = if config.in_ips.is_empty() {
             None
         } else {
@@ -292,8 +306,11 @@ impl VntUtil {
             (None, None, None)
         } else {
             let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(
+                #[cfg(not(target_os = "android"))]
                 channel_sender.clone(),
+                #[cfg(not(target_os = "android"))]
                 current_device.clone(),
+                #[cfg(not(target_os = "android"))]
                 client_cipher.clone(),
             )
             .await?;
@@ -334,8 +351,7 @@ impl VntUtil {
                 client_cipher.clone(),
                 self.server_cipher.clone(),
                 config.parallel,
-            )
-            .await;
+            );
         }
         #[cfg(any(target_os = "android"))]
         tun_handler::start(
@@ -350,8 +366,7 @@ impl VntUtil {
             client_cipher.clone(),
             self.server_cipher.clone(),
             config.parallel,
-        )
-        .await;
+        );
 
         //外部数据接收处理
         let channel_recv_handler = ChannelDataHandler::new(
@@ -439,10 +454,11 @@ impl VntUtil {
             }
             let context = context.clone();
             let nat_test = nat_test.clone();
-            //延迟切换类型,避免无效流量
             tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(15)).await;
-                context.switch(nat_test.nat_info().nat_type);
+                let info = nat_test
+                    .re_test(public_ip, public_port, local_ipv4_addr, ipv6_addr)
+                    .await;
+                context.switch(info.nat_type);
             });
         }
         Ok(Vnt {
@@ -497,14 +513,15 @@ impl Vnt {
         self.context.route_table_one()
     }
     pub fn stop(&self) -> io::Result<()> {
-        self.context.close();
+        let _ = self.context.close();
         self.vnt_status_manager.stop_all();
-        self.device_writer.close()?;
+        let _ = self.device_writer.close();
         let virtual_gateway = self.current_device.load().virtual_gateway;
-        let _ = std::net::UdpSocket::bind("0.0.0.0:0")?.send_to(
-            &[0],
+        let _ = UdpSocket::bind("0.0.0.0:0")?.send_to(
+            b"stop",
             SocketAddr::V4(SocketAddrV4::new(virtual_gateway, 10000)),
         );
+
         Ok(())
     }
     pub async fn wait_stop(&mut self) {

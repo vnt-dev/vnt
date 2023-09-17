@@ -1,14 +1,15 @@
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use protobuf::Message;
+use std::net::UdpSocket;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::TcpStream;
 
 use crate::channel::channel::Context;
+use crate::channel::RouteKey;
 use crate::cipher::{Cipher, RsaCipher};
 use crate::proto::message::{HandshakeRequest, HandshakeResponse, SecretHandshakeRequest};
-use crate::protocol::body::ENCRYPTION_RESERVED;
+use crate::protocol::body::RSA_ENCRYPTION_RESERVED;
 use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
 
 pub enum HandshakeEnum {
@@ -44,7 +45,10 @@ fn secret_handshake_request_packet(
     request.token = token;
     request.key = key.to_vec();
     let bytes = request.write_to_bytes()?;
-    let mut net_packet = NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;
+    let mut net_packet = NetPacket::new0(
+        12 + bytes.len(),
+        vec![0u8; 12 + bytes.len() + RSA_ENCRYPTION_RESERVED],
+    )?;
     net_packet.set_version(Version::V1);
     net_packet.set_gateway_flag(true);
     net_packet.set_protocol(Protocol::Service);
@@ -166,26 +170,18 @@ async fn send_recv(
         }
         Ok(len)
     } else {
-        if let Err(e) = main_channel.send_to(send_buf, server_address).await {
+        if let Err(e) = main_channel.send_to(send_buf, server_address) {
             return Err(HandshakeEnum::Other(format!("send error:{}", e)));
         }
-        match tokio::time::timeout(Duration::from_millis(300), main_channel.recv_from(recv_buf))
-            .await
-        {
-            Ok(rs) => match rs {
-                Ok((len, addr)) => {
-                    if server_address != addr {
-                        return Err(HandshakeEnum::Other(format!("invalid data,from {}", addr)));
-                    }
+        match main_channel.recv_from(recv_buf) {
+            Ok((len, addr)) => {
+                if server_address != addr {
+                    Err(HandshakeEnum::Other(format!("invalid data,from {}", addr)))
+                } else {
                     Ok(len)
                 }
-                Err(e) => {
-                    return Err(HandshakeEnum::Other(format!("receiver error:{}", e)));
-                }
-            },
-            Err(_) => {
-                return Err(HandshakeEnum::Timeout);
             }
+            Err(e) => Err(HandshakeEnum::Other(format!("receiver error:{}", e))),
         }
     }
 }
@@ -241,22 +237,20 @@ pub async fn secret_handshake(
     }
 }
 
-pub async fn secret_handshake_req(
+pub fn secret_handshake_req(
     context: &Context,
     server_address: SocketAddr,
     rsa_cipher: &RsaCipher,
     server_cipher: &Cipher,
     token: String,
+    route_key: &RouteKey,
 ) -> crate::Result<()> {
     let secret_packet =
         secret_handshake_request_packet(rsa_cipher, token, server_cipher.key().unwrap())?;
-    context
-        .send_main(secret_packet.buffer(), server_address)
-        .await?;
-    if context.is_main_tcp() {
-        context
-            .send_main_udp(secret_packet.buffer(), server_address)
-            .await?;
+    if route_key.is_tcp() {
+        context.send_main(secret_packet.buffer(), server_address)?;
+    } else {
+        context.send_main_udp(secret_packet.buffer(), server_address)?;
     }
     Ok(())
 }

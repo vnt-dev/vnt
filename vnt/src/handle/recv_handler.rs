@@ -7,7 +7,6 @@ use parking_lot::Mutex;
 use protobuf::Message;
 use tokio::sync::mpsc::Sender;
 
-use packet::icmp::icmp::HeaderOther;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
@@ -144,17 +143,13 @@ impl ChannelDataHandler {
                 // 转发
                 if let Some(route) = context.route_one(&destination) {
                     if route.metric <= net_packet.ttl() {
-                        context
-                            .send_by_key(net_packet.buffer(), &route.route_key())
-                            .await?;
+                        context.try_send_by_key(net_packet.buffer(), &route.route_key())?;
                     }
                 } else if (ttl > 1 || destination == current_device.virtual_gateway())
                     && source != current_device.virtual_gateway()
                 {
                     //网关默认要转发一次，生存时间不够的发到网关也会被丢弃
-                    context
-                        .send_main(net_packet.buffer(), current_device.connect_server)
-                        .await?;
+                    context.send_main(net_packet.buffer(), current_device.connect_server)?;
                 }
             }
             return Ok(());
@@ -171,8 +166,8 @@ impl ChannelDataHandler {
                         rsa_cipher,
                         &self.server_cipher,
                         self.token.clone(),
-                    )
-                    .await?;
+                        route_key,
+                    )?;
                 }
             } else {
                 //服务端解密
@@ -211,7 +206,7 @@ impl ChannelDataHandler {
                                         net_packet.set_destination(source);
                                         //不管加不加密，和接收到的数据长度都一致
                                         self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                                        context.send_by_key(net_packet.buffer(), route_key).await?;
+                                        context.try_send_by_key(net_packet.buffer(), route_key)?;
                                         return Ok(());
                                     }
                                 }
@@ -263,13 +258,14 @@ impl ChannelDataHandler {
                                                 .udp_proxy_map
                                                 .insert(key, SocketAddrV4::new(dest_ip, dest_port));
                                         }
+                                        #[cfg(not(target_os = "android"))]
                                         ipv4::protocol::Protocol::Icmp => {
                                             let dest_ip = ipv4.destination_ip();
                                             //转发到代理目标地址
                                             let icmp_packet =
                                                 icmp::IcmpPacket::new(ipv4.payload())?;
                                             match icmp_packet.header_other() {
-                                                HeaderOther::Identifier(id, seq) => {
+                                                icmp::HeaderOther::Identifier(id, seq) => {
                                                     ip_proxy_map
                                                         .icmp_proxy_map
                                                         .insert((dest_ip, id, seq), source);
@@ -360,9 +356,7 @@ impl ChannelDataHandler {
                 poll_device.set_protocol(Protocol::Service);
                 poll_device.set_transport_protocol(service_packet::Protocol::PollDeviceList.into());
                 self.server_cipher.encrypt_ipv4(&mut poll_device)?;
-                context
-                    .send_main(poll_device.buffer(), current_device.connect_server)
-                    .await?;
+                context.send_main(poll_device.buffer(), current_device.connect_server)?;
             }
         }
         Ok(())
@@ -383,7 +377,7 @@ impl ChannelDataHandler {
                 net_packet.set_destination(source);
                 net_packet.first_set_ttl(MAX_TTL);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                context.send_by_key(net_packet.buffer(), route_key).await?;
+                context.try_send_by_key(net_packet.buffer(), route_key)?;
                 let route = Route::from(*route_key, metric, 199);
                 context.add_route_if_absent(source, route);
             }
@@ -409,7 +403,7 @@ impl ChannelDataHandler {
                 net_packet.set_destination(source);
                 net_packet.first_set_ttl(1);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                context.send_by_key(net_packet.buffer(), route_key).await?;
+                context.try_send_by_key(net_packet.buffer(), route_key)?;
                 let route = Route::from(*route_key, 1, 199);
                 context.add_route_if_absent(source, route);
             }
@@ -433,7 +427,7 @@ impl ChannelDataHandler {
                     addr_packet.set_ipv4(ipv4);
                     addr_packet.set_port(route_key.addr.port());
                     self.client_cipher.encrypt_ipv4(&mut packet)?;
-                    context.send_by_key(packet.buffer(), route_key).await?;
+                    context.try_send_by_key(packet.buffer(), route_key)?;
                 }
                 std::net::IpAddr::V6(_) => {}
             },
@@ -535,9 +529,7 @@ impl ChannelDataHandler {
                     // }
                     if self.punch(source, peer_nat_info).await {
                         self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
-                        context
-                            .send_by_key(punch_packet.buffer(), route_key)
-                            .await?;
+                        context.try_send_by_key(punch_packet.buffer(), route_key)?;
                     }
                 } else {
                     self.punch(source, peer_nat_info).await;
@@ -624,9 +616,6 @@ impl ChannelDataHandler {
         net_packet: NetPacket<&[u8]>,
         route_key: &RouteKey,
     ) -> crate::Result<()> {
-        if net_packet.source() != current_device.virtual_gateway {
-            return Ok(());
-        }
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PongPacket(pong_packet) => {
                 let metric = net_packet.source_ttl() - net_packet.ttl() + 1;
@@ -677,7 +666,7 @@ impl ChannelDataHandler {
                         let local_ipv4_addr = nat::local_ipv4_addr(local_port);
                         let local_port = context.main_local_ipv6_port().unwrap_or(0);
                         let ipv6_addr = nat::local_ipv6_addr(local_port);
-                       let nat_info =  nat_test
+                        let nat_info = nat_test
                             .re_test(
                                 Ipv4Addr::from(response.public_ip),
                                 response.public_port as u16,
@@ -778,9 +767,7 @@ impl ChannelDataHandler {
                 }
 
                 self.connect_status.store(ConnectStatus::Connecting);
-                self.register
-                    .fast_register(current_device.virtual_ip)
-                    .await?;
+                self.register.fast_register(current_device.virtual_ip)?;
             }
             InErrorPacket::AddressExhausted => {
                 //地址用尽

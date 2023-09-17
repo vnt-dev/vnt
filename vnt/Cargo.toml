@@ -1,6 +1,6 @@
 [package]
 name = "vnt"
-version = "1.2.2"
+version = "1.2.3"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,6 +11,7 @@ bytes = "1.3.0"
 log = "0.4.17"
 libc = "0.2.137"
 crossbeam-utils = "0.8"
+crossbeam-epoch = "0.9.15"
 dashmap = "5.5.1"
 parking_lot = "0.12.1"
 byte-pool = "0.2.4"
@@ -19,31 +20,36 @@ rand = "0.8.5"
 sha2 = { version = "0.10.6", features = ["oid"] }
 thiserror = "1.0.37"
 protobuf = "3.2.0"
-socket2 ={ version = "0.5.2", features = ["all"] }
-tokio = { version = "1.28.1", features = ["full"] }
-aes-gcm = {version="0.10.2", optional = true}
-ring = {version="0.16.20", optional = true}
+socket2 = { version = "0.5.2", features = ["all"] }
+tokio = { version = "1.32.0", features = ["full"] }
+aes-gcm = { version = "0.10.2" }
+ring = { version = "0.16.20", optional = true }
 cbc = "0.1.2"
 ecb = "0.1.2"
 aes = "0.8.3"
-stun-format = {version="1.0.1",features=["fmt","rfc3489"]}
-rsa = {version="0.7.2", features = [] }
-spki = {version="0.6.0",features=["fingerprint","alloc"]}
+stun-format = { version = "1.0.1", features = ["fmt", "rfc3489"] }
+rsa = { version = "0.7.2", features = [] }
+spki = { version = "0.6.0", features = ["fingerprint", "alloc"] }
+openssl-sys = { git = "https://github.com/lbl8603/rust-openssl" ,optional = true}
+
 
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
 tun = { path = "./rust-tun" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-
-win-tun-tap = {path = "./win-tun-tap"}
+win-tun-tap = { path = "./win-tun-tap" }
 libloading = "0.7.4"
+
 
 [build-dependencies]
 protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
 
 [features]
-default=["aes-gcm"]
-ring-cipher=["ring"]
+default = []
+openssl = ["openssl-sys"]
+# 从源码编译
+openssl-vendored = ["openssl-sys/vendored"]
+ring-cipher = ["ring"]
 
 

@@ -137,9 +137,7 @@ async fn start_punch_(
             info.virtual_ip,
         )
         .unwrap();
-        let _ = sender
-            .send_main(packet.buffer(), current_device.connect_server)
-            .await;
+        let _ = sender.send_main(packet.buffer(), current_device.connect_server);
     }
     tokio::time::sleep(sleep_time).await;
     Ok(())

@@ -95,8 +95,7 @@ impl Punch {
         if !nat_info.local_ipv4_addr.ip().is_unspecified() && nat_info.local_ipv4_addr.port() != 0 {
             let _ = self
                 .context
-                .send_main_udp(buf, SocketAddr::V4(nat_info.local_ipv4_addr))
-                .await;
+                .send_main_udp(buf, SocketAddr::V4(nat_info.local_ipv4_addr));
         }
         if self.punch_model != PunchModel::IPv4
             && !nat_info.ipv6_addr.ip().is_unspecified()
@@ -104,8 +103,7 @@ impl Punch {
         {
             let rs = self
                 .context
-                .send_main_udp(buf, SocketAddr::V6(nat_info.ipv6_addr))
-                .await;
+                .send_main_udp(buf, SocketAddr::V6(nat_info.ipv6_addr));
             log::info!("发送到ipv6地址:{:?},rs={:?}", nat_info.ipv6_addr, rs);
             if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
                 return Ok(());
@@ -167,11 +165,10 @@ impl Punch {
                 let is_cone = self.context.is_cone();
                 for ip in nat_info.public_ips {
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, nat_info.public_port));
-                    if is_cone {
-                        self.context.send_main_udp(buf, addr).await?;
-                    } else {
+                    self.context.send_main_udp(buf, addr)?;
+                    if !is_cone {
                         //只有一方是对称，则对称方要使用全部端口发送数据，符合上述计算的概率
-                        self.context.send_all(buf, addr).await?;
+                        self.context.try_send_all(buf, addr)?;
                     }
                     tokio::time::sleep(Duration::from_millis(2)).await;
                 }
@@ -195,7 +192,7 @@ impl Punch {
                     return Ok(());
                 }
                 let addr = SocketAddr::V4(SocketAddrV4::new(*pub_ip, *port));
-                self.context.send_main_udp(buf, addr).await?;
+                self.context.send_main_udp(buf, addr)?;
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }

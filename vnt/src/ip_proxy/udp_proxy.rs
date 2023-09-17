@@ -1,3 +1,4 @@
+use crate::ip_proxy::DashMapNew;
 use dashmap::DashMap;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
@@ -20,7 +21,8 @@ impl UdpProxy {
         let map = self.map;
         let udp_socket = self.udp_socket;
         let mut buf = [0u8; 65536];
-        let inner_map: Arc<DashMap<SocketAddrV4, Arc<UdpSocket>>> = Arc::new(DashMap::new());
+
+        let inner_map: Arc<DashMap<SocketAddrV4, Arc<UdpSocket>>> = Arc::new(DashMap::new0());
 
         loop {
             match udp_socket.recv_from(&mut buf).await {

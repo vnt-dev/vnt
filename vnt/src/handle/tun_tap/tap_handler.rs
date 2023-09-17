@@ -43,33 +43,27 @@ pub fn start(
         thread::Builder::new()
             .name("tap_handler".into())
             .spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-                    .block_on(async move {
-                        if let Err(e) = start_simple(
-                            sender,
-                            device_reader,
-                            device_writer,
-                            igmp_server,
-                            current_device,
-                            ip_route,
-                            ip_proxy_map,
-                            client_cipher,
-                            server_cipher,
-                        )
-                        .await
-                        {
-                            log::warn!("tap:{:?}", e);
-                        }
-                        worker.stop_all();
-                    });
+                if let Err(e) = start_simple(
+                    &sender,
+                    device_reader,
+                    &device_writer,
+                    igmp_server,
+                    current_device,
+                    ip_route,
+                    ip_proxy_map,
+                    client_cipher,
+                    server_cipher,
+                ) {
+                    log::warn!("tap:{:?}", e);
+                }
+                let _ = sender.close();
+                let _ = device_writer.close();
+                worker.stop_all();
             })
             .unwrap();
     } else {
         let (buf_sender, buf_receiver) = buf_channel_group(parallel);
-        for mut buf_receiver in buf_receiver.0 {
+        for buf_receiver in buf_receiver.0 {
             let sender = sender.clone();
             let device_writer = device_writer.clone();
             let igmp_server = igmp_server.clone();
@@ -78,8 +72,8 @@ pub fn start(
             let ip_proxy_map = ip_proxy_map.clone();
             let client_cipher = client_cipher.clone();
             let server_cipher = server_cipher.clone();
-            tokio::spawn(async move {
-                while let Some((mut buf, _, len)) = buf_receiver.recv().await {
+            thread::spawn(move || {
+                while let Ok((mut buf, _, len)) = buf_receiver.recv() {
                     match handle(
                         &mut buf,
                         len,
@@ -91,37 +85,33 @@ pub fn start(
                         &ip_proxy_map,
                         &client_cipher,
                         &server_cipher,
-                    )
-                    .await
-                    {
+                    ) {
                         Ok(_) => {}
                         Err(e) => {
                             log::warn!("{:?}", e)
                         }
                     }
                 }
+                let _ = sender.close();
+                let _ = device_writer.close();
             });
         }
         thread::Builder::new()
             .name("tap_handler".into())
             .spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-                    .block_on(async move {
-                        if let Err(e) = start_(sender, device_reader, buf_sender).await {
-                            log::warn!("tap:{:?}", e);
-                        }
-                        worker.stop_all();
-                    });
+                if let Err(e) = start_(&sender, device_reader, buf_sender) {
+                    log::warn!("tap:{:?}", e);
+                }
+                let _ = sender.close();
+                let _ = device_writer.close();
+                worker.stop_all();
             })
             .unwrap();
     }
 }
 
-async fn start_(
-    sender: ChannelSender,
+fn start_(
+    sender: &ChannelSender,
     device_reader: DeviceReader,
     mut buf_sender: BufSenderGroup,
 ) -> io::Result<()> {
@@ -132,7 +122,7 @@ async fn start_(
         }
         let start = 0;
         let len = device_reader.read(&mut buf)?;
-        if !buf_sender.send((buf, start, len)).await {
+        if !buf_sender.send((buf, start, len)) {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "tap buf_sender发送失败",
@@ -141,10 +131,10 @@ async fn start_(
     }
 }
 
-async fn start_simple(
-    sender: ChannelSender,
+fn start_simple(
+    sender: &ChannelSender,
     device_reader: DeviceReader,
-    device_writer: DeviceWriter,
+    device_writer: &DeviceWriter,
     igmp_server: Option<IgmpServer>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: Option<ExternalRoute>,
@@ -160,21 +150,19 @@ async fn start_simple(
             len,
             &igmp_server,
             &current_device,
-            &device_writer,
-            &sender,
+            device_writer,
+            sender,
             &ip_route,
             &ip_proxy_map,
             &client_cipher,
             &server_cipher,
-        )
-        .await
-        {
+        ) {
             log::warn!("tap handle{:?}", e);
         }
     }
 }
 
-async fn handle(
+fn handle(
     buf: &mut [u8],
     len: usize,
     igmp_server: &Option<IgmpServer>,
@@ -261,8 +249,7 @@ async fn handle(
                 proxy_map,
                 client_cipher,
                 server_cipher,
-            )
-            .await;
+            );
         }
         _ => {
             // log::warn!("不支持的二层协议：{:?}",p)

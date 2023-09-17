@@ -1,4 +1,4 @@
-use crate::protocol::body::{RsaSecretBody, ENCRYPTION_RESERVED};
+use crate::protocol::body::{RsaSecretBody, RSA_ENCRYPTION_RESERVED};
 use crate::protocol::NetPacket;
 use rand::Rng;
 use rsa::pkcs8::der::Decode;
@@ -59,10 +59,10 @@ impl RsaCipher {
         &self,
         net_packet: &mut NetPacket<B>,
     ) -> io::Result<NetPacket<Vec<u8>>> {
-        if net_packet.reserve() < ENCRYPTION_RESERVED {
+        if net_packet.reserve() < RSA_ENCRYPTION_RESERVED {
             return Err(io::Error::new(io::ErrorKind::Other, "too short"));
         }
-        let data_len = net_packet.data_len() + ENCRYPTION_RESERVED;
+        let data_len = net_packet.data_len() + RSA_ENCRYPTION_RESERVED;
         net_packet.set_data_len(data_len)?;
         let mut nonce_raw = [0; 12];
         nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());

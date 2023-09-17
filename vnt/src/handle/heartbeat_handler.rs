@@ -74,7 +74,7 @@ fn heartbeat_packet(
     gateway: bool,
     src: Ipv4Addr,
     dest: Ipv4Addr,
-) -> NetPacket<[u8; 48]> {
+) -> NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]> {
     let mut net_packet = NetPacket::new_encrypt([0u8; 12 + 4 + ENCRYPTION_RESERVED]).unwrap();
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::Control);
@@ -123,9 +123,7 @@ async fn start_heartbeat_(
             packet.set_source(current_dev.virtual_ip());
             packet.set_destination(current_dev.virtual_gateway);
             server_cipher.encrypt_ipv4(&mut packet)?;
-            let _ = sender
-                .send_main_udp(packet.buffer(), current_dev.connect_server)
-                .await;
+            let _ = sender.send_main_udp(packet.buffer(), current_dev.connect_server);
         }
         if count % 20 == 19 {
             if let Ok(mut addr) = server_address_str.to_socket_addrs() {
@@ -155,10 +153,7 @@ async fn start_heartbeat_(
             src,
             current_dev.virtual_gateway,
         );
-        if let Err(e) = sender
-            .send_main(server_packet.buffer(), current_dev.connect_server)
-            .await
-        {
+        if let Err(e) = sender.send_main(server_packet.buffer(), current_dev.connect_server) {
             log::warn!("connect_server:{:?},e:{:?}", current_dev.connect_server, e);
         }
         if count < 7 || count % 7 == 0 {
@@ -178,9 +173,8 @@ async fn start_heartbeat_(
                     peer.virtual_ip,
                 );
                 if let Some(route) = sender.route_one(&peer.virtual_ip) {
-                    if let Err(e) = sender
-                        .send_by_key(client_packet.buffer(), &route.route_key())
-                        .await
+                    if let Err(e) =
+                        sender.try_send_by_key(client_packet.buffer(), &route.route_key())
                     {
                         log::warn!("virtual_ip:{},route:{:?},e:{:?}", peer.virtual_ip, route, e);
                     }
@@ -189,9 +183,8 @@ async fn start_heartbeat_(
                     }
                 } else {
                     //没有直连路由则发送到网关
-                    if let Err(e) = sender
-                        .send_main(client_packet.buffer(), current_dev.connect_server)
-                        .await
+                    if let Err(e) =
+                        sender.send_main(client_packet.buffer(), current_dev.connect_server)
                     {
                         log::warn!(
                             "virtual_ip:{},connect_server:{:?},e:{:?}",
@@ -247,9 +240,8 @@ async fn start_heartbeat_(
                     *peer_ip,
                 );
                 for route in route_list {
-                    if let Err(e) = sender
-                        .send_by_key(client_packet.buffer(), &route.route_key())
-                        .await
+                    if let Err(e) =
+                        sender.try_send_by_key(client_packet.buffer(), &route.route_key())
                     {
                         log::warn!("peer_ip:{:?},route:{:?},e:{:?}", peer_ip, route, e);
                     }

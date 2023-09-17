@@ -1,6 +1,9 @@
+#[cfg(not(any(feature = "openssl-vendored", feature = "openssl")))]
 use crate::cipher::aes_ecb::AesEcbCipher;
 #[cfg(not(feature = "ring-cipher"))]
 use crate::cipher::aes_gcm_cipher::AesGcmCipher;
+#[cfg(any(feature = "openssl-vendored", feature = "openssl"))]
+use crate::cipher::openssl_aes_ecb::AesEcbCipher;
 #[cfg(feature = "ring-cipher")]
 use crate::cipher::ring_aes_gcm_cipher::AesGcmCipher;
 use crate::cipher::{aes_cbc, Finger};
