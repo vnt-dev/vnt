@@ -37,7 +37,7 @@ impl TcpProxy {
                                     Duration::from_secs(5),
                                     TcpStream::connect(dest_addr),
                                 )
-                                .await
+                                    .await
                                 {
                                     Ok(peer_tcp_stream) => match peer_tcp_stream {
                                         Ok(peer_tcp_stream) => peer_tcp_stream,
@@ -85,16 +85,9 @@ async fn proxy(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
 
     let client_to_server = tokio::io::copy(&mut client_reader, &mut server_writer);
     let server_to_client = tokio::io::copy(&mut server_reader, &mut client_writer);
-
-    let (r1, r2) = tokio::join!(
-        tokio::time::timeout(Duration::from_secs(10), client_to_server),
-        tokio::time::timeout(Duration::from_secs(10), server_to_client)
-    );
-    if let Ok(r) = r1 {
-        r?;
-    }
-    if let Ok(r) = r2 {
-        r?;
+    tokio::select! {
+        _ = tokio::time::timeout(Duration::from_secs(10), client_to_server) =>{},
+        _ = tokio::time::timeout(Duration::from_secs(10), server_to_client) =>{},
     }
     Ok(())
 }
