@@ -431,18 +431,9 @@ impl ChannelDataHandler {
                 }
                 std::net::IpAddr::V6(_) => {}
             },
-            ControlPacket::AddrResponse(addr_packet) => {
-                if !addr_packet.ipv4().is_multicast()
-                    && !addr_packet.ipv4().is_broadcast()
-                    && !addr_packet.ipv4().is_unspecified()
-                    && !addr_packet.ipv4().is_loopback()
-                    && !addr_packet.ipv4().is_private()
-                    && addr_packet.port() != 0
-                {
-                    self.nat_test
-                        .update_addr(addr_packet.ipv4(), addr_packet.port())
-                }
-            }
+            ControlPacket::AddrResponse(addr_packet) => self
+                .nat_test
+                .update_addr(addr_packet.ipv4(), addr_packet.port()),
         }
         Ok(())
     }
@@ -630,18 +621,9 @@ impl ChannelDataHandler {
                 )
                 .await?;
             }
-            ControlPacket::AddrResponse(addr_packet) => {
-                if addr_packet.port() != 0
-                    && !addr_packet.ipv4().is_multicast()
-                    && !addr_packet.ipv4().is_broadcast()
-                    && !addr_packet.ipv4().is_unspecified()
-                    && !addr_packet.ipv4().is_loopback()
-                    && !addr_packet.ipv4().is_private()
-                {
-                    self.nat_test
-                        .update_addr(addr_packet.ipv4(), addr_packet.port())
-                }
-            }
+            ControlPacket::AddrResponse(addr_packet) => self
+                .nat_test
+                .update_addr(addr_packet.ipv4(), addr_packet.port()),
             _ => {}
         }
         Ok(())

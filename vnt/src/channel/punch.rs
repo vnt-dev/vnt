@@ -50,9 +50,12 @@ impl NatInfo {
         public_port_range: u16,
         local_ipv4_addr: SocketAddrV4,
         ipv6_addr: SocketAddrV6,
-        nat_type: NatType,
+        mut nat_type: NatType,
     ) -> Self {
-        public_ips.retain(|ip| !ip.is_loopback() && !ip.is_private());
+        public_ips.retain(|ip| !ip.is_loopback() && !ip.is_private() && !ip.is_unspecified());
+        if public_ips.len() > 1 {
+            nat_type = NatType::Symmetric;
+        }
         Self {
             public_ips,
             public_port,

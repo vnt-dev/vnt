@@ -99,10 +99,18 @@ impl NatTest {
         self.info.lock().clone()
     }
     pub fn update_addr(&self, ip: Ipv4Addr, port: u16) {
-        let mut guard = self.info.lock();
-        guard.public_port = port;
-        if !guard.public_ips.contains(&ip) {
-            guard.public_ips.push(ip);
+        if !ip.is_multicast()
+            && !ip.is_broadcast()
+            && !ip.is_unspecified()
+            && !ip.is_loopback()
+            && !ip.is_private()
+            && port != 0
+        {
+            let mut guard = self.info.lock();
+            guard.public_port = port;
+            if !guard.public_ips.contains(&ip) {
+                guard.public_ips.push(ip);
+            }
         }
     }
     pub async fn re_test(
@@ -131,13 +139,9 @@ impl NatTest {
         ipv6_addr: SocketAddrV6,
     ) -> NatInfo {
         return match stun_test::stun_test_nat(stun_server.clone()).await {
-            Ok((nat_type, ips, port_range)) => {
-                let mut public_ips = Vec::new();
-                public_ips.push(Ipv4Addr::from(public_ip));
-                for ip in ips {
-                    if ip != public_ip {
-                        public_ips.push(ip);
-                    }
+            Ok((nat_type, mut public_ips, port_range)) => {
+                if !public_ips.contains(&public_ip) {
+                    public_ips.push(public_ip)
                 }
                 NatInfo::new(
                     public_ips,
