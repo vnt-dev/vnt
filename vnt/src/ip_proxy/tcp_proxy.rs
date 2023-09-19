@@ -86,8 +86,12 @@ async fn proxy(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
     let client_to_server = tokio::io::copy(&mut client_reader, &mut server_writer);
     let server_to_client = tokio::io::copy(&mut server_reader, &mut client_writer);
     tokio::select! {
-        _ = tokio::time::timeout(Duration::from_secs(10), client_to_server) =>{},
-        _ = tokio::time::timeout(Duration::from_secs(10), server_to_client) =>{},
+        rs = server_to_client =>{
+            log::info!("server_to_client proxy={:?}",rs);
+        },
+        rs = client_to_server =>{
+            log::info!("client_to_server proxy={:?}",rs);
+        },
     }
     Ok(())
 }
