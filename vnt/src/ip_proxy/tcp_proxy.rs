@@ -3,8 +3,10 @@ use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
-
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 pub struct TcpProxy {
     tcp_listener: TcpListener,
@@ -79,15 +81,32 @@ impl TcpProxy {
     }
 }
 
-async fn proxy(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
-    let (mut client_reader, mut client_writer) = client.split();
-    let (mut server_reader, mut server_writer) = server.split();
+async fn proxy(client: TcpStream, server: TcpStream) -> io::Result<()> {
+    let (client_read, client_write) = client.into_split();
+    let (server_read, server_write) = server.into_split();
+    tokio::spawn(async move {
+        if let Err(e) = copy(client_read, server_write).await {
+            log::warn!("{:?}",e);
+        }
+    });
+    copy(server_read, client_write).await
+}
 
-    let client_to_server = tokio::io::copy(&mut client_reader, &mut server_writer);
-    let server_to_client = tokio::io::copy(&mut server_reader, &mut client_writer);
-    tokio::select! {
-        _ = tokio::time::timeout(Duration::from_secs(10), client_to_server) =>{},
-        _ = tokio::time::timeout(Duration::from_secs(10), server_to_client) =>{},
+async fn copy(mut read: OwnedReadHalf, mut write: OwnedWriteHalf) -> io::Result<()> {
+    let mut buf = [0; 10240];
+    loop {
+        tokio::select! {
+            result = read.read(&mut buf) =>{
+                let len = result?;
+                if len==0{
+                    break;
+                }
+                write.write_all(&buf[..len]).await?;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(300)) =>{
+                break;
+            }
+        }
     }
     Ok(())
 }
