@@ -28,7 +28,7 @@ impl FromStr for CipherModel {
             "aes_gcm" => Ok(CipherModel::AesGcm),
             "aes_cbc" => Ok(CipherModel::AesCbc),
             "aes_ecb" => Ok(CipherModel::AesEcb),
-            _ => Err(format!("not match '{}'", s)),
+            _ => Err(format!("not match '{}', enum:aes_gcm/aes_cbc/aes_ecb", s)),
         }
     }
 }

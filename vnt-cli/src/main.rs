@@ -214,10 +214,16 @@ fn main() {
         return;
     }
 
-    let cipher_model = matches
-        .opt_get::<CipherModel>("model")
-        .unwrap()
-        .unwrap_or(CipherModel::AesGcm);
+    let cipher_model = match matches
+        .opt_get::<CipherModel>("model") {
+        Ok(model) => {
+            model.unwrap_or(CipherModel::AesGcm)
+        }
+        Err(e) => {
+            println!("'--model ' invalid,{}", e);
+            return;
+        }
+    };
 
     let finger = matches.opt_present("finger");
     let punch_model = matches
@@ -250,6 +256,7 @@ fn main() {
     main0(config, !unused_cmd);
     std::process::exit(0);
 }
+
 #[tokio::main]
 async fn main0(config: Config, show_cmd: bool) {
     let server_encrypt = config.server_encrypt;
