@@ -214,11 +214,8 @@ fn main() {
         return;
     }
 
-    let cipher_model = match matches
-        .opt_get::<CipherModel>("model") {
-        Ok(model) => {
-            model.unwrap_or(CipherModel::AesGcm)
-        }
+    let cipher_model = match matches.opt_get::<CipherModel>("model") {
+        Ok(model) => model.unwrap_or(CipherModel::AesGcm),
         Err(e) => {
             println!("'--model ' invalid,{}", e);
             return;

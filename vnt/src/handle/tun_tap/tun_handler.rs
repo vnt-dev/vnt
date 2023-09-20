@@ -1,4 +1,3 @@
-use byte_pool::BytePool;
 use std::sync::Arc;
 use std::{io, thread};
 
@@ -19,9 +18,6 @@ use crate::handle::CurrentDeviceInfo;
 use crate::igmp_server::IgmpServer;
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::{DeviceReader, DeviceWriter};
-lazy_static::lazy_static! {
-    static ref POOL:BytePool<Vec<u8>> = BytePool::<Vec<u8>>::new();
-}
 fn icmp(device_writer: &DeviceWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> Result<()> {
     if ipv4_packet.protocol() == ipv4::protocol::Protocol::Icmp {
         let mut icmp = IcmpPacket::new(ipv4_packet.payload_mut())?;
@@ -169,7 +165,7 @@ fn start_(
     mut buf_sender: BufSenderGroup,
 ) -> io::Result<()> {
     loop {
-        let mut buf = POOL.alloc(4096);
+        let mut buf = vec![0; 4096];
         buf[..12].fill(0);
         if sender.is_close() {
             return Ok(());

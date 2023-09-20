@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpListener, TcpStream};
 
 pub struct TcpProxy {
     tcp_listener: TcpListener,
@@ -39,7 +39,7 @@ impl TcpProxy {
                                     Duration::from_secs(5),
                                     TcpStream::connect(dest_addr),
                                 )
-                                    .await
+                                .await
                                 {
                                     Ok(peer_tcp_stream) => match peer_tcp_stream {
                                         Ok(peer_tcp_stream) => peer_tcp_stream,
@@ -86,7 +86,7 @@ async fn proxy(client: TcpStream, server: TcpStream) -> io::Result<()> {
     let (server_read, server_write) = server.into_split();
     tokio::spawn(async move {
         if let Err(e) = copy(client_read, server_write).await {
-            log::warn!("{:?}",e);
+            log::warn!("{:?}", e);
         }
     });
     copy(server_read, client_write).await

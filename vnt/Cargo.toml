@@ -14,8 +14,6 @@ crossbeam-utils = "0.8"
 crossbeam-epoch = "0.9.15"
 dashmap = "5.5.1"
 parking_lot = "0.12.1"
-byte-pool = "0.2.4"
-lazy_static = "1.4.0"
 rand = "0.8.5"
 sha2 = { version = "0.10.6", features = ["oid"] }
 thiserror = "1.0.37"

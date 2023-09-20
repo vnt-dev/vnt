@@ -98,7 +98,7 @@ impl ChannelDataHandler {
 }
 
 impl ChannelDataHandler {
-    pub async fn handle(
+    pub fn handle(
         &self,
         buf: &mut [u8],
         start: usize,
@@ -107,14 +107,14 @@ impl ChannelDataHandler {
         context: &Context,
     ) {
         assert_eq!(start, 14);
-        match self.handle0(&mut buf[..end], &route_key, context).await {
+        match self.handle0(&mut buf[..end], &route_key, context) {
             Ok(_) => {}
             Err(e) => {
                 log::warn!("{:?}", e);
             }
         }
     }
-    async fn handle0(
+    fn handle0(
         &self,
         buf: &mut [u8],
         route_key: &RouteKey,
@@ -173,8 +173,7 @@ impl ChannelDataHandler {
                 //服务端解密
                 self.server_cipher.decrypt_ipv4(&mut net_packet)?;
                 let data_len = net_packet.data_len();
-                self.server_packet_handle(context, current_device, buf, data_len, route_key)
-                    .await?;
+                self.server_packet_handle(context, current_device, buf, data_len, route_key)?;
             }
             return Ok(());
         }
@@ -313,12 +312,10 @@ impl ChannelDataHandler {
             Protocol::Service => {}
             Protocol::Error => {}
             Protocol::Control => {
-                self.control(context, current_device, source, net_packet, route_key)
-                    .await?;
+                self.control(context, current_device, source, net_packet, route_key)?;
             }
             Protocol::OtherTurn => {
-                self.other_turn(context, current_device, source, net_packet, route_key)
-                    .await?;
+                self.other_turn(context, current_device, source, net_packet, route_key)?;
             }
             Protocol::UnKnow(e) => {
                 log::info!("不支持的协议:{}", e);
@@ -327,7 +324,7 @@ impl ChannelDataHandler {
         Ok(())
     }
 
-    async fn pong_packet(
+    fn pong_packet(
         &self,
         gateway: bool,
         metric: u8,
@@ -361,7 +358,7 @@ impl ChannelDataHandler {
         }
         Ok(())
     }
-    async fn control(
+    fn control(
         &self,
         context: &Context,
         current_device: CurrentDeviceInfo,
@@ -390,8 +387,7 @@ impl ChannelDataHandler {
                     source,
                     pong_packet,
                     route_key,
-                )
-                .await?;
+                )?;
             }
             ControlPacket::PunchRequest => {
                 if self.relay {
@@ -437,7 +433,7 @@ impl ChannelDataHandler {
         }
         Ok(())
     }
-    async fn other_turn(
+    fn other_turn(
         &self,
         context: &Context,
         current_device: CurrentDeviceInfo,
@@ -518,12 +514,12 @@ impl ChannelDataHandler {
                     //     let _ = context.try_send_main_udp(packet.buffer(),
                     //                               SocketAddr::V4(SocketAddrV4::new(peer_nat_info.local_ip, peer_nat_info.local_port)));
                     // }
-                    if self.punch(source, peer_nat_info).await {
+                    if self.punch(source, peer_nat_info) {
                         self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
                         context.try_send_by_key(punch_packet.buffer(), route_key)?;
                     }
                 } else {
-                    self.punch(source, peer_nat_info).await;
+                    self.punch(source, peer_nat_info);
                 }
             }
             other_turn_packet::Protocol::Unknown(e) => {
@@ -532,7 +528,7 @@ impl ChannelDataHandler {
         }
         Ok(())
     }
-    async fn punch(&self, peer_ip: Ipv4Addr, peer_nat_info: NatInfo) -> bool {
+    fn punch(&self, peer_ip: Ipv4Addr, peer_nat_info: NatInfo) -> bool {
         match peer_nat_info.nat_type {
             NatType::Symmetric => self
                 .symmetric_sender
@@ -545,7 +541,7 @@ impl ChannelDataHandler {
 
 /// 处理服务端数据
 impl ChannelDataHandler {
-    async fn server_packet_handle(
+    fn server_packet_handle(
         &self,
         context: &Context,
         current_device: CurrentDeviceInfo,
@@ -557,16 +553,13 @@ impl ChannelDataHandler {
         let source = net_packet.source();
         match net_packet.protocol() {
             Protocol::Service => {
-                self.service(context, current_device, net_packet, route_key)
-                    .await?;
+                self.service(context, current_device, net_packet, route_key)?;
             }
             Protocol::Error => {
-                self.error(context, current_device, source, net_packet, route_key)
-                    .await?;
+                self.error(context, current_device, source, net_packet, route_key)?;
             }
             Protocol::Control => {
-                self.control_gateway(context, current_device, net_packet, route_key)
-                    .await?;
+                self.control_gateway(context, current_device, net_packet, route_key)?;
             }
             Protocol::IpTurn => {
                 match ip_turn_packet::Protocol::from(net_packet.transport_protocol()) {
@@ -600,7 +593,7 @@ impl ChannelDataHandler {
         }
         return Ok(());
     }
-    async fn control_gateway(
+    fn control_gateway(
         &self,
         context: &Context,
         current_device: CurrentDeviceInfo,
@@ -618,8 +611,7 @@ impl ChannelDataHandler {
                     net_packet.source(),
                     pong_packet,
                     route_key,
-                )
-                .await?;
+                )?;
             }
             ControlPacket::AddrResponse(addr_packet) => self
                 .nat_test
@@ -628,7 +620,7 @@ impl ChannelDataHandler {
         }
         Ok(())
     }
-    async fn service(
+    fn service(
         &self,
         context: &Context,
         current_device: CurrentDeviceInfo,
@@ -643,20 +635,24 @@ impl ChannelDataHandler {
                 {
                     let context = context.clone();
                     let nat_test = self.nat_test.clone();
-                    tokio::spawn(async move {
-                        let local_port = context.main_local_ipv4_port().unwrap_or(0);
-                        let local_ipv4_addr = nat::local_ipv4_addr(local_port);
-                        let local_port = context.main_local_ipv6_port().unwrap_or(0);
-                        let ipv6_addr = nat::local_ipv6_addr(local_port);
-                        let nat_info = nat_test
-                            .re_test(
-                                Ipv4Addr::from(response.public_ip),
-                                response.public_port as u16,
-                                local_ipv4_addr,
-                                ipv6_addr,
-                            )
-                            .await;
-                        context.switch(nat_info.nat_type);
+                    std::thread::spawn(move ||{
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all().build().unwrap()
+                            .block_on(async move {
+                                let local_port = context.main_local_ipv4_port().unwrap_or(0);
+                                let local_ipv4_addr = nat::local_ipv4_addr(local_port);
+                                let local_port = context.main_local_ipv6_port().unwrap_or(0);
+                                let ipv6_addr = nat::local_ipv6_addr(local_port);
+                                let nat_info = nat_test
+                                    .re_test(
+                                        Ipv4Addr::from(response.public_ip),
+                                        response.public_port as u16,
+                                        local_ipv4_addr,
+                                        ipv6_addr,
+                                    )
+                                    .await;
+                                context.switch(nat_info.nat_type);
+                            })
                     });
                 }
                 let new_ip = Ipv4Addr::from(response.virtual_ip);
@@ -728,7 +724,7 @@ impl ChannelDataHandler {
         }
         Ok(())
     }
-    async fn error(
+    fn error(
         &self,
         _context: &Context,
         current_device: CurrentDeviceInfo,

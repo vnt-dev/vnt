@@ -6,7 +6,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use byte_pool::{Block, BytePool};
 use crossbeam_epoch::{Atomic, Owned};
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
@@ -23,9 +22,6 @@ use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::DashMapNew;
 
-lazy_static::lazy_static! {
-    static ref POOL:BytePool = BytePool::new();
-}
 pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
     pub(crate) main_channel: Arc<StdUdpSocket>,
@@ -526,8 +522,10 @@ impl Context {
     pub fn update_read_time(&self, id: &Ipv4Addr, route_key: &RouteKey) {
         if let Some(mut time) = self.inner.route_table_time.get_mut(&(*route_key, *id)) {
             *time.value_mut() = Instant::now();
-        }else{
-            self.inner.route_table_time.insert((*route_key,*id),Instant::now());
+        } else {
+            self.inner
+                .route_table_time
+                .insert((*route_key, *id), Instant::now());
         }
     }
 }
@@ -546,13 +544,13 @@ impl Channel {
 #[derive(Clone)]
 struct BufSenderGroup(
     usize,
-    Vec<std::sync::mpsc::SyncSender<(Block<'static>, usize, usize, RouteKey)>>,
+    Vec<std::sync::mpsc::SyncSender<(Vec<u8>, usize, usize, RouteKey)>>,
 );
 
-struct BufReceiverGroup(Vec<std::sync::mpsc::Receiver<(Block<'static>, usize, usize, RouteKey)>>);
+struct BufReceiverGroup(Vec<std::sync::mpsc::Receiver<(Vec<u8>, usize, usize, RouteKey)>>);
 
 impl BufSenderGroup {
-    pub fn send(&mut self, val: (Block<'static>, usize, usize, RouteKey)) -> bool {
+    pub fn send(&mut self, val: (Vec<u8>, usize, usize, RouteKey)) -> bool {
         let index = self.0 % self.1.len();
         self.0 = self.0.wrapping_add(1);
         self.1[index].send(val).is_ok()
@@ -564,7 +562,7 @@ fn buf_channel_group(size: usize) -> (BufSenderGroup, BufReceiverGroup) {
     let mut buf_receiver_group = Vec::with_capacity(size);
     for _ in 0..size {
         let (buf_sender, buf_receiver) =
-            std::sync::mpsc::sync_channel::<(Block<'static, Vec<u8>>, usize, usize, RouteKey)>(1);
+            std::sync::mpsc::sync_channel::<(Vec<u8>, usize, usize, RouteKey)>(1);
         buf_sender_group.push(buf_sender);
         buf_receiver_group.push(buf_receiver);
     }
@@ -598,8 +596,7 @@ impl Channel {
                 .read_exact(&mut buf[head_reserve..head_reserve + len])
                 .await?;
             handler
-                .handle(&mut buf, head_reserve, head_reserve + len, key, &context)
-                .await;
+                .handle(&mut buf, head_reserve, head_reserve + len, key, &context);
         }
     }
     async fn start_tcp(
@@ -686,19 +683,11 @@ impl Channel {
                 let context = context.clone();
                 let handler = handler.clone();
                 std::thread::spawn(move || {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap();
-                    log::info!("启动异步处理");
-                    runtime.block_on(async move {
-                        while let Ok((mut buf, start, end, route_key)) = buf_receiver.recv() {
-                            handler
-                                .handle(&mut buf, start, end, route_key, &context)
-                                .await;
-                        }
-                        log::warn!("异步处理停止");
-                    });
+                    while let Ok((mut buf, start, end, route_key)) = buf_receiver.recv() {
+                        handler
+                            .handle(&mut buf, start, end, route_key, &context);
+                    }
+                    log::warn!("异步处理停止");
                 });
             }
             Some(buf_sender)
@@ -723,12 +712,8 @@ impl Channel {
             let handler = handler.clone();
             let buf_sender = buf_sender.clone();
             std::thread::spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
                 log::info!("启动udp v6");
-                runtime.block_on(Self::main_start_(
+                Self::main_start_(
                     worker,
                     context,
                     UDP_V6_ID,
@@ -736,7 +721,7 @@ impl Channel {
                     handler,
                     buf_sender,
                     head_reserve,
-                ));
+                )
             });
         }
         {
@@ -746,12 +731,8 @@ impl Channel {
             let handler = handler.clone();
             let buf_sender = buf_sender.clone();
             std::thread::spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
                 log::info!("启动udp v4");
-                runtime.block_on(Self::main_start_(
+                Self::main_start_(
                     worker,
                     context,
                     UDP_ID,
@@ -759,7 +740,7 @@ impl Channel {
                     handler,
                     buf_sender,
                     head_reserve,
-                ));
+                )
             });
         }
         if relay {
@@ -813,7 +794,7 @@ impl Channel {
         }
         worker.stop_all();
     }
-    async fn main_start_(
+    fn main_start_(
         worker: VntWorker,
         context: Context,
         id: usize,
@@ -841,8 +822,7 @@ impl Channel {
                                     end,
                                     RouteKey::new(id, addr),
                                     &context,
-                                )
-                                .await;
+                                );
                         }
                         Err(e) => {
                             log::error!("udp :{:?}", e);
@@ -851,7 +831,7 @@ impl Channel {
                 }
             }
             Some(mut buf_sender) => loop {
-                let mut buf = POOL.alloc(4096);
+                let mut buf = vec![0; 4096];
                 match udp.recv_from(&mut buf[head_reserve..]) {
                     Ok((len, addr)) => {
                         let end = head_reserve + len;
@@ -884,11 +864,11 @@ impl Channel {
         #[cfg(target_os = "windows")]
         use std::os::windows::io::AsRawSocket;
         #[cfg(target_os = "windows")]
-        let id = 3 + udp.as_raw_socket() as usize;
+            let id = 3 + udp.as_raw_socket() as usize;
         #[cfg(any(unix))]
         use std::os::fd::AsRawFd;
         #[cfg(any(unix))]
-        let id = 3 + udp.as_raw_fd() as usize;
+            let id = 3 + udp.as_raw_fd() as usize;
 
         context.insert_udp(id, udp.clone());
         match buf_sender {
@@ -899,7 +879,7 @@ impl Channel {
                         rs=udp.recv_from(&mut buf[head_reserve..])=>{
                               match rs {
                                 Ok((len, addr)) => {
-                                    handler.handle(&mut buf, head_reserve, head_reserve + len, RouteKey::new(id, addr), &context).await;
+                                    handler.handle(&mut buf, head_reserve, head_reserve + len, RouteKey::new(id, addr), &context);
                                 }
                                 Err(e) => {
                                     log::error!("{:?}",e)
@@ -933,7 +913,7 @@ impl Channel {
                 }
             }
             Some(mut buf_sender) => loop {
-                let mut buf = POOL.alloc(4096);
+                let mut buf = vec![0; 4096];
                 tokio::select! {
                     rs=udp.recv_from(&mut buf[head_reserve..])=>{
                          match rs {
