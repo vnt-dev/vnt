@@ -1,10 +1,12 @@
 use crate::ip_proxy::DashMapNew;
+use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
+use tokio::time::Instant;
 
 /// 一个udp代理，作用是利用系统协议栈，将udp数据报解析出来再转发到目的地址
 pub struct UdpProxy {
@@ -22,7 +24,8 @@ impl UdpProxy {
         let udp_socket = self.udp_socket;
         let mut buf = [0u8; 65536];
 
-        let inner_map: Arc<DashMap<SocketAddrV4, Arc<UdpSocket>>> = Arc::new(DashMap::new0());
+        let inner_map: Arc<DashMap<SocketAddrV4, (Arc<UdpSocket>, Arc<AtomicCell<Instant>>)>> =
+            Arc::new(DashMap::new0());
 
         loop {
             match udp_socket.recv_from(&mut buf).await {
@@ -49,29 +52,35 @@ impl UdpProxy {
 async fn start0(
     buf: &[u8],
     sender_addr: SocketAddrV4,
-    inner_map: &Arc<DashMap<SocketAddrV4, Arc<UdpSocket>>>,
+    inner_map: &Arc<DashMap<SocketAddrV4, (Arc<UdpSocket>, Arc<AtomicCell<Instant>>)>>,
     map: &Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
     udp_socket: &Arc<UdpSocket>,
 ) -> io::Result<()> {
     if let Some(entry) = inner_map.get(&sender_addr) {
-        let udp = entry.value().clone();
+        entry.value().1.store(Instant::now());
+        let udp = entry.value().0.clone();
         drop(entry);
         udp.send(buf).await?;
     } else if let Some(entry) = map.get(&sender_addr) {
         let dest_addr = *entry.value();
         drop(entry);
-        let peer_udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
+        //先使用相同的端口，冲突了再随机端口
+        let peer_udp_socket = match UdpSocket::bind(format!("0.0.0.0:{}", sender_addr.port())).await {
+            Ok(udp) => { udp }
+            Err(_) => { UdpSocket::bind("0.0.0.0:0").await? }
+        };
         peer_udp_socket.connect(dest_addr).await?;
         peer_udp_socket.send(buf).await?;
         let peer_udp_socket = Arc::new(peer_udp_socket);
         let inner_map = inner_map.clone();
-        inner_map.insert(sender_addr, peer_udp_socket.clone());
+        let time = Arc::new(AtomicCell::new(Instant::now()));
+        inner_map.insert(sender_addr, (peer_udp_socket.clone(), time.clone()));
         let udp_socket = udp_socket.clone();
         let map = map.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 65536];
             loop {
-                match tokio::time::timeout(Duration::from_secs(300), peer_udp_socket.recv(&mut buf))
+                match tokio::time::timeout(Duration::from_secs(600), peer_udp_socket.recv(&mut buf))
                     .await
                 {
                     Ok(rs) => match rs {
@@ -98,9 +107,11 @@ async fn start0(
                         }
                     },
                     Err(_) => {
-                        //超时关闭
-                        log::warn!("udp代理超时关闭,来源:{},目标：{}", sender_addr, dest_addr);
-                        break;
+                        if time.load().elapsed() > Duration::from_secs(580) {
+                            //超时关闭
+                            log::warn!("udp代理超时关闭,来源:{},目标：{}", sender_addr, dest_addr);
+                            break;
+                        }
                     }
                 }
             }

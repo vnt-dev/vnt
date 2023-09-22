@@ -1,8 +1,9 @@
+use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -84,15 +85,21 @@ impl TcpProxy {
 async fn proxy(client: TcpStream, server: TcpStream) -> io::Result<()> {
     let (client_read, client_write) = client.into_split();
     let (server_read, server_write) = server.into_split();
+    let time = Arc::new(AtomicCell::new(Instant::now()));
+    let time1 = time.clone();
     tokio::spawn(async move {
-        if let Err(e) = copy(client_read, server_write).await {
+        if let Err(e) = copy(client_read, server_write, &time1).await {
             log::warn!("{:?}", e);
         }
     });
-    copy(server_read, client_write).await
+    copy(server_read, client_write, &time).await
 }
 
-async fn copy(mut read: OwnedReadHalf, mut write: OwnedWriteHalf) -> io::Result<()> {
+async fn copy(
+    mut read: OwnedReadHalf,
+    mut write: OwnedWriteHalf,
+    time: &AtomicCell<Instant>,
+) -> io::Result<()> {
     let mut buf = [0; 10240];
     loop {
         tokio::select! {
@@ -102,9 +109,13 @@ async fn copy(mut read: OwnedReadHalf, mut write: OwnedWriteHalf) -> io::Result<
                     break;
                 }
                 write.write_all(&buf[..len]).await?;
+                time.store(Instant::now());
             }
-            _ = tokio::time::sleep(Duration::from_secs(300)) =>{
-                break;
+            _ = tokio::time::sleep(Duration::from_secs(600)) =>{
+                if time.load().elapsed()>=Duration::from_secs(580){
+                    //读写均超时再退出
+                    break;
+                }
             }
         }
     }
