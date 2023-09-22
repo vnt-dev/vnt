@@ -403,12 +403,20 @@ impl VntUtil {
             let device_list = device_list.clone();
             let current_device = current_device.clone();
             // 定时心跳
+            heartbeat_handler::start_heartbeat_main(
+                vnt_status_manager.worker("main-heartbeat"),
+                channel_sender.clone(),
+                device_list.clone(),
+                current_device.clone(),
+                config.server_address_str,
+                client_cipher.clone(),
+                self.server_cipher.clone(),
+            );
             heartbeat_handler::start_heartbeat(
                 vnt_status_manager.worker("heartbeat"),
                 channel_sender.clone(),
                 device_list.clone(),
                 current_device.clone(),
-                config.server_address_str,
                 client_cipher.clone(),
                 self.server_cipher.clone(),
             );

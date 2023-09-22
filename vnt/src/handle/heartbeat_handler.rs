@@ -47,6 +47,28 @@ pub fn start_heartbeat(
     sender: ChannelSender,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
+    server_cipher: Cipher,
+) {
+    tokio::spawn(async move {
+        tokio::select! {
+             _=worker.stop_wait()=>{
+                    return;
+             }
+            rs=start_heartbeat_(sender, device_list, current_device,client_cipher,server_cipher)=>{
+                if let Err(e) = rs {
+                    log::warn!("心跳任务停止:{:?}", e);
+                }
+            }
+        }
+        worker.stop_all();
+    });
+}
+pub fn start_heartbeat_main(
+    mut worker: VntWorker,
+    sender: ChannelSender,
+    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     server_address_str: String,
     client_cipher: Cipher,
     server_cipher: Cipher,
@@ -56,11 +78,11 @@ pub fn start_heartbeat(
              _=worker.stop_wait()=>{
                     return;
              }
-            rs=start_heartbeat_(sender, device_list, current_device,server_address_str,client_cipher,server_cipher)=>{
+             rs=start_heartbeat_main_(sender, device_list, current_device,server_address_str,client_cipher,server_cipher)=>{
                 if let Err(e) = rs {
-                    log::warn!("心跳任务停止:{:?}", e);
+                    log::warn!("主心跳任务停止:{:?}", e);
                 }
-            }
+             }
         }
         worker.stop_all();
     });
@@ -97,7 +119,7 @@ fn heartbeat_packet(
     net_packet
 }
 
-async fn start_heartbeat_(
+async fn start_heartbeat_main_(
     sender: ChannelSender,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -106,26 +128,14 @@ async fn start_heartbeat_(
     server_cipher: Cipher,
 ) -> io::Result<()> {
     let mut count = 0;
-    log::info!("启动心跳任务");
+    log::info!("启动主心跳任务");
     loop {
         if sender.is_close() {
             return Ok(());
         }
         let mut current_dev = current_device.load();
-        //如果和服务端使用tcp连接，则维持udp洞的频率要更高些
-        if (sender.is_main_tcp() && count % 2 == 0) || (!sender.is_main_tcp() && count % 20 == 1) {
-            let mut packet = NetPacket::new_encrypt([0; 12 + ENCRYPTION_RESERVED])?;
-            packet.set_version(Version::V1);
-            packet.set_gateway_flag(true);
-            packet.set_protocol(Protocol::Control);
-            packet.set_transport_protocol(control_packet::Protocol::AddrRequest.into());
-            packet.first_set_ttl(MAX_TTL);
-            packet.set_source(current_dev.virtual_ip());
-            packet.set_destination(current_dev.virtual_gateway);
-            server_cipher.encrypt_ipv4(&mut packet)?;
-            let _ = sender.send_main_udp(packet.buffer(), current_dev.connect_server);
-        }
-        if count % 20 == 19 {
+        let src = current_dev.virtual_ip();
+        if count % 40 == 19 {
             if let Ok(mut addr) = server_address_str.to_socket_addrs() {
                 if let Some(addr) = addr.next() {
                     if addr != current_dev.connect_server {
@@ -143,7 +153,6 @@ async fn start_heartbeat_(
                 }
             }
         }
-        let src = current_dev.virtual_ip();
         let server_packet = heartbeat_packet(
             MAX_TTL,
             &device_list,
@@ -156,6 +165,41 @@ async fn start_heartbeat_(
         if let Err(e) = sender.send_main(server_packet.buffer(), current_dev.connect_server) {
             log::warn!("connect_server:{:?},e:{:?}", current_dev.connect_server, e);
         }
+        count += 1;
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+    }
+}
+
+async fn start_heartbeat_(
+    sender: ChannelSender,
+    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
+    server_cipher: Cipher,
+) -> io::Result<()> {
+    let mut count = 0;
+    log::info!("启动心跳任务");
+    loop {
+        if sender.is_close() {
+            return Ok(());
+        }
+        let current_dev = current_device.load();
+        //如果和服务端使用tcp连接，则维持udp洞的频率要更高些
+        if (sender.is_main_tcp() && count % 4 == 0) || (!sender.is_main_tcp() && count % 40 == 1) {
+            let mut packet = NetPacket::new_encrypt([0; 12 + ENCRYPTION_RESERVED])?;
+            packet.set_version(Version::V1);
+            packet.set_gateway_flag(true);
+            packet.set_protocol(Protocol::Control);
+            packet.set_transport_protocol(control_packet::Protocol::AddrRequest.into());
+            packet.first_set_ttl(MAX_TTL);
+            packet.set_source(current_dev.virtual_ip());
+            packet.set_destination(current_dev.virtual_gateway);
+            server_cipher.encrypt_ipv4(&mut packet)?;
+            let _ = sender.send_main_udp(packet.buffer(), current_dev.connect_server);
+        }
+
+        let src = current_dev.virtual_ip();
+
         if count < 7 || count % 7 == 0 {
             let mut route_list: Option<Vec<(Ipv4Addr, Vec<Route>)>> = None;
             let peer_list = { device_list.lock().1.clone() };
@@ -251,6 +295,6 @@ async fn start_heartbeat_(
         }
 
         count += 1;
-        tokio::time::sleep(Duration::from_millis(5000)).await;
+        tokio::time::sleep(Duration::from_millis(3000)).await;
     }
 }
