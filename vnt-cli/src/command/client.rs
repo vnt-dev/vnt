@@ -26,7 +26,7 @@ impl CommandClient {
             }
         };
         let udp = UdpSocket::bind("127.0.0.1:0")?;
-        udp.set_read_timeout(Some(Duration::from_secs(2)))?;
+        udp.set_read_timeout(Some(Duration::from_secs(5)))?;
         udp.connect(SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(127, 0, 0, 1),
             port,
