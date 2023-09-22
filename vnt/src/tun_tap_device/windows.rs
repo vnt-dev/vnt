@@ -117,7 +117,7 @@ impl DeviceWriter {
         // 当前网段路由
         dev.add_route(address, netmask, gateway, 1)?;
         // 广播和组播路由
-        dev.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
+        // dev.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
         dev.add_route(
             Ipv4Addr::from([224, 0, 0, 0]),
             Ipv4Addr::from([240, 0, 0, 0]),
@@ -230,8 +230,8 @@ fn create_tun(
         }
         // 当前网段路由
         tun_device.add_route(address, netmask, gateway, 1)?;
-        // 广播和组播路由
-        tun_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
+        // 广播和组播路由 修改了广播路由会导致发不出广播
+        // tun_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
         tun_device.add_route(
             Ipv4Addr::from([224, 0, 0, 0]),
             Ipv4Addr::from([240, 0, 0, 0]),
