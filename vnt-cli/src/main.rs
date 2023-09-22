@@ -362,6 +362,7 @@ async fn main0(config: Config, show_cmd: bool) {
     let vnt_c = vnt.clone();
     tokio::spawn(async {
         if let Err(e) = command::server::CommandServer::new().start(vnt_c).await {
+            log::warn!("cmd:{:?}", e);
             println!("command error :{}", e);
         }
     });

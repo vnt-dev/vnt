@@ -17,15 +17,19 @@ impl CommandServer {
         let udp = UdpSocket::bind("127.0.0.1:0").await?;
         let path_buf = crate::app_home()?.join("command-port");
         let mut file = std::fs::File::create(path_buf)?;
-        file.write_all(udp.local_addr()?.port().to_string().as_bytes())?;
+        let addr = udp.local_addr()?;
+        file.write_all(addr.port().to_string().as_bytes())?;
         file.sync_all()?;
+        log::info!("启动后台cmd:{:?}", addr);
         let mut buf = [0u8; 64];
         loop {
             let (len, addr) = udp.recv_from(&mut buf).await?;
             match std::str::from_utf8(&buf[..len]) {
                 Ok(cmd) => {
                     if let Ok(out) = command(cmd, &vnt) {
-                        let _ = udp.send_to(out.as_bytes(), addr).await;
+                        if let Err(e) = udp.send_to(out.as_bytes(), addr).await {
+                            log::warn!("cmd={},err={:?}", cmd, e);
+                        }
                         if "stopped" == &out {
                             break;
                         }
