@@ -309,7 +309,7 @@ fn create_tap(
         tap_device.add_route(*address, *netmask, gateway, 1)?;
     }
     // 广播和组播路由
-    tap_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
+    // tap_device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, gateway, 1)?;
     tap_device.add_route(
         Ipv4Addr::from([224, 0, 0, 0]),
         Ipv4Addr::from([240, 0, 0, 0]),
