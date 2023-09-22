@@ -273,8 +273,10 @@ impl ChannelDataHandler {
                                                 }
                                                 _ => {
                                                     log::warn!(
-                                                        "不支持的ip代理Icmp协议:{}",
-                                                        destination
+                                                        "不支持的ip代理Icmp协议:{}->{}->{}",
+                                                        source,
+                                                        destination,
+                                                        dest_ip
                                                     );
                                                     return Err(Error::Warn(
                                                         "不支持的ip代理Icmp协议".to_string(),
@@ -283,18 +285,36 @@ impl ChannelDataHandler {
                                             }
                                         }
                                         _ => {
-                                            log::warn!("不支持的ip代理ipv4协议:{}", destination);
+                                            log::warn!(
+                                                "不支持的ip代理ipv4协议{:?}:{}->{}->{}",
+                                                ipv4.protocol(),
+                                                source,
+                                                destination,
+                                                ipv4.destination_ip()
+                                            );
                                             return Err(Error::Warn(
                                                 "不支持的ip代理ipv4协议".to_string(),
                                             ));
                                         }
                                     }
                                 } else {
-                                    log::warn!("没有ip代理规则:{}", destination);
+                                    log::warn!(
+                                        "没有ip代理规则{:?}:{}->{}->{}",
+                                        ipv4.protocol(),
+                                        source,
+                                        destination,
+                                        ipv4.destination_ip()
+                                    );
                                     return Err(Error::Warn("没有ip代理规则".to_string()));
                                 }
                             } else {
-                                log::warn!("不支持ip代理:{}", destination);
+                                log::warn!(
+                                    "不支持ip代理{:?}:{}->{}->{}",
+                                    ipv4.protocol(),
+                                    source,
+                                    destination,
+                                    ipv4.destination_ip()
+                                );
                                 return Err(Error::Warn("不支持ip代理".to_string()));
                             }
                         }
@@ -635,9 +655,11 @@ impl ChannelDataHandler {
                 {
                     let context = context.clone();
                     let nat_test = self.nat_test.clone();
-                    std::thread::spawn(move ||{
+                    std::thread::spawn(move || {
                         tokio::runtime::Builder::new_current_thread()
-                            .enable_all().build().unwrap()
+                            .enable_all()
+                            .build()
+                            .unwrap()
                             .block_on(async move {
                                 let local_port = context.main_local_ipv4_port().unwrap_or(0);
                                 let local_ipv4_addr = nat::local_ipv4_addr(local_port);

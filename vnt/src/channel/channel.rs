@@ -595,8 +595,7 @@ impl Channel {
             tcp_r
                 .read_exact(&mut buf[head_reserve..head_reserve + len])
                 .await?;
-            handler
-                .handle(&mut buf, head_reserve, head_reserve + len, key, &context);
+            handler.handle(&mut buf, head_reserve, head_reserve + len, key, &context);
         }
     }
     async fn start_tcp(
@@ -684,8 +683,7 @@ impl Channel {
                 let handler = handler.clone();
                 std::thread::spawn(move || {
                     while let Ok((mut buf, start, end, route_key)) = buf_receiver.recv() {
-                        handler
-                            .handle(&mut buf, start, end, route_key, &context);
+                        handler.handle(&mut buf, start, end, route_key, &context);
                     }
                     log::warn!("异步处理停止");
                 });
@@ -815,14 +813,13 @@ impl Channel {
                                     break;
                                 }
                             }
-                            handler
-                                .handle(
-                                    &mut buf,
-                                    head_reserve,
-                                    end,
-                                    RouteKey::new(id, addr),
-                                    &context,
-                                );
+                            handler.handle(
+                                &mut buf,
+                                head_reserve,
+                                end,
+                                RouteKey::new(id, addr),
+                                &context,
+                            );
                         }
                         Err(e) => {
                             log::error!("udp :{:?}", e);
@@ -864,11 +861,11 @@ impl Channel {
         #[cfg(target_os = "windows")]
         use std::os::windows::io::AsRawSocket;
         #[cfg(target_os = "windows")]
-            let id = 3 + udp.as_raw_socket() as usize;
+        let id = 3 + udp.as_raw_socket() as usize;
         #[cfg(any(unix))]
         use std::os::fd::AsRawFd;
         #[cfg(any(unix))]
-            let id = 3 + udp.as_raw_fd() as usize;
+        let id = 3 + udp.as_raw_fd() as usize;
 
         context.insert_udp(id, udp.clone());
         match buf_sender {

@@ -65,9 +65,10 @@ async fn start0(
         let dest_addr = *entry.value();
         drop(entry);
         //先使用相同的端口，冲突了再随机端口
-        let peer_udp_socket = match UdpSocket::bind(format!("0.0.0.0:{}", sender_addr.port())).await {
-            Ok(udp) => { udp }
-            Err(_) => { UdpSocket::bind("0.0.0.0:0").await? }
+        let peer_udp_socket = match UdpSocket::bind(format!("0.0.0.0:{}", sender_addr.port())).await
+        {
+            Ok(udp) => udp,
+            Err(_) => UdpSocket::bind("0.0.0.0:0").await?,
         };
         peer_udp_socket.connect(dest_addr).await?;
         peer_udp_socket.send(buf).await?;
