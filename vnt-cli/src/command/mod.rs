@@ -17,7 +17,7 @@ pub enum CommandEnum {
 
 pub fn command(cmd: CommandEnum) {
     if let Err(e) = command_(cmd) {
-        println!("cmd: {}", e);
+        println!("cmd: {:?}", e);
     }
 }
 

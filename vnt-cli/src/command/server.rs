@@ -26,6 +26,7 @@ impl CommandServer {
             let (len, addr) = udp.recv_from(&mut buf).await?;
             match std::str::from_utf8(&buf[..len]) {
                 Ok(cmd) => {
+                    log::info!("收到cmd={:?}", cmd);
                     if let Ok(out) = command(cmd, &vnt) {
                         if let Err(e) = udp.send_to(out.as_bytes(), addr).await {
                             log::warn!("cmd={},err={:?}", cmd, e);
