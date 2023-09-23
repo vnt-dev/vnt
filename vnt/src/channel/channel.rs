@@ -678,15 +678,20 @@ impl Channel {
         let main_channel = context.inner.main_channel.clone();
         let buf_sender = if parallel > 1 {
             let (buf_sender, buf_receiver) = buf_channel_group(parallel);
+            let mut num = 0;
             for buf_receiver in buf_receiver.0 {
                 let context = context.clone();
                 let handler = handler.clone();
-                std::thread::spawn(move || {
-                    while let Ok((mut buf, start, end, route_key)) = buf_receiver.recv() {
-                        handler.handle(&mut buf, start, end, route_key, &context);
-                    }
-                    log::warn!("异步处理停止");
-                });
+                std::thread::Builder::new()
+                    .name(format!("recv-handler-{}", num))
+                    .spawn(move || {
+                        while let Ok((mut buf, start, end, route_key)) = buf_receiver.recv() {
+                            handler.handle(&mut buf, start, end, route_key, &context);
+                        }
+                        log::warn!("异步处理停止");
+                    })
+                    .unwrap();
+                num += 1;
             }
             Some(buf_sender)
         } else {
@@ -709,18 +714,21 @@ impl Channel {
             let main_channel_ipv6 = main_channel_ipv6.clone();
             let handler = handler.clone();
             let buf_sender = buf_sender.clone();
-            std::thread::spawn(move || {
-                log::info!("启动udp v6");
-                Self::main_start_(
-                    worker,
-                    context,
-                    UDP_V6_ID,
-                    main_channel_ipv6,
-                    handler,
-                    buf_sender,
-                    head_reserve,
-                )
-            });
+            std::thread::Builder::new()
+                .name("ipv6-recv".into())
+                .spawn(move || {
+                    log::info!("启动udp v6");
+                    Self::main_start_(
+                        worker,
+                        context,
+                        UDP_V6_ID,
+                        main_channel_ipv6,
+                        handler,
+                        buf_sender,
+                        head_reserve,
+                    )
+                })
+                .unwrap();
         }
         {
             let worker = worker.worker("main_channel_1");
@@ -728,18 +736,21 @@ impl Channel {
             let main_channel = main_channel.clone();
             let handler = handler.clone();
             let buf_sender = buf_sender.clone();
-            std::thread::spawn(move || {
-                log::info!("启动udp v4");
-                Self::main_start_(
-                    worker,
-                    context,
-                    UDP_ID,
-                    main_channel,
-                    handler,
-                    buf_sender,
-                    head_reserve,
-                )
-            });
+            std::thread::Builder::new()
+                .name("ipv4-recv".into())
+                .spawn(move || {
+                    log::info!("启动udp v4");
+                    Self::main_start_(
+                        worker,
+                        context,
+                        UDP_ID,
+                        main_channel,
+                        handler,
+                        buf_sender,
+                        head_reserve,
+                    )
+                })
+                .unwrap();
         }
         if relay {
             worker.stop_wait().await;
