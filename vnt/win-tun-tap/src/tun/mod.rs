@@ -5,8 +5,8 @@ use winapi::um::{handleapi, synchapi, winbase, winnt};
 
 use crate::{decode_utf16, encode_utf16, ffi, netsh, route, IFace};
 use rand::Rng;
-mod log;
 pub mod packet;
+mod wintun_log;
 mod wintun_raw;
 
 /// The maximum size of wintun's internal ring buffer (in bytes)
@@ -80,7 +80,7 @@ impl TunDevice {
         let guid_struct: wintun_raw::GUID = unsafe { std::mem::transmute(guid) };
         let guid_ptr = &guid_struct as *const wintun_raw::GUID;
 
-        log::set_default_logger_if_unset(&win_tun);
+        wintun_log::set_default_logger_if_unset(&win_tun);
 
         //SAFETY: the function is loaded from the wintun dll properly, we are providing valid
         //pointers, and all the strings are correct null terminated UTF-16. This safety rationale
@@ -88,6 +88,7 @@ impl TunDevice {
         let adapter =
             win_tun.WintunCreateAdapter(pool_utf16.as_ptr(), name_utf16.as_ptr(), guid_ptr);
         if adapter.is_null() {
+            log::error!("adapter.is_null {:?}", io::Error::last_os_error());
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "Failed to crate adapter",
@@ -102,6 +103,7 @@ impl TunDevice {
         // 开启session
         let session = win_tun.WintunStartSession(adapter, 128 * 1024);
         if session.is_null() {
+            log::error!("session.is_null {:?}", io::Error::last_os_error());
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "WintunStartSession failed",
@@ -138,10 +140,14 @@ impl TunDevice {
                 ));
             }
         };
-        log::set_default_logger_if_unset(&win_tun);
+        wintun_log::set_default_logger_if_unset(&win_tun);
         let name_utf16 = encode_utf16(name);
         let adapter = win_tun.WintunOpenAdapter(name_utf16.as_ptr());
         if adapter.is_null() {
+            log::error!(
+                "delete_for_name adapter.is_null {:?}",
+                io::Error::last_os_error()
+            );
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "Failed to open adapter",
