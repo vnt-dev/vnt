@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
@@ -53,6 +54,7 @@ pub struct ChannelDataHandler {
     rsa_cipher: Option<RsaCipher>,
     relay: bool,
     token: String,
+    time: Arc<AtomicCell<Instant>>,
 }
 
 impl ChannelDataHandler {
@@ -93,6 +95,7 @@ impl ChannelDataHandler {
             rsa_cipher,
             relay,
             token,
+            time: Arc::new(AtomicCell::new(Instant::now())),
         }
     }
 }
@@ -132,6 +135,7 @@ impl ChannelDataHandler {
             && !destination.is_multicast()
             && destination != current_device.broadcast_address;
         if current_device.virtual_ip() != destination
+            && !net_packet.is_gateway()
             && not_broadcast
             && !destination.is_unspecified()
         {
@@ -160,6 +164,14 @@ impl ChannelDataHandler {
                     == crate::protocol::error_packet::Protocol::NoKey.into()
             {
                 if let Some(rsa_cipher) = &self.rsa_cipher {
+                    let last = self.time.load();
+                    if last.elapsed() < Duration::from_secs(3)
+                        || self.time.compare_exchange(last, Instant::now()).is_err()
+                    {
+                        //短时间不重复上传服务端密钥
+                        return Ok(());
+                    }
+                    log::warn!("上传服务端密钥");
                     secret_handshake_req(
                         context,
                         current_device.connect_server,
