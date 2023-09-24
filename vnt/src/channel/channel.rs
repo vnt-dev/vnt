@@ -522,10 +522,6 @@ impl Context {
     pub fn update_read_time(&self, id: &Ipv4Addr, route_key: &RouteKey) {
         if let Some(mut time) = self.inner.route_table_time.get_mut(&(*route_key, *id)) {
             *time.value_mut() = Instant::now();
-        } else {
-            self.inner
-                .route_table_time
-                .insert((*route_key, *id), Instant::now());
         }
     }
 }
