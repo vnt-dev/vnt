@@ -29,5 +29,6 @@ features = [
     "winerror",
     "ipexport",
     "iphlpapi",
-    "handleapi"
+    "handleapi",
+    "ifdef"
 ]

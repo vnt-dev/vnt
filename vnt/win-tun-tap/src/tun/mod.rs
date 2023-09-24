@@ -193,8 +193,8 @@ pub struct Version {
 
 impl IFace for TunDevice {
     fn shutdown(&self) -> io::Result<()> {
-        let _ = unsafe { synchapi::SetEvent(self.shutdown_event) };
-        let _ = unsafe { handleapi::CloseHandle(self.shutdown_event) };
+        // let _ = unsafe { synchapi::SetEvent(self.shutdown_event) };
+        // let _ = unsafe { handleapi::CloseHandle(self.shutdown_event) };
         Ok(())
     }
 

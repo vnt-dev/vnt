@@ -112,16 +112,17 @@ impl DeviceWriter {
         }
     }
     pub fn close(&self) -> io::Result<()> {
-        unsafe {
-            match &self.writer {
-                DeviceW::Tun(writer) => {
-                    libc::close(writer.as_raw_fd());
-                }
-                DeviceW::Tap((writer, _)) => {
-                    libc::close(writer.as_raw_fd());
-                }
-            }
-        }
+        //早期使用close直接切断网卡，现在并不需要这么做也能正常关闭
+        // unsafe {
+        //     match &self.writer {
+        //         DeviceW::Tun(writer) => {
+        //             libc::close(writer.as_raw_fd());
+        //         }
+        //         DeviceW::Tap((writer, _)) => {
+        //             libc::close(writer.as_raw_fd());
+        //         }
+        //     }
+        // }
         Ok(())
     }
     pub fn is_tun(&self) -> bool {

@@ -119,7 +119,8 @@ impl TapDevice {
     }
 
     pub fn delete(self) -> io::Result<()> {
-        iface::delete_interface(&self.luid)
+        // iface::delete_interface(&self.luid)
+        Ok(())
     }
 }
 
