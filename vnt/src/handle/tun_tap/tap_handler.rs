@@ -139,6 +139,9 @@ fn start_simple(
 ) -> io::Result<()> {
     let mut buf = [0; 4096];
     loop {
+        if sender.is_close() {
+            return Ok(());
+        }
         let len = device_reader.read(&mut buf)?;
         if let Err(e) = handle(
             &mut buf,
