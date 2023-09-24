@@ -24,7 +24,7 @@ pub fn local_ipv4() -> io::Result<Ipv4Addr> {
 
 pub fn local_ipv6() -> io::Result<Ipv6Addr> {
     let socket = UdpSocket::bind("[::]:0")?;
-    socket.connect("[2001:4860:4860::8888]:80")?;
+    socket.connect("[2001:4860:4860:0000:0000:0000:0000:8888]:80")?;
     let addr = socket.local_addr()?;
     match addr.ip() {
         IpAddr::V4(_) => Ok(Ipv6Addr::UNSPECIFIED),
