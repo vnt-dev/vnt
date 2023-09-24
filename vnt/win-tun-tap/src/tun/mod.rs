@@ -1,7 +1,7 @@
 use std::io;
 use std::net::Ipv4Addr;
 
-use winapi::um::{handleapi, synchapi, winbase, winnt};
+use winapi::um::{synchapi, winbase, winnt};
 
 use crate::{decode_utf16, encode_utf16, ffi, netsh, route, IFace};
 use rand::Rng;
