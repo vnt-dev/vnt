@@ -5,7 +5,6 @@ use bytes::BufMut;
 use packet::ethernet;
 use parking_lot::Mutex;
 use std::net::Ipv4Addr;
-use std::os::unix::io::AsRawFd;
 #[cfg(any(target_os = "linux"))]
 use tun::platform::linux::Device;
 #[cfg(any(target_os = "macos"))]
