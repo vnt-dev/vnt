@@ -229,7 +229,7 @@ impl Register {
     }
     pub fn fast_register(&self, ip: Ipv4Addr) -> crate::Result<()> {
         let last = self.time.load();
-        if last.elapsed() < Duration::from_secs(2)
+        if last.elapsed() < Duration::from_secs(3)
             || self.time.compare_exchange(last, Instant::now()).is_err()
         {
             //短时间不重复注册

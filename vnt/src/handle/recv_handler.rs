@@ -664,7 +664,7 @@ impl ChannelDataHandler {
             service_packet::Protocol::RegistrationResponse => {
                 let response = RegistrationResponse::parse_from_bytes(net_packet.payload())?;
 
-                {
+                if self.nat_test.can_update() {
                     let context = context.clone();
                     let nat_test = self.nat_test.clone();
                     std::thread::spawn(move || {

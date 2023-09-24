@@ -1,7 +1,9 @@
+use crossbeam_utils::atomic::AtomicCell;
 use std::io;
 use std::net::UdpSocket;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
@@ -54,6 +56,7 @@ pub fn local_ipv6_addr(port: u16) -> SocketAddrV6 {
 pub struct NatTest {
     stun_server: Vec<String>,
     info: Arc<Mutex<NatInfo>>,
+    time: Arc<AtomicCell<Instant>>,
 }
 
 impl From<NatType> for PunchNatType {
@@ -93,7 +96,16 @@ impl NatTest {
             NatType::Cone,
         );
         let info = Arc::new(Mutex::new(nat_info));
-        NatTest { stun_server, info }
+        NatTest {
+            stun_server,
+            info,
+            time: Arc::new(AtomicCell::new(Instant::now())),
+        }
+    }
+    pub fn can_update(&self) -> bool {
+        let last = self.time.load();
+        last.elapsed() > Duration::from_secs(10)
+            && self.time.compare_exchange(last, Instant::now()).is_ok()
     }
     pub fn nat_info(&self) -> NatInfo {
         self.info.lock().clone()
@@ -128,6 +140,7 @@ impl NatTest {
             ipv6_addr,
         )
         .await;
+        log::info!("探测nat类型={:?}", info);
         *self.info.lock() = info.clone();
         info
     }
