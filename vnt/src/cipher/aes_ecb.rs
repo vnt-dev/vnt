@@ -51,10 +51,6 @@ impl AesEcbCipher {
             //未加密的数据直接丢弃
             return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
         }
-        if net_packet.payload().len() < 16 {
-            log::error!("数据异常,长度{}小于{}", net_packet.payload().len(), 16);
-            return Err(io::Error::new(io::ErrorKind::Other, "data err"));
-        }
 
         if let Some(finger) = &self.finger {
             let mut nonce_raw = [0; 12];
@@ -74,6 +70,10 @@ impl AesEcbCipher {
                 return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
             }
             net_packet.set_data_len(net_packet.data_len() - finger.len())?;
+        }
+        if net_packet.payload().len() < 16 {
+            log::error!("数据异常,长度{}小于{}", net_packet.payload().len(), 16);
+            return Err(io::Error::new(io::ErrorKind::Other, "data err"));
         }
         let mut out = [0u8; 1024 * 5];
         let rs = match self.key {
@@ -111,7 +111,7 @@ impl AesEcbCipher {
             }
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("解密失败:{}", e),
+                format!("aes_ecb解密失败:{}", e),
             )),
         }
     }
@@ -154,7 +154,7 @@ impl AesEcbCipher {
             }
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("加密失败:{}", e),
+                format!("aes_ecb加密失败:{}", e),
             )),
         };
     }
@@ -164,6 +164,8 @@ impl AesEcbCipher {
 fn test_aes_ecb() {
     let d = AesEcbCipher::new_128([0; 16], Some(Finger::new("123")));
     let mut p = NetPacket::new_encrypt([0; 100]).unwrap();
+    let src = p.buffer().to_vec();
     d.encrypt_ipv4(&mut p).unwrap();
     d.decrypt_ipv4(&mut p).unwrap();
+    assert_eq!(p.buffer(), &src)
 }
