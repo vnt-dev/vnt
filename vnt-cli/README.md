@@ -29,10 +29,10 @@
 
 提升通信安全性，使用该密码生成的密钥对客户端数据进行加密，并且服务端无法解密(包括中继数据)。使用相同密码的客户端才能通信
 
-| 密码位数     | 加密算法   |  
-|---------|-------| 
-| 小于8 | AES128-GCM     
-| 大于等于8 | AES256-GCM     | 
+| 密码位数  | 加密算法       |  
+|-------|------------| 
+| 小于8   | AES128-GCM |
+| 大于等于8 | AES256-GCM | 
 
 ### -W
 开启和服务端通信的数据加密，采用rsa+aes256gcm加密客户端和服务端之间通信的数据，可以避免token泄漏、中间人攻击
@@ -59,7 +59,8 @@
 ### --par `<parallel>`
 任务并行度(必须为正整数),默认值为1,该值表示处理网卡读写的任务数,组网设备数较多、处理延迟较大时可适当调大此值
 ### --model `<model>`
-加密模式，可选值 aes_gcm/aes_cbc/aes_ecb，默认使用aes_gcm，通常情况aes_gcm安全性高、aes_ecb性能更好
+加密模式，可选值 aes_gcm/aes_cbc/aes_ecb/sm4_cbc，默认使用aes_gcm，通常情况aes_gcm安全性高、aes_ecb性能更好，但是在低性能设备上sm4_cbc也许速度会更快；
+
 
 | 密码位数  | model   | 加密算法       |  
 |-------|---------|------------|
@@ -69,12 +70,53 @@
 | `>=`8 | aes_cbc | AES256-CBC |
 | 1~8位  | aes_ecb | AES128-ECB |
 | `>=`8 | aes_ecb | AES256-ECB |
+| `>0`  | sm4_cbc | SM4-CBC    |
 ### --finger 
 
 开启数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启，开启会损耗一部分性能
 
 注意：默认情况下服务端不会对中转的数据做校验，如果要对中转的数据做校验，则需要客户端、服务端都开启此参数
+### --punch `<punch>`
+取值ipv4/ipv6，选择只使用ipv4打洞或者只使用ipv6打洞，默认两则都会使用
+### --port `<port>`
+取值0~65535，指定本地监听的端口，默认取随机端口
+### -f `<conf>`
+指定配置文件
+配置文件才有yaml格式，可参考：
+```yaml
+# 全部参数
+tap: false #是否使用tap 
+token: xxx #组网token
+device_id: xxx #当前设备id
+name: windows 11 #当前设备名称
+server_address: ip:port #注册和中继服务器
+stun_server:  #stun服务器
+  - stun1.l.google.com:19302
+  - stun2.l.google.com:19302
+in_ips: #代理ip入站
+  - 192.168.1.0/24,10.26.0.3
+out_ips: #代理ip出站
+  - 0.0.0.0/0
+password: xxx #密码
+simulate_multicast: false #模拟组播
+mtu: 1420  #mtu
+tcp: false #tcp模式
+ip: 10.26.0.2 #指定虚拟ip
+relay: false #中继模式
+server_encrypt: true #服务端加密
+parallel: 1 #任务并行度
+cipher_model: aes_gcm #客户端加密算法
+finger: false #关闭数据指纹
+punch_model: ipv4 #打洞模式
+port: 0 #使用随机端口
+cmd: false #关闭控制台输入
+```
 
+或者需要哪个配置就加哪个，当然token是必须的
+```yaml
+# 部分参数
+token: xxx #组网token
+```
 ### --relay
 禁用p2p,在网络环境很差时，只使用服务器中转效果可能更好（可以配合--tcp参数一起使用）
 ### --list
