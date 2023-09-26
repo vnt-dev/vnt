@@ -68,6 +68,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     let finger = env.get_field(&config, "finger", "Z")?.z()?;
     let in_ips = to_string(env, &config, "inIps")?;
     let out_ips = to_string(env, &config, "outIps")?;
+    let port = env.get_field(&config, "port", "I")?.i()? as u16;
     let in_ips = if let Some(in_ips) = in_ips {
         let in_ips: Vec<&str> = in_ips.split("\n").collect();
         let in_ips = in_ips.iter().map(|v| v.to_string()).collect();
@@ -149,6 +150,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
         cipher_model,
         finger,
         PunchModel::All,
+        port,
     );
     match VntUtilSync::new(config) {
         Ok(vnt_util) => Ok(vnt_util),

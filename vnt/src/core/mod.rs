@@ -69,11 +69,11 @@ pub struct VntUtil {
 impl VntUtil {
     pub async fn new(config: Config) -> io::Result<VntUtil> {
         //单个udp用同步的性能更好，但是代理和多端口监听用异步更方便，这里将两者结合起来
-        let main_channel = UdpSocket::bind("0.0.0.0:0")?;
+        let main_channel = UdpSocket::bind(format!("0.0.0.0:{}", config.port))?;
         main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
         main_channel.set_read_timeout(Some(Duration::from_secs(2)))?;
         let main_channel_ipv6 = if config.punch_model != PunchModel::IPv4 {
-            match UdpSocket::bind("[::]:0") {
+            match UdpSocket::bind(format!("[::]:{}", config.port)) {
                 Ok(main_channel_ipv6) => {
                     main_channel_ipv6.set_write_timeout(Some(Duration::from_secs(5)))?;
                     Some(main_channel_ipv6)
@@ -577,6 +577,7 @@ pub struct Config {
     pub cipher_model: CipherModel,
     pub finger: bool,
     pub punch_model: PunchModel,
+    pub port: u16,
 }
 
 impl Config {
@@ -601,6 +602,7 @@ impl Config {
         cipher_model: CipherModel,
         finger: bool,
         punch_model: PunchModel,
+        port: u16,
     ) -> Self {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -628,6 +630,7 @@ impl Config {
             cipher_model,
             finger,
             punch_model,
+            port,
         }
     }
 }

@@ -16,6 +16,7 @@ use vnt::handle::handshake_handler::HandshakeEnum;
 use vnt::handle::registration_handler::ReqEnum;
 
 mod command;
+mod config;
 mod console_out;
 mod root_check;
 
@@ -54,12 +55,10 @@ fn main() {
     opts.optopt("", "thread", "线程数(必须为正整数)", "<thread>");
     opts.optopt("", "model", "加密模式", "<model>");
     opts.optflag("", "finger", "指纹校验");
-    opts.optopt(
-        "",
-        "punch",
-        "取值ipv4/ipv6，表示仅使用ipv4或ipv6打洞",
-        "<punch>",
-    );
+    opts.optopt("", "punch", "取值ipv4/ipv6", "<punch>");
+    opts.optopt("", "port", "监听的端口", "<port>");
+    opts.optflag("", "cmd", "开启窗口输入");
+    opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -101,156 +100,161 @@ fn main() {
         command::command(command::CommandEnum::All);
         return;
     }
-    if !matches.opt_present("k") {
-        print_usage(&program, opts);
-        println!("parameter -k not found .");
-        return;
-    }
-    let tap = matches.opt_present("a");
-    let token: String = matches.opt_get("k").unwrap().unwrap();
-    let device_id = matches.opt_get_default("d", String::new()).unwrap();
-    let device_id = if device_id.is_empty() {
-        if let Some(id) = common::identifier::get_unique_identifier() {
-            id
-        } else {
-            let path_buf = app_home().unwrap().join("device-id");
-            if let Ok(id) = std::fs::read_to_string(path_buf.as_path()) {
-                id
-            } else {
-                let id = uuid::Uuid::new_v4().to_string();
-                let _ = std::fs::write(path_buf, &id);
-                id
-            }
-        }
-    } else {
-        device_id
-    };
-    if device_id.is_empty() {
-        print_usage(&program, opts);
-        println!("parameter -d not found .");
-        return;
-    }
-    let name = matches
-        .opt_get_default("n", os_info::get().to_string())
-        .unwrap();
-    let server_address_str = matches
-        .opt_get_default("s", "nat1.wherewego.top:29872".to_string())
-        .unwrap();
-    let server_address = match server_address_str.to_socket_addrs() {
-        Ok(mut addr) => {
-            if let Some(addr) = addr.next() {
-                addr
-            } else {
-                println!("parameter '-s {}' error .", server_address_str);
+    let conf = matches.opt_str("f");
+    let (config, cmd) = if conf.is_some() {
+        match config::read_config(&conf.unwrap()) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("conf err {}", e);
                 return;
             }
         }
-        Err(e) => {
-            println!("parameter '-s {}' error {}.", server_address_str, e);
+    } else {
+        if !matches.opt_present("k") {
+            print_usage(&program, opts);
+            println!("parameter -k not found .");
             return;
         }
-    };
-    let mut stun_server = matches.opt_strs("e");
-    if stun_server.is_empty() {
-        stun_server.push("stun1.l.google.com:19302".to_string());
-        stun_server.push("stun2.l.google.com:19302".to_string());
-        stun_server.push("stun.qq.com:3478".to_string());
-    }
+        let tap = matches.opt_present("a");
+        let token: String = matches.opt_get("k").unwrap().unwrap();
+        let device_id = matches.opt_get_default("d", String::new()).unwrap();
+        let device_id = if device_id.is_empty() {
+            config::get_device_id()
+        } else {
+            device_id
+        };
+        if device_id.is_empty() {
+            print_usage(&program, opts);
+            println!("parameter -d not found .");
+            return;
+        }
+        let name = matches
+            .opt_get_default("n", os_info::get().to_string())
+            .unwrap();
+        let server_address_str = matches
+            .opt_get_default("s", "nat1.wherewego.top:29872".to_string())
+            .unwrap();
+        let server_address = match server_address_str.to_socket_addrs() {
+            Ok(mut addr) => {
+                if let Some(addr) = addr.next() {
+                    addr
+                } else {
+                    println!("parameter '-s {}' error .", server_address_str);
+                    return;
+                }
+            }
+            Err(e) => {
+                println!("parameter '-s {}' error {}.", server_address_str, e);
+                return;
+            }
+        };
+        let mut stun_server = matches.opt_strs("e");
+        if stun_server.is_empty() {
+            stun_server.push("stun1.l.google.com:19302".to_string());
+            stun_server.push("stun2.l.google.com:19302".to_string());
+            stun_server.push("stun.qq.com:3478".to_string());
+        }
 
-    let in_ip = matches.opt_strs("i");
-    let in_ip = match ips_parse(&in_ip) {
-        Ok(in_ip) => in_ip,
-        Err(e) => {
-            print_usage(&program, opts);
-            println!();
-            println!("-i: {:?} {}", in_ip, e);
-            println!("example: -i 192.168.0.0/24,10.26.0.3");
-            return;
-        }
-    };
-    let out_ip = matches.opt_strs("o");
-    let out_ip = match out_ips_parse(&out_ip) {
-        Ok(out_ip) => out_ip,
-        Err(e) => {
-            print_usage(&program, opts);
-            println!();
-            println!("-o: {:?} {}", out_ip, e);
-            println!("example: -o 0.0.0.0/0");
-            return;
-        }
-    };
-    let password: Option<String> = matches.opt_get("w").unwrap();
-    let server_encrypt = matches.opt_present("W");
-    let simulate_multicast = matches.opt_present("m");
-    let unused_cmd = matches.opt_present("c");
-    let mtu: Option<String> = matches.opt_get("u").unwrap();
-    let mtu = if let Some(mtu) = mtu {
-        match u16::from_str(&mtu) {
-            Ok(mtu) => Some(mtu),
+        let in_ip = matches.opt_strs("i");
+        let in_ip = match ips_parse(&in_ip) {
+            Ok(in_ip) => in_ip,
             Err(e) => {
                 print_usage(&program, opts);
                 println!();
-                println!("'-u {}' {}", mtu, e);
+                println!("-i: {:?} {}", in_ip, e);
+                println!("example: -i 192.168.0.0/24,10.26.0.3");
+                return;
+            }
+        };
+        let out_ip = matches.opt_strs("o");
+        let out_ip = match out_ips_parse(&out_ip) {
+            Ok(out_ip) => out_ip,
+            Err(e) => {
+                print_usage(&program, opts);
+                println!();
+                println!("-o: {:?} {}", out_ip, e);
+                println!("example: -o 0.0.0.0/0");
+                return;
+            }
+        };
+        let password: Option<String> = matches.opt_get("w").unwrap();
+        let server_encrypt = matches.opt_present("W");
+        let simulate_multicast = matches.opt_present("m");
+        let mtu: Option<String> = matches.opt_get("u").unwrap();
+        let mtu = if let Some(mtu) = mtu {
+            match u16::from_str(&mtu) {
+                Ok(mtu) => Some(mtu),
+                Err(e) => {
+                    print_usage(&program, opts);
+                    println!();
+                    println!("'-u {}' {}", mtu, e);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let virtual_ip: Option<String> = matches.opt_get("ip").unwrap();
+        let virtual_ip =
+            virtual_ip.map(|v| Ipv4Addr::from_str(&v).expect(&format!("'--ip {}' error", v)));
+        if let Some(virtual_ip) = virtual_ip {
+            if virtual_ip.is_unspecified() || virtual_ip.is_broadcast() || virtual_ip.is_multicast()
+            {
+                println!("'--ip {}' invalid", virtual_ip);
                 return;
             }
         }
-    } else {
-        None
-    };
-    let virtual_ip: Option<String> = matches.opt_get("ip").unwrap();
-    let virtual_ip =
-        virtual_ip.map(|v| Ipv4Addr::from_str(&v).expect(&format!("'--ip {}' error", v)));
-    if let Some(virtual_ip) = virtual_ip {
-        if virtual_ip.is_unspecified() || virtual_ip.is_broadcast() || virtual_ip.is_multicast() {
-            println!("'--ip {}' invalid", virtual_ip);
+        let tcp_channel = matches.opt_present("tcp");
+        let relay = matches.opt_present("relay");
+        let parallel = matches.opt_get::<usize>("par").unwrap().unwrap_or(1);
+        if parallel == 0 {
+            println!("'--par {}' invalid", parallel);
             return;
         }
-    }
-    let tcp_channel = matches.opt_present("tcp");
-    let relay = matches.opt_present("relay");
-    let parallel = matches.opt_get::<usize>("par").unwrap().unwrap_or(1);
-    if parallel == 0 {
-        println!("'--par {}' invalid", parallel);
-        return;
-    }
 
-    let cipher_model = match matches.opt_get::<CipherModel>("model") {
-        Ok(model) => model.unwrap_or(CipherModel::AesGcm),
-        Err(e) => {
-            println!("'--model ' invalid,{}", e);
-            return;
-        }
+        let cipher_model = match matches.opt_get::<CipherModel>("model") {
+            Ok(model) => model.unwrap_or(CipherModel::AesGcm),
+            Err(e) => {
+                println!("'--model ' invalid,{}", e);
+                return;
+            }
+        };
+
+        let finger = matches.opt_present("finger");
+        let punch_model = matches
+            .opt_get::<PunchModel>("punch")
+            .unwrap()
+            .unwrap_or(PunchModel::All);
+        let port = matches.opt_get::<u16>("port").unwrap_or(None).unwrap_or(0);
+        let cmd = matches.opt_present("cmd");
+        let config = Config::new(
+            tap,
+            token,
+            device_id,
+            name,
+            server_address,
+            server_address_str,
+            stun_server,
+            in_ip,
+            out_ip,
+            password,
+            simulate_multicast,
+            mtu,
+            tcp_channel,
+            virtual_ip,
+            relay,
+            server_encrypt,
+            parallel,
+            cipher_model,
+            finger,
+            punch_model,
+            port,
+        );
+        (config, cmd)
     };
-
-    let finger = matches.opt_present("finger");
-    let punch_model = matches
-        .opt_get::<PunchModel>("punch")
-        .unwrap()
-        .unwrap_or(PunchModel::All);
     println!("version {}", vnt::VNT_VERSION);
-    let config = Config::new(
-        tap,
-        token,
-        device_id,
-        name,
-        server_address,
-        server_address_str,
-        stun_server,
-        in_ip,
-        out_ip,
-        password,
-        simulate_multicast,
-        mtu,
-        tcp_channel,
-        virtual_ip,
-        relay,
-        server_encrypt,
-        parallel,
-        cipher_model,
-        finger,
-        punch_model,
-    );
-    main0(config, !unused_cmd);
+
+    main0(config, cmd);
     std::process::exit(0);
 }
 
@@ -438,11 +442,10 @@ fn print_usage(program: &str, _opts: Options) {
     println!("Options:");
     println!(
         "  -k <token>          {}",
-        green("必选,使用相同的token,就能组建一个局域网络".to_string())
+        green("使用相同的token,就能组建一个局域网络".to_string())
     );
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip");
-    println!("  -c                  关闭交互式命令,使用此参数禁用控制台输入");
     println!("  -s <server>         注册和中继服务器地址");
     println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可多次指定,如-e addr1 -e addr2");
     println!("  -a                  使用tap模式,默认使用tun模式");
@@ -453,13 +456,17 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
     println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     println!("  -u <mtu>            自定义mtu(不加密默认为1450，加密默认为1410)");
+    println!("  -f <conf_file>      读取配置文件中的配置");
+
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
-    println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb，一般来说性能:aes_ecb>aes_cbc>aes_gcm");
+    println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb/sm4_cbc");
     println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
     println!("  --punch <punch>     取值ipv4/ipv6，ipv4表示仅使用ipv4打洞");
+    println!("  --port <port>       取值0~65535，指定本地监听的端口，默认取随机端口");
+    println!("  --cmd               开启交互式命令，使用此参数开启控制台输入");
 
     println!();
     println!(
