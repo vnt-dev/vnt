@@ -1,6 +1,6 @@
 [package]
 name = "vnt"
-version = "1.2.4"
+version = "1.2.5"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -29,7 +29,7 @@ stun-format = { version = "1.0.1", features = ["fmt", "rfc3489"] }
 rsa = { version = "0.7.2", features = [] }
 spki = { version = "0.6.0", features = ["fingerprint", "alloc"] }
 openssl-sys = { git = "https://github.com/lbl8603/rust-openssl" ,optional = true}
-
+libsm = {git="https://github.com/lbl8603/libsm"}
 
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
 tun = { path = "./rust-tun" }

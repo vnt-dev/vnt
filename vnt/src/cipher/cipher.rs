@@ -6,6 +6,7 @@ use crate::cipher::aes_gcm_cipher::AesGcmCipher;
 use crate::cipher::openssl_aes_ecb::AesEcbCipher;
 #[cfg(feature = "ring-cipher")]
 use crate::cipher::ring_aes_gcm_cipher::AesGcmCipher;
+use crate::cipher::sm4_cbc::Sm4CbcCipher;
 use crate::cipher::{aes_cbc, Finger};
 use crate::protocol::NetPacket;
 use aes_cbc::AesCbcCipher;
@@ -18,6 +19,7 @@ pub enum CipherModel {
     AesGcm,
     AesCbc,
     AesEcb,
+    Sm4Cbc,
 }
 
 impl FromStr for CipherModel {
@@ -28,6 +30,7 @@ impl FromStr for CipherModel {
             "aes_gcm" => Ok(CipherModel::AesGcm),
             "aes_cbc" => Ok(CipherModel::AesCbc),
             "aes_ecb" => Ok(CipherModel::AesEcb),
+            "sm4_cbc" => Ok(CipherModel::Sm4Cbc),
             _ => Err(format!("not match '{}', enum:aes_gcm/aes_cbc/aes_ecb", s)),
         }
     }
@@ -38,6 +41,7 @@ pub enum Cipher {
     AesGcm((AesGcmCipher, Vec<u8>)),
     AesCbc(AesCbcCipher),
     AesEcb(AesEcbCipher),
+    Sm4Cbc(Sm4CbcCipher),
     None,
 }
 
@@ -80,6 +84,10 @@ impl Cipher {
                         Cipher::AesEcb(aes)
                     }
                 }
+                CipherModel::Sm4Cbc => {
+                    let aes = Sm4CbcCipher::new_128(key[..16].try_into().unwrap(), finger);
+                    Cipher::Sm4Cbc(aes)
+                }
             }
         } else {
             Cipher::None
@@ -107,6 +115,7 @@ impl Cipher {
             Cipher::AesGcm((aes_gcm, _)) => aes_gcm.decrypt_ipv4(net_packet),
             Cipher::AesCbc(aes_cbc) => aes_cbc.decrypt_ipv4(net_packet),
             Cipher::AesEcb(aes_ecb) => aes_ecb.decrypt_ipv4(net_packet),
+            Cipher::Sm4Cbc(sm4_cbc) => sm4_cbc.decrypt_ipv4(net_packet),
             Cipher::None => {
                 if net_packet.is_encrypt() {
                     return Err(io::Error::new(io::ErrorKind::Other, "not key"));
@@ -123,6 +132,7 @@ impl Cipher {
             Cipher::AesGcm((aes_gcm, _)) => aes_gcm.encrypt_ipv4(net_packet),
             Cipher::AesCbc(aes_cbc) => aes_cbc.encrypt_ipv4(net_packet),
             Cipher::AesEcb(aes_ecb) => aes_ecb.encrypt_ipv4(net_packet),
+            Cipher::Sm4Cbc(sm4_cbc) => sm4_cbc.encrypt_ipv4(net_packet),
             Cipher::None => Ok(()),
         }
     }
@@ -131,6 +141,7 @@ impl Cipher {
             Cipher::AesGcm((aes_gcm, _)) => aes_gcm.finger.as_ref(),
             Cipher::AesCbc(aes_cbc) => aes_cbc.finger.as_ref(),
             Cipher::AesEcb(aes_ecb) => aes_ecb.finger.as_ref(),
+            Cipher::Sm4Cbc(sm4_cbc) => sm4_cbc.finger.as_ref(),
             Cipher::None => None,
         };
         if let Some(finger) = finger {
@@ -144,6 +155,7 @@ impl Cipher {
             Cipher::AesGcm((_, key)) => Some(key),
             Cipher::AesCbc(aes_cbc) => Some(aes_cbc.key()),
             Cipher::AesEcb(aes_ecb) => Some(aes_ecb.key()),
+            Cipher::Sm4Cbc(sm4_cbc) => Some(sm4_cbc.key()),
             Cipher::None => None,
         }
     }

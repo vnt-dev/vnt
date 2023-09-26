@@ -1,6 +1,6 @@
 use std::{fmt, io};
 
-pub const ENCRYPTION_RESERVED: usize = 32 + 12;
+pub const ENCRYPTION_RESERVED: usize = 16 + 32 + 12;
 pub const AES_GCM_ENCRYPTION_RESERVED: usize = 32;
 pub const RSA_ENCRYPTION_RESERVED: usize = 32;
 
