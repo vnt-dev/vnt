@@ -3,7 +3,9 @@
 A virtual network tool (VPN)
 
 将不同网络下的多个设备虚拟到一个局域网下
+
 ### vnt-cli参数详解 [参数说明](https://github.com/lbl8603/vnt/blob/main/vnt-cli/README.md)
+
 ### 快速使用：
 
 1. 指定一个token，在多台设备上运行该程序，例如：
@@ -61,7 +63,27 @@ A virtual network tool (VPN)
 
 前提条件:安装rust编译环境([install rust](https://www.rust-lang.org/zh-CN/tools/install))
 
+```
 到项目根目录下执行 cargo build -p vnt-cli
+
+也可按需编译，将得到更小的二进制文件，使用--no-default-features排除默认features
+
+cargo build -p vnt-cli --no-default-features --features raw
+```
+
+features说明
+
+| feature          | 说明                   |
+|------------------|----------------------|
+| raw              | 默认                   |
+| openssl          | 使用openssl中的aes_ecb算法 |
+| openssl-vendored | 从源码编译openssl         |
+| ring-cipher      | 使用ring中的aes_gcm算法    |
+| aes_cbc          | 支持aes_cbc加密          |
+| aes_ecb          | 支持aes_ecb加密          |
+| aes_gcm          | 支持aes_gcm加密          |
+| aes_ecb          | 支持aes_ecb加密          |
+| server_encrypt   | 支持服务端加密              |
 
 ### 支持平台
 
@@ -86,9 +108,11 @@ A virtual network tool (VPN)
 - p2p组播/广播
 - 客户端数据加密
 - 服务端数据加密
+
 ### 结构
+
 <details> <summary>展开</summary>
-    
+
 <pre>
     
    0                                            15                                              31
@@ -121,8 +145,9 @@ A virtual network tool (VPN)
 - 支持Ipv6(1.2.2已支持客户端之间的ipv6，待支持客户端和服务端之间的ipv6通信)
 
 ### 常见问题
+
 <details> <summary>展开</summary>
-    
+
 #### 问题1: 设置网络地址失败
 
 ##### 可能原因:
@@ -138,26 +163,35 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 #### 问题2: windows系统上wintun.dll加载失败
 
 ##### 可能原因：
+
 没有下载wintun.dll 或者使用的wintun.dll有问题
+
 ##### 解决方法：
+
 1. 下载最新版的wintun.dll [下载链接](https://www.wintun.net/builds/wintun-0.14.1.zip)
 2. 解压后找到对应架构的目录,通常是amd64
 3. 将对应的wintun.dll放到和vnt-cli同目录下（或者放到C盘Windows目录下）
 4. 再次启动vnt-cli
-   
+
 #### 问题3: 丢包严重，或是不能正常组网通信
+
 ##### 可能原因：
+
 某些宽带下(比如广电宽带)UDP丢包严重
+
 ##### 解决方法：
+
 1. 使用TCP模式中继转发（vnt-cli增加--tcp参数）
 2. 如果p2p后效果很差，可以选择禁用p2p（vnt-cli增加--relay参数）
-
 
 </details>
 
 ### 交流群
 
 QQ:1034868233
+
 ### 其他
+
 可使用社区小伙伴搭建的中继服务器
+
 1. -s vnt.8443.eu.org:29871

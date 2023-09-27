@@ -116,7 +116,7 @@ impl Sm4CbcCipher {
         let mut out = [0u8; 1024 * 4];
         let mut iv = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut iv);
-        if net_packet.buffer().len() > 1024 * 4 - 32 {
+        if net_packet.data_len() > 1024 * 4 - 32 {
             log::error!(
                 "数据异常,长度{}大于1024 * 4 - 32",
                 net_packet.buffer().len()
@@ -125,10 +125,9 @@ impl Sm4CbcCipher {
         }
         match self.cipher.encrypt(net_packet.buffer(), &iv, &mut out) {
             Ok(len) => {
-                out[len..len + 16].copy_from_slice(&iv);
                 net_packet.set_data_len(HEAD_LEN + len + 16)?;
-                net_packet.set_payload(&out[..len + 16])?;
-                net_packet.set_encrypt_flag(true);
+                net_packet.payload_mut()[..len].copy_from_slice(&out[..len]);
+                net_packet.payload_mut()[len..].copy_from_slice(&iv);
                 if let Some(finger) = &self.finger {
                     let mut nonce_raw = [0; 12];
                     nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
@@ -144,6 +143,7 @@ impl Sm4CbcCipher {
 
                     net_packet.buffer_mut()[src_data_len..].copy_from_slice(&finger);
                 }
+                net_packet.set_encrypt_flag(true);
                 Ok(())
             }
             Err(e) => Err(io::Error::new(

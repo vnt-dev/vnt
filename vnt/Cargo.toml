@@ -20,16 +20,16 @@ thiserror = "1.0.37"
 protobuf = "3.2.0"
 socket2 = { version = "0.5.2", features = ["all"] }
 tokio = { version = "1.32.0", features = ["full"] }
-aes-gcm = { version = "0.10.2" }
+aes-gcm = { version = "0.10.2",optional = true }
 ring = { version = "0.16.20", optional = true }
-cbc = "0.1.2"
-ecb = "0.1.2"
+cbc = {version = "0.1.2",optional = true}
+ecb = {version = "0.1.2",optional = true}
 aes = "0.8.3"
 stun-format = { version = "1.0.1", features = ["fmt", "rfc3489"] }
-rsa = { version = "0.7.2", features = [] }
-spki = { version = "0.6.0", features = ["fingerprint", "alloc"] }
+rsa = { version = "0.7.2", features = [] ,optional = true}
+spki = { version = "0.6.0", features = ["fingerprint", "alloc"] ,optional = true}
 openssl-sys = { git = "https://github.com/lbl8603/rust-openssl" ,optional = true}
-libsm = {git="https://github.com/lbl8603/libsm"}
+libsm = {git="https://github.com/lbl8603/libsm" ,optional = true}
 
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
 tun = { path = "./rust-tun" }
@@ -44,10 +44,14 @@ protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
 
 [features]
-default = []
+default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]
 ring-cipher = ["ring"]
-
+aes_cbc=["cbc"]
+aes_ecb=["ecb"]
+sm4_cbc=["libsm"]
+aes_gcm=["aes-gcm","ring"]
+server_encrypt =["rsa","spki"]
 

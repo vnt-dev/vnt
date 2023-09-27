@@ -1,23 +1,32 @@
-use crate::protocol::body::{RsaSecretBody, RSA_ENCRYPTION_RESERVED};
 use crate::protocol::NetPacket;
-use rand::Rng;
-use rsa::pkcs8::der::Decode;
-use rsa::{PublicKey, RsaPublicKey};
-use sha2::Digest;
-use spki::{DecodePublicKey, EncodePublicKey};
 use std::io;
+
+#[cfg(feature = "server_encrypt")]
+use crate::protocol::body::{RsaSecretBody, RSA_ENCRYPTION_RESERVED};
+#[cfg(feature = "server_encrypt")]
+use rand::Rng;
+#[cfg(feature = "server_encrypt")]
+use rsa::pkcs8::der::Decode;
+#[cfg(feature = "server_encrypt")]
+use rsa::{PublicKey, RsaPublicKey};
+#[cfg(feature = "server_encrypt")]
+use sha2::Digest;
+#[cfg(feature = "server_encrypt")]
+use spki::{DecodePublicKey, EncodePublicKey};
 
 #[derive(Clone)]
 pub struct RsaCipher {
+    #[cfg(feature = "server_encrypt")]
     inner: Inner,
 }
-
+#[cfg(feature = "server_encrypt")]
 #[derive(Clone)]
 struct Inner {
     public_key: RsaPublicKey,
 }
 
 impl RsaCipher {
+    #[cfg(feature = "server_encrypt")]
     pub fn new(der: &[u8]) -> io::Result<Self> {
         match RsaPublicKey::from_public_key_der(der) {
             Ok(public_key) => {
@@ -30,6 +39,11 @@ impl RsaCipher {
             )),
         }
     }
+    #[cfg(not(feature = "server_encrypt"))]
+    pub fn new(_der: &[u8]) -> io::Result<Self> {
+        unimplemented!()
+    }
+    #[cfg(feature = "server_encrypt")]
     pub fn finger(&self) -> io::Result<String> {
         match self.inner.public_key.to_public_key_der() {
             Ok(der) => match rsa::pkcs8::SubjectPublicKeyInfo::from_der(der.as_bytes()) {
@@ -51,9 +65,21 @@ impl RsaCipher {
             )),
         }
     }
+    #[cfg(not(feature = "server_encrypt"))]
+    pub fn finger(&self) -> io::Result<String> {
+        unimplemented!()
+    }
 }
 
 impl RsaCipher {
+    #[cfg(not(feature = "server_encrypt"))]
+    pub fn encrypt<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        _net_packet: &mut NetPacket<B>,
+    ) -> io::Result<NetPacket<Vec<u8>>> {
+        unimplemented!()
+    }
+    #[cfg(feature = "server_encrypt")]
     /// net_packet 必须预留足够长度
     pub fn encrypt<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,

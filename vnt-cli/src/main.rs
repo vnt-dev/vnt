@@ -179,6 +179,13 @@ fn main() {
         };
         let password: Option<String> = matches.opt_get("w").unwrap();
         let server_encrypt = matches.opt_present("W");
+        #[cfg(not(feature = "server_encrypt"))]
+        {
+            if server_encrypt {
+                println!("Server encryption not supported");
+                return;
+            }
+        }
         let simulate_multicast = matches.opt_present("m");
         let mtu: Option<String> = matches.opt_get("u").unwrap();
         let mtu = if let Some(mtu) = mtu {
@@ -213,7 +220,31 @@ fn main() {
         }
 
         let cipher_model = match matches.opt_get::<CipherModel>("model") {
-            Ok(model) => model.unwrap_or(CipherModel::AesGcm),
+            Ok(model) => {
+                #[cfg(not(any(
+                    feature = "aes_gcm",
+                    feature = "server_encrypt",
+                    feature = "aes_cbc",
+                    feature = "aes_ecb",
+                    feature = "sm4_cbc"
+                )))]
+                {
+                    if password.is_some() && model.is_none() {
+                        println!("Encryption not supported");
+                        return;
+                    }
+                }
+                #[cfg(not(any(feature = "aes_gcm", feature = "server_encrypt")))]
+                {
+                    if password.is_some() && model.is_none() {
+                        println!("'--model ' undefined");
+                        return;
+                    }
+                    model.unwrap_or(CipherModel::None)
+                }
+                #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
+                model.unwrap_or(CipherModel::AesGcm)
+            }
             Err(e) => {
                 println!("'--model ' invalid,{}", e);
                 return;
@@ -452,7 +483,19 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");
     println!("  -o <out-ip>         配置点对网时使用,-o 192.168.0.0/24表示允许将数据转发到192.168.0.0/24,可指定多个网段");
-    println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
+    let mut enums = String::new();
+    #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
+    enums.push_str("/aes_gcm");
+    #[cfg(feature = "aes_cbc")]
+    enums.push_str("/aes_cbc");
+    #[cfg(feature = "aes_ecb")]
+    enums.push_str("/aes_ecb");
+    #[cfg(feature = "sm4_cbc")]
+    enums.push_str("/sm4_cbc");
+    if !enums.is_empty() {
+        println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
+    }
+    #[cfg(feature = "server_encrypt")]
     println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
     println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     println!("  -u <mtu>            自定义mtu(不加密默认为1450，加密默认为1410)");
@@ -462,7 +505,12 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
-    println!("  --model <model>     加密模式(默认aes_gcm)，可选值aes_gcm/aes_cbc/aes_ecb/sm4_cbc");
+    if !enums.is_empty() {
+        println!(
+            "  --model <model>     加密模式(默认aes_gcm)，可选值{}",
+            &enums[1..]
+        );
+    }
     println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
     println!("  --punch <punch>     取值ipv4/ipv6，ipv4表示仅使用ipv4打洞");
     println!("  --port <port>       取值0~65535，指定本地监听的端口，默认取随机端口");
