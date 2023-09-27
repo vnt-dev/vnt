@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vnt = { path = "../vnt", package = "vnt",default-features = false, optional = true }
+vnt = { path = "../vnt", package = "vnt",default-features = false }
 common = { path = "../common" }
 tokio = { version = "1.32.0", features = ["full"] }
 getopts = "0.2.21"
@@ -32,7 +32,6 @@ winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "win
 
 [features]
 default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc"]
-raw=["vnt"]
 openssl = ["vnt/openssl"]
 openssl-vendored = ["vnt/openssl-vendored"]
 ring-cipher = ["vnt/ring-cipher"]

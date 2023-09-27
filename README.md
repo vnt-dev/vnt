@@ -68,14 +68,13 @@ A virtual network tool (VPN)
 
 也可按需编译，将得到更小的二进制文件，使用--no-default-features排除默认features
 
-cargo build -p vnt-cli --no-default-features --features raw
+cargo build -p vnt-cli --no-default-features
 ```
 
 features说明
 
 | feature          | 说明                   |
 |------------------|----------------------|
-| raw              | 默认                   |
 | openssl          | 使用openssl中的aes_ecb算法 |
 | openssl-vendored | 从源码编译openssl         |
 | ring-cipher      | 使用ring中的aes_gcm算法    |
