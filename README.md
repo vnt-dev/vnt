@@ -73,16 +73,16 @@ cargo build -p vnt-cli --no-default-features
 
 features说明
 
-| feature          | 说明                   |
-|------------------|----------------------|
-| openssl          | 使用openssl中的aes_ecb算法 |
-| openssl-vendored | 从源码编译openssl         |
-| ring-cipher      | 使用ring中的aes_gcm算法    |
-| aes_cbc          | 支持aes_cbc加密          |
-| aes_ecb          | 支持aes_ecb加密          |
-| aes_gcm          | 支持aes_gcm加密          |
-| aes_ecb          | 支持aes_ecb加密          |
-| server_encrypt   | 支持服务端加密              |
+| feature          | 说明                   | 是否默认 |
+|------------------|----------------------|------|
+| openssl          | 使用openssl中的aes_ecb算法 | 否    |
+| openssl-vendored | 从源码编译openssl         | 否    |
+| ring-cipher      | 使用ring中的aes_gcm算法    | 否    |
+| aes_cbc          | 支持aes_cbc加密          | 是    |
+| aes_ecb          | 支持aes_ecb加密          | 是    |
+| aes_gcm          | 支持aes_gcm加密          | 是    |
+| aes_ecb          | 支持aes_ecb加密          | 是    |
+| server_encrypt   | 支持服务端加密              | 是    |
 
 ### 支持平台
 
