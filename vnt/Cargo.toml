@@ -52,6 +52,6 @@ ring-cipher = ["ring"]
 aes_cbc=["cbc"]
 aes_ecb=["ecb"]
 sm4_cbc=["libsm"]
-aes_gcm=["aes-gcm","ring"]
+aes_gcm=["aes-gcm"]
 server_encrypt =["rsa","spki"]
 
