@@ -51,7 +51,7 @@ impl IcmpProxy {
         self.icmp_socket.clone()
     }
     pub fn start(self) {
-        let mut buf = [0 as u8; 1500];
+        let mut buf = [0u8; 1500];
         let data: &mut [MaybeUninit<u8>] = unsafe { std::mem::transmute(&mut buf[..]) };
 
         loop {
