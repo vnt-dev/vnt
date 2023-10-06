@@ -1,16 +1,15 @@
 use std::net::SocketAddr;
 
-use protobuf::Message;
-use std::net::UdpSocket;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-
 use crate::channel::channel::Context;
 use crate::channel::RouteKey;
 use crate::cipher::{Cipher, RsaCipher};
 use crate::proto::message::{HandshakeRequest, HandshakeResponse, SecretHandshakeRequest};
 use crate::protocol::body::RSA_ENCRYPTION_RESERVED;
 use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
+use protobuf::Message;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::net::UdpSocket;
 
 pub enum HandshakeEnum {
     NotSecret,
@@ -59,7 +58,7 @@ fn secret_handshake_request_packet(
 }
 
 /// 第一次握手，拿到公钥
-pub async fn handshake(
+pub fn handshake(
     main_channel: &UdpSocket,
     main_tcp_channel: Option<&mut TcpStream>,
     server_address: SocketAddr,
@@ -74,8 +73,7 @@ pub async fn handshake(
         server_address,
         send_buf,
         &mut recv_buf,
-    )
-    .await?;
+    )?;
     let net_packet = match NetPacket::new(&recv_buf[..len]) {
         Ok(net_packet) => net_packet,
         Err(e) => {
@@ -140,7 +138,7 @@ pub async fn handshake(
     }
 }
 
-async fn send_recv(
+fn send_recv(
     main_channel: &UdpSocket,
     main_tcp_channel: Option<&mut TcpStream>,
     server_address: SocketAddr,
@@ -152,20 +150,20 @@ async fn send_recv(
         let len = send_buf.len();
         head[2] = (len >> 8) as u8;
         head[3] = (len & 0xFF) as u8;
-        if let Err(e) = main_tcp_channel.write_all(&head).await {
+        if let Err(e) = main_tcp_channel.write_all(&head) {
             return Err(HandshakeEnum::Other(format!("send error:{}", e)));
         }
-        if let Err(e) = main_tcp_channel.write_all(send_buf).await {
+        if let Err(e) = main_tcp_channel.write_all(send_buf) {
             return Err(HandshakeEnum::Other(format!("send error:{}", e)));
         }
-        if let Err(e) = main_tcp_channel.read_exact(&mut head).await {
+        if let Err(e) = main_tcp_channel.read_exact(&mut head) {
             return Err(HandshakeEnum::Other(format!("read error:{}", e)));
         }
         let len = (((head[2] as u16) << 8) | head[3] as u16) as usize;
         if len > recv_buf.len() {
             return Err(HandshakeEnum::Other("too long".to_string()));
         }
-        if let Err(e) = main_tcp_channel.read_exact(&mut recv_buf[..len]).await {
+        if let Err(e) = main_tcp_channel.read_exact(&mut recv_buf[..len]) {
             return Err(HandshakeEnum::Other(format!("read error:{}", e)));
         }
         Ok(len)
@@ -187,7 +185,7 @@ async fn send_recv(
 }
 
 /// 第二次握手，同步对称密钥，后续将使用对称加密
-pub async fn secret_handshake(
+pub fn secret_handshake(
     main_channel: &UdpSocket,
     main_tcp_channel: Option<&mut TcpStream>,
     server_address: SocketAddr,
@@ -213,8 +211,7 @@ pub async fn secret_handshake(
         server_address,
         send_buf,
         &mut recv_buf,
-    )
-    .await?;
+    )?;
     let mut net_packet = match NetPacket::new(&mut recv_buf[..len]) {
         Ok(net_packet) => net_packet,
         Err(e) => {

@@ -7,8 +7,8 @@ use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use rand::Rng;
+use std::net::TcpStream;
 use std::net::UdpSocket;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::channel;
 
 use crate::channel::channel::{Channel, Context};
@@ -67,7 +67,7 @@ pub struct VntUtil {
 }
 
 impl VntUtil {
-    pub async fn new(config: Config) -> io::Result<VntUtil> {
+    pub fn new(config: Config) -> io::Result<VntUtil> {
         //单个udp用同步的性能更好，但是代理和多端口监听用异步更方便，这里将两者结合起来
         let main_channel = UdpSocket::bind(format!("0.0.0.0:{}", config.port))?;
         main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -105,28 +105,28 @@ impl VntUtil {
         })
     }
     ///链接
-    pub async fn connect(&mut self) -> io::Result<()> {
+    pub fn connect(&mut self) -> io::Result<()> {
         if self.config.tcp {
-            let tcp = TcpStream::connect(self.config.server_address).await?;
+            let tcp = TcpStream::connect(self.config.server_address)?;
+            tcp.set_read_timeout(Some(Duration::from_secs(10)))?;
             let _ = self.main_tcp_channel.insert(tcp);
         }
         Ok(())
     }
 
     ///握手 用于获取公钥
-    pub async fn handshake(&mut self) -> Result<Option<RsaCipher>, HandshakeEnum> {
+    pub fn handshake(&mut self) -> Result<Option<RsaCipher>, HandshakeEnum> {
         let rsa_cipher = handshake_handler::handshake(
             &self.main_channel,
             self.main_tcp_channel.as_mut(),
             self.config.server_address,
             self.config.server_encrypt,
-        )
-        .await?;
+        )?;
         self.rsa_cipher = rsa_cipher.clone();
         Ok(rsa_cipher)
     }
     /// 加密握手 用于同步密钥
-    pub async fn secret_handshake(&mut self) -> Result<(), HandshakeEnum> {
+    pub fn secret_handshake(&mut self) -> Result<(), HandshakeEnum> {
         handshake_handler::secret_handshake(
             &self.main_channel,
             self.main_tcp_channel.as_mut(),
@@ -135,10 +135,9 @@ impl VntUtil {
             &self.server_cipher,
             self.config.token.clone(),
         )
-        .await
     }
     /// 注册
-    pub async fn register(&mut self) -> Result<RegResponse, ReqEnum> {
+    pub fn register(&mut self) -> Result<RegResponse, ReqEnum> {
         match registration_handler::registration(
             &self.main_channel,
             self.main_tcp_channel.as_mut(),
@@ -149,9 +148,7 @@ impl VntUtil {
             self.config.name.clone(),
             self.config.ip.unwrap_or(Ipv4Addr::UNSPECIFIED),
             self.config.password.is_some(),
-        )
-        .await
-        {
+        ) {
             Ok(res) => {
                 let _ = self.response.insert(res.clone());
                 Ok(res)
@@ -253,7 +250,7 @@ impl VntUtil {
         let (cone_sender, cone_receiver) = channel(3);
         let (symmetric_sender, symmetric_receiver) = channel(2);
         let (tcp_sender, tcp) = if let Some(main_tcp_channel) = self.main_tcp_channel {
-            let (tcp_sender, tcp_receiver) = channel::<Vec<u8>>(100);
+            let (tcp_sender, tcp_receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(100);
             (Some(tcp_sender), Some((main_tcp_channel, tcp_receiver)))
         } else {
             (None, None)

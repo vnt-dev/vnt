@@ -22,20 +22,20 @@ impl VntUtilSync {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        let vnt_util = runtime.block_on(VntUtil::new(config))?;
+        let vnt_util = VntUtil::new(config)?;
         Ok(VntUtilSync { vnt_util, runtime })
     }
     pub fn connect(&mut self) -> io::Result<()> {
-        self.runtime.block_on(self.vnt_util.connect())
+        self.vnt_util.connect()
     }
     pub fn handshake(&mut self) -> Result<Option<RsaCipher>, HandshakeEnum> {
-        self.runtime.block_on(self.vnt_util.handshake())
+        self.vnt_util.handshake()
     }
     pub fn secret_handshake(&mut self) -> Result<(), HandshakeEnum> {
-        self.runtime.block_on(self.vnt_util.secret_handshake())
+        self.vnt_util.secret_handshake()
     }
     pub fn register(&mut self) -> Result<RegResponse, ReqEnum> {
-        self.runtime.block_on(self.vnt_util.register())
+        self.vnt_util.register()
     }
     #[cfg(any(target_os = "android"))]
     pub fn create_iface(&mut self, vpn_fd: i32) {

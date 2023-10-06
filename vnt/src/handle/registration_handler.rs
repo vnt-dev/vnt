@@ -1,4 +1,5 @@
 use crossbeam_utils::atomic::AtomicCell;
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
@@ -6,9 +7,8 @@ use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
 use crate::handle::PeerDeviceInfo;
 use protobuf::Message;
+use std::net::TcpStream;
 use std::net::UdpSocket;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 
 use crate::proto::message::{RegistrationRequest, RegistrationResponse};
 use crate::protocol::body::ENCRYPTION_RESERVED;
@@ -37,7 +37,7 @@ pub struct RegResponse {
 }
 
 ///向中继服务器注册，token标识一个虚拟网关，device_id防止多次注册时得到的ip不一致
-pub async fn registration(
+pub fn registration(
     main_channel: &UdpSocket,
     main_tcp_channel: Option<&mut TcpStream>,
     server_cipher: &Cipher,
@@ -67,17 +67,17 @@ pub async fn registration(
         vec[2] = (len >> 8) as u8;
         vec[3] = (len & 0xFF) as u8;
         vec[4..].copy_from_slice(buf);
-        if let Err(e) = main_tcp_channel.write_all(&vec).await {
+        if let Err(e) = main_tcp_channel.write_all(&vec) {
             return Err(ReqEnum::Other(format!("send error:{}", e)));
         }
-        if let Err(e) = main_tcp_channel.read_exact(&mut recv_buf[..4]).await {
+        if let Err(e) = main_tcp_channel.read_exact(&mut recv_buf[..4]) {
             return Err(ReqEnum::Other(format!("read error:{}", e)));
         }
         let len = 4 + (((recv_buf[2] as u16) << 8) | recv_buf[3] as u16) as usize;
         if len > recv_buf.len() {
             return Err(ReqEnum::Other("too long".to_string()));
         }
-        if let Err(e) = main_tcp_channel.read_exact(&mut recv_buf[4..len]).await {
+        if let Err(e) = main_tcp_channel.read_exact(&mut recv_buf[4..len]) {
             return Err(ReqEnum::Other(format!("read error:{}", e)));
         }
         &mut recv_buf[4..len]

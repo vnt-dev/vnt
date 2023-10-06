@@ -292,23 +292,23 @@ fn main() {
 #[tokio::main]
 async fn main0(config: Config, show_cmd: bool) {
     let server_encrypt = config.server_encrypt;
-    let mut vnt_util = VntUtil::new(config).await.unwrap();
+    let mut vnt_util = VntUtil::new(config).unwrap();
     let mut conn_count = 0;
     let response = loop {
         if conn_count > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         conn_count += 1;
-        if let Err(e) = vnt_util.connect().await {
+        if let Err(e) = vnt_util.connect() {
             println!("connect server failed {}", e);
             return;
         }
-        match vnt_util.handshake().await {
+        match vnt_util.handshake() {
             Ok(response) => {
                 if server_encrypt {
                     let finger = response.unwrap().finger().unwrap();
                     println!("{}{}", green("server fingerprint:".to_string()), finger);
-                    match vnt_util.secret_handshake().await {
+                    match vnt_util.secret_handshake() {
                         Ok(_) => {}
                         Err(e) => {
                             match e {
@@ -328,7 +328,7 @@ async fn main0(config: Config, show_cmd: bool) {
                         }
                     }
                 }
-                match vnt_util.register().await {
+                match vnt_util.register() {
                     Ok(response) => {
                         break response;
                     }
