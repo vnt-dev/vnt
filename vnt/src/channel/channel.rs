@@ -151,8 +151,8 @@ impl Context {
                 Ordering::Relaxed,
                 guard,
             ) {
-                Ok(p) => unsafe {
-                    guard.defer_destroy(p);
+                Ok(_p) => unsafe {
+                    guard.defer_destroy(udp_map_shared);
                     return;
                 },
                 Err(e) => {
@@ -369,8 +369,8 @@ impl Context {
                 Ordering::Relaxed,
                 guard,
             ) {
-                Ok(p) => unsafe {
-                    guard.defer_destroy(p);
+                Ok(_p) => unsafe {
+                    guard.defer_destroy(table_share);
                     break;
                 },
                 Err(e) => {
@@ -510,8 +510,8 @@ impl Context {
                     Ordering::Relaxed,
                     guard,
                 ) {
-                    Ok(p) => unsafe {
-                        guard.defer_destroy(p);
+                    Ok(_p) => unsafe {
+                        guard.defer_destroy(table_share);
                         self.inner.route_table_time.remove(&(route_key, *id));
                         return;
                     },
