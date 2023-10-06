@@ -30,5 +30,8 @@ features = [
     "ipexport",
     "iphlpapi",
     "handleapi",
-    "ifdef"
+    "ifdef",
+    "minwinbase",
+    "basetsd",
+    "impl-default"
 ]

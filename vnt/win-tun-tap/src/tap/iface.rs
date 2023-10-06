@@ -119,14 +119,14 @@ pub fn create_interface() -> io::Result<NET_LUID> {
         KEY_QUERY_VALUE | KEY_NOTIFY,
     )?;
 
-    let key = RegKey::predef(key);
+    let key = RegKey::predef(key as _);
 
     while let Err(_) = key.get_value::<DWORD, &str>("*IfType") {
-        ffi::notify_change_key_value(key.raw_handle(), TRUE, REG_NOTIFY_CHANGE_NAME, 2000)?;
+        ffi::notify_change_key_value(key.raw_handle() as _, TRUE, REG_NOTIFY_CHANGE_NAME, 2000)?;
     }
 
     while let Err(_) = key.get_value::<DWORD, &str>("NetLuidIndex") {
-        ffi::notify_change_key_value(key.raw_handle(), TRUE, REG_NOTIFY_CHANGE_NAME, 2000)?;
+        ffi::notify_change_key_value(key.raw_handle() as _, TRUE, REG_NOTIFY_CHANGE_NAME, 2000)?;
     }
 
     let if_type: DWORD = key.get_value("*IfType")?;
@@ -179,7 +179,7 @@ pub fn check_interface(luid: &NET_LUID) -> io::Result<()> {
             DIREG_DRV,
             KEY_QUERY_VALUE | KEY_NOTIFY,
         ) {
-            Ok(key) => RegKey::predef(key),
+            Ok(key) => RegKey::predef(key as _),
             Err(_) => continue,
         };
 
@@ -248,7 +248,7 @@ pub fn delete_interface(luid: &NET_LUID) -> io::Result<()> {
             DIREG_DRV,
             KEY_QUERY_VALUE | KEY_NOTIFY,
         ) {
-            Ok(key) => RegKey::predef(key),
+            Ok(key) => RegKey::predef(key as _),
             Err(_) => continue,
         };
 
