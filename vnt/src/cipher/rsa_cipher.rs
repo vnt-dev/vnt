@@ -8,7 +8,7 @@ use rand::Rng;
 #[cfg(feature = "server_encrypt")]
 use rsa::pkcs8::der::Decode;
 #[cfg(feature = "server_encrypt")]
-use rsa::{PublicKey, RsaPublicKey};
+use rsa::RsaPublicKey;
 #[cfg(feature = "server_encrypt")]
 use sha2::Digest;
 #[cfg(feature = "server_encrypt")]
@@ -46,7 +46,7 @@ impl RsaCipher {
     #[cfg(feature = "server_encrypt")]
     pub fn finger(&self) -> io::Result<String> {
         match self.inner.public_key.to_public_key_der() {
-            Ok(der) => match rsa::pkcs8::SubjectPublicKeyInfo::from_der(der.as_bytes()) {
+            Ok(der) => match rsa::pkcs8::SubjectPublicKeyInfoRef::from_der(der.as_bytes()) {
                 Ok(spki) => match spki.fingerprint_base64() {
                     Ok(finger) => Ok(finger),
                     Err(e) => Err(io::Error::new(
@@ -109,7 +109,7 @@ impl RsaCipher {
         secret_body.set_finger(&key[16..])?;
         match self.inner.public_key.encrypt(
             &mut rng,
-            rsa::PaddingScheme::PKCS1v15Encrypt,
+            rsa::pkcs1v15::Pkcs1v15Encrypt,
             secret_body.buffer(),
         ) {
             Ok(enc_data) => {
