@@ -83,6 +83,45 @@ features说明
 | aes_gcm          | 支持aes_gcm加密          | 是    |
 | sm4_cbc          | 支持sm4_cbc加密          | 是    |
 | server_encrypt   | 支持服务端加密              | 是    |
+| ip_proxy         | 内置ip代理               | 是    |
+
+如果编译时去除了内置的ip代理，则可以使用nat转发来实现点对网
+
+<details> <summary>NAT配置可参考如下示例,点击展开</summary>
+
+### 在出口一端做如下配置
+注意原有的-i(入口)和-o(出口)的参数不能少
+
+### windows
+参考 https://learn.microsoft.com/zh-cn/virtualization/hyper-v-on-windows/user-guide/setup-nat-network
+```shell
+#设置nat,名字可以自己取，网段是vnt的网段
+New-NetNat -Name vntnat -InternalIPInterfaceAddressPrefix 10.26.0.0/24
+#查看设置
+Get-NetNat
+```
+### linux
+```shell
+# 开启ip转发
+sudo sysctl -w net.ipv4.ip_forward=1
+# 开启nat转发  表示来源10.26.0.0/24的数据通过nat映射后再从vnt-tun以外的其他网卡发出去
+sudo iptables -t nat -A POSTROUTING ! -o vnt-tun -s 10.26.0.0/24 -j MASQUERADE
+# 或者这样  表示来源10.26.0.0/24的数据通过nat映射后再从eth0网卡发出去
+sudo iptables -t nat -A POSTROUTING  -o eth0 -s 10.26.0.0/24 -j MASQUERADE
+# 查看设置
+iptables -vnL -t nat
+```
+### macos
+```shell
+# 开启ip转发
+sudo sysctl -w net.ipv4.ip_forward=1
+# 配置NAT转发规则
+# 在/etc/pf.conf文件中添加以下规则,en0是出口网卡，10.26.0.0/24是来源网段
+nat on en0 from 10.26.0.0/24 to any -> (en0)
+# 加载规则
+sudo pfctl -f /etc/pf.conf -e
+```
+</details>
 
 ### 支持平台
 
