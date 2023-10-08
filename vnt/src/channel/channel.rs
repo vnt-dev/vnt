@@ -503,7 +503,7 @@ impl Context {
     pub fn update_read_time(&self, id: &Ipv4Addr, route_key: &RouteKey) {
         let guard = &crossbeam_epoch::pin();
         let table_share = self.inner.route_table.load(Ordering::Relaxed, guard);
-        let table = unsafe { table_share.deref().clone() };
+        let table = unsafe { table_share.deref() };
         if let Some(routes) = table.get(id) {
             for (route, time) in routes {
                 if &route.route_key() == route_key {
