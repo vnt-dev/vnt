@@ -30,8 +30,7 @@ pub fn start(
     igmp_server: Option<IgmpServer>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: Option<ExternalRoute>,
-    #[cfg(feature = "ip_proxy")]
-    ip_proxy_map: Option<IpProxyMap>,
+    #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
     parallel: usize,
@@ -138,8 +137,7 @@ fn start_simple(
     igmp_server: Option<IgmpServer>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: Option<ExternalRoute>,
-    #[cfg(feature = "ip_proxy")]
-    ip_proxy_map: Option<IpProxyMap>,
+    #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
 ) -> io::Result<()> {
@@ -175,8 +173,7 @@ fn handle(
     device_writer: &DeviceWriter,
     sender: &ChannelSender,
     ip_route: &Option<ExternalRoute>,
-    #[cfg(feature = "ip_proxy")]
-    proxy_map: &Option<IpProxyMap>,
+    #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
 ) -> crate::Result<()> {

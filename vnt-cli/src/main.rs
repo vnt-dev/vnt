@@ -483,6 +483,21 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");
     println!("  -o <out-ip>         配置点对网时使用,-o 192.168.0.0/24表示允许将数据转发到192.168.0.0/24,可指定多个网段");
+    #[cfg(not(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    )))]
+    let enums = String::new();
+    #[cfg(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    ))]
     let mut enums = String::new();
     #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
     enums.push_str("/aes_gcm");

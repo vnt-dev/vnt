@@ -15,8 +15,22 @@ use crate::cipher::openssl_aes_ecb::AesEcbCipher;
 use crate::cipher::ring_aes_gcm_cipher::AesGcmCipher;
 #[cfg(feature = "sm4_cbc")]
 use crate::cipher::sm4_cbc::Sm4CbcCipher;
+#[cfg(any(
+    feature = "aes_gcm",
+    feature = "server_encrypt",
+    feature = "aes_cbc",
+    feature = "aes_ecb",
+    feature = "sm4_cbc"
+))]
 use crate::cipher::Finger;
 use crate::protocol::NetPacket;
+#[cfg(any(
+    feature = "aes_gcm",
+    feature = "server_encrypt",
+    feature = "aes_cbc",
+    feature = "aes_ecb",
+    feature = "sm4_cbc"
+))]
 use sha2::Digest;
 use std::io;
 use std::str::FromStr;
@@ -38,6 +52,21 @@ impl FromStr for CipherModel {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        #[cfg(not(any(
+            feature = "aes_gcm",
+            feature = "server_encrypt",
+            feature = "aes_cbc",
+            feature = "aes_ecb",
+            feature = "sm4_cbc"
+        )))]
+        return Err(format!("not match '{}', no encrypt", s));
+        #[cfg(any(
+            feature = "aes_gcm",
+            feature = "server_encrypt",
+            feature = "aes_cbc",
+            feature = "aes_ecb",
+            feature = "sm4_cbc"
+        ))]
         match s.to_lowercase().trim() {
             #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
             "aes_gcm" => Ok(CipherModel::AesGcm),
@@ -49,7 +78,7 @@ impl FromStr for CipherModel {
             "sm4_cbc" => Ok(CipherModel::Sm4Cbc),
             _ => {
                 let mut enums = String::new();
-                #[cfg(feature = "aes_gcm")]
+                #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
                 enums.push_str("/aes_gcm");
                 #[cfg(feature = "aes_cbc")]
                 enums.push_str("/aes_cbc");
@@ -80,8 +109,28 @@ pub enum Cipher {
     Sm4Cbc(Sm4CbcCipher),
     None,
 }
-
 impl Cipher {
+    #[cfg(not(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    )))]
+    pub fn new_password(
+        _model: CipherModel,
+        _password: Option<String>,
+        _token: Option<String>,
+    ) -> Self {
+        Cipher::None
+    }
+    #[cfg(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    ))]
     pub fn new_password(
         model: CipherModel,
         password: Option<String>,
@@ -134,6 +183,23 @@ impl Cipher {
             Cipher::None
         }
     }
+    #[cfg(not(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    )))]
+    pub fn new_key(_key: [u8; 32], _token: String) -> io::Result<Self> {
+        Err(io::Error::new(io::ErrorKind::Other, "key error"))
+    }
+    #[cfg(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    ))]
     pub fn new_key(key: [u8; 32], token: String) -> io::Result<Self> {
         let finger = Some(Finger::new(&token));
         match key.len() {
@@ -171,6 +237,26 @@ impl Cipher {
             }
         }
     }
+    #[cfg(not(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    )))]
+    pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        _net_packet: &mut NetPacket<B>,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+    #[cfg(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    ))]
     pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         net_packet: &mut NetPacket<B>,
@@ -187,6 +273,26 @@ impl Cipher {
             Cipher::None => Ok(()),
         }
     }
+    #[cfg(not(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    )))]
+    pub fn check_finger<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        _net_packet: &NetPacket<B>,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+    #[cfg(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    ))]
     pub fn check_finger<B: AsRef<[u8]>>(&self, net_packet: &NetPacket<B>) -> io::Result<()> {
         match self {
             #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_epoch::{Atomic, Owned};
@@ -56,7 +56,8 @@ pub struct IgmpServer {
 
 impl IgmpServer {
     pub fn new(device_writer: DeviceWriter) -> Self {
-        let multicast: Arc<Atomic<HashMap<Ipv4Addr, Arc<RwLock<Multicast>>>>> = Arc::new(Atomic::new(HashMap::with_capacity(16)));
+        let multicast: Arc<Atomic<HashMap<Ipv4Addr, Arc<RwLock<Multicast>>>>> =
+            Arc::new(Atomic::new(HashMap::with_capacity(16)));
         std::thread::spawn(move || {
             //预留以太网帧头和ip头
             let mut buf = [0; 14 + 24 + 12];
@@ -98,7 +99,7 @@ impl IgmpServer {
     }
     pub fn load(&self, multicast_addr: &Ipv4Addr) -> Option<Arc<RwLock<Multicast>>> {
         let guard = &crossbeam_epoch::pin();
-        let multicast = unsafe{self.multicast.load(Ordering::Relaxed, guard).deref()};
+        let multicast = unsafe { self.multicast.load(Ordering::Relaxed, guard).deref() };
         if let Some(entry) = multicast.get(multicast_addr) {
             Some(entry.clone())
         } else {
@@ -107,8 +108,8 @@ impl IgmpServer {
     }
     pub fn handle(&self, buf: &[u8], source: Ipv4Addr) -> crate::Result<()> {
         let guard = &crossbeam_epoch::pin();
-        let multicast = unsafe{self.multicast.load(Ordering::Relaxed, guard).deref()};
-        for (_,v) in multicast.iter() {
+        let multicast = unsafe { self.multicast.load(Ordering::Relaxed, guard).deref() };
+        for (_, v) in multicast.iter() {
             let mut list = Vec::new();
             let mut write_guard = v.write();
             for (ip, time) in &write_guard.members {
@@ -233,22 +234,20 @@ impl IgmpServer {
         }
         Ok(())
     }
-    fn get_multicast(&self,multicast_addr:&Ipv4Addr)->Option<Arc<RwLock<Multicast>>>{
+    fn get_multicast(&self, multicast_addr: &Ipv4Addr) -> Option<Arc<RwLock<Multicast>>> {
         let guard = &crossbeam_epoch::pin();
         let multicast = &self.multicast;
         let table_share = multicast.load(Ordering::Acquire, guard);
-        unsafe {
-            table_share.deref().get(multicast_addr).map(|v|v.clone())
-        }
+        unsafe { table_share.deref().get(multicast_addr).map(|v| v.clone()) }
     }
-    fn add_multicast(&self,multicast_addr:Ipv4Addr)->Arc<RwLock<Multicast>>{
+    fn add_multicast(&self, multicast_addr: Ipv4Addr) -> Arc<RwLock<Multicast>> {
         let guard = &crossbeam_epoch::pin();
         let multicast = &self.multicast;
         let mut table_share = multicast.load(Ordering::Acquire, guard);
         let value = Arc::new(RwLock::new(Multicast::new()));
         loop {
             let mut table = unsafe { table_share.deref().clone() };
-            table.insert(multicast_addr,value.clone());
+            table.insert(multicast_addr, value.clone());
             match self.multicast.compare_exchange(
                 table_share,
                 Owned::new(table.clone()),

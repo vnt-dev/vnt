@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::net::TcpStream;
 use std::net::UdpSocket;
-use std::sync::Arc;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_epoch::Atomic;
@@ -13,25 +13,25 @@ use parking_lot::Mutex;
 use rand::Rng;
 use tokio::sync::mpsc::channel;
 
-use crate::channel::{Route, RouteKey};
 use crate::channel::channel::{Channel, Context};
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch, PunchModel};
 use crate::channel::sender::ChannelSender;
+use crate::channel::{Route, RouteKey};
 use crate::cipher::{Cipher, CipherModel, RsaCipher};
 use crate::core::status::VntStatusManger;
 use crate::error::Error;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
-use crate::handle::{
-    ConnectStatus, CurrentDeviceInfo, handshake_handler, heartbeat_handler, PeerDeviceInfo,
-    punch_handler, registration_handler,
-};
 use crate::handle::handshake_handler::HandshakeEnum;
 use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::registration_handler::{RegResponse, ReqEnum};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::handle::tun_tap::tap_handler;
 use crate::handle::tun_tap::tun_handler;
+use crate::handle::{
+    handshake_handler, heartbeat_handler, punch_handler, registration_handler, ConnectStatus,
+    CurrentDeviceInfo, PeerDeviceInfo,
+};
 use crate::igmp_server::IgmpServer;
 use crate::nat::NatTest;
 use crate::tun_tap_device;
@@ -88,7 +88,7 @@ impl VntUtil {
             None
         };
         let server_cipher = if config.server_encrypt {
-            let mut key = [0 as u8; 32];
+            let mut key = [0u8; 32];
             rand::thread_rng().fill(&mut key);
             Cipher::new_key(key, config.token.clone())?
         } else {
@@ -278,7 +278,8 @@ impl VntUtil {
         ));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> =
             Arc::new(Mutex::new((response.epoch, response.device_info_list)));
-        let peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>> = Arc::new(Atomic::new(HashMap::new()));
+        let peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>> =
+            Arc::new(Atomic::new(HashMap::new()));
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
         let public_ip = response.public_ip;
         let public_port = response.public_port;
@@ -504,8 +505,8 @@ impl Vnt {
     }
     pub fn peer_nat_info(&self, ip: &Ipv4Addr) -> Option<NatInfo> {
         let guard = &crossbeam_epoch::pin();
-        let shared = self.peer_nat_info_map.load(Ordering::Acquire,guard);
-        let map = unsafe{shared.deref()};
+        let shared = self.peer_nat_info_map.load(Ordering::Acquire, guard);
+        let map = unsafe { shared.deref() };
         map.get(ip).map(|e| e.clone())
     }
     pub fn connection_status(&self) -> ConnectStatus {

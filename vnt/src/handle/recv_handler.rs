@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_epoch::{Atomic, Owned};
@@ -14,28 +14,28 @@ use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 
-use crate::channel::{Route, RouteKey};
 use crate::channel::channel::Context;
 use crate::channel::punch::{NatInfo, NatType};
+use crate::channel::{Route, RouteKey};
 use crate::cipher::{Cipher, RsaCipher};
 use crate::error::Error;
 use crate::external_route::AllowExternalRoute;
-use crate::handle::{ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, PeerDeviceStatus};
 use crate::handle::handshake_handler::secret_handshake_req;
 use crate::handle::registration_handler::Register;
+use crate::handle::{ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, PeerDeviceStatus};
 use crate::igmp_server::IgmpServer;
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::{IpProxyMap, ProxyHandler};
 use crate::nat;
 use crate::nat::NatTest;
 use crate::proto::message::{DeviceList, PunchInfo, PunchNatType, RegistrationResponse};
-use crate::protocol::{
-    control_packet, ip_turn_packet, MAX_TTL, NetPacket, other_turn_packet, Protocol,
-    service_packet, Version,
-};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::error_packet::InErrorPacket;
+use crate::protocol::{
+    control_packet, ip_turn_packet, other_turn_packet, service_packet, NetPacket, Protocol,
+    Version, MAX_TTL,
+};
 use crate::tun_tap_device::DeviceWriter;
 
 #[derive(Clone)]
@@ -71,8 +71,7 @@ impl ChannelDataHandler {
         device_writer: DeviceWriter,
         connect_status: Arc<AtomicCell<ConnectStatus>>,
         peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>>,
-        #[cfg(feature = "ip_proxy")]
-        ip_proxy_map: Option<IpProxyMap>,
+        #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
         out_external_route: AllowExternalRoute,
         cone_sender: Sender<(Ipv4Addr, NatInfo)>,
         symmetric_sender: Sender<(Ipv4Addr, NatInfo)>,
@@ -476,7 +475,7 @@ impl ChannelDataHandler {
                     let nat_map_shared = nat_map.load(Ordering::Acquire, guard);
                     let mut map = unsafe { nat_map_shared.deref().clone() };
                     map.insert(source, peer_nat_info.clone());
-                    nat_map.store(Owned::new(map),Ordering::Release);
+                    nat_map.store(Owned::new(map), Ordering::Release);
                     unsafe {
                         guard.defer_destroy(nat_map_shared);
                     }

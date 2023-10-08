@@ -98,8 +98,7 @@ pub fn base_handle(
     igmp_server: &Option<IgmpServer>,
     current_device: CurrentDeviceInfo,
     ip_route: &Option<ExternalRoute>,
-    #[cfg(feature = "ip_proxy")]
-    proxy_map: &Option<IpProxyMap>,
+    #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
 ) -> Result<()> {

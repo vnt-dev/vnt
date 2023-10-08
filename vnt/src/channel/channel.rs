@@ -298,12 +298,7 @@ impl Context {
     }
     fn get_udp_by_route(&self, route_key: &RouteKey) -> Option<Arc<UdpSocket>> {
         let guard = &crossbeam_epoch::pin();
-        let udp_map = unsafe {
-            self.inner
-                .udp_map
-                .load(Ordering::Relaxed, guard)
-                .deref()
-        };
+        let udp_map = unsafe { self.inner.udp_map.load(Ordering::Relaxed, guard).deref() };
         udp_map.get(&route_key.index).cloned()
     }
 
@@ -500,7 +495,7 @@ impl Context {
                         table_share = e.current;
                     }
                 }
-            }else{
+            } else {
                 return;
             }
         }
