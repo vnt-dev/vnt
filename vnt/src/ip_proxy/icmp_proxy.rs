@@ -1,20 +1,20 @@
-use crossbeam_utils::atomic::AtomicCell;
-use dashmap::DashMap;
 use std::io;
 use std::mem::MaybeUninit;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 
+use crossbeam_utils::atomic::AtomicCell;
+use dashmap::DashMap;
 use socket2::{Domain, SockAddr, Socket, Type};
+
+use packet::icmp::icmp;
+use packet::icmp::icmp::HeaderOther;
+use packet::ip::ipv4::packet::IpV4Packet;
 
 use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
-use crate::protocol::body::ENCRYPTION_RESERVED;
-use crate::protocol::{NetPacket, Protocol, Version, MAX_TTL};
-use packet::icmp::icmp;
-use packet::icmp::icmp::HeaderOther;
-use packet::ip::ipv4;
+use crate::ip_proxy::{send, ProxyHandler};
 
 pub struct IcmpProxy {
     icmp_socket: Arc<Socket>,
@@ -47,19 +47,19 @@ impl IcmpProxy {
             client_cipher,
         })
     }
-    pub fn icmp_socket(&self) -> Arc<Socket> {
-        self.icmp_socket.clone()
+    pub fn icmp_handler(&self) -> IcmpHandler {
+        IcmpHandler(self.icmp_socket.clone(), self.icmp_proxy_map.clone())
     }
     pub fn start(self) {
-        let mut buf = [0u8; 1500];
-        let data: &mut [MaybeUninit<u8>] = unsafe { std::mem::transmute(&mut buf[..]) };
+        let mut buf = [0u8; 4096];
+        let data: &mut [MaybeUninit<u8>] = unsafe { std::mem::transmute(&mut buf[12..]) };
 
         loop {
             match self.recv(data) {
                 Ok((len, peer_ip)) => {
                     match peer_ip {
                         IpAddr::V4(peer_ip) => {
-                            match ipv4::packet::IpV4Packet::new(&mut buf[..len]) {
+                            match IpV4Packet::new(&mut buf[12..12 + len]) {
                                 Ok(mut ipv4_packet) => {
                                     match icmp::IcmpPacket::new(ipv4_packet.payload()) {
                                         Ok(icmp_packet) => {
@@ -73,47 +73,14 @@ impl IcmpProxy {
                                                         drop(entry);
                                                         ipv4_packet.set_destination_ip(dest_ip);
                                                         ipv4_packet.update_checksum();
-                                                        let current_device =
-                                                            self.current_device.load();
-                                                        let virtual_ip =
-                                                            current_device.virtual_ip();
-                                                        let connect_server =
-                                                            current_device.connect_server;
-                                                        let mut net_packet =
-                                                            NetPacket::new_encrypt(vec![
-                                                                    0u8;
-                                                                    12 + len + ENCRYPTION_RESERVED
-                                                                ])
-                                                            .unwrap();
-                                                        net_packet.set_version(Version::V1);
-                                                        net_packet.set_protocol(Protocol::IpTurn);
-                                                        net_packet.set_transport_protocol(crate::protocol::ip_turn_packet::Protocol::Ipv4.into());
-                                                        net_packet.first_set_ttl(MAX_TTL);
-                                                        net_packet.set_source(virtual_ip);
-                                                        net_packet.set_destination(dest_ip);
-                                                        net_packet
-                                                            .set_payload(ipv4_packet.buffer)
-                                                            .unwrap();
-                                                        if let Err(e) = self
-                                                            .client_cipher
-                                                            .encrypt_ipv4(&mut net_packet)
-                                                        {
-                                                            log::warn!("加密失败:{}", e);
-                                                            continue;
-                                                        }
-                                                        if self
-                                                            .sender
-                                                            .try_send_by_id(
-                                                                net_packet.buffer(),
-                                                                &dest_ip,
-                                                            )
-                                                            .is_err()
-                                                        {
-                                                            let _ = self.sender.send_main(
-                                                                net_packet.buffer(),
-                                                                connect_server,
-                                                            );
-                                                        }
+                                                        send(
+                                                            &mut buf,
+                                                            len,
+                                                            dest_ip,
+                                                            &self.sender,
+                                                            &self.current_device,
+                                                            &self.client_cipher,
+                                                        );
                                                     }
                                                 }
                                                 _ => {
@@ -144,7 +111,42 @@ impl IcmpProxy {
         };
         Ok((size, addr))
     }
-    // fn send_to(&self, buf: &[u8], addr: SocketAddrV4) -> io::Result<usize> {
-    //     self.icmp_socket.send_to(buf, &SockAddr::from(addr))
-    // }
+}
+/// icmp用Identifier来区分，没有Identifier的一律不转发
+#[derive(Clone)]
+pub struct IcmpHandler(Arc<Socket>, Arc<DashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>);
+
+impl ProxyHandler for IcmpHandler {
+    fn recv_handle(
+        &self,
+        ipv4: &mut IpV4Packet<&mut [u8]>,
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+    ) -> io::Result<bool> {
+        let dest_ip = ipv4.destination_ip();
+        //转发到代理目标地址
+        let icmp_packet = icmp::IcmpPacket::new(ipv4.payload())?;
+        match icmp_packet.header_other() {
+            HeaderOther::Identifier(id, seq) => {
+                self.1.insert((dest_ip, id, seq), source);
+                self.0.send_to(
+                    ipv4.payload(),
+                    &SockAddr::from(SocketAddrV4::new(dest_ip, 0)),
+                )?;
+            }
+            _ => {
+                log::warn!(
+                    "不支持的ip代理Icmp协议:{}->{}->{}",
+                    source,
+                    destination,
+                    dest_ip
+                );
+            }
+        }
+        Ok(true)
+    }
+
+    fn send_handle(&self, _ipv4: &mut IpV4Packet<&mut [u8]>) -> io::Result<()> {
+        Ok(())
+    }
 }

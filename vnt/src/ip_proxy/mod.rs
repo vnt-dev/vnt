@@ -1,14 +1,23 @@
-use crate::ip_proxy::tcp_proxy::TcpProxy;
-use crate::ip_proxy::udp_proxy::UdpProxy;
-use dashmap::DashMap;
-#[cfg(not(target_os = "android"))]
-use socket2::{SockAddr, Socket};
 #[cfg(not(target_os = "android"))]
 use std::net::Ipv4Addr;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
 use std::{io, thread};
-use tokio::net::{TcpListener, UdpSocket};
+
+use crossbeam_utils::atomic::AtomicCell;
+use dashmap::DashMap;
+use tokio::net::UdpSocket;
+
+use packet::ip::ipv4::packet::IpV4Packet;
+
+use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
+use crate::handle::CurrentDeviceInfo;
+use crate::ip_proxy::icmp_proxy::IcmpHandler;
+use crate::ip_proxy::tcp_proxy::{TcpHandler, TcpProxy};
+use crate::ip_proxy::udp_proxy::{UdpHandler, UdpProxy};
+use crate::protocol;
+use crate::protocol::{NetPacket, Version, MAX_TTL};
 
 #[cfg(not(target_os = "android"))]
 pub mod icmp_proxy;
@@ -18,6 +27,16 @@ pub mod udp_proxy;
 pub trait DashMapNew {
     fn new0() -> Self;
     fn new_cap(capacity: usize) -> Self;
+}
+
+pub trait ProxyHandler {
+    fn recv_handle(
+        &self,
+        ipv4: &mut IpV4Packet<&mut [u8]>,
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+    ) -> io::Result<bool>;
+    fn send_handle(&self, ipv4: &mut IpV4Packet<&mut [u8]>) -> io::Result<()>;
 }
 
 impl<'a, K: 'a + Eq + std::hash::Hash, V: 'a> DashMapNew for DashMap<K, V> {
@@ -52,72 +71,105 @@ pub enum Protocol {
 
 #[derive(Clone)]
 pub struct IpProxyMap {
-    pub(crate) tcp_proxy_port: u16,
-    pub(crate) udp_proxy_port: u16,
-    //真实源地址 -> 目的地址
-    pub(crate) tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
-    pub(crate) udp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
-    // icmp用Identifier来区分，没有Identifier的一律不转发
     #[cfg(not(target_os = "android"))]
-    pub(crate) icmp_proxy_map: Arc<DashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
-    #[cfg(not(target_os = "android"))]
-    icmp_socket: Arc<Socket>,
+    pub(crate) icmp_handler: IcmpHandler,
+    pub(crate) tcp_handler: TcpHandler,
+    pub(crate) udp_handler: UdpHandler,
 }
 
-impl IpProxyMap {
-    #[cfg(not(target_os = "android"))]
-    pub fn send_icmp(&self, buf: &[u8], dest: &Ipv4Addr) -> io::Result<usize> {
-        self.icmp_socket
-            .send_to(buf, &SockAddr::from(SocketAddrV4::new(*dest, 0)))
-    }
-}
-
+#[cfg(not(target_os = "android"))]
 pub async fn init_proxy(
-    #[cfg(not(target_os = "android"))] sender: crate::channel::sender::ChannelSender,
-    #[cfg(not(target_os = "android"))] current_device: Arc<
-        crossbeam_utils::atomic::AtomicCell<crate::handle::CurrentDeviceInfo>,
-    >,
-    #[cfg(not(target_os = "android"))] client_cipher: crate::cipher::Cipher,
+    sender: ChannelSender,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
 ) -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
     let tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>> = Arc::new(DashMap::new0());
     let udp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>> = Arc::new(DashMap::new0());
-    #[cfg(not(target_os = "android"))]
+
     let icmp_proxy_map: Arc<DashMap<(Ipv4Addr, u16, u16), Ipv4Addr>> = Arc::new(DashMap::new0());
-    let tcp_listener = TcpListener::bind("0.0.0.0:0").await?;
     let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
-    let tcp_proxy_port = tcp_listener.local_addr()?.port();
-    let udp_proxy_port = udp_socket.local_addr()?.port();
-    let tcp_proxy = TcpProxy::new(tcp_listener, tcp_proxy_map.clone());
-    let udp_proxy = UdpProxy::new(udp_socket, udp_proxy_map.clone());
-    #[cfg(not(target_os = "android"))]
-    let icmp_socket = {
-        let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    let tcp_proxy = TcpProxy::new(addr, tcp_proxy_map.clone()).await?;
+    let tcp_handler = tcp_proxy.tcp_handler();
+    let udp_proxy = UdpProxy::new(udp_socket, udp_proxy_map.clone())?;
+    let udp_handler = udp_proxy.udp_handler();
+
+    let icmp_handler = {
         let icmp_proxy = icmp_proxy::IcmpProxy::new(
             addr,
             icmp_proxy_map.clone(),
             sender.clone(),
             current_device.clone(),
-            client_cipher,
+            client_cipher.clone(),
         )?;
-        let icmp_socket = icmp_proxy.icmp_socket();
+        let icmp_handler = icmp_proxy.icmp_handler();
         thread::spawn(move || {
             icmp_proxy.start();
         });
-        icmp_socket
+        icmp_handler
     };
 
     Ok((
         tcp_proxy,
         udp_proxy,
         IpProxyMap {
-            tcp_proxy_port,
-            udp_proxy_port,
-            tcp_proxy_map,
-            udp_proxy_map,
-            #[cfg(not(target_os = "android"))]
-            icmp_proxy_map,
-            #[cfg(not(target_os = "android"))]
-            icmp_socket,
+            tcp_handler,
+            udp_handler,
+            icmp_handler,
         },
     ))
+}
+
+#[cfg(target_os = "android")]
+pub async fn init_proxy() -> io::Result<(TcpProxy, UdpProxy, IpProxyMap)> {
+    let tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>> = Arc::new(DashMap::new0());
+    let udp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>> = Arc::new(DashMap::new0());
+    let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+    let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
+    let tcp_proxy = TcpProxy::new(addr, tcp_proxy_map.clone()).await?;
+    let tcp_handler = tcp_proxy.tcp_handler();
+    let udp_proxy = UdpProxy::new(udp_socket, udp_proxy_map.clone())?;
+    let udp_handler = udp_proxy.udp_handler();
+
+    Ok((
+        tcp_proxy,
+        udp_proxy,
+        IpProxyMap {
+            tcp_handler,
+            udp_handler,
+        },
+    ))
+}
+
+pub fn send(
+    buf: &mut [u8],
+    data_len: usize,
+    dest_ip: Ipv4Addr,
+    sender: &ChannelSender,
+    current_device: &AtomicCell<CurrentDeviceInfo>,
+    client_cipher: &Cipher,
+) {
+    let current_device = current_device.load();
+    let virtual_ip = current_device.virtual_ip();
+
+    let mut net_packet = NetPacket::new0(12 + data_len, buf).unwrap();
+    net_packet.set_version(Version::V1);
+    net_packet.set_protocol(protocol::Protocol::IpTurn);
+    net_packet.set_transport_protocol(protocol::ip_turn_packet::Protocol::Ipv4.into());
+    net_packet.first_set_ttl(MAX_TTL);
+    net_packet.set_source(virtual_ip);
+    net_packet.set_destination(dest_ip);
+    if let Err(e) = client_cipher.encrypt_ipv4(&mut net_packet) {
+        log::warn!("加密失败:{}", e);
+        return;
+    }
+    if sender
+        .try_send_by_id(net_packet.buffer(), &dest_ip)
+        .is_err()
+    {
+        let connect_server = current_device.connect_server;
+        if let Err(e) = sender.send_main(net_packet.buffer(), connect_server) {
+            log::warn!("发送到目标失败:{},{}", e, connect_server);
+        }
+    }
 }

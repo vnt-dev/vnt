@@ -3,6 +3,7 @@ use crate::channel::RouteKey;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::Ipv4Addr;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 pub struct Idle {
@@ -21,13 +22,25 @@ impl Idle {
     pub async fn next_idle(&self) -> io::Result<(Ipv4Addr, RouteKey)> {
         loop {
             let mut max = Duration::from_secs(0);
-            for entry in self.context.inner.route_table_time.iter() {
-                let last_read = entry.value().elapsed();
-                if last_read >= self.read_idle {
-                    return Ok((entry.key().1.clone(), entry.key().0.clone()));
-                } else {
-                    if max < last_read {
-                        max = last_read;
+            {
+                let guard = &crossbeam_epoch::pin();
+                let table = unsafe {
+                    self.context
+                        .inner
+                        .route_table
+                        .load(Ordering::Relaxed, guard)
+                        .deref()
+                };
+                for (ip, routes) in table.iter() {
+                    for (route, time) in routes {
+                        let last_read = time.load().elapsed();
+                        if last_read >= self.read_idle {
+                            return Ok((*ip, route.route_key()));
+                        } else {
+                            if max < last_read {
+                                max = last_read;
+                            }
+                        }
                     }
                 }
             }

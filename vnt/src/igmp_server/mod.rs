@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
+use crossbeam_epoch::{Atomic, Owned};
 use parking_lot::RwLock;
 
 use packet::igmp::igmp_v2::IgmpV2Packet;
@@ -11,7 +12,6 @@ use packet::igmp::igmp_v3::{IgmpV3QueryPacket, IgmpV3RecordType, IgmpV3ReportPac
 use packet::igmp::IgmpType;
 use packet::ip::ipv4::protocol::Protocol;
 
-use crate::ip_proxy::DashMapNew;
 use crate::tun_tap_device::DeviceWriter;
 
 //1. 定时发送query，启动时20秒一次，连发3次，之后8分钟一次
@@ -51,12 +51,12 @@ impl Multicast {
 
 #[derive(Clone)]
 pub struct IgmpServer {
-    multicast: Arc<DashMap<Ipv4Addr, Arc<RwLock<Multicast>>>>,
+    multicast: Arc<Atomic<HashMap<Ipv4Addr, Arc<RwLock<Multicast>>>>>,
 }
 
 impl IgmpServer {
     pub fn new(device_writer: DeviceWriter) -> Self {
-        let multicast: Arc<DashMap<Ipv4Addr, Arc<RwLock<Multicast>>>> = Arc::new(DashMap::new0());
+        let multicast: Arc<Atomic<HashMap<Ipv4Addr, Arc<RwLock<Multicast>>>>> = Arc::new(Atomic::new(HashMap::with_capacity(16)));
         std::thread::spawn(move || {
             //预留以太网帧头和ip头
             let mut buf = [0; 14 + 24 + 12];
@@ -97,16 +97,20 @@ impl IgmpServer {
         Self { multicast }
     }
     pub fn load(&self, multicast_addr: &Ipv4Addr) -> Option<Arc<RwLock<Multicast>>> {
-        if let Some(entry) = self.multicast.get(multicast_addr) {
-            Some(entry.value().clone())
+        let guard = &crossbeam_epoch::pin();
+        let multicast = unsafe{self.multicast.load(Ordering::Relaxed, guard).deref()};
+        if let Some(entry) = multicast.get(multicast_addr) {
+            Some(entry.clone())
         } else {
             None
         }
     }
     pub fn handle(&self, buf: &[u8], source: Ipv4Addr) -> crate::Result<()> {
-        for x in self.multicast.iter() {
+        let guard = &crossbeam_epoch::pin();
+        let multicast = unsafe{self.multicast.load(Ordering::Relaxed, guard).deref()};
+        for (_,v) in multicast.iter() {
             let mut list = Vec::new();
-            let mut write_guard = x.value().write();
+            let mut write_guard = v.write();
             for (ip, time) in &write_guard.members {
                 if time.elapsed() > Duration::from_secs(30) {
                     list.push(*ip);
@@ -126,13 +130,7 @@ impl IgmpServer {
                 if !multicast_addr.is_multicast() {
                     return Ok(());
                 }
-                let multi = {
-                    self.multicast
-                        .entry(multicast_addr)
-                        .or_insert_with(|| Arc::new(RwLock::new(Multicast::new())))
-                        .value()
-                        .clone()
-                };
+                let multi = self.add_multicast(multicast_addr);
                 let mut guard = multi.write();
                 guard.members.insert(source, Instant::now());
             }
@@ -143,8 +141,8 @@ impl IgmpServer {
                 if !multicast_addr.is_multicast() {
                     return Ok(());
                 }
-                if let Some(entry) = self.multicast.get(&multicast_addr) {
-                    let mut guard = entry.value().write();
+                if let Some(entry) = self.get_multicast(&multicast_addr) {
+                    let mut guard = entry.write();
                     guard.map.remove(&source);
                     guard.members.remove(&source);
                 }
@@ -157,12 +155,7 @@ impl IgmpServer {
                         if !multicast_addr.is_multicast() {
                             return Ok(());
                         }
-                        let multi = self
-                            .multicast
-                            .entry(multicast_addr)
-                            .or_insert_with(|| Arc::new(RwLock::new(Multicast::new())))
-                            .value()
-                            .clone();
+                        let multi = self.add_multicast(multicast_addr);
                         let mut guard = multi.write();
 
                         match group_record.record_type() {
@@ -239,5 +232,38 @@ impl IgmpServer {
             IgmpType::Unknown(_) => {}
         }
         Ok(())
+    }
+    fn get_multicast(&self,multicast_addr:&Ipv4Addr)->Option<Arc<RwLock<Multicast>>>{
+        let guard = &crossbeam_epoch::pin();
+        let multicast = &self.multicast;
+        let table_share = multicast.load(Ordering::Acquire, guard);
+        unsafe {
+            table_share.deref().get(multicast_addr).map(|v|v.clone())
+        }
+    }
+    fn add_multicast(&self,multicast_addr:Ipv4Addr)->Arc<RwLock<Multicast>>{
+        let guard = &crossbeam_epoch::pin();
+        let multicast = &self.multicast;
+        let mut table_share = multicast.load(Ordering::Acquire, guard);
+        let value = Arc::new(RwLock::new(Multicast::new()));
+        loop {
+            let mut table = unsafe { table_share.deref().clone() };
+            table.insert(multicast_addr,value.clone());
+            match self.multicast.compare_exchange(
+                table_share,
+                Owned::new(table.clone()),
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+                guard,
+            ) {
+                Ok(_p) => unsafe {
+                    guard.defer_destroy(table_share);
+                    return value;
+                },
+                Err(e) => {
+                    table_share = e.current;
+                }
+            }
+        }
     }
 }

@@ -1,8 +1,10 @@
-use crate::ip_proxy::DashMapNew;
+use crate::ip_proxy::{DashMapNew, ProxyHandler};
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
+use packet::ip::ipv4::packet::IpV4Packet;
+use packet::udp::udp::UdpPacket;
 use std::io;
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -10,14 +12,26 @@ use tokio::time::Instant;
 
 /// 一个udp代理，作用是利用系统协议栈，将udp数据报解析出来再转发到目的地址
 pub struct UdpProxy {
+    udp_proxy_port: u16,
     udp_socket: Arc<UdpSocket>,
     map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
 }
 
 impl UdpProxy {
-    pub fn new(udp_socket: UdpSocket, map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>) -> Self {
+    pub fn new(
+        udp_socket: UdpSocket,
+        map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
+    ) -> io::Result<Self> {
         let udp_socket = Arc::new(udp_socket);
-        Self { udp_socket, map }
+        let udp_proxy_port = udp_socket.local_addr()?.port();
+        Ok(Self {
+            udp_proxy_port,
+            udp_socket,
+            map,
+        })
+    }
+    pub fn udp_handler(&self) -> UdpHandler {
+        UdpHandler(self.udp_proxy_port, self.map.clone())
     }
     pub async fn start(self) {
         let map = self.map;
@@ -121,4 +135,48 @@ async fn start0(
         });
     }
     Ok(())
+}
+
+#[derive(Clone)]
+pub struct UdpHandler(u16, Arc<DashMap<SocketAddrV4, SocketAddrV4>>);
+
+impl ProxyHandler for UdpHandler {
+    fn recv_handle(
+        &self,
+        ipv4: &mut IpV4Packet<&mut [u8]>,
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+    ) -> io::Result<bool> {
+        let dest_ip = ipv4.destination_ip();
+        //转发到代理目标地址
+        let mut udp_packet = UdpPacket::new(source, destination, ipv4.payload_mut())?;
+        let source_port = udp_packet.source_port();
+        let dest_port = udp_packet.destination_port();
+        udp_packet.set_destination_port(self.0);
+        udp_packet.update_checksum();
+        ipv4.set_destination_ip(destination);
+        ipv4.update_checksum();
+        let key = SocketAddrV4::new(source, source_port);
+        self.1.insert(key, SocketAddrV4::new(dest_ip, dest_port));
+        Ok(false)
+    }
+
+    fn send_handle(&self, ipv4: &mut IpV4Packet<&mut [u8]>) -> io::Result<()> {
+        let src_ip = ipv4.source_ip();
+        let dest_ip = ipv4.destination_ip();
+        let dest_addr = {
+            let udp_packet = UdpPacket::new(src_ip, dest_ip, ipv4.payload_mut())?;
+            SocketAddrV4::new(dest_ip, udp_packet.destination_port())
+        };
+        if let Some(entry) = self.1.get(&dest_addr) {
+            let source_addr = entry.value();
+            let source_ip = *source_addr.ip();
+            let mut udp_packet = UdpPacket::new(source_ip, dest_ip, ipv4.payload_mut())?;
+            udp_packet.set_source_port(source_addr.port());
+            udp_packet.update_checksum();
+            ipv4.set_source_ip(source_ip);
+            ipv4.update_checksum();
+        }
+        Ok(())
+    }
 }

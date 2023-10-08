@@ -76,7 +76,14 @@ impl<B: AsRef<[u8]>> TcpPacket<B> {
         Ok(packet)
     }
 }
-
+impl<B: AsRef<[u8]> + AsMut<[u8]>> TcpPacket<B> {
+    pub fn set_source_ip(&mut self, value: Ipv4Addr) {
+        self.source_ip = value;
+    }
+    pub fn set_destination_ip(&mut self, value: Ipv4Addr) {
+        self.destination_ip = value;
+    }
+}
 impl<B: AsRef<[u8]> + AsMut<[u8]>> TcpPacket<B> {
     fn set_checksum(&mut self, value: u16) {
         self.buffer.as_mut()[16..18].copy_from_slice(&value.to_be_bytes())

@@ -18,6 +18,7 @@ use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::{buf_channel_group, BufSenderGroup};
 use crate::handle::CurrentDeviceInfo;
 use crate::igmp_server::IgmpServer;
+#[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::{DeviceReader, DeviceWriter};
 
@@ -29,6 +30,7 @@ pub fn start(
     igmp_server: Option<IgmpServer>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: Option<ExternalRoute>,
+    #[cfg(feature = "ip_proxy")]
     ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
@@ -45,6 +47,7 @@ pub fn start(
                     igmp_server,
                     current_device,
                     ip_route,
+                    #[cfg(feature = "ip_proxy")]
                     ip_proxy_map,
                     client_cipher,
                     server_cipher,
@@ -64,6 +67,7 @@ pub fn start(
             let igmp_server = igmp_server.clone();
             let current_device = current_device.clone();
             let ip_route = ip_route.clone();
+            #[cfg(feature = "ip_proxy")]
             let ip_proxy_map = ip_proxy_map.clone();
             let client_cipher = client_cipher.clone();
             let server_cipher = server_cipher.clone();
@@ -77,6 +81,7 @@ pub fn start(
                         &device_writer,
                         &sender,
                         &ip_route,
+                        #[cfg(feature = "ip_proxy")]
                         &ip_proxy_map,
                         &client_cipher,
                         &server_cipher,
@@ -133,6 +138,7 @@ fn start_simple(
     igmp_server: Option<IgmpServer>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: Option<ExternalRoute>,
+    #[cfg(feature = "ip_proxy")]
     ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
@@ -151,6 +157,7 @@ fn start_simple(
             device_writer,
             sender,
             &ip_route,
+            #[cfg(feature = "ip_proxy")]
             &ip_proxy_map,
             &client_cipher,
             &server_cipher,
@@ -168,6 +175,7 @@ fn handle(
     device_writer: &DeviceWriter,
     sender: &ChannelSender,
     ip_route: &Option<ExternalRoute>,
+    #[cfg(feature = "ip_proxy")]
     proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
@@ -213,9 +221,6 @@ fn handle(
         ethernet::protocol::Protocol::Ipv4 => {
             let mut ipv4_packet = IpV4Packet::unchecked(ethernet_packet.payload_mut());
             let src_ip = ipv4_packet.source_ip();
-            if src_ip != current_device.virtual_ip() {
-                return Ok(());
-            }
             let dest_ip = ipv4_packet.destination_ip();
             let protocol = ipv4_packet.protocol();
             if src_ip == dest_ip {
@@ -244,6 +249,7 @@ fn handle(
                 igmp_server,
                 current_device,
                 ip_route,
+                #[cfg(feature = "ip_proxy")]
                 proxy_map,
                 client_cipher,
                 server_cipher,

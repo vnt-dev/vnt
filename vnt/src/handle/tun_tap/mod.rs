@@ -1,22 +1,23 @@
+use std::net::Ipv4Addr;
+use std::sync::Arc;
+
+use parking_lot::RwLock;
+
+use packet::ip::ipv4::packet::IpV4Packet;
+use packet::ip::ipv4::protocol::Protocol;
+
 use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
 use crate::error::*;
 use crate::external_route::ExternalRoute;
 use crate::handle::{check_dest, CurrentDeviceInfo};
 use crate::igmp_server::{IgmpServer, Multicast};
-use crate::ip_proxy::IpProxyMap;
+#[cfg(feature = "ip_proxy")]
+use crate::ip_proxy::{IpProxyMap, ProxyHandler};
 use crate::protocol;
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, Version, MAX_TTL};
-use packet::ip::ipv4::packet::IpV4Packet;
-use packet::ip::ipv4::protocol::Protocol;
-use packet::tcp::tcp::TcpPacket;
-use packet::udp::udp::UdpPacket;
-use parking_lot::RwLock;
-use std::io;
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::sync::Arc;
 
 pub mod channel_group;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -64,10 +65,8 @@ fn broadcast(
     if peer_ips.is_empty() {
         sender.send_main(net_packet.buffer(), current_device.connect_server)?;
     } else {
-        let buf = vec![
-            0 as u8;
-            12 + 1 + peer_ips.len() * 4 + net_packet.data_len() + ENCRYPTION_RESERVED
-        ];
+        let buf =
+            vec![0u8; 12 + 1 + peer_ips.len() * 4 + net_packet.data_len() + ENCRYPTION_RESERVED];
         //剩余的发送到服务端，需要告知哪些已发送过
         let mut server_packet = NetPacket::new_encrypt(buf)?;
         server_packet.set_version(Version::V1);
@@ -99,16 +98,13 @@ pub fn base_handle(
     igmp_server: &Option<IgmpServer>,
     current_device: CurrentDeviceInfo,
     ip_route: &Option<ExternalRoute>,
+    #[cfg(feature = "ip_proxy")]
     proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
 ) -> Result<()> {
     let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
     let protocol = ipv4_packet.protocol();
-    let ip_head_len = ipv4_packet.header_len() as usize * 4;
-    if 12 + ip_head_len >= data_len {
-        Err(io::Error::new(io::ErrorKind::Other, "ip_head_len err"))?
-    }
     let src_ip = ipv4_packet.source_ip();
     let mut dest_ip = ipv4_packet.destination_ip();
     let mut net_packet = NetPacket::new0(data_len, buf)?;
@@ -190,55 +186,17 @@ pub fn base_handle(
         } else {
             return Ok(());
         }
-    } else if let Some(proxy_map) = proxy_map {
+    }
+    #[cfg(feature = "ip_proxy")]
+    if let Some(proxy_map) = proxy_map {
         match protocol {
             Protocol::Tcp => {
-                let dest_addr = {
-                    let tcp_packet = TcpPacket::new(
-                        src_ip,
-                        dest_ip,
-                        &mut net_packet.payload_mut()[ip_head_len..],
-                    )?;
-                    SocketAddrV4::new(dest_ip, tcp_packet.destination_port())
-                };
-                if let Some(entry) = proxy_map.tcp_proxy_map.get(&dest_addr) {
-                    let source_addr = entry.value();
-                    let source_ip = *source_addr.ip();
-                    let mut tcp_packet = TcpPacket::new(
-                        source_ip,
-                        dest_ip,
-                        &mut net_packet.payload_mut()[ip_head_len..],
-                    )?;
-                    tcp_packet.set_source_port(source_addr.port());
-                    tcp_packet.update_checksum();
-                    let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
-                    ipv4_packet.set_source_ip(source_ip);
-                    ipv4_packet.update_checksum();
-                }
+                let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
+                proxy_map.tcp_handler.send_handle(&mut ipv4_packet)?;
             }
             Protocol::Udp => {
-                let dest_addr = {
-                    let udp_packet = UdpPacket::new(
-                        src_ip,
-                        dest_ip,
-                        &mut net_packet.payload_mut()[ip_head_len..],
-                    )?;
-                    SocketAddrV4::new(dest_ip, udp_packet.destination_port())
-                };
-                if let Some(entry) = proxy_map.udp_proxy_map.get(&dest_addr) {
-                    let source_addr = entry.value();
-                    let source_ip = *source_addr.ip();
-                    let mut udp_packet = UdpPacket::new(
-                        source_ip,
-                        dest_ip,
-                        &mut net_packet.payload_mut()[ip_head_len..],
-                    )?;
-                    udp_packet.set_source_port(source_addr.port());
-                    udp_packet.update_checksum();
-                    let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
-                    ipv4_packet.set_source_ip(source_ip);
-                    ipv4_packet.update_checksum();
-                }
+                let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
+                proxy_map.udp_handler.send_handle(&mut ipv4_packet)?;
             }
             _ => {}
         }

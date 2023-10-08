@@ -31,7 +31,7 @@ sudo = "0.6.0"
 winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
 
 [features]
-default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc"]
+default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc","ip_proxy"]
 openssl = ["vnt/openssl"]
 openssl-vendored = ["vnt/openssl-vendored"]
 ring-cipher = ["vnt/ring-cipher"]
@@ -40,6 +40,6 @@ aes_ecb=["vnt/aes_ecb"]
 sm4_cbc=["vnt/sm4_cbc"]
 aes_gcm=["vnt/aes_gcm"]
 server_encrypt=["vnt/server_encrypt"]
-
+ip_proxy=["vnt/ip_proxy"]
 [build-dependencies]
 embed-manifest = "1.4.0"

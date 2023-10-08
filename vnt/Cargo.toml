@@ -12,7 +12,7 @@ log = "0.4.17"
 libc = "0.2.137"
 crossbeam-utils = "0.8"
 crossbeam-epoch = "0.9.15"
-dashmap = "5.5.3"
+dashmap = {version = "5.5.3",optional = true}
 parking_lot = "0.12.1"
 rand = "0.8.5"
 sha2 = { version = "0.10.6", features = ["oid"] }
@@ -54,4 +54,4 @@ aes_ecb=["ecb"]
 sm4_cbc=["libsm"]
 aes_gcm=["aes-gcm"]
 server_encrypt =["rsa","spki"]
-
+ip_proxy=["dashmap"]

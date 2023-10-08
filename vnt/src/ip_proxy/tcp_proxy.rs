@@ -1,7 +1,10 @@
+use crate::ip_proxy::ProxyHandler;
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
+use packet::ip::ipv4::packet::IpV4Packet;
+use packet::tcp::tcp::TcpPacket;
 use std::io;
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
@@ -10,19 +13,26 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 
 pub struct TcpProxy {
+    tcp_proxy_port: u16,
     tcp_listener: TcpListener,
+    //真实源地址 -> 目的地址
     tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
 }
 
 impl TcpProxy {
-    pub fn new(
-        tcp_listener: TcpListener,
+    pub async fn new(
+        addr: SocketAddrV4,
         tcp_proxy_map: Arc<DashMap<SocketAddrV4, SocketAddrV4>>,
-    ) -> Self {
-        Self {
+    ) -> io::Result<Self> {
+        let tcp_listener = TcpListener::bind(addr).await?;
+        Ok(Self {
+            tcp_proxy_port: tcp_listener.local_addr()?.port(),
             tcp_listener,
             tcp_proxy_map,
-        }
+        })
+    }
+    pub fn tcp_handler(&self) -> TcpHandler {
+        TcpHandler(self.tcp_proxy_port, self.tcp_proxy_map.clone())
     }
     pub async fn start(self) {
         let tcp_listener = self.tcp_listener;
@@ -120,4 +130,49 @@ async fn copy(
         }
     }
     Ok(())
+}
+
+#[derive(Clone)]
+pub struct TcpHandler(u16, Arc<DashMap<SocketAddrV4, SocketAddrV4>>);
+
+impl ProxyHandler for TcpHandler {
+    fn recv_handle(
+        &self,
+        ipv4: &mut IpV4Packet<&mut [u8]>,
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+    ) -> io::Result<bool> {
+        let dest_ip = ipv4.destination_ip();
+        //转发到代理目标地址
+        let mut tcp_packet = TcpPacket::new(source, destination, ipv4.payload_mut())?;
+        let source_port = tcp_packet.source_port();
+        let dest_port = tcp_packet.destination_port();
+        tcp_packet.set_destination_port(self.0);
+        tcp_packet.update_checksum();
+        ipv4.set_destination_ip(destination);
+        ipv4.update_checksum();
+        let key = SocketAddrV4::new(source, source_port);
+        //https://github.com/crossbeam-rs/crossbeam/issues/1023
+        self.1.insert(key, SocketAddrV4::new(dest_ip, dest_port));
+        Ok(false)
+    }
+
+    fn send_handle(&self, ipv4: &mut IpV4Packet<&mut [u8]>) -> io::Result<()> {
+        let src_ip = ipv4.source_ip();
+        let dest_ip = ipv4.destination_ip();
+        let dest_addr = {
+            let tcp_packet = TcpPacket::new(src_ip, dest_ip, ipv4.payload_mut())?;
+            SocketAddrV4::new(dest_ip, tcp_packet.destination_port())
+        };
+        if let Some(entry) = self.1.get(&dest_addr) {
+            let source_addr = entry.value();
+            let source_ip = *source_addr.ip();
+            let mut tcp_packet = TcpPacket::new(source_ip, dest_ip, ipv4.payload_mut())?;
+            tcp_packet.set_source_port(source_addr.port());
+            tcp_packet.update_checksum();
+            ipv4.set_source_ip(source_ip);
+            ipv4.update_checksum();
+        }
+        Ok(())
+    }
 }

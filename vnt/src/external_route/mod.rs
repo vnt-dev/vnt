@@ -37,6 +37,9 @@ impl AllowExternalRoute {
         }
     }
     pub fn allow(&self, ip: &Ipv4Addr) -> bool {
+        if self.route_table.is_empty() {
+            return false;
+        }
         let ip = u32::from_be_bytes(ip.octets());
         for (dest, mask) in self.route_table.iter() {
             if *mask & ip == *mask & *dest {

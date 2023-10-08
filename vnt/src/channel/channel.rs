@@ -3,7 +3,6 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
-use std::ops::Sub;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,7 +10,6 @@ use std::{io, thread};
 
 use crossbeam_epoch::{Atomic, Owned};
 use crossbeam_utils::atomic::AtomicCell;
-use dashmap::DashMap;
 use tokio::net::UdpSocket;
 use tokio::sync::watch::{channel, Receiver, Sender};
 
@@ -20,7 +18,6 @@ use crate::channel::{Route, RouteKey, Status, TCP_ID, UDP_ID, UDP_V6_ID};
 use crate::core::status::VntWorker;
 use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::CurrentDeviceInfo;
-use crate::ip_proxy::DashMapNew;
 
 pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
@@ -28,8 +25,7 @@ pub struct ContextInner {
     pub(crate) main_channel_ipv6: Option<Arc<StdUdpSocket>>,
     //在udp的基础上，可以选择使用tcp和服务端通信
     pub(crate) main_tcp_channel: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
-    pub(crate) route_table: Atomic<HashMap<Ipv4Addr, Vec<Route>>>,
-    pub(crate) route_table_time: DashMap<(RouteKey, Ipv4Addr), Instant>,
+    pub(crate) route_table: Atomic<HashMap<Ipv4Addr, Vec<(Route, Arc<AtomicCell<Instant>>)>>>,
     pub(crate) status_receiver: Receiver<Status>,
     pub(crate) status_sender: Sender<Status>,
     pub(crate) udp_map: Atomic<HashMap<usize, Arc<UdpSocket>>>,
@@ -58,7 +54,6 @@ impl Context {
             main_channel_ipv6,
             main_tcp_channel,
             route_table: Atomic::new(HashMap::with_capacity(16)),
-            route_table_time: DashMap::new_cap(16),
             status_receiver,
             status_sender,
             udp_map: Atomic::new(HashMap::with_capacity(16)),
@@ -133,9 +128,9 @@ impl Context {
     fn insert_udp_(&self, id: usize, udp: Option<Arc<UdpSocket>>) {
         let guard = &crossbeam_epoch::pin();
         let udp_map = &self.inner.udp_map;
-        let mut udp_map_shared = self.inner.udp_map.load(Ordering::Relaxed, guard);
+        let mut udp_map_shared = udp_map.load(Ordering::Acquire, guard);
         loop {
-            let mut map = unsafe { udp_map_shared.as_ref().unwrap().clone() };
+            let mut map = unsafe { udp_map_shared.deref().clone() };
             match udp.clone() {
                 None => {
                     map.remove(&id);
@@ -147,7 +142,7 @@ impl Context {
             match udp_map.compare_exchange(
                 udp_map_shared,
                 Owned::new(map),
-                Ordering::Relaxed,
+                Ordering::AcqRel,
                 Ordering::Relaxed,
                 guard,
             ) {
@@ -191,8 +186,7 @@ impl Context {
             self.inner
                 .udp_map
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
                 .clone()
         };
         if table.is_empty() {
@@ -222,27 +216,24 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         if let Some(v) = table.get(id) {
             if v.is_empty() {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
             }
-            let route = v[0];
+            let (route, time) = &v[0];
             if route.rt == 199 {
                 //这通常是刚加入路由，直接放弃使用,避免抖动
                 return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
             }
             if !route.is_p2p() {
-                if let Some(time) = self.inner.route_table_time.get(&(route.route_key(), *id)) {
-                    //借道传输时，长时间不通信的通道不使用
-                    if time.value().elapsed() > Duration::from_secs(6) {
-                        return Err(io::Error::new(io::ErrorKind::NotFound, "route time out"));
-                    }
+                //借道传输时，长时间不通信的通道不使用
+                if time.load().elapsed() > Duration::from_secs(6) {
+                    return Err(io::Error::new(io::ErrorKind::NotFound, "route time out"));
                 }
             }
-            return Ok(route);
+            return Ok(*route);
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
     }
@@ -311,8 +302,7 @@ impl Context {
             self.inner
                 .udp_map
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         udp_map.get(&route_key.index).cloned()
     }
@@ -327,13 +317,12 @@ impl Context {
         let key = route.route_key();
         let guard = &crossbeam_epoch::pin();
         let route_table = &self.inner.route_table;
-        let mut table_share = route_table.load(Ordering::Relaxed, guard);
+        let mut table_share = route_table.load(Ordering::Acquire, guard);
         loop {
-            let mut table = unsafe { table_share.as_ref().unwrap().clone() };
-
+            let mut table = unsafe { table_share.deref().clone() };
             let list = table.entry(id).or_insert_with(|| Vec::with_capacity(4));
             let mut exist = false;
-            for x in list.iter_mut() {
+            for (x, time) in list.iter_mut() {
                 if x.metric < route.metric {
                     //不能比当前的路径更长
                     return;
@@ -345,18 +334,19 @@ impl Context {
                     x.metric = route.metric;
                     x.rt = route.rt;
                     exist = true;
+                    time.store(Instant::now());
                     break;
                 }
             }
             if exist {
-                list.sort_by_key(|k| k.sort_key());
+                list.sort_by_key(|(k, _)| k.sort_key());
             } else {
                 if route.metric == 1 {
                     //添加了直连的则排除非直连的
-                    list.retain(|k| k.metric == 1);
+                    list.retain(|(k, _)| k.metric == 1);
                 }
-                list.push(route);
-                list.sort_by_key(|k| k.sort_key());
+                list.push((route, Arc::new(AtomicCell::new(Instant::now()))));
+                list.sort_by_key(|(k, _)| k.sort_key());
                 let max_len = self.inner.channel_num + 1;
                 if list.len() > max_len {
                     list.truncate(max_len);
@@ -365,7 +355,7 @@ impl Context {
             match route_table.compare_exchange(
                 table_share,
                 Owned::new(table),
-                Ordering::Relaxed,
+                Ordering::AcqRel,
                 Ordering::Relaxed,
                 guard,
             ) {
@@ -378,10 +368,6 @@ impl Context {
                 }
             }
         }
-
-        self.inner
-            .route_table_time
-            .insert((key, id), Instant::now().sub(Duration::from_secs(10)));
     }
     pub fn route(&self, id: &Ipv4Addr) -> Option<Vec<Route>> {
         let guard = &crossbeam_epoch::pin();
@@ -389,11 +375,10 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         if let Some(v) = table.get(id) {
-            Some(v.clone())
+            Some(v.iter().map(|(i, _)| *i).collect())
         } else {
             None
         }
@@ -404,11 +389,10 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         if let Some(v) = table.get(id) {
-            v.first().map(|v| *v)
+            v.first().map(|(i, _)| *i)
         } else {
             None
         }
@@ -419,11 +403,10 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         for (k, v) in table.iter() {
-            for route in v {
+            for (route, _) in v {
                 if &route.route_key() == route_key && route.is_p2p() {
                     return Some(*k);
                 }
@@ -437,11 +420,10 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         if let Some(v) = table.get(id) {
-            if v.iter().filter(|k| k.is_p2p()).count() >= self.inner.channel_num {
+            if v.iter().filter(|(k, _)| k.is_p2p()).count() >= self.inner.channel_num {
                 return false;
             }
         }
@@ -453,10 +435,12 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
-        table.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        table
+            .iter()
+            .map(|(k, v)| (k.clone(), v.iter().map(|(i, _)| *i).collect()))
+            .collect()
     }
     pub fn route_table_one(&self) -> Vec<(Ipv4Addr, Route)> {
         let mut list = Vec::with_capacity(8);
@@ -465,11 +449,10 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         for (k, v) in table {
-            if let Some(route) = v.first() {
+            if let Some((route, _)) = v.first() {
                 list.push((*k, *route));
             }
         }
@@ -482,11 +465,10 @@ impl Context {
             self.inner
                 .route_table
                 .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
+                .deref()
         };
         for (k, v) in table {
-            if let Some(route) = v.first() {
+            if let Some((route, _)) = v.first() {
                 if route.metric == 1 {
                     list.push((*k, *route));
                 }
@@ -498,33 +480,42 @@ impl Context {
     pub fn remove_route(&self, id: &Ipv4Addr, route_key: RouteKey) {
         let guard = &crossbeam_epoch::pin();
         let route_table = &self.inner.route_table;
-        let mut table_share = route_table.load(Ordering::Relaxed, guard);
+        let mut table_share = route_table.load(Ordering::Acquire, guard);
         loop {
-            let mut table = unsafe { table_share.as_ref().unwrap().clone() };
+            let mut table = unsafe { table_share.deref().clone() };
             if let Some(routes) = table.get_mut(id) {
-                routes.retain(|x| x.route_key() != route_key);
+                routes.retain(|(x, _)| x.route_key() != route_key);
                 match route_table.compare_exchange(
                     table_share,
                     Owned::new(table),
-                    Ordering::Relaxed,
+                    Ordering::AcqRel,
                     Ordering::Relaxed,
                     guard,
                 ) {
                     Ok(_p) => unsafe {
                         guard.defer_destroy(table_share);
-                        self.inner.route_table_time.remove(&(route_key, *id));
                         return;
                     },
                     Err(e) => {
                         table_share = e.current;
                     }
                 }
+            }else{
+                return;
             }
         }
     }
     pub fn update_read_time(&self, id: &Ipv4Addr, route_key: &RouteKey) {
-        if let Some(mut time) = self.inner.route_table_time.get_mut(&(*route_key, *id)) {
-            *time.value_mut() = Instant::now();
+        let guard = &crossbeam_epoch::pin();
+        let table_share = self.inner.route_table.load(Ordering::Relaxed, guard);
+        let table = unsafe { table_share.deref().clone() };
+        if let Some(routes) = table.get(id) {
+            for (route, time) in routes {
+                if &route.route_key() == route_key {
+                    time.store(Instant::now());
+                    break;
+                }
+            }
         }
     }
 }

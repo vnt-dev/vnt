@@ -1,37 +1,38 @@
+use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::Arc;
-use std::time::Duration;
-
-use crossbeam_utils::atomic::AtomicCell;
-use dashmap::DashMap;
-use parking_lot::Mutex;
-use rand::Rng;
 use std::net::TcpStream;
 use std::net::UdpSocket;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+use crossbeam_epoch::Atomic;
+use crossbeam_utils::atomic::AtomicCell;
+use parking_lot::Mutex;
+use rand::Rng;
 use tokio::sync::mpsc::channel;
 
+use crate::channel::{Route, RouteKey};
 use crate::channel::channel::{Channel, Context};
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch, PunchModel};
 use crate::channel::sender::ChannelSender;
-use crate::channel::{Route, RouteKey};
 use crate::cipher::{Cipher, CipherModel, RsaCipher};
 use crate::core::status::VntStatusManger;
 use crate::error::Error;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
+use crate::handle::{
+    ConnectStatus, CurrentDeviceInfo, handshake_handler, heartbeat_handler, PeerDeviceInfo,
+    punch_handler, registration_handler,
+};
 use crate::handle::handshake_handler::HandshakeEnum;
 use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::registration_handler::{RegResponse, ReqEnum};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::handle::tun_tap::tap_handler;
 use crate::handle::tun_tap::tun_handler;
-use crate::handle::{
-    handshake_handler, heartbeat_handler, punch_handler, registration_handler, ConnectStatus,
-    CurrentDeviceInfo, PeerDeviceInfo,
-};
 use crate::igmp_server::IgmpServer;
-use crate::ip_proxy::DashMapNew;
 use crate::nat::NatTest;
 use crate::tun_tap_device;
 use crate::tun_tap_device::{DeviceReader, DeviceWriter};
@@ -52,7 +53,7 @@ pub struct Vnt {
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     nat_test: NatTest,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
-    peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>>,
+    peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>>,
 }
 
 pub struct VntUtil {
@@ -277,7 +278,7 @@ impl VntUtil {
         ));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> =
             Arc::new(Mutex::new((response.epoch, response.device_info_list)));
-        let peer_nat_info_map: Arc<DashMap<Ipv4Addr, NatInfo>> = Arc::new(DashMap::new0());
+        let peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>> = Arc::new(Atomic::new(HashMap::new()));
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
         let public_ip = response.public_ip;
         let public_port = response.public_port;
@@ -299,6 +300,7 @@ impl VntUtil {
         } else {
             Some(ExternalRoute::new(config.in_ips))
         };
+        #[cfg(feature = "ip_proxy")]
         let (tcp_proxy, udp_proxy, ip_proxy_map) = if config.out_ips.is_empty() {
             (None, None, None)
         } else {
@@ -330,6 +332,7 @@ impl VntUtil {
                 igmp_server.clone(),
                 current_device.clone(),
                 in_external_route,
+                #[cfg(feature = "ip_proxy")]
                 ip_proxy_map.clone(),
                 client_cipher.clone(),
                 self.server_cipher.clone(),
@@ -344,6 +347,7 @@ impl VntUtil {
                 igmp_server.clone(),
                 current_device.clone(),
                 in_external_route,
+                #[cfg(feature = "ip_proxy")]
                 ip_proxy_map.clone(),
                 client_cipher.clone(),
                 self.server_cipher.clone(),
@@ -359,6 +363,7 @@ impl VntUtil {
             igmp_server.clone(),
             current_device.clone(),
             in_external_route,
+            #[cfg(feature = "ip_proxy")]
             ip_proxy_map.clone(),
             client_cipher.clone(),
             self.server_cipher.clone(),
@@ -375,6 +380,7 @@ impl VntUtil {
             device_writer.clone(),
             connect_status.clone(),
             peer_nat_info_map.clone(),
+            #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
             out_external_route,
             cone_sender,
@@ -449,6 +455,7 @@ impl VntUtil {
                 ));
             }
         }
+        #[cfg(feature = "ip_proxy")]
         {
             //代理
             if let Some(tcp_proxy) = tcp_proxy {
@@ -457,6 +464,8 @@ impl VntUtil {
             if let Some(udp_proxy) = udp_proxy {
                 tokio::spawn(udp_proxy.start());
             }
+        }
+        {
             let context = context.clone();
             let nat_test = nat_test.clone();
             tokio::spawn(async move {
@@ -494,7 +503,10 @@ impl Vnt {
         self.current_device.load()
     }
     pub fn peer_nat_info(&self, ip: &Ipv4Addr) -> Option<NatInfo> {
-        self.peer_nat_info_map.get(ip).map(|e| e.value().clone())
+        let guard = &crossbeam_epoch::pin();
+        let shared = self.peer_nat_info_map.load(Ordering::Acquire,guard);
+        let map = unsafe{shared.deref()};
+        map.get(ip).map(|e| e.clone())
     }
     pub fn connection_status(&self) -> ConnectStatus {
         self.connect_status.load()
