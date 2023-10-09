@@ -146,6 +146,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
         None,
         false,
         false,
+        false,
         1,
         cipher_model,
         finger,

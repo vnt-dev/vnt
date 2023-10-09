@@ -44,7 +44,7 @@ protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
 
 [features]
-default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc"]
+default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc","ip_proxy"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]

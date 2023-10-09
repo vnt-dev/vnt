@@ -58,6 +58,7 @@ fn main() {
     opts.optopt("", "punch", "取值ipv4/ipv6", "<punch>");
     opts.optopt("", "port", "监听的端口", "<port>");
     opts.optflag("", "cmd", "开启窗口输入");
+    opts.optflag("", "no-proxy", "关闭内置代理");
     opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
@@ -258,6 +259,8 @@ fn main() {
             .unwrap_or(PunchModel::All);
         let port = matches.opt_get::<u16>("port").unwrap_or(None).unwrap_or(0);
         let cmd = matches.opt_present("cmd");
+        #[cfg(feature = "ip_proxy")]
+        let no_proxy = matches.opt_present("no-proxy");
         let config = Config::new(
             tap,
             token,
@@ -274,6 +277,8 @@ fn main() {
             tcp_channel,
             virtual_ip,
             relay,
+            #[cfg(feature = "ip_proxy")]
+            no_proxy,
             server_encrypt,
             parallel,
             cipher_model,
@@ -528,10 +533,14 @@ fn print_usage(program: &str, _opts: Options) {
             &enums[1..]
         );
     }
-    println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
+    if !enums.is_empty() {
+        println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
+    }
     println!("  --punch <punch>     取值ipv4/ipv6，ipv4表示仅使用ipv4打洞");
     println!("  --port <port>       取值0~65535，指定本地监听的端口，默认取随机端口");
     println!("  --cmd               开启交互式命令，使用此参数开启控制台输入");
+    #[cfg(feature = "ip_proxy")]
+    println!("  --no-proxy          关闭内置代理，如需点对网则需要配置网卡NAT转发");
 
     println!();
     println!(

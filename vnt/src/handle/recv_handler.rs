@@ -233,57 +233,9 @@ impl ChannelDataHandler {
                             if self.out_external_route.allow(&ipv4.destination_ip()) {
                                 #[cfg(feature = "ip_proxy")]
                                 if let Some(ip_proxy_map) = &self.ip_proxy_map {
-                                    match ipv4.protocol() {
-                                        ipv4::protocol::Protocol::Tcp => {
-                                            if ip_proxy_map.tcp_handler.recv_handle(
-                                                &mut ipv4,
-                                                source,
-                                                destination,
-                                            )? {
-                                                return Ok(());
-                                            }
-                                        }
-                                        ipv4::protocol::Protocol::Udp => {
-                                            if ip_proxy_map.udp_handler.recv_handle(
-                                                &mut ipv4,
-                                                source,
-                                                destination,
-                                            )? {
-                                                return Ok(());
-                                            }
-                                        }
-                                        #[cfg(not(target_os = "android"))]
-                                        ipv4::protocol::Protocol::Icmp => {
-                                            if ip_proxy_map.icmp_handler.recv_handle(
-                                                &mut ipv4,
-                                                source,
-                                                destination,
-                                            )? {
-                                                return Ok(());
-                                            }
-                                        }
-                                        _ => {
-                                            log::warn!(
-                                                "不支持的ip代理ipv4协议{:?}:{}->{}->{}",
-                                                ipv4.protocol(),
-                                                source,
-                                                destination,
-                                                ipv4.destination_ip()
-                                            );
-                                            return Err(Error::Warn(
-                                                "不支持的ip代理ipv4协议".to_string(),
-                                            ));
-                                        }
+                                    if ip_proxy_map.recv_handle(&mut ipv4, source, destination)? {
+                                        return Ok(());
                                     }
-                                } else {
-                                    log::warn!(
-                                        "不支持ip代理{:?}:{}->{}->{}",
-                                        ipv4.protocol(),
-                                        source,
-                                        destination,
-                                        ipv4.destination_ip()
-                                    );
-                                    return Err(Error::Warn("不支持ip代理".to_string()));
                                 }
                             } else {
                                 log::warn!(

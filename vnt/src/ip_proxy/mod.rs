@@ -6,6 +6,7 @@ use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
+use packet::ip::ipv4;
 use tokio::net::UdpSocket;
 
 use packet::ip::ipv4::packet::IpV4Packet;
@@ -170,6 +171,46 @@ pub fn send(
         let connect_server = current_device.connect_server;
         if let Err(e) = sender.send_main(net_packet.buffer(), connect_server) {
             log::warn!("发送到目标失败:{},{}", e, connect_server);
+        }
+    }
+}
+
+impl ProxyHandler for IpProxyMap {
+    fn recv_handle(
+        &self,
+        ipv4: &mut IpV4Packet<&mut [u8]>,
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+    ) -> io::Result<bool> {
+        match ipv4.protocol() {
+            ipv4::protocol::Protocol::Tcp => {
+                self.tcp_handler.recv_handle(ipv4, source, destination)
+            }
+            ipv4::protocol::Protocol::Udp => {
+                self.udp_handler.recv_handle(ipv4, source, destination)
+            }
+            #[cfg(not(target_os = "android"))]
+            ipv4::protocol::Protocol::Icmp => {
+                self.icmp_handler.recv_handle(ipv4, source, destination)
+            }
+            _ => {
+                log::warn!(
+                    "不支持的ip代理ipv4协议{:?}:{}->{}->{}",
+                    ipv4.protocol(),
+                    source,
+                    destination,
+                    ipv4.destination_ip()
+                );
+                Ok(false)
+            }
+        }
+    }
+
+    fn send_handle(&self, ipv4: &mut IpV4Packet<&mut [u8]>) -> io::Result<()> {
+        match ipv4.protocol() {
+            ipv4::protocol::Protocol::Tcp => self.tcp_handler.send_handle(ipv4),
+            ipv4::protocol::Protocol::Udp => self.udp_handler.send_handle(ipv4),
+            _ => Ok(()),
         }
     }
 }

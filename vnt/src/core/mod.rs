@@ -302,7 +302,7 @@ impl VntUtil {
             Some(ExternalRoute::new(config.in_ips))
         };
         #[cfg(feature = "ip_proxy")]
-        let (tcp_proxy, udp_proxy, ip_proxy_map) = if config.out_ips.is_empty() {
+        let (tcp_proxy, udp_proxy, ip_proxy_map) = if config.out_ips.is_empty() || config.no_proxy {
             (None, None, None)
         } else {
             let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(
@@ -582,6 +582,8 @@ pub struct Config {
     pub tcp: bool,
     pub ip: Option<Ipv4Addr>,
     pub relay: bool,
+    #[cfg(feature = "ip_proxy")]
+    pub no_proxy: bool,
     pub server_encrypt: bool,
     pub parallel: usize,
     pub cipher_model: CipherModel,
@@ -607,6 +609,7 @@ impl Config {
         tcp: bool,
         ip: Option<Ipv4Addr>,
         relay: bool,
+        #[cfg(feature = "ip_proxy")] no_proxy: bool,
         server_encrypt: bool,
         parallel: usize,
         cipher_model: CipherModel,
@@ -635,6 +638,8 @@ impl Config {
             tcp,
             ip,
             relay,
+            #[cfg(feature = "ip_proxy")]
+            no_proxy,
             server_encrypt,
             parallel,
             cipher_model,

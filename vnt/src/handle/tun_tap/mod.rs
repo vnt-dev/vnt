@@ -188,17 +188,8 @@ pub fn base_handle(
     }
     #[cfg(feature = "ip_proxy")]
     if let Some(proxy_map) = proxy_map {
-        match protocol {
-            Protocol::Tcp => {
-                let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
-                proxy_map.tcp_handler.send_handle(&mut ipv4_packet)?;
-            }
-            Protocol::Udp => {
-                let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
-                proxy_map.udp_handler.send_handle(&mut ipv4_packet)?;
-            }
-            _ => {}
-        }
+        let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
+        proxy_map.send_handle(&mut ipv4_packet)?;
     }
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     //优先发到直连到地址
