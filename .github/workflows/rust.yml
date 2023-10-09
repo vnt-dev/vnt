@@ -47,13 +47,13 @@ jobs:
             FEATURES: ring-cipher,openssl-vendored
           - TARGET: aarch64-unknown-linux-musl # tested on aws t4g.nano in alpine container
             OS: ubuntu-latest
-            FEATURES: default
+            FEATURES: ring-cipher,openssl-vendored
           - TARGET: armv7-unknown-linux-musleabihf # raspberry pi 2-3-4, not tested
             OS: ubuntu-latest
             FEATURES: openssl-vendored
           - TARGET: arm-unknown-linux-musleabihf # raspberry pi 0-1, not tested
             OS: ubuntu-latest
-            FEATURES: openssl-vendored
+            FEATURES: ring-cipher,openssl-vendored
           - TARGET: x86_64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
             FEATURES: ring-cipher,openssl-vendored
@@ -68,7 +68,7 @@ jobs:
             FEATURES: ring-cipher,openssl-vendored
           - TARGET: mipsel-unknown-linux-musl # openwrt
             OS: ubuntu-latest
-            FEATURES: openssl-vendored
+            FEATURES: openssl-vendored,ring-cipher
           - TARGET: mips-unknown-linux-musl # openwrt
             OS: ubuntu-latest
             FEATURES: openssl-vendored
