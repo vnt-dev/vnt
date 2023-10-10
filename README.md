@@ -258,10 +258,16 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 
 ### 交流群
 
-QQ:1034868233
+QQ: 1034868233
 
 ### 其他
 
 可使用社区小伙伴搭建的中继服务器
 
 1. -s vnt.8443.eu.org:29871
+
+### 参与贡献
+
+<a href="https://github.com/lbl8603/vnt/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=lbl8603/vnt" />
+</a>
