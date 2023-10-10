@@ -120,7 +120,6 @@ iptables -vnL -t nat
 
 ```bash
 yay -Syu vnt
-sudo systemctl enable --now vnt-cli@1
 ```
 
 - 通过 `systemd` 设置开机自启及配置
@@ -159,6 +158,7 @@ sudo pfctl -f /etc/pf.conf -e
 
 - Mac
 - Linux
+    - Arch Linux `yay -Syu vnt`
 - Windows
     - 默认使用tun网卡 依赖wintun.dll([win-tun](https://www.wintun.net/))(将dll放到同目录下，建议使用版本0.14.1)
     - 使用tap网卡 依赖tap-windows([win-tap](https://build.openvpn.net/downloads/releases/))(建议使用版本9.24.7)
