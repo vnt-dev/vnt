@@ -111,6 +111,38 @@ sudo iptables -t nat -A POSTROUTING  -o eth0 -s 10.26.0.0/24 -j MASQUERADE
 # 查看设置
 iptables -vnL -t nat
 ```
+
+### Arch Linux
+
+[![Packaging status](https://repology.org/badge/vertical-allrepos/vnt.svg)](https://repology.org/project/vnt/versions)
+
+- 通过 AUR 安装 [vnt-git](https://aur.archlinux.org/packages/vnt-git)
+
+```bash
+yay -Syu vnt
+sudo systemctl enable --now vnt-cli@1
+```
+
+- 通过 `systemd` 设置开机自启及配置
+
+```bash
+sudo systemctl enable --now vnt-cli@
+sudo systemctl status vnt-cli@
+```
+
+- 启用内置 `IPv4` 转发规则
+
+```bash
+sudo sysctl --system
+```
+
+- 通过内置防火墙文件配置防火墙转发规则
+
+```bash
+sudo cat /etc/vnt/iptables-vnt.rules >> /etc/iptables/iptables.rules
+sudo iptables-restore iptables.rules
+```
+
 ### macos
 ```shell
 # 开启ip转发
