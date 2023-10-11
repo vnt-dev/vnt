@@ -112,9 +112,10 @@ server_encrypt: true #服务端加密
 parallel: 1 #任务并行度
 cipher_model: aes_gcm #客户端加密算法
 finger: false #关闭数据指纹
-punch_model: ipv4 #打洞模式
+punch_model: ipv4 #打洞模式 
 port: 0 #使用随机端口
 cmd: false #关闭控制台输入
+no_proxy: false #是否关闭内置代理，true为关闭
 ```
 
 或者需要哪个配置就加哪个，当然token是必须的
