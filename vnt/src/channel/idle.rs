@@ -1,10 +1,10 @@
-use crate::channel::channel::Context;
-use crate::channel::RouteKey;
 use std::io;
 use std::io::{Error, ErrorKind};
 use std::net::Ipv4Addr;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
+
+use crate::channel::channel::Context;
+use crate::channel::RouteKey;
 
 pub struct Idle {
     read_idle: Duration,
@@ -23,15 +23,7 @@ impl Idle {
         loop {
             let mut max = Duration::from_secs(0);
             {
-                let guard = &crossbeam_epoch::pin();
-                let table = unsafe {
-                    self.context
-                        .inner
-                        .route_table
-                        .load(Ordering::Relaxed, guard)
-                        .deref()
-                };
-                for (ip, routes) in table.iter() {
+                for (ip, routes) in self.context.inner.route_table.read().iter() {
                     for (route, time) in routes {
                         let last_read = time.load().elapsed();
                         if last_read >= self.read_idle {

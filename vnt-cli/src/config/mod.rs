@@ -33,6 +33,7 @@ pub struct FileConfig {
     pub punch_model: String,
     pub port: u16,
     pub cmd: bool,
+    pub first_latency: bool,
 }
 
 impl Default for FileConfig {
@@ -64,6 +65,7 @@ impl Default for FileConfig {
             punch_model: "".to_string(),
             port: 0,
             cmd: false,
+            first_latency: false,
         }
     }
 }
@@ -155,6 +157,7 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         file_conf.finger,
         punch_model,
         file_conf.port,
+        file_conf.first_latency,
     );
     Ok((config, file_conf.cmd))
 }

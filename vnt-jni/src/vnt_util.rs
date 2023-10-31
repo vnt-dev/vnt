@@ -66,6 +66,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
     let tcp = env.get_field(&config, "tcp", "Z")?.z()?;
     let finger = env.get_field(&config, "finger", "Z")?.z()?;
+    let first_latency = env.get_field(&config, "firstLatency", "Z")?.z()?;
     let in_ips = to_string(env, &config, "inIps")?;
     let out_ips = to_string(env, &config, "outIps")?;
     let port = env.get_field(&config, "port", "I")?.i()? as u16;
@@ -152,6 +153,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
         finger,
         PunchModel::All,
         port,
+        first_latency,
     );
     match VntUtilSync::new(config) {
         Ok(vnt_util) => Ok(vnt_util),

@@ -3,13 +3,11 @@ use std::io;
 use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossbeam_epoch::Atomic;
 use crossbeam_utils::atomic::AtomicCell;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use rand::Rng;
 use tokio::sync::mpsc::channel;
 
@@ -53,7 +51,7 @@ pub struct Vnt {
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     nat_test: NatTest,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
-    peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>>,
+    peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
 }
 
 pub struct VntUtil {
@@ -262,6 +260,7 @@ impl VntUtil {
             tcp_sender,
             current_device.clone(),
             1,
+            config.first_latency,
         );
         let punch = Punch::new(context.clone(), config.punch_model);
         let idle = Idle::new(Duration::from_secs(16), context.clone());
@@ -278,8 +277,8 @@ impl VntUtil {
         ));
         let device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>> =
             Arc::new(Mutex::new((response.epoch, response.device_info_list)));
-        let peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>> =
-            Arc::new(Atomic::new(HashMap::new()));
+        let peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>> =
+            Arc::new(RwLock::new(HashMap::with_capacity(16)));
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
         let public_ip = response.public_ip;
         let public_port = response.public_port;
@@ -504,10 +503,7 @@ impl Vnt {
         self.current_device.load()
     }
     pub fn peer_nat_info(&self, ip: &Ipv4Addr) -> Option<NatInfo> {
-        let guard = &crossbeam_epoch::pin();
-        let shared = self.peer_nat_info_map.load(Ordering::Acquire, guard);
-        let map = unsafe { shared.deref() };
-        map.get(ip).map(|e| e.clone())
+        self.peer_nat_info_map.read().get(ip).cloned()
     }
     pub fn connection_status(&self) -> ConnectStatus {
         self.connect_status.load()
@@ -590,6 +586,7 @@ pub struct Config {
     pub finger: bool,
     pub punch_model: PunchModel,
     pub port: u16,
+    pub first_latency: bool,
 }
 
 impl Config {
@@ -616,6 +613,7 @@ impl Config {
         finger: bool,
         punch_model: PunchModel,
         port: u16,
+        first_latency: bool,
     ) -> Self {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -646,6 +644,7 @@ impl Config {
             finger,
             punch_model,
             port,
+            first_latency,
         }
     }
 }

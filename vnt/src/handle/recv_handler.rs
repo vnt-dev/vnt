@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossbeam_epoch::{Atomic, Owned};
 use crossbeam_utils::atomic::AtomicCell;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use protobuf::Message;
 use tokio::sync::mpsc::Sender;
 
@@ -47,7 +45,7 @@ pub struct ChannelDataHandler {
     igmp_server: Option<IgmpServer>,
     device_writer: DeviceWriter,
     connect_status: Arc<AtomicCell<ConnectStatus>>,
-    peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>>,
+    peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     #[cfg(feature = "ip_proxy")]
     ip_proxy_map: Option<IpProxyMap>,
     out_external_route: AllowExternalRoute,
@@ -70,7 +68,7 @@ impl ChannelDataHandler {
         igmp_server: Option<IgmpServer>,
         device_writer: DeviceWriter,
         connect_status: Arc<AtomicCell<ConnectStatus>>,
-        peer_nat_info_map: Arc<Atomic<HashMap<Ipv4Addr, NatInfo>>>,
+        peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
         out_external_route: AllowExternalRoute,
         cone_sender: Sender<(Ipv4Addr, NatInfo)>,
@@ -422,15 +420,8 @@ impl ChannelDataHandler {
                     punch_info.nat_type.enum_value_or_default().into(),
                 );
                 {
-                    let guard = &crossbeam_epoch::pin();
-                    let nat_map = &self.peer_nat_info_map;
-                    let nat_map_shared = nat_map.load(Ordering::Acquire, guard);
-                    let mut map = unsafe { nat_map_shared.deref().clone() };
-                    map.insert(source, peer_nat_info.clone());
-                    nat_map.store(Owned::new(map), Ordering::Release);
-                    unsafe {
-                        guard.defer_destroy(nat_map_shared);
-                    }
+                    let peer_nat_info = peer_nat_info.clone();
+                    self.peer_nat_info_map.write().insert(source, peer_nat_info);
                 }
                 if !punch_info.reply {
                     let mut punch_reply = PunchInfo::new();

@@ -59,6 +59,7 @@ fn main() {
     opts.optopt("", "port", "监听的端口", "<port>");
     opts.optflag("", "cmd", "开启窗口输入");
     opts.optflag("", "no-proxy", "关闭内置代理");
+    opts.optflag("", "first-latency", "优先延迟");
     opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
@@ -261,6 +262,7 @@ fn main() {
         let cmd = matches.opt_present("cmd");
         #[cfg(feature = "ip_proxy")]
         let no_proxy = matches.opt_present("no-proxy");
+        let first_latency = matches.opt_present("first-latency");
         let config = Config::new(
             tap,
             token,
@@ -285,6 +287,7 @@ fn main() {
             finger,
             punch_model,
             port,
+            first_latency,
         );
         (config, cmd)
     };
@@ -541,6 +544,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --cmd               开启交互式命令，使用此参数开启控制台输入");
     #[cfg(feature = "ip_proxy")]
     println!("  --no-proxy          关闭内置代理，如需点对网则需要配置网卡NAT转发");
+    println!("  --first-latency     优先低延迟的通道，默认情况优先使用p2p通道");
 
     println!();
     println!(

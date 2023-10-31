@@ -1,4 +1,3 @@
-#[cfg(not(target_os = "android"))]
 use std::net::Ipv4Addr;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
@@ -14,6 +13,7 @@ use packet::ip::ipv4::packet::IpV4Packet;
 use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
+#[cfg(not(target_os = "android"))]
 use crate::ip_proxy::icmp_proxy::IcmpHandler;
 use crate::ip_proxy::tcp_proxy::{TcpHandler, TcpProxy};
 use crate::ip_proxy::udp_proxy::{UdpHandler, UdpProxy};
