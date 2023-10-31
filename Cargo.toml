@@ -6,7 +6,6 @@ opt-level = 'z'
 debug = 0
 debug-assertions = false
 strip= "debuginfo"
-overflow-checks = true
 lto = true
 panic = 'abort'
 incremental = false
