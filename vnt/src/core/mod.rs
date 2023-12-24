@@ -68,10 +68,10 @@ impl VntUtil {
     pub fn new(config: Config) -> io::Result<VntUtil> {
         let address: SocketAddr = format!("[::]:{}", config.port).parse().unwrap();
         //单个udp用同步的性能更好，但是代理和多端口监听用异步更方便，这里将两者结合起来
-        let socket = socket2::Socket::new(socket2::Domain::IPV6,socket2::Type::DGRAM,None)?;
+        let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None)?;
         socket.set_only_v6(false)?;
         socket.bind(&address.into())?;
-        let main_channel:UdpSocket = socket.into();
+        let main_channel: UdpSocket = socket.into();
         main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
         main_channel.set_read_timeout(Some(Duration::from_secs(2)))?;
         let server_cipher = if config.server_encrypt {

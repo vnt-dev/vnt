@@ -1,22 +1,22 @@
-use std::{io, thread};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, Shutdown, SocketAddr};
 use std::net::TcpStream;
 use std::net::UdpSocket as StdUdpSocket;
+use std::net::{Ipv4Addr, Shutdown, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::RwLock;
 use tokio::net::UdpSocket;
 use tokio::sync::watch::{channel, Receiver, Sender};
 
-use crate::channel::{Route, RouteKey, Status, TCP_ID, UDP_ID};
 use crate::channel::punch::NatType;
+use crate::channel::{Route, RouteKey, Status, TCP_ID, UDP_ID};
 use crate::core::status::VntWorker;
-use crate::handle::CurrentDeviceInfo;
 use crate::handle::recv_handler::ChannelDataHandler;
+use crate::handle::CurrentDeviceInfo;
 
 pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
