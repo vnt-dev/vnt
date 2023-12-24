@@ -1,27 +1,26 @@
+use std::{io, thread};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr};
 use std::net::TcpStream;
 use std::net::UdpSocket as StdUdpSocket;
-use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::RwLock;
 use tokio::net::UdpSocket;
 use tokio::sync::watch::{channel, Receiver, Sender};
 
+use crate::channel::{Route, RouteKey, Status, TCP_ID, UDP_ID};
 use crate::channel::punch::NatType;
-use crate::channel::{Route, RouteKey, Status, TCP_ID, UDP_ID, UDP_V6_ID};
 use crate::core::status::VntWorker;
-use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::CurrentDeviceInfo;
+use crate::handle::recv_handler::ChannelDataHandler;
 
 pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
     pub(crate) main_channel: Arc<StdUdpSocket>,
-    pub(crate) main_channel_ipv6: Option<Arc<StdUdpSocket>>,
     //在udp的基础上，可以选择使用tcp和服务端通信
     pub(crate) main_tcp_channel: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
     pub(crate) route_table: RwLock<HashMap<Ipv4Addr, Vec<(Route, AtomicCell<Instant>)>>>,
@@ -41,7 +40,6 @@ pub struct Context {
 impl Context {
     pub fn new(
         main_channel: Arc<StdUdpSocket>,
-        main_channel_ipv6: Option<Arc<StdUdpSocket>>,
         main_tcp_channel: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         _channel_num: usize,
@@ -52,7 +50,6 @@ impl Context {
         let (status_sender, status_receiver) = channel(Status::Cone);
         let inner = Arc::new(ContextInner {
             main_channel,
-            main_channel_ipv6,
             main_tcp_channel,
             route_table: RwLock::new(HashMap::with_capacity(16)),
             status_receiver,
@@ -75,16 +72,10 @@ impl Context {
     }
     pub fn close(&self) -> io::Result<()> {
         let _ = self.inner.status_sender.send(Status::Close);
-        if let Ok(port) = self.main_local_ipv4_port() {
+        if let Ok(port) = self.main_local_udp_port() {
             let _ = StdUdpSocket::bind("127.0.0.1:0")?.send_to(
                 b"stop",
                 SocketAddr::V4(std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
-            );
-        }
-        if let Ok(port) = self.main_local_ipv6_port() {
-            let _ = StdUdpSocket::bind("[::]:0")?.send_to(
-                b"stop",
-                SocketAddr::V6(std::net::SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0)),
             );
         }
         if let Some(tcp) = &self.inner.main_tcp_channel {
@@ -111,15 +102,8 @@ impl Context {
     pub fn switch_to_symmetric(&self) {
         let _ = self.inner.status_sender.send(Status::Symmetric);
     }
-    pub fn main_local_ipv4_port(&self) -> io::Result<u16> {
+    pub fn main_local_udp_port(&self) -> io::Result<u16> {
         self.inner.main_channel.local_addr().map(|k| k.port())
-    }
-    pub fn main_local_ipv6_port(&self) -> io::Result<u16> {
-        if let Some(ipv6) = &self.inner.main_channel_ipv6 {
-            ipv6.local_addr().map(|k| k.port())
-        } else {
-            Err(io::Error::new(io::ErrorKind::Other, "not ipv6"))
-        }
     }
     fn insert_udp(&self, id: usize, udp: Arc<UdpSocket>) {
         self.inner.udp_map.write().insert(id, udp);
@@ -127,16 +111,9 @@ impl Context {
     fn remove_udp(&self, id: usize) {
         self.inner.udp_map.write().remove(&id);
     }
+    #[inline]
     pub fn send_main_udp(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
-        if addr.is_ipv6() {
-            if let Some(udp_ipv6) = &self.inner.main_channel_ipv6 {
-                udp_ipv6.send_to(buf, addr)
-            } else {
-                Err(io::Error::new(io::ErrorKind::Other, "not ipv6"))
-            }
-        } else {
-            self.inner.main_channel.send_to(buf, addr)
-        }
+        self.inner.main_channel.send_to(buf, addr)
     }
 
     pub fn send_main(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
@@ -209,13 +186,6 @@ impl Context {
                 }
             }
             UDP_ID => self.inner.main_channel.send_to(buf, route_key.addr),
-            UDP_V6_ID => {
-                if let Some(udp_ipv6) = &self.inner.main_channel_ipv6 {
-                    udp_ipv6.send_to(buf, route_key.addr)
-                } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "not ipv6 udp"))
-                }
-            }
             _ => {
                 if let Some(udp) = self.get_udp_by_route(route_key) {
                     return udp.send_to(buf, route_key.addr).await;
@@ -238,13 +208,6 @@ impl Context {
                 }
             }
             UDP_ID => self.inner.main_channel.send_to(buf, route_key.addr),
-            UDP_V6_ID => {
-                if let Some(udp_ipv6) = &self.inner.main_channel_ipv6 {
-                    udp_ipv6.send_to(buf, route_key.addr)
-                } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "not ipv6 udp"))
-                }
-            }
             _ => {
                 if let Some(udp) = self.get_udp_by_route(route_key) {
                     return udp.try_send_to(buf, route_key.addr);
@@ -579,28 +542,6 @@ impl Channel {
                         receiver,
                         context,
                         handler,
-                        head_reserve,
-                    )
-                })
-                .unwrap();
-        }
-        if let Some(main_channel_ipv6) = &context.inner.main_channel_ipv6 {
-            let worker = worker.worker("main_channel_ipv6");
-            let context = context.clone();
-            let main_channel_ipv6 = main_channel_ipv6.clone();
-            let handler = handler.clone();
-            let buf_sender = buf_sender.clone();
-            thread::Builder::new()
-                .name("ipv6-recv".into())
-                .spawn(move || {
-                    log::info!("启动udp v6");
-                    Self::main_start_(
-                        worker,
-                        context,
-                        UDP_V6_ID,
-                        main_channel_ipv6,
-                        handler,
-                        buf_sender,
                         head_reserve,
                     )
                 })

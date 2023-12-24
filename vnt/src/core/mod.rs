@@ -57,7 +57,6 @@ pub struct Vnt {
 pub struct VntUtil {
     config: Config,
     main_channel: UdpSocket,
-    main_channel_ipv6: Option<UdpSocket>,
     main_tcp_channel: Option<TcpStream>,
     response: Option<RegResponse>,
     iface: Option<(DeviceWriter, DeviceReader)>,
@@ -67,24 +66,14 @@ pub struct VntUtil {
 
 impl VntUtil {
     pub fn new(config: Config) -> io::Result<VntUtil> {
+        let address: SocketAddr = format!("[::]:{}", config.port).parse().unwrap();
         //单个udp用同步的性能更好，但是代理和多端口监听用异步更方便，这里将两者结合起来
-        let main_channel = UdpSocket::bind(format!("0.0.0.0:{}", config.port))?;
+        let socket = socket2::Socket::new(socket2::Domain::IPV6,socket2::Type::DGRAM,None)?;
+        socket.set_only_v6(false)?;
+        socket.bind(&address.into())?;
+        let main_channel:UdpSocket = socket.into();
         main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
         main_channel.set_read_timeout(Some(Duration::from_secs(2)))?;
-        let main_channel_ipv6 = if config.punch_model != PunchModel::IPv4 {
-            match UdpSocket::bind(format!("[::]:{}", config.port)) {
-                Ok(main_channel_ipv6) => {
-                    main_channel_ipv6.set_write_timeout(Some(Duration::from_secs(5)))?;
-                    Some(main_channel_ipv6)
-                }
-                Err(e) => {
-                    log::warn!("绑定ipv6地址失败:{}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
         let server_cipher = if config.server_encrypt {
             let mut key = [0u8; 32];
             rand::thread_rng().fill(&mut key);
@@ -95,7 +84,6 @@ impl VntUtil {
         Ok(VntUtil {
             config,
             main_channel,
-            main_channel_ipv6,
             main_tcp_channel: None,
             response: None,
             iface: None,
@@ -256,7 +244,6 @@ impl VntUtil {
         };
         let context = Context::new(
             Arc::new(self.main_channel),
-            self.main_channel_ipv6.map(|v| Arc::new(v)),
             tcp_sender,
             current_device.clone(),
             1,
@@ -282,11 +269,10 @@ impl VntUtil {
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
         let public_ip = response.public_ip;
         let public_port = response.public_port;
-        let local_port = context.main_local_ipv4_port().unwrap_or(0);
+        let local_port = context.main_local_udp_port().unwrap_or(0);
 
         let local_ipv4_addr = crate::nat::local_ipv4_addr(local_port);
-        let ipv6_port = context.main_local_ipv6_port().unwrap_or(0);
-        let ipv6_addr = crate::nat::local_ipv6_addr(ipv6_port);
+        let ipv6_addr = crate::nat::local_ipv6_addr(local_port);
         // NAT检测
         let nat_test = NatTest::new(
             config.stun_server.clone(),

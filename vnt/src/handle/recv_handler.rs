@@ -592,9 +592,8 @@ impl ChannelDataHandler {
                             .build()
                             .unwrap()
                             .block_on(async move {
-                                let local_port = context.main_local_ipv4_port().unwrap_or(0);
+                                let local_port = context.main_local_udp_port().unwrap_or(0);
                                 let local_ipv4_addr = nat::local_ipv4_addr(local_port);
-                                let local_port = context.main_local_ipv6_port().unwrap_or(0);
                                 let ipv6_addr = nat::local_ipv6_addr(local_port);
                                 let nat_info = nat_test
                                     .re_test(

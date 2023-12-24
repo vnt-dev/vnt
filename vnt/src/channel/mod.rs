@@ -7,7 +7,6 @@ pub mod sender;
 
 const TCP_ID: usize = 0;
 const UDP_ID: usize = 1;
-const UDP_V6_ID: usize = 2;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Status {
