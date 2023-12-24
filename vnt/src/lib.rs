@@ -1,5 +1,5 @@
 use crate::error::Error;
-pub const VNT_VERSION: &'static str = "1.2.7";
+pub const VNT_VERSION: &'static str = "1.2.8";
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod channel;
