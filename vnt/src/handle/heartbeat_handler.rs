@@ -1,21 +1,21 @@
 use std::io;
-use std::net::{Ipv4Addr, ToSocketAddrs};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::channel::idle::Idle;
-use crate::channel::sender::ChannelSender;
-use crate::channel::Route;
-use crate::cipher::Cipher;
-use crate::core::status::VntWorker;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
 
+use crate::channel::idle::Idle;
+use crate::channel::Route;
+use crate::channel::sender::ChannelSender;
+use crate::cipher::Cipher;
+use crate::core::status::VntWorker;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
+use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::PingPacket;
-use crate::protocol::{control_packet, NetPacket, Protocol, Version, MAX_TTL};
 
 pub fn start_idle(mut worker: VntWorker, idle: Idle, sender: ChannelSender) {
     tokio::spawn(async move {
@@ -64,6 +64,7 @@ pub fn start_heartbeat(
         worker.stop_all();
     });
 }
+
 pub fn start_heartbeat_main(
     mut worker: VntWorker,
     sender: ChannelSender,
@@ -137,9 +138,12 @@ async fn start_heartbeat_main_(
         let src = current_dev.virtual_ip();
         if count % 40 == 19 {
             if let Ok(mut addr) = server_address_str.to_socket_addrs() {
-                if let Some(addr) = addr.next() {
+                if let Some(mut addr) = addr.next() {
                     if addr != current_dev.connect_server {
                         let mut tmp = current_dev.clone();
+                        if let SocketAddr::V4(ipv4) = addr {
+                            addr = SocketAddr::V6(SocketAddrV6::new(ipv4.ip().to_ipv6_mapped(), ipv4.port(), 0, 0))
+                        }
                         tmp.connect_server = addr;
                         log::info!(
                             "服务端地址变化,旧地址:{}，新地址:{}",
