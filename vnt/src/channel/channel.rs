@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddrV6, TcpStream};
 use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, Shutdown, SocketAddr};
 use std::sync::Arc;
@@ -112,7 +112,10 @@ impl Context {
         self.inner.udp_map.write().remove(&id);
     }
     #[inline]
-    pub fn send_main_udp(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
+    pub fn send_main_udp(&self, buf: &[u8], mut addr: SocketAddr) -> io::Result<usize> {
+        if let SocketAddr::V4(ipv4) = addr{
+            addr = SocketAddr::V6(SocketAddrV6::new(ipv4.ip().to_ipv6_mapped(), ipv4.port(),0,0));
+        }
         self.inner.main_channel.send_to(buf, addr)
     }
 
@@ -185,7 +188,7 @@ impl Context {
                     Err(io::Error::new(io::ErrorKind::Other, "send_by_key err"))
                 }
             }
-            UDP_ID => self.inner.main_channel.send_to(buf, route_key.addr),
+            UDP_ID => self.send_main_udp(buf, route_key.addr),
             _ => {
                 if let Some(udp) = self.get_udp_by_route(route_key) {
                     return udp.send_to(buf, route_key.addr).await;
@@ -207,7 +210,7 @@ impl Context {
                     Err(io::Error::new(io::ErrorKind::Other, "send_by_key err"))
                 }
             }
-            UDP_ID => self.inner.main_channel.send_to(buf, route_key.addr),
+            UDP_ID => self.send_main_udp(buf, route_key.addr),
             _ => {
                 if let Some(udp) = self.get_udp_by_route(route_key) {
                     return udp.try_send_to(buf, route_key.addr);
