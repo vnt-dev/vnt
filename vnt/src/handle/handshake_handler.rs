@@ -174,7 +174,7 @@ fn send_recv(
         match main_channel.recv_from(recv_buf) {
             Ok((len, addr)) => {
                 if server_address != addr {
-                    log::warn!("请求{:?}和响应{:?}地址不一致",server_address,addr);
+                    log::warn!("请求{:?}和响应{:?}地址不一致", server_address, addr);
                 }
                 Ok(len)
             }
@@ -222,7 +222,7 @@ pub fn secret_handshake(
             if net_packet.is_gateway()
                 && net_packet.protocol() == Protocol::Service
                 && service_packet::Protocol::from(net_packet.transport_protocol())
-                == service_packet::Protocol::SecretHandshakeResponse
+                    == service_packet::Protocol::SecretHandshakeResponse
             {
                 Ok(())
             } else {

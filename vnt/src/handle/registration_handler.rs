@@ -88,7 +88,7 @@ pub fn registration(
         match main_channel.recv_from(&mut recv_buf) {
             Ok((len, addr)) => {
                 if server_address != addr {
-                    log::warn!("请求{:?}和响应{:?}地址不一致",server_address,addr);
+                    log::warn!("请求{:?}和响应{:?}地址不一致", server_address, addr);
                 }
                 &mut recv_buf[..len]
             }

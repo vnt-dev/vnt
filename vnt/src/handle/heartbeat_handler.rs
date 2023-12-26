@@ -8,14 +8,14 @@ use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
 
 use crate::channel::idle::Idle;
-use crate::channel::Route;
 use crate::channel::sender::ChannelSender;
+use crate::channel::Route;
 use crate::cipher::Cipher;
 use crate::core::status::VntWorker;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
-use crate::protocol::{control_packet, MAX_TTL, NetPacket, Protocol, Version};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::PingPacket;
+use crate::protocol::{control_packet, NetPacket, Protocol, Version, MAX_TTL};
 
 pub fn start_idle(mut worker: VntWorker, idle: Idle, sender: ChannelSender) {
     tokio::spawn(async move {
@@ -142,7 +142,12 @@ async fn start_heartbeat_main_(
                     if addr != current_dev.connect_server {
                         let mut tmp = current_dev.clone();
                         if let SocketAddr::V4(ipv4) = addr {
-                            addr = SocketAddr::V6(SocketAddrV6::new(ipv4.ip().to_ipv6_mapped(), ipv4.port(), 0, 0))
+                            addr = SocketAddr::V6(SocketAddrV6::new(
+                                ipv4.ip().to_ipv6_mapped(),
+                                ipv4.port(),
+                                0,
+                                0,
+                            ))
                         }
                         tmp.connect_server = addr;
                         log::info!(

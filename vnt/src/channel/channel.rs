@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddrV6, TcpStream};
 use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, Shutdown, SocketAddr};
+use std::net::{SocketAddrV6, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, thread};
@@ -113,8 +113,13 @@ impl Context {
     }
     #[inline]
     pub fn send_main_udp(&self, buf: &[u8], mut addr: SocketAddr) -> io::Result<usize> {
-        if let SocketAddr::V4(ipv4) = addr{
-            addr = SocketAddr::V6(SocketAddrV6::new(ipv4.ip().to_ipv6_mapped(), ipv4.port(),0,0));
+        if let SocketAddr::V4(ipv4) = addr {
+            addr = SocketAddr::V6(SocketAddrV6::new(
+                ipv4.ip().to_ipv6_mapped(),
+                ipv4.port(),
+                0,
+                0,
+            ));
         }
         self.inner.main_channel.send_to(buf, addr)
     }

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::io;
-use std::net::{SocketAddrV6, TcpStream};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::net::UdpSocket;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{SocketAddrV6, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,25 +11,25 @@ use parking_lot::{Mutex, RwLock};
 use rand::Rng;
 use tokio::sync::mpsc::channel;
 
-use crate::channel::{Route, RouteKey};
 use crate::channel::channel::{Channel, Context};
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch, PunchModel};
 use crate::channel::sender::ChannelSender;
+use crate::channel::{Route, RouteKey};
 use crate::cipher::{Cipher, CipherModel, RsaCipher};
 use crate::core::status::VntStatusManger;
 use crate::error::Error;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
-use crate::handle::{
-    ConnectStatus, CurrentDeviceInfo, handshake_handler, heartbeat_handler, PeerDeviceInfo,
-    punch_handler, registration_handler,
-};
 use crate::handle::handshake_handler::HandshakeEnum;
 use crate::handle::recv_handler::ChannelDataHandler;
 use crate::handle::registration_handler::{RegResponse, ReqEnum};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use crate::handle::tun_tap::tap_handler;
 use crate::handle::tun_tap::tun_handler;
+use crate::handle::{
+    handshake_handler, heartbeat_handler, punch_handler, registration_handler, ConnectStatus,
+    CurrentDeviceInfo, PeerDeviceInfo,
+};
 use crate::igmp_server::IgmpServer;
 use crate::nat::NatTest;
 use crate::tun_tap_device;
@@ -287,18 +287,18 @@ impl VntUtil {
             Some(ExternalRoute::new(config.in_ips))
         };
         #[cfg(feature = "ip_proxy")]
-            let (tcp_proxy, udp_proxy, ip_proxy_map) = if config.out_ips.is_empty() || config.no_proxy {
+        let (tcp_proxy, udp_proxy, ip_proxy_map) = if config.out_ips.is_empty() || config.no_proxy {
             (None, None, None)
         } else {
             let (tcp_proxy, udp_proxy, ip_proxy_map) = crate::ip_proxy::init_proxy(
                 #[cfg(not(target_os = "android"))]
-                    channel_sender.clone(),
+                channel_sender.clone(),
                 #[cfg(not(target_os = "android"))]
-                    current_device.clone(),
+                current_device.clone(),
                 #[cfg(not(target_os = "android"))]
-                    client_cipher.clone(),
+                client_cipher.clone(),
             )
-                .await?;
+            .await?;
             (Some(tcp_proxy), Some(udp_proxy), Some(ip_proxy_map))
         };
         let out_external_route = AllowExternalRoute::new(config.out_ips);
@@ -319,7 +319,7 @@ impl VntUtil {
                 current_device.clone(),
                 in_external_route,
                 #[cfg(feature = "ip_proxy")]
-                    ip_proxy_map.clone(),
+                ip_proxy_map.clone(),
                 client_cipher.clone(),
                 self.server_cipher.clone(),
                 config.parallel,
@@ -334,7 +334,7 @@ impl VntUtil {
                 current_device.clone(),
                 in_external_route,
                 #[cfg(feature = "ip_proxy")]
-                    ip_proxy_map.clone(),
+                ip_proxy_map.clone(),
                 client_cipher.clone(),
                 self.server_cipher.clone(),
                 config.parallel,
@@ -350,7 +350,7 @@ impl VntUtil {
             current_device.clone(),
             in_external_route,
             #[cfg(feature = "ip_proxy")]
-                ip_proxy_map.clone(),
+            ip_proxy_map.clone(),
             client_cipher.clone(),
             self.server_cipher.clone(),
             config.parallel,
@@ -367,7 +367,7 @@ impl VntUtil {
             connect_status.clone(),
             peer_nat_info_map.clone(),
             #[cfg(feature = "ip_proxy")]
-                ip_proxy_map,
+            ip_proxy_map,
             out_external_route,
             cone_sender,
             symmetric_sender,
@@ -608,7 +608,12 @@ impl Config {
         }
         match server_address {
             SocketAddr::V4(ipv4) => {
-                server_address = SocketAddr::V6(SocketAddrV6::new(ipv4.ip().to_ipv6_mapped(), ipv4.port(), 0, 0))
+                server_address = SocketAddr::V6(SocketAddrV6::new(
+                    ipv4.ip().to_ipv6_mapped(),
+                    ipv4.port(),
+                    0,
+                    0,
+                ))
             }
             SocketAddr::V6(_) => {}
         }
