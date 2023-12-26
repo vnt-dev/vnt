@@ -1,6 +1,6 @@
 use crossbeam_utils::atomic::AtomicCell;
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6};
 use std::time::{Duration, Instant};
 
 use crate::channel::sender::ChannelSender;
@@ -82,6 +82,15 @@ pub fn registration(
         }
         &mut recv_buf[4..len]
     } else {
+        let server_address = match server_address {
+            SocketAddr::V4(ipv4) => SocketAddr::V6(SocketAddrV6::new(
+                ipv4.ip().to_ipv6_mapped(),
+                ipv4.port(),
+                0,
+                0,
+            )),
+            SocketAddr::V6(_) => server_address,
+        };
         if let Err(e) = main_channel.send_to(buf, server_address) {
             return Err(ReqEnum::Other(format!("send error:{}", e)));
         }

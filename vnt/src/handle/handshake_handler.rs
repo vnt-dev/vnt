@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV6};
 
 use crate::channel::channel::Context;
 use crate::channel::RouteKey;
@@ -168,6 +168,16 @@ fn send_recv(
         }
         Ok(len)
     } else {
+        let server_address = if let SocketAddr::V4(ipv4) = server_address {
+            SocketAddr::V6(SocketAddrV6::new(
+                ipv4.ip().to_ipv6_mapped(),
+                ipv4.port(),
+                0,
+                0,
+            ))
+        } else {
+            server_address
+        };
         if let Err(e) = main_channel.send_to(send_buf, server_address) {
             return Err(HandshakeEnum::Other(format!("send error:{}", e)));
         }

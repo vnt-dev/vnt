@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::io;
+use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::net::{SocketAddrV6, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -581,7 +581,7 @@ impl Config {
         token: String,
         device_id: String,
         name: String,
-        mut server_address: SocketAddr,
+        server_address: SocketAddr,
         server_address_str: String,
         mut stun_server: Vec<String>,
         in_ips: Vec<(u32, u32, Ipv4Addr)>,
@@ -605,17 +605,6 @@ impl Config {
             if !x.contains(":") {
                 x.push_str(":3478");
             }
-        }
-        match server_address {
-            SocketAddr::V4(ipv4) => {
-                server_address = SocketAddr::V6(SocketAddrV6::new(
-                    ipv4.ip().to_ipv6_mapped(),
-                    ipv4.port(),
-                    0,
-                    0,
-                ))
-            }
-            SocketAddr::V6(_) => {}
         }
         Self {
             tap,

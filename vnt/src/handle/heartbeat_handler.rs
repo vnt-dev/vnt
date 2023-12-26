@@ -1,5 +1,5 @@
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, ToSocketAddrs};
+use std::net::{Ipv4Addr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -138,17 +138,9 @@ async fn start_heartbeat_main_(
         let src = current_dev.virtual_ip();
         if count % 40 == 19 {
             if let Ok(mut addr) = server_address_str.to_socket_addrs() {
-                if let Some(mut addr) = addr.next() {
+                if let Some(addr) = addr.next() {
                     if addr != current_dev.connect_server {
                         let mut tmp = current_dev.clone();
-                        if let SocketAddr::V4(ipv4) = addr {
-                            addr = SocketAddr::V6(SocketAddrV6::new(
-                                ipv4.ip().to_ipv6_mapped(),
-                                ipv4.port(),
-                                0,
-                                0,
-                            ))
-                        }
                         tmp.connect_server = addr;
                         log::info!(
                             "服务端地址变化,旧地址:{}，新地址:{}",
