@@ -201,7 +201,7 @@ async fn start_heartbeat_(
 
         let src = current_dev.virtual_ip();
 
-        if count < 7 || count % 7 == 0 {
+        if count % 10 == 7 {
             let mut route_list: Option<Vec<(Ipv4Addr, Vec<Route>)>> = None;
             let peer_list = { device_list.lock().1.clone() };
             for peer in peer_list {
@@ -223,7 +223,7 @@ async fn start_heartbeat_(
                     {
                         log::warn!("virtual_ip:{},route:{:?},e:{:?}", peer.virtual_ip, route, e);
                     }
-                    if route.is_p2p() {
+                    if route.is_p2p() && !sender.is_first_latency() {
                         continue;
                     }
                 } else {

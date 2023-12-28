@@ -86,6 +86,9 @@ impl Context {
     pub fn is_main_tcp(&self) -> bool {
         self.inner.main_tcp_channel.is_some()
     }
+    pub fn is_first_latency(&self) -> bool {
+        self.inner.first_latency
+    }
     pub fn switch(&self, nat_type: NatType) {
         match nat_type {
             NatType::Symmetric => {
@@ -242,8 +245,8 @@ impl Context {
             .or_insert_with(|| Vec::with_capacity(4));
         let mut exist = false;
         for (x, time) in list.iter_mut() {
-            if x.metric < route.metric {
-                //不能比当前的路径更长
+            if x.metric < route.metric && !self.inner.first_latency {
+                //非优先延迟的情况下 不能比当前的路径更长
                 return;
             }
             if x.route_key() == key {
@@ -260,12 +263,16 @@ impl Context {
         if exist {
             list.sort_by_key(|(k, _)| k.rt);
         } else {
-            if route.metric == 1 && !self.inner.first_latency {
-                //非优先延迟的情况下 添加了直连的则排除非直连的
-                list.retain(|(k, _)| k.metric == 1);
-            }
+            let max_len = if self.inner.first_latency {
+                self.inner.channel_num + 1
+            } else {
+                if route.metric == 1 {
+                    //非优先延迟的情况下 添加了直连的则排除非直连的
+                    list.retain(|(k, _)| k.metric == 1);
+                }
+                self.inner.channel_num
+            };
             list.sort_by_key(|(k, _)| k.rt);
-            let max_len = self.inner.channel_num;
             if list.len() > max_len {
                 list.truncate(max_len);
             }
