@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use tokio::net::UdpSocket;
 use tokio::sync::watch::{channel, Receiver, Sender};
 
@@ -22,7 +22,7 @@ pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
     pub(crate) main_channel: Arc<StdUdpSocket>,
     //在udp的基础上，可以选择使用tcp和服务端通信
-    pub(crate) main_tcp_channel: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+    pub(crate) main_tcp_channel: Option<Mutex<TcpStream>>,
     pub(crate) route_table: RwLock<HashMap<Ipv4Addr, Vec<(Route, AtomicCell<Instant>)>>>,
     pub(crate) status_receiver: Receiver<Status>,
     pub(crate) status_sender: Sender<Status>,
@@ -40,7 +40,7 @@ pub struct Context {
 impl Context {
     pub fn new(
         main_channel: Arc<StdUdpSocket>,
-        main_tcp_channel: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+        main_tcp_channel: Option<TcpStream>,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         _channel_num: usize,
         first_latency: bool,
@@ -48,6 +48,7 @@ impl Context {
         //当前版本只支持一个通道
         let channel_num = 1;
         let (status_sender, status_receiver) = channel(Status::Cone);
+        let main_tcp_channel = main_tcp_channel.map(|e| Mutex::new(e));
         let inner = Arc::new(ContextInner {
             main_channel,
             main_tcp_channel,
@@ -79,7 +80,7 @@ impl Context {
             );
         }
         if let Some(tcp) = &self.inner.main_tcp_channel {
-            let _ = tcp.send(vec![]);
+            tcp.lock().shutdown(Shutdown::Both)?;
         }
         Ok(())
     }
@@ -126,14 +127,32 @@ impl Context {
         }
         self.inner.main_channel.send_to(buf, addr)
     }
+    #[inline]
+    pub fn send_main_tcp(&self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(sender) = &self.inner.main_tcp_channel {
+            let mut stream = sender.lock();
+            let mut head = [0; 4];
+            let len = buf.len();
+            head[2] = (len >> 8) as u8;
+            head[3] = (len & 0xFF) as u8;
+            stream.write_all(&head)?;
+            stream.write_all(buf)?;
+            Ok(len)
+        } else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "tcp not found"));
+        }
+    }
 
     pub fn send_main(&self, buf: &[u8], addr: SocketAddr) -> io::Result<usize> {
         if let Some(sender) = &self.inner.main_tcp_channel {
-            if sender.try_send(buf.to_vec()).is_ok() {
-                Ok(buf.len())
-            } else {
-                Err(io::Error::new(io::ErrorKind::Other, "send_main err"))
-            }
+            let mut stream = sender.lock();
+            let mut head = [0; 4];
+            let len = buf.len();
+            head[2] = (len >> 8) as u8;
+            head[3] = (len & 0xFF) as u8;
+            stream.write_all(&head)?;
+            stream.write_all(buf)?;
+            Ok(len)
         } else {
             self.send_main_udp(buf, addr)
         }
@@ -185,17 +204,7 @@ impl Context {
 
     pub async fn send_by_key(&self, buf: &[u8], route_key: &RouteKey) -> io::Result<usize> {
         match route_key.index {
-            TCP_ID => {
-                if let Some(sender) = &self.inner.main_tcp_channel {
-                    if sender.send(buf.to_vec()).is_ok() {
-                        Ok(buf.len())
-                    } else {
-                        Err(io::Error::new(io::ErrorKind::Other, "send_by_key err"))
-                    }
-                } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "send_by_key err"))
-                }
-            }
+            TCP_ID => self.send_main_tcp(buf),
             UDP_ID => self.send_main_udp(buf, route_key.addr),
             _ => {
                 if let Some(udp) = self.get_udp_by_route(route_key) {
@@ -207,17 +216,7 @@ impl Context {
     }
     pub fn try_send_by_key(&self, buf: &[u8], route_key: &RouteKey) -> io::Result<usize> {
         match route_key.index {
-            TCP_ID => {
-                if let Some(sender) = &self.inner.main_tcp_channel {
-                    if sender.try_send(buf.to_vec()).is_ok() {
-                        Ok(buf.len())
-                    } else {
-                        Err(io::Error::new(io::ErrorKind::Other, "send_by_key err"))
-                    }
-                } else {
-                    Err(io::Error::new(io::ErrorKind::Other, "send_by_key err"))
-                }
-            }
+            TCP_ID => self.send_main_tcp(buf),
             UDP_ID => self.send_main_udp(buf, route_key.addr),
             _ => {
                 if let Some(udp) = self.get_udp_by_route(route_key) {
@@ -406,14 +405,17 @@ fn buf_channel_group(size: usize) -> (BufSenderGroup, BufReceiverGroup) {
 impl Channel {
     fn tcp_handle(
         tcp_r: &mut TcpStream,
-        context: Context,
-        handler: ChannelDataHandler,
+        context: &Context,
+        handler: &ChannelDataHandler,
         head_reserve: usize,
     ) -> io::Result<()> {
         let mut head = [0; 4];
         let addr = tcp_r.peer_addr()?;
         let key = RouteKey::new(TCP_ID, addr);
         loop {
+            if context.is_close() {
+                return Ok(());
+            }
             let mut buf = [0; 4096];
             tcp_r.read_exact(&mut head)?;
             let len = (((head[2] as u16) << 8) | head[3] as u16) as usize;
@@ -424,97 +426,57 @@ impl Channel {
                 ));
             }
             tcp_r.read_exact(&mut buf[head_reserve..head_reserve + len])?;
-            handler.handle(&mut buf, head_reserve, head_reserve + len, key, &context);
+            handler.handle(&mut buf, head_reserve, head_reserve + len, key, context);
         }
     }
     fn start_tcp(
-        worker: VntWorker,
         mut tcp_stream: TcpStream,
-        receiver: std::sync::mpsc::Receiver<Vec<u8>>,
         context: Context,
         handler: ChannelDataHandler,
         head_reserve: usize,
     ) {
         let current_device = context.inner.current_device.clone();
-        {
-            let mut tcp_r = tcp_stream.try_clone().unwrap();
-            let context = context.clone();
-            let handler = handler.clone();
-            thread::Builder::new()
-                .name("tcp_reader".into())
-                .spawn(move || {
-                    if let Err(e) = Self::tcp_handle(&mut tcp_r, context, handler, head_reserve) {
-                        log::info!("tcp链接断开:{:?}", e);
-                    }
-                    if let Err(e) = tcp_r.shutdown(Shutdown::Both) {
-                        log::info!("tcp链接关闭异常:{:?}", e);
-                    }
-                })
-                .unwrap();
-        }
-        let mut head = [0; 4];
         loop {
-            let data = match receiver.recv() {
-                Ok(data) => data,
-                Err(_) => {
-                    break;
-                }
-            };
-            let len = data.len();
-            if len == 0 {
-                break;
+            if let Err(e) = tcp_stream.set_nodelay(true) {
+                log::info!("set_nodelay:{:?}", e);
             }
-            head[2] = (len >> 8) as u8;
-            head[3] = (len & 0xFF) as u8;
-            let mut err = false;
-            if let Err(e) = tcp_stream.write_all(&head) {
-                err = true;
-                log::info!("发送失败,需要重连:{:?}", e);
-            } else if let Err(e) = tcp_stream.write_all(&data) {
-                err = true;
-                log::info!("发送失败,需要重连:{:?}", e);
+            if let Err(e) = tcp_stream.set_write_timeout(Some(Duration::from_secs(3))) {
+                log::info!("set_write_timeout:{:?}", e);
             }
-            if err {
-                if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
-                    log::info!("tcp链接关闭异常:{:?}", e);
+            if let Err(e) = tcp_stream.set_read_timeout(Some(Duration::from_secs(10))) {
+                log::info!("set_read_timeout:{:?}", e);
+            }
+            if let Err(e) = Self::tcp_handle(&mut tcp_stream, &context, &handler, head_reserve) {
+                log::info!("tcp链接断开:{:?}", e);
+            }
+            if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
+                log::info!("tcp链接关闭异常:{:?}", e);
+            }
+            loop {
+                if context.is_close() {
+                    return;
                 }
-                match TcpStream::connect(current_device.load().connect_server) {
+                let device_info = current_device.load();
+                match TcpStream::connect(device_info.connect_server) {
                     Ok(tcp) => {
-                        tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-                        tcp_stream = tcp;
-                        let mut tcp_r = tcp_stream.try_clone().unwrap();
-                        let context = context.clone();
-                        let handler = handler.clone();
-                        thread::Builder::new()
-                            .name("tcp_reader".into())
-                            .spawn(move || {
-                                if let Err(e) =
-                                    Self::tcp_handle(&mut tcp_r, context, handler, head_reserve)
-                                {
-                                    log::info!("重连后 tcp链接断开:{:?}", e);
-                                }
-                                if let Err(e) = tcp_r.shutdown(Shutdown::Both) {
-                                    log::info!("重连后 tcp链接关闭异常:{:?}", e);
-                                }
-                            })
-                            .unwrap();
+                        tcp_stream = tcp.try_clone().unwrap();
+                        let mut guard = context.inner.main_tcp_channel.as_ref().unwrap().lock();
+                        *guard = tcp;
+                        break;
                     }
                     Err(e) => {
-                        log::info!("重连失败:{:?}", e);
+                        log::info!("重连失败,{},{:?}", device_info.connect_server, e);
+                        thread::sleep(Duration::from_secs(3));
                     }
                 }
             }
         }
-        if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
-            log::info!("tcp链接关闭异常:{:?}", e);
-        }
-        worker.stop_all();
     }
 
     pub async fn start(
         self,
         mut worker: VntWorker,
-        tcp: Option<(TcpStream, std::sync::mpsc::Receiver<Vec<u8>>)>,
+        tcp: Option<TcpStream>,
         head_reserve: usize,          //头部预留字节
         symmetric_channel_num: usize, //对称网络，则再加一组监听，提升打洞成功率
         relay: bool,
@@ -544,32 +506,26 @@ impl Channel {
         } else {
             None
         };
-        if let Some((tcp_stream, receiver)) = tcp {
+        if let Some(tcp_stream) = tcp {
             let context = context.clone();
             let handler = handler.clone();
             let main_channel_tcp = worker.worker("main_channel_tcp");
             thread::Builder::new()
-                .name("main_channel_tcp".into())
+                .name("channel_tcp".into())
                 .spawn(move || {
-                    Self::start_tcp(
-                        main_channel_tcp,
-                        tcp_stream,
-                        receiver,
-                        context,
-                        handler,
-                        head_reserve,
-                    )
+                    Self::start_tcp(tcp_stream, context, handler, head_reserve);
+                    drop(main_channel_tcp)
                 })
                 .unwrap();
         }
         {
-            let worker = worker.worker("main_channel_1");
+            let worker = worker.worker("main_channel_udp");
             let context = context.clone();
             let main_channel = main_channel.clone();
             let handler = handler.clone();
             let buf_sender = buf_sender.clone();
             thread::Builder::new()
-                .name("ipv4-recv".into())
+                .name("channel_udp".into())
                 .spawn(move || {
                     log::info!("启动udp v4");
                     Self::main_start_(

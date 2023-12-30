@@ -236,9 +236,8 @@ impl VntUtil {
 
         let (cone_sender, cone_receiver) = channel(3);
         let (symmetric_sender, symmetric_receiver) = channel(2);
-        let (tcp_sender, tcp) = if let Some(main_tcp_channel) = self.main_tcp_channel {
-            let (tcp_sender, tcp_receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(100);
-            (Some(tcp_sender), Some((main_tcp_channel, tcp_receiver)))
+        let (tcp_sender, tcp_receiver) = if let Some(main_tcp_channel) = self.main_tcp_channel {
+            (Some(main_tcp_channel.try_clone()?), Some(main_tcp_channel))
         } else {
             (None, None)
         };
@@ -383,7 +382,7 @@ impl VntUtil {
             let relay = config.relay;
             tokio::spawn(async move {
                 channel
-                    .start(channel_worker, tcp, 14, 65, relay, config.parallel)
+                    .start(channel_worker, tcp_receiver, 14, 65, relay, config.parallel)
                     .await
             });
         }
