@@ -288,7 +288,8 @@ fn main() {
             punch_model,
             port,
             first_latency,
-        );
+        )
+        .unwrap();
         (config, cmd)
     };
     println!("version {}", vnt::VNT_VERSION);

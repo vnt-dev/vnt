@@ -130,7 +130,7 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
     for addr in stun_server_str.split(",") {
         stun_server.push(addr.trim().to_string());
     }
-    let config = Config::new(
+    let config = match Config::new(
         false,
         token,
         device_id,
@@ -154,7 +154,17 @@ fn new_sync(env: &mut JNIEnv, config: JObject) -> Result<VntUtilSync, Error> {
         PunchModel::All,
         port,
         first_latency,
-    );
+    ) {
+        Ok(config) => config,
+        Err(e) => {
+            env.throw_new(
+                "java/lang/RuntimeException",
+                format!("vnt start error {}", e),
+            )
+            .expect("throw");
+            return Err(Error::JavaException);
+        }
+    };
     match VntUtilSync::new(config) {
         Ok(vnt_util) => Ok(vnt_util),
         Err(e) => {

@@ -600,13 +600,22 @@ impl Config {
         punch_model: PunchModel,
         port: u16,
         first_latency: bool,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
                 x.push_str(":3478");
             }
         }
-        Self {
+        if token.is_empty() || token.len() > 128 {
+            return Err(Error::Stop(String::from("token too long")));
+        }
+        if device_id.is_empty() || device_id.len() > 128 {
+            return Err(Error::Stop(String::from("device_id too long")));
+        }
+        if name.is_empty() || name.len() > 128 {
+            return Err(Error::Stop(String::from("name too long")));
+        }
+        Ok(Self {
             tap,
             token,
             device_id,
@@ -631,6 +640,6 @@ impl Config {
             punch_model,
             port,
             first_latency,
-        }
+        })
     }
 }

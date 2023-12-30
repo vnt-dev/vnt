@@ -158,7 +158,8 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         punch_model,
         file_conf.port,
         file_conf.first_latency,
-    );
+    )
+    .unwrap();
     Ok((config, file_conf.cmd))
 }
 
