@@ -242,7 +242,7 @@ impl VntUtil {
             (None, None)
         };
         let context = Context::new(
-            Arc::new(self.main_channel),
+            self.main_channel,
             tcp_sender,
             current_device.clone(),
             1,

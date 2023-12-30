@@ -20,7 +20,7 @@ use crate::handle::CurrentDeviceInfo;
 
 pub struct ContextInner {
     //udp用于打洞、服务端通信(可选)
-    pub(crate) main_channel: Arc<StdUdpSocket>,
+    pub(crate) main_channel: StdUdpSocket,
     //在udp的基础上，可以选择使用tcp和服务端通信
     pub(crate) main_tcp_channel: Option<Mutex<TcpStream>>,
     pub(crate) route_table: RwLock<HashMap<Ipv4Addr, Vec<(Route, AtomicCell<Instant>)>>>,
@@ -39,7 +39,7 @@ pub struct Context {
 
 impl Context {
     pub fn new(
-        main_channel: Arc<StdUdpSocket>,
+        main_channel: StdUdpSocket,
         main_tcp_channel: Option<TcpStream>,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         _channel_num: usize,
@@ -484,7 +484,7 @@ impl Channel {
     ) {
         let handler = self.handler.clone();
         let context = self.context;
-        let main_channel = context.inner.main_channel.clone();
+        let main_channel = context.inner.main_channel.try_clone().unwrap();
         let buf_sender = if parallel > 1 {
             let (buf_sender, buf_receiver) = buf_channel_group(parallel);
             let mut num = 0;
@@ -521,7 +521,7 @@ impl Channel {
         {
             let worker = worker.worker("main_channel_udp");
             let context = context.clone();
-            let main_channel = main_channel.clone();
+            let main_channel = main_channel.try_clone().unwrap();
             let handler = handler.clone();
             let buf_sender = buf_sender.clone();
             thread::Builder::new()
@@ -546,6 +546,7 @@ impl Channel {
         }
         let mut cur_status = Status::Cone;
         let mut status_receiver = context.inner.status_receiver.clone();
+        let channel_num = context.inner.channel_num;
         loop {
             tokio::select! {
                 _=worker.stop_wait()=>{
@@ -564,7 +565,7 @@ impl Channel {
                                         continue;
                                     }
                                     cur_status = Status::Symmetric;
-                                    for _ in 0..symmetric_channel_num {
+                                    for _ in 0..symmetric_channel_num - channel_num {
                                         match UdpSocket::bind("0.0.0.0:0").await {
                                             Ok(udp) => {
                                                 let udp = Arc::new(udp);
@@ -595,7 +596,7 @@ impl Channel {
         worker: VntWorker,
         context: Context,
         id: usize,
-        udp: Arc<StdUdpSocket>,
+        udp: StdUdpSocket,
         handler: ChannelDataHandler,
         buf_sender: Option<BufSenderGroup>,
         head_reserve: usize,
