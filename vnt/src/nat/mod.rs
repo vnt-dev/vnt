@@ -111,19 +111,8 @@ impl NatTest {
         self.info.lock().clone()
     }
     pub fn update_addr(&self, ip: Ipv4Addr, port: u16) {
-        if !ip.is_multicast()
-            && !ip.is_broadcast()
-            && !ip.is_unspecified()
-            && !ip.is_loopback()
-            && !ip.is_private()
-            && port != 0
-        {
-            let mut guard = self.info.lock();
-            guard.public_port = port;
-            if !guard.public_ips.contains(&ip) {
-                guard.public_ips.push(ip);
-            }
-        }
+        let mut guard = self.info.lock();
+        guard.update_addr(ip, port)
     }
     pub async fn re_test(
         &self,

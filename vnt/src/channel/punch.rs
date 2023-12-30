@@ -52,7 +52,13 @@ impl NatInfo {
         ipv6_addr: SocketAddrV6,
         mut nat_type: NatType,
     ) -> Self {
-        public_ips.retain(|ip| !ip.is_loopback() && !ip.is_private() && !ip.is_unspecified());
+        public_ips.retain(|ip| {
+            !ip.is_multicast()
+                && !ip.is_broadcast()
+                && !ip.is_unspecified()
+                && !ip.is_loopback()
+                && !ip.is_private()
+        });
         if public_ips.len() > 1 {
             nat_type = NatType::Symmetric;
         }
@@ -63,6 +69,20 @@ impl NatInfo {
             local_ipv4_addr,
             ipv6_addr,
             nat_type,
+        }
+    }
+    pub fn update_addr(&mut self, ip: Ipv4Addr, port: u16) {
+        if !ip.is_multicast()
+            && !ip.is_broadcast()
+            && !ip.is_unspecified()
+            && !ip.is_loopback()
+            && !ip.is_private()
+            && port != 0
+        {
+            self.public_port = port;
+            if !self.public_ips.contains(&ip) {
+                self.public_ips.push(ip);
+            }
         }
     }
 }
@@ -165,15 +185,17 @@ impl Punch {
                 self.port_index.insert(id, index);
             }
             NatType::Cone => {
-                let is_cone = self.context.is_cone();
-                for ip in nat_info.public_ips {
-                    let addr = SocketAddr::V4(SocketAddrV4::new(ip, nat_info.public_port));
-                    self.context.send_main_udp(buf, addr)?;
-                    if !is_cone {
-                        //只有一方是对称，则对称方要使用全部端口发送数据，符合上述计算的概率
-                        self.context.try_send_all(buf, addr)?;
+                if nat_info.public_port != 0 {
+                    let is_cone = self.context.is_cone();
+                    for ip in nat_info.public_ips {
+                        let addr = SocketAddr::V4(SocketAddrV4::new(ip, nat_info.public_port));
+                        self.context.send_main_udp(buf, addr)?;
+                        if !is_cone {
+                            //只有一方是对称，则对称方要使用全部端口发送数据，符合上述计算的概率
+                            self.context.try_send_all(buf, addr)?;
+                        }
+                        tokio::time::sleep(Duration::from_millis(2)).await;
                     }
-                    tokio::time::sleep(Duration::from_millis(2)).await;
                 }
             }
         }
