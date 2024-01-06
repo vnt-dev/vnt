@@ -14,7 +14,11 @@ impl CommandServer {
 
 impl CommandServer {
     pub async fn start(self, vnt: Vnt) -> io::Result<()> {
-        let udp = UdpSocket::bind("127.0.0.1:0").await?;
+        let udp = if let Ok(udp) = UdpSocket::bind("127.0.0.1:39271").await {
+            udp
+        } else {
+            UdpSocket::bind("127.0.0.1:0").await?
+        };
         let path_buf = crate::app_home()?.join("command-port");
         let mut file = std::fs::File::create(path_buf)?;
         let addr = udp.local_addr()?;
