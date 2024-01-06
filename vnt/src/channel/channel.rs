@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, Shutdown, SocketAddr};
 use std::net::{SocketAddrV6, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, thread};
@@ -27,9 +28,11 @@ pub struct ContextInner {
     pub(crate) status_receiver: Receiver<Status>,
     pub(crate) status_sender: Sender<Status>,
     pub(crate) udp_map: RwLock<HashMap<usize, Arc<UdpSocket>>>,
+    pub(crate) tcp_map: RwLock<HashMap<usize, Arc<Mutex<TcpStream>>>>,
     pub(crate) channel_num: usize,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     first_latency: bool,
+    is_close: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -56,9 +59,11 @@ impl Context {
             status_receiver,
             status_sender,
             udp_map: RwLock::new(HashMap::with_capacity(16)),
+            tcp_map: RwLock::new(HashMap::with_capacity(16)),
             channel_num,
             current_device,
             first_latency,
+            is_close: AtomicBool::new(false),
         });
         Self { inner }
     }
@@ -66,21 +71,38 @@ impl Context {
 
 impl Context {
     pub fn is_close(&self) -> bool {
-        *self.inner.status_receiver.borrow() == Status::Close
+        self.inner.is_close.load(Ordering::Relaxed)
     }
     pub fn is_cone(&self) -> bool {
         *self.inner.status_receiver.borrow() == Status::Cone
     }
     pub fn close(&self) -> io::Result<()> {
+        self.inner.is_close.store(true, Ordering::Release);
         let _ = self.inner.status_sender.send(Status::Close);
         if let Ok(port) = self.main_local_udp_port() {
-            let _ = StdUdpSocket::bind("127.0.0.1:0")?.send_to(
-                b"stop",
-                SocketAddr::V4(std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
-            );
+            match StdUdpSocket::bind("127.0.0.1:0") {
+                Ok(udp) => {
+                    if let Err(e) = udp.send_to(
+                        b"stop",
+                        SocketAddr::V4(std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
+                    ) {
+                        log::error!("发送停止消息到udp失败:{:?}", e);
+                    }
+                }
+                Err(e) => {
+                    log::error!("发送停止-绑定udp失败:{:?}", e);
+                }
+            }
         }
         if let Some(tcp) = &self.inner.main_tcp_channel {
-            tcp.lock().shutdown(Shutdown::Both)?;
+            if let Err(e) = tcp.lock().shutdown(Shutdown::Both) {
+                log::error!("发送停止消息到tcp失败:{:?}", e);
+            }
+        }
+        for (_, tcp) in self.inner.tcp_map.read().clone() {
+            if let Err(e) = tcp.lock().shutdown(Shutdown::Both) {
+                log::error!("发送停止消息到tcp失败:{:?}", e);
+            }
         }
         Ok(())
     }
@@ -371,37 +393,6 @@ impl Channel {
     }
 }
 
-#[derive(Clone)]
-struct BufSenderGroup(
-    usize,
-    Vec<std::sync::mpsc::SyncSender<(Vec<u8>, usize, usize, RouteKey)>>,
-);
-
-struct BufReceiverGroup(Vec<std::sync::mpsc::Receiver<(Vec<u8>, usize, usize, RouteKey)>>);
-
-impl BufSenderGroup {
-    pub fn send(&mut self, val: (Vec<u8>, usize, usize, RouteKey)) -> bool {
-        let index = self.0 % self.1.len();
-        self.0 = self.0.wrapping_add(1);
-        self.1[index].send(val).is_ok()
-    }
-}
-
-fn buf_channel_group(size: usize) -> (BufSenderGroup, BufReceiverGroup) {
-    let mut buf_sender_group = Vec::with_capacity(size);
-    let mut buf_receiver_group = Vec::with_capacity(size);
-    for _ in 0..size {
-        let (buf_sender, buf_receiver) =
-            std::sync::mpsc::sync_channel::<(Vec<u8>, usize, usize, RouteKey)>(1);
-        buf_sender_group.push(buf_sender);
-        buf_receiver_group.push(buf_receiver);
-    }
-    (
-        BufSenderGroup(0, buf_sender_group),
-        BufReceiverGroup(buf_receiver_group),
-    )
-}
-
 impl Channel {
     fn tcp_handle(
         tcp_r: &mut TcpStream,
@@ -411,7 +402,7 @@ impl Channel {
     ) -> io::Result<()> {
         let mut head = [0; 4];
         let addr = tcp_r.peer_addr()?;
-        let key = RouteKey::new(TCP_ID, addr);
+        let key = RouteKey::new(true, TCP_ID, addr);
         loop {
             if context.is_close() {
                 return Ok(());
@@ -480,32 +471,10 @@ impl Channel {
         head_reserve: usize,          //头部预留字节
         symmetric_channel_num: usize, //对称网络，则再加一组监听，提升打洞成功率
         relay: bool,
-        parallel: usize,
     ) {
         let handler = self.handler.clone();
         let context = self.context;
         let main_channel = context.inner.main_channel.try_clone().unwrap();
-        let buf_sender = if parallel > 1 {
-            let (buf_sender, buf_receiver) = buf_channel_group(parallel);
-            let mut num = 0;
-            for buf_receiver in buf_receiver.0 {
-                let context = context.clone();
-                let handler = handler.clone();
-                thread::Builder::new()
-                    .name(format!("recv-handler-{}", num))
-                    .spawn(move || {
-                        while let Ok((mut buf, start, end, route_key)) = buf_receiver.recv() {
-                            handler.handle(&mut buf, start, end, route_key, &context);
-                        }
-                        log::warn!("异步处理停止");
-                    })
-                    .unwrap();
-                num += 1;
-            }
-            Some(buf_sender)
-        } else {
-            None
-        };
         if let Some(tcp_stream) = tcp {
             let context = context.clone();
             let handler = handler.clone();
@@ -527,15 +496,7 @@ impl Channel {
                 .name("channel_udp".into())
                 .spawn(move || {
                     log::info!("启动udp v4");
-                    Self::main_start_(
-                        worker,
-                        context,
-                        UDP_ID,
-                        main_channel,
-                        handler,
-                        buf_sender,
-                        head_reserve,
-                    )
+                    Self::main_start_(worker, context, UDP_ID, main_channel, handler, head_reserve)
                 })
                 .unwrap();
         }
@@ -597,52 +558,30 @@ impl Channel {
         id: usize,
         udp: StdUdpSocket,
         handler: ChannelDataHandler,
-        buf_sender: Option<BufSenderGroup>,
         head_reserve: usize,
     ) {
-        match buf_sender {
-            None => {
-                let mut buf = [0; 4096];
-                loop {
-                    match udp.recv_from(&mut buf[head_reserve..]) {
-                        Ok((len, addr)) => {
-                            let end = head_reserve + len;
-                            if &buf[head_reserve..end] == b"stop" {
-                                if context.is_close() {
-                                    break;
-                                }
-                            }
-                            handler.handle(
-                                &mut buf,
-                                head_reserve,
-                                end,
-                                RouteKey::new(id, addr),
-                                &context,
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("udp :{:?}", e);
+        let mut buf = [0; 4096];
+        loop {
+            match udp.recv_from(&mut buf[head_reserve..]) {
+                Ok((len, addr)) => {
+                    let end = head_reserve + len;
+                    if &buf[head_reserve..end] == b"stop" {
+                        if context.is_close() {
+                            break;
                         }
                     }
+                    handler.handle(
+                        &mut buf,
+                        head_reserve,
+                        end,
+                        RouteKey::new(false, id, addr),
+                        &context,
+                    );
+                }
+                Err(e) => {
+                    log::error!("udp :{:?}", e);
                 }
             }
-            Some(mut buf_sender) => loop {
-                let mut buf = vec![0; 4096];
-                match udp.recv_from(&mut buf[head_reserve..]) {
-                    Ok((len, addr)) => {
-                        let end = head_reserve + len;
-                        if &buf[head_reserve..end] == b"stop" {
-                            if context.is_close() {
-                                break;
-                            }
-                        }
-                        buf_sender.send((buf, head_reserve, end, RouteKey::new(id, addr)));
-                    }
-                    Err(e) => {
-                        log::error!("udp :{:?}", e);
-                    }
-                }
-            },
         }
 
         worker.stop_all();
@@ -671,7 +610,7 @@ impl Channel {
                 rs=udp.recv_from(&mut buf[head_reserve..])=>{
                       match rs {
                         Ok((len, addr)) => {
-                            handler.handle(&mut buf, head_reserve, head_reserve + len, RouteKey::new(id, addr), &context);
+                            handler.handle(&mut buf, head_reserve, head_reserve + len, RouteKey::new(false,id, addr), &context);
                         }
                         Err(e) => {
                             log::error!("{:?}",e)

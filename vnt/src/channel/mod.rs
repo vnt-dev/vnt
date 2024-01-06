@@ -17,6 +17,7 @@ pub enum Status {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Route {
+    is_tcp: bool,
     index: usize,
     pub addr: SocketAddr,
     pub metric: u8,
@@ -30,8 +31,9 @@ pub struct RouteSortKey {
 }
 
 impl Route {
-    pub fn new(index: usize, addr: SocketAddr, metric: u8, rt: i64) -> Self {
+    pub fn new(is_tcp: bool, index: usize, addr: SocketAddr, metric: u8, rt: i64) -> Self {
         Self {
+            is_tcp,
             index,
             addr,
             metric,
@@ -40,6 +42,7 @@ impl Route {
     }
     pub fn from(route_key: RouteKey, metric: u8, rt: i64) -> Self {
         Self {
+            is_tcp: route_key.is_tcp,
             index: route_key.index,
             addr: route_key.addr,
             metric,
@@ -48,6 +51,7 @@ impl Route {
     }
     pub fn route_key(&self) -> RouteKey {
         RouteKey {
+            is_tcp: self.is_tcp,
             index: self.index,
             addr: self.addr,
         }
@@ -65,13 +69,18 @@ impl Route {
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
 pub struct RouteKey {
+    is_tcp: bool,
     index: usize,
     pub addr: SocketAddr,
 }
 
 impl RouteKey {
-    pub(crate) fn new(index: usize, addr: SocketAddr) -> Self {
-        Self { index, addr }
+    pub(crate) fn new(is_tcp: bool, index: usize, addr: SocketAddr) -> Self {
+        Self {
+            is_tcp,
+            index,
+            addr,
+        }
     }
     pub fn is_tcp(&self) -> bool {
         self.index == TCP_ID

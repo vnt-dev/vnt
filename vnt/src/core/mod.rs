@@ -382,7 +382,7 @@ impl VntUtil {
             let relay = config.relay;
             tokio::spawn(async move {
                 channel
-                    .start(channel_worker, tcp_receiver, 14, 65, relay, config.parallel)
+                    .start(channel_worker, tcp_receiver, 14, 65, relay)
                     .await
             });
         }
