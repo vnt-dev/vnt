@@ -21,9 +21,11 @@ mod console_out;
 mod root_check;
 
 pub fn app_home() -> io::Result<PathBuf> {
-    let path = dirs::home_dir()
-        .ok_or(io::Error::new(io::ErrorKind::Other, "not home"))?
-        .join(".vnt-cli");
+    let path = std::env::current_exe()
+        .expect("current_exe error")
+        .parent()
+        .expect("current_exe parent error")
+        .join("env");
     if !path.exists() {
         std::fs::create_dir_all(&path)?;
     }
