@@ -120,6 +120,12 @@ jobs:
                 ;;
             esac
           
+            if [[ $TARGET =~ ^mips.*$ ]]; then
+              # mips平台使用1.71.1版本
+              rustup install 1.71.1
+              rustup default 1.71.1  
+            fi
+          
             if [  -n "$MUSL_URI" ]; then
               mkdir -p ./musl_gcc 
               wget -c https://musl.cc/$MUSL_URI.tgz -P ./musl_gcc/
