@@ -76,7 +76,7 @@ pub fn console_device_list(mut list: Vec<DeviceItem>) {
                     ("".to_string(), Style::new().red()),
                 ]);
             } else {
-                if &item.nat_traversal_type == "p2p" {
+                if item.nat_traversal_type.contains("p2p") {
                     out_list.push(vec![
                         (item.name, Style::new().green()),
                         (item.virtual_ip, Style::new().green()),

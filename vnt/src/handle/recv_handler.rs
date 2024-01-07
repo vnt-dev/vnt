@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -57,6 +57,7 @@ pub struct ChannelDataHandler {
     relay: bool,
     token: String,
     time: Arc<AtomicCell<Instant>>,
+    pub head_reserve: usize,
 }
 
 impl ChannelDataHandler {
@@ -78,6 +79,7 @@ impl ChannelDataHandler {
         rsa_cipher: Option<RsaCipher>,
         relay: bool,
         token: String,
+        head_reserve: usize,
     ) -> Self {
         Self {
             current_device,
@@ -99,6 +101,7 @@ impl ChannelDataHandler {
             relay,
             token,
             time: Arc::new(AtomicCell::new(Instant::now())),
+            head_reserve,
         }
     }
 }
@@ -400,23 +403,24 @@ impl ChannelDataHandler {
                     .iter()
                     .map(|v| Ipv4Addr::from(v.to_be_bytes()))
                     .collect();
-                let local_ipv4_addr = SocketAddrV4::new(
-                    Ipv4Addr::from(punch_info.local_ip.to_be_bytes()),
-                    punch_info.local_port as u16,
-                );
-                let ipv6_addr = if punch_info.ipv6.len() == 16 {
+                let local_ipv4 = Some(Ipv4Addr::from(punch_info.local_ip.to_be_bytes()));
+                let udp_port = punch_info.local_port as u16;
+                let tcp_port = punch_info.tcp_port as u16;
+                let ipv6 = if punch_info.ipv6.len() == 16 {
                     let ipv6: [u8; 16] = punch_info.ipv6.try_into().unwrap();
-                    SocketAddrV6::new(Ipv6Addr::from(ipv6), punch_info.ipv6_port as u16, 0, 0)
+                    Some(Ipv6Addr::from(ipv6))
                 } else {
-                    SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)
+                    None
                 };
 
                 let peer_nat_info = NatInfo::new(
                     public_ips,
                     punch_info.public_port as u16,
                     punch_info.public_port_range as u16,
-                    local_ipv4_addr,
-                    ipv6_addr,
+                    local_ipv4,
+                    ipv6,
+                    udp_port,
+                    tcp_port,
                     punch_info.nat_type.enum_value_or_default().into(),
                 );
                 {
@@ -437,11 +441,11 @@ impl ChannelDataHandler {
                     punch_reply.nat_type =
                         protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
                     punch_reply.local_ip =
-                        u32::from_be_bytes(nat_info.local_ipv4_addr.ip().octets());
-                    punch_reply.local_port = nat_info.local_ipv4_addr.port() as u32;
-                    if !nat_info.ipv6_addr.ip().is_unspecified() {
-                        punch_reply.ipv6 = nat_info.ipv6_addr.ip().octets().to_vec();
-                        punch_reply.ipv6_port = nat_info.ipv6_addr.port() as u32;
+                        u32::from(nat_info.local_ipv4().unwrap_or(Ipv4Addr::UNSPECIFIED));
+                    punch_reply.local_port = nat_info.udp_port as u32;
+                    if let Some(ipv6) = nat_info.ipv6() {
+                        punch_reply.ipv6 = ipv6.octets().to_vec();
+                        punch_reply.ipv6_port = nat_info.udp_port as u32;
                     }
                     let bytes = punch_reply.write_to_bytes()?;
                     let mut punch_packet =
@@ -453,18 +457,6 @@ impl ChannelDataHandler {
                     punch_packet.set_source(current_device.virtual_ip());
                     punch_packet.set_destination(source);
                     punch_packet.set_payload(&bytes)?;
-                    // if !peer_nat_info.local_ip.is_unspecified() && peer_nat_info.local_port != 0 {
-                    //     let mut packet = NetPacket::new_encrypt([0u8; 12 + ENCRYPTION_RESERVED])?;
-                    //     packet.set_version(Version::V1);
-                    //     packet.first_set_ttl(1);
-                    //     packet.set_protocol(Protocol::Control);
-                    //     packet.set_transport_protocol(control_packet::Protocol::PunchRequest.into());
-                    //     packet.set_source(current_device.virtual_ip());
-                    //     packet.set_destination(source);
-                    //     self.client_cipher.encrypt_ipv4(&mut packet)?;
-                    //     let _ = context.try_send_main_udp(packet.buffer(),
-                    //                               SocketAddr::V4(SocketAddrV4::new(peer_nat_info.local_ip, peer_nat_info.local_port)));
-                    // }
                     if self.punch(source, peer_nat_info) {
                         self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
                         context.try_send_by_key(punch_packet.buffer(), route_key)?;
@@ -592,15 +584,18 @@ impl ChannelDataHandler {
                             .build()
                             .unwrap()
                             .block_on(async move {
-                                let local_port = context.main_local_udp_port().unwrap_or(0);
-                                let local_ipv4_addr = nat::local_ipv4_addr(local_port);
-                                let ipv6_addr = nat::local_ipv6_addr(local_port);
+                                let local_ipv4 = nat::local_ipv4();
+                                let ipv6 = nat::local_ipv6();
+                                let udp_port = nat_test.nat_info().udp_port;
+                                let tcp_port = nat_test.nat_info().tcp_port;
                                 let nat_info = nat_test
                                     .re_test(
                                         Ipv4Addr::from(response.public_ip),
                                         response.public_port as u16,
-                                        local_ipv4_addr,
-                                        ipv6_addr,
+                                        local_ipv4,
+                                        ipv6,
+                                        udp_port,
+                                        tcp_port,
                                     )
                                     .await;
                                 context.switch(nat_info.nat_type);

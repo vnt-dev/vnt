@@ -17,7 +17,7 @@ pub enum Status {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Route {
-    is_tcp: bool,
+    pub is_tcp: bool,
     index: usize,
     pub addr: SocketAddr,
     pub metric: u8,

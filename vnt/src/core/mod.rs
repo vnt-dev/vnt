@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::io;
-use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -241,14 +241,16 @@ impl VntUtil {
         } else {
             (None, None)
         };
+        let tcp_listener = TcpListener::bind(format!("[::]:{}", config.port))?;
+        let local_tcp_port = tcp_listener.local_addr()?.port();
         let context = Context::new(
             self.main_channel,
             tcp_sender,
             current_device.clone(),
             1,
             config.first_latency,
+            local_tcp_port,
         );
-        let punch = Punch::new(context.clone(), config.punch_model);
         let idle = Idle::new(Duration::from_secs(16), context.clone());
         let channel_sender = ChannelSender::new(context.clone());
 
@@ -268,17 +270,19 @@ impl VntUtil {
         let connect_status = Arc::new(AtomicCell::new(ConnectStatus::Connected));
         let public_ip = response.public_ip;
         let public_port = response.public_port;
-        let local_port = context.main_local_udp_port().unwrap_or(0);
+        let local_udp_port = context.main_local_udp_port().unwrap_or(0);
+        let local_ipv4 = crate::nat::local_ipv4();
+        let ipv6 = crate::nat::local_ipv6();
 
-        let local_ipv4_addr = crate::nat::local_ipv4_addr(local_port);
-        let ipv6_addr = crate::nat::local_ipv6_addr(local_port);
         // NAT检测
         let nat_test = NatTest::new(
             config.stun_server.clone(),
             public_ip,
             public_port,
-            local_ipv4_addr,
-            ipv6_addr,
+            local_ipv4,
+            ipv6,
+            local_udp_port,
+            local_tcp_port,
         );
         let in_external_route = if config.in_ips.is_empty() {
             None
@@ -375,16 +379,21 @@ impl VntUtil {
             self.rsa_cipher.clone(),
             config.relay,
             config.token.clone(),
+            14,
+        );
+        let punch = Punch::new(
+            context.clone(),
+            config.punch_model,
+            config.tcp,
+            channel_recv_handler.clone(),
         );
         {
-            let channel = Channel::new(context.clone(), channel_recv_handler);
+            let channel = Channel::new(context.clone(), channel_recv_handler, tcp_listener);
             let channel_worker = vnt_status_manager.worker("channel_worker");
             let relay = config.relay;
-            tokio::spawn(async move {
-                channel
-                    .start(channel_worker, tcp_receiver, 14, 65, relay)
-                    .await
-            });
+            tokio::spawn(
+                async move { channel.start(channel_worker, tcp_receiver, 65, relay).await },
+            );
         }
         {
             let nat_test = nat_test.clone();
@@ -455,7 +464,14 @@ impl VntUtil {
             let nat_test = nat_test.clone();
             tokio::spawn(async move {
                 let info = nat_test
-                    .re_test(public_ip, public_port, local_ipv4_addr, ipv6_addr)
+                    .re_test(
+                        public_ip,
+                        public_port,
+                        local_ipv4,
+                        ipv6,
+                        local_udp_port,
+                        local_tcp_port,
+                    )
                     .await;
                 context.switch(info.nat_type);
             });

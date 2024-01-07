@@ -158,11 +158,12 @@ pub fn punch_packet(
         .collect();
     punch_reply.public_port = nat_info.public_port as u32;
     punch_reply.public_port_range = nat_info.public_port_range as u32;
-    punch_reply.local_ip = u32::from_be_bytes(nat_info.local_ipv4_addr.ip().octets());
-    punch_reply.local_port = nat_info.local_ipv4_addr.port() as u32;
-    if !nat_info.ipv6_addr.ip().is_unspecified() {
-        punch_reply.ipv6_port = nat_info.ipv6_addr.port() as u32;
-        punch_reply.ipv6 = nat_info.ipv6_addr.ip().octets().to_vec();
+    punch_reply.local_ip = u32::from(nat_info.local_ipv4().unwrap_or(Ipv4Addr::UNSPECIFIED));
+    punch_reply.local_port = nat_info.udp_port as u32;
+    punch_reply.tcp_port = nat_info.tcp_port as u32;
+    if let Some(ipv6) = nat_info.ipv6 {
+        punch_reply.ipv6_port = nat_info.udp_port as u32;
+        punch_reply.ipv6 = ipv6.octets().to_vec();
     }
     punch_reply.nat_type = protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
     let bytes = punch_reply.write_to_bytes()?;

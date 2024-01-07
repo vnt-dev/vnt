@@ -1,10 +1,10 @@
-use crossbeam_utils::atomic::AtomicCell;
 use std::io;
 use std::net::UdpSocket;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 
 use crate::channel::punch::{NatInfo, NatType};
@@ -12,7 +12,7 @@ use crate::proto::message::PunchNatType;
 
 mod stun_test;
 
-pub fn local_ipv4() -> io::Result<Ipv4Addr> {
+pub fn local_ipv4_() -> io::Result<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
     let addr = socket.local_addr()?;
@@ -21,8 +21,17 @@ pub fn local_ipv4() -> io::Result<Ipv4Addr> {
         IpAddr::V6(_) => Ok(Ipv4Addr::UNSPECIFIED),
     }
 }
+pub fn local_ipv4() -> Option<Ipv4Addr> {
+    match local_ipv4_() {
+        Ok(ipv4) => Some(ipv4),
+        Err(e) => {
+            log::warn!("获取ipv4失败：{:?}", e);
+            None
+        }
+    }
+}
 
-pub fn local_ipv6() -> io::Result<Ipv6Addr> {
+pub fn local_ipv6_() -> io::Result<Ipv6Addr> {
     let socket = UdpSocket::bind("[::]:0")?;
     socket.connect("[2001:4860:4860:0000:0000:0000:0000:8888]:80")?;
     let addr = socket.local_addr()?;
@@ -31,23 +40,12 @@ pub fn local_ipv6() -> io::Result<Ipv6Addr> {
         IpAddr::V6(ip) => Ok(ip),
     }
 }
-
-pub fn local_ipv4_addr(port: u16) -> SocketAddrV4 {
-    match local_ipv4() {
-        Ok(ipv4) => SocketAddrV4::new(ipv4, port),
+pub fn local_ipv6() -> Option<Ipv6Addr> {
+    match local_ipv6_() {
+        Ok(ipv6) => Some(ipv6),
         Err(e) => {
-            log::warn!("获取本地ipv4地址失败:{}", e);
-            SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)
-        }
-    }
-}
-
-pub fn local_ipv6_addr(port: u16) -> SocketAddrV6 {
-    match local_ipv6() {
-        Ok(ipv6) => SocketAddrV6::new(ipv6, port, 0, 0),
-        Err(e) => {
-            log::warn!("获取本地ipv6地址失败:{}", e);
-            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)
+            log::warn!("获取ipv6失败：{:?}", e);
+            None
         }
     }
 }
@@ -82,8 +80,10 @@ impl NatTest {
         mut stun_server: Vec<String>,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ipv4_addr: SocketAddrV4,
-        ipv6_addr: SocketAddrV6,
+        local_ipv4: Option<Ipv4Addr>,
+        ipv6: Option<Ipv6Addr>,
+        udp_port: u16,
+        tcp_port: u16,
     ) -> NatTest {
         let server = stun_server[0].clone();
         stun_server.resize(3, server);
@@ -91,8 +91,10 @@ impl NatTest {
             vec![public_ip],
             public_port,
             0,
-            local_ipv4_addr,
-            ipv6_addr,
+            local_ipv4,
+            ipv6,
+            udp_port,
+            tcp_port,
             NatType::Cone,
         );
         let info = Arc::new(Mutex::new(nat_info));
@@ -118,15 +120,19 @@ impl NatTest {
         &self,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ipv4_addr: SocketAddrV4,
-        ipv6_addr: SocketAddrV6,
+        local_ipv4: Option<Ipv4Addr>,
+        ipv6: Option<Ipv6Addr>,
+        udp_port: u16,
+        tcp_port: u16,
     ) -> NatInfo {
         let info = NatTest::re_test_(
             &self.stun_server,
             public_ip,
             public_port,
-            local_ipv4_addr,
-            ipv6_addr,
+            local_ipv4,
+            ipv6,
+            udp_port,
+            tcp_port,
         )
         .await;
         log::info!("探测nat类型={:?}", info);
@@ -137,8 +143,10 @@ impl NatTest {
         stun_server: &Vec<String>,
         public_ip: Ipv4Addr,
         public_port: u16,
-        local_ipv4_addr: SocketAddrV4,
-        ipv6_addr: SocketAddrV6,
+        local_ipv4: Option<Ipv4Addr>,
+        ipv6: Option<Ipv6Addr>,
+        udp_port: u16,
+        tcp_port: u16,
     ) -> NatInfo {
         return match stun_test::stun_test_nat(stun_server.clone()).await {
             Ok((nat_type, mut public_ips, port_range)) => {
@@ -149,8 +157,10 @@ impl NatTest {
                     public_ips,
                     public_port,
                     port_range,
-                    local_ipv4_addr,
-                    ipv6_addr,
+                    local_ipv4,
+                    ipv6,
+                    udp_port,
+                    tcp_port,
                     nat_type,
                 )
             }
@@ -160,8 +170,10 @@ impl NatTest {
                     vec![public_ip],
                     public_port,
                     0,
-                    local_ipv4_addr,
-                    ipv6_addr,
+                    local_ipv4,
+                    ipv6,
+                    udp_port,
+                    tcp_port,
                     NatType::Cone,
                 )
             }

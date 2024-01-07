@@ -87,8 +87,14 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
                 let public_ips: Vec<String> =
                     nat_info.public_ips.iter().map(|v| v.to_string()).collect();
                 let public_ips = public_ips.join(",");
-                let local_ip = nat_info.local_ipv4_addr.ip().to_string();
-                let ipv6 = nat_info.ipv6_addr.ip().to_string();
+                let local_ip = nat_info
+                    .local_ipv4()
+                    .map(|v| v.to_string())
+                    .unwrap_or("None".to_string());
+                let ipv6 = nat_info
+                    .ipv6()
+                    .map(|v| v.to_string())
+                    .unwrap_or("None".to_string());
                 (nat_type, public_ips, local_ip, ipv6)
             } else {
                 (
@@ -100,7 +106,11 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
             };
         let (nat_traversal_type, rt) = if let Some(route) = vnt.route(&peer.virtual_ip) {
             let nat_traversal_type = if route.metric == 1 {
-                "p2p"
+                if route.is_tcp {
+                    "tcp-p2p"
+                } else {
+                    "p2p"
+                }
             } else if route.addr == info.connect_server {
                 "server-relay"
             } else {
@@ -148,12 +158,14 @@ pub fn command_info(vnt: &Vnt) -> Info {
     let nat_type = format!("{:?}", nat_info.nat_type);
     let public_ips: Vec<String> = nat_info.public_ips.iter().map(|v| v.to_string()).collect();
     let public_ips = public_ips.join(",");
-    let local_addr = nat_info.local_ipv4_addr.to_string();
-    let ipv6_addr = if nat_info.ipv6_addr.ip().is_unspecified() {
-        "None".to_string()
-    } else {
-        nat_info.ipv6_addr.ip().to_string()
-    };
+    let local_addr = nat_info
+        .local_ipv4()
+        .map(|v| v.to_string())
+        .unwrap_or("None".to_string());
+    let ipv6_addr = nat_info
+        .ipv6()
+        .map(|v| v.to_string())
+        .unwrap_or("None".to_string());
     Info {
         name,
         virtual_ip,
