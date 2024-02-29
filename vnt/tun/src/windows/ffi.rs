@@ -137,7 +137,7 @@ pub fn read_file(handle: HANDLE, buffer: &mut [u8]) -> io::Result<DWORD> {
             &mut ip_overlapped,
         ) {
             let e = io::Error::last_os_error();
-            if e.raw_os_error().unwrap_or(0) == 997 {
+            if e.raw_os_error().unwrap_or(0) == ERROR_IO_PENDING as _ {
                 if 0 == GetOverlappedResult(handle, &mut ip_overlapped, &mut ret, 1) {
                     return Err(e);
                 }
@@ -166,7 +166,7 @@ pub fn write_file(handle: HANDLE, buffer: &[u8]) -> io::Result<DWORD> {
             &mut ip_overlapped,
         ) {
             let e = io::Error::last_os_error();
-            if e.raw_os_error().unwrap_or(0) == 997 {
+            if e.raw_os_error().unwrap_or(0) == ERROR_IO_PENDING as _ {
                 if 0 == GetOverlappedResult(handle, &mut ip_overlapped, &mut ret, 1) {
                     return Err(e);
                 }

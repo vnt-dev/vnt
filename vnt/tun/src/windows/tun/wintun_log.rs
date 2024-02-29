@@ -1,6 +1,6 @@
 use log::*;
 
-use crate::tun::wintun_raw;
+use crate::windows::tun::wintun_raw;
 use std::sync::atomic::{AtomicBool, Ordering};
 use widestring::U16CStr;
 

@@ -1,4 +1,4 @@
-use crate::TunDevice;
+use crate::windows::tun::Device;
 
 pub(crate) enum Kind {
     SendPacketPending,
@@ -16,7 +16,7 @@ pub struct TunPacket<'a> {
 
     //Share ownership of session to prevent the session from being dropped before packets that
     //belong to it
-    pub(crate) tun_device: Option<&'a TunDevice>,
+    pub(crate) tun_device: Option<&'a Device>,
 }
 
 impl<'a> TunPacket<'a> {

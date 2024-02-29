@@ -1,46 +1,17 @@
-//            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
-//                    Version 2, December 2004
-//
-// Copyleft (ↄ) meh. <meh@schizofreni.co> | http://meh.schizofreni.co
-//
-// Everyone is permitted to copy and distribute verbatim or modified
-// copies of this license document, and changing it is allowed as long
-// as the name is changed.
-//
-//            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
-//   TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
-//
-//  0. You just DO WHAT THE FUCK YOU WANT TO.
-
-use std::mem;
-use std::net::Ipv4Addr;
-use std::ptr;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use libc::c_uchar;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use libc::c_ushort;
-
-use libc::AF_INET as _AF_INET;
 use libc::{in_addr, sockaddr, sockaddr_in};
+use std::{io, mem, net::Ipv4Addr, ptr};
 
-use crate::error::*;
+use io::Result;
 
 /// A wrapper for `sockaddr_in`.
 #[derive(Copy, Clone)]
 pub struct SockAddr(sockaddr_in);
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const AF_INET: c_ushort = _AF_INET as c_ushort;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-const AF_INET: c_uchar = _AF_INET as c_uchar;
-
 impl SockAddr {
     /// Create a new `SockAddr` from a generic `sockaddr`.
     pub fn new(value: &sockaddr) -> Result<Self> {
-        if value.sa_family != AF_INET {
-            return Err(Error::InvalidAddress);
+        if value.sa_family != libc::AF_INET as libc::sa_family_t {
+            return Err(io::Error::new(io::ErrorKind::Other, "invalid address"));
         }
 
         unsafe { Self::unchecked(value) }
@@ -64,7 +35,7 @@ impl From<Ipv4Addr> for SockAddr {
         let octets = ip.octets();
         let mut addr = unsafe { mem::zeroed::<sockaddr_in>() };
 
-        addr.sin_family = AF_INET;
+        addr.sin_family = libc::AF_INET as libc::sa_family_t;
         addr.sin_port = 0;
         addr.sin_addr = in_addr {
             s_addr: u32::from_ne_bytes(octets),
