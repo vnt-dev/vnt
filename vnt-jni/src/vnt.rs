@@ -1,11 +1,53 @@
+use std::ptr;
+
 use jni::errors::Error;
 use jni::objects::{JClass, JObject, JValue};
-use jni::sys::{jboolean, jbyte, jint, jlong, jobject, jobjectArray, jsize};
+use jni::sys::{jbyte, jint, jlong, jobject, jobjectArray, jsize};
 use jni::JNIEnv;
-use std::ptr;
+
 use vnt::channel::Route;
-use vnt::core::sync::VntSync;
+use vnt::core::Vnt;
 use vnt::handle::PeerDeviceInfo;
+
+use crate::callback::CallBack;
+
+#[no_mangle]
+pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_new0(
+    mut env: JNIEnv<'static>,
+    _class: JClass,
+    config: JObject,
+    call_back: JObject<'static>,
+) -> jlong {
+    let jvm = if let Ok(jvm) = env.get_java_vm() {
+        jvm
+    } else {
+        return 0;
+    };
+    match crate::config::new_config(&mut env, config) {
+        Ok(config) => {
+            let call_back = if let Ok(call_back) = env.new_global_ref(call_back) {
+                call_back
+            } else {
+                return 0;
+            };
+            let vnt_util = match Vnt::new(config, CallBack::new(jvm, call_back)) {
+                Ok(vnt_util) => vnt_util,
+                Err(e) => {
+                    env.throw_new(
+                        "java/lang/RuntimeException",
+                        format!("vnt start error {}", e),
+                    )
+                    .expect("throw");
+                    return 0;
+                }
+            };
+            let ptr = Box::into_raw(Box::new(vnt_util));
+            return ptr as jlong;
+        }
+        Err(_) => {}
+    }
+    return 0;
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_stop0(
@@ -13,33 +55,17 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_stop0(
     _class: JClass,
     raw_vnt: jlong,
 ) {
-    let vnt = raw_vnt as *mut VntSync;
+    let vnt = raw_vnt as *mut Vnt;
     let _ = (&*vnt).stop();
 }
-
 #[no_mangle]
-pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_waitStop0(
+pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_wait0(
     _env: JNIEnv,
     _class: JClass,
     raw_vnt: jlong,
 ) {
-    let vnt = raw_vnt as *mut VntSync;
-    let _ = (&mut *vnt).wait_stop();
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_waitStopMs0(
-    _env: JNIEnv,
-    _class: JClass,
-    raw_vnt: jlong,
-    ms: jlong,
-) -> jboolean {
-    let vnt = raw_vnt as *mut VntSync;
-    if (&mut *vnt).wait_stop_ms(ms as _) {
-        jni::sys::JNI_TRUE
-    } else {
-        jni::sys::JNI_FALSE
-    }
+    let vnt = raw_vnt as *mut Vnt;
+    let _ = (&*vnt).wait();
 }
 
 #[no_mangle]
@@ -48,7 +74,7 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_drop0(
     _class: JClass,
     raw_vnt: jlong,
 ) {
-    let vnt = raw_vnt as *mut VntSync;
+    let vnt = raw_vnt as *mut Vnt;
     let _ = Box::from_raw(vnt).stop();
 }
 
@@ -58,7 +84,7 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_list0(
     _class: JClass,
     raw_vnt: jlong,
 ) -> jobjectArray {
-    let vnt = raw_vnt as *mut VntSync;
+    let vnt = raw_vnt as *mut Vnt;
     let vnt = &mut *vnt;
     let list = vnt.device_list();
 
