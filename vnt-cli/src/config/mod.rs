@@ -11,6 +11,7 @@ use vnt::core::Config;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct FileConfig {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     pub tap: bool,
     pub token: String,
     pub device_id: String,
@@ -20,25 +21,27 @@ pub struct FileConfig {
     pub in_ips: Vec<String>,
     pub out_ips: Vec<String>,
     pub password: Option<String>,
-    pub simulate_multicast: bool,
-    pub mtu: Option<u16>,
+    pub mtu: Option<u32>,
     pub tcp: bool,
     pub ip: Option<String>,
     pub relay: bool,
+    #[cfg(feature = "ip_proxy")]
     pub no_proxy: bool,
     pub server_encrypt: bool,
     pub parallel: usize,
     pub cipher_model: String,
     pub finger: bool,
     pub punch_model: String,
-    pub port: u16,
+    pub ports: Option<Vec<u16>>,
     pub cmd: bool,
     pub first_latency: bool,
+    pub device_name: Option<String>,
 }
 
 impl Default for FileConfig {
     fn default() -> Self {
         Self {
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             tap: false,
             token: "".to_string(),
             device_id: get_device_id(),
@@ -52,20 +55,21 @@ impl Default for FileConfig {
             in_ips: vec![],
             out_ips: vec![],
             password: None,
-            simulate_multicast: false,
             mtu: None,
             tcp: false,
             ip: None,
             relay: false,
+            #[cfg(feature = "ip_proxy")]
             no_proxy: false,
             server_encrypt: false,
             parallel: 1,
             cipher_model: "aes_gcm".to_string(),
             finger: false,
             punch_model: "".to_string(),
-            port: 0,
+            ports: None,
             cmd: false,
             first_latency: false,
+            device_name: None,
         }
     }
 }
@@ -134,6 +138,7 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
     let punch_model = PunchModel::from_str(&file_conf.punch_model)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     let config = Config::new(
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         file_conf.tap,
         file_conf.token,
         file_conf.device_id,
@@ -144,7 +149,6 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         in_ips,
         out_ips,
         file_conf.password,
-        file_conf.simulate_multicast,
         file_conf.mtu,
         file_conf.tcp,
         virtual_ip,
@@ -156,8 +160,9 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         cipher_model,
         file_conf.finger,
         punch_model,
-        file_conf.port,
+        file_conf.ports,
         file_conf.first_latency,
+        file_conf.device_name,
     )
     .unwrap();
     Ok((config, file_conf.cmd))

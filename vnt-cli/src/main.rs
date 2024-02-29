@@ -1,19 +1,15 @@
-use std::io;
 use std::net::{Ipv4Addr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::{io, thread};
 
 use console::style;
 use getopts::Options;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::signal;
 
 use common::args_parse::{ips_parse, out_ips_parse};
 use vnt::channel::punch::PunchModel;
 use vnt::cipher::CipherModel;
-use vnt::core::{Config, Vnt, VntUtil};
-use vnt::handle::handshake_handler::HandshakeEnum;
-use vnt::handle::registration_handler::ReqEnum;
+use vnt::core::{Config, Vnt};
 
 mod command;
 mod config;
@@ -44,21 +40,20 @@ fn main() {
     opts.optopt("s", "", "注册和中继服务器地址", "<server>");
     opts.optmulti("e", "", "stun服务器", "<stun-server>");
     opts.optflag("a", "", "使用tap模式");
+    opts.optopt("", "nic", "虚拟网卡名称,windows下使用tap则必填", "<tun0>");
     opts.optmulti("i", "", "配置点对网(IP代理)入站时使用", "<in-ip>");
     opts.optmulti("o", "", "配置点对网出站时使用", "<out-ip>");
     opts.optopt("w", "", "客户端加密", "<password>");
     opts.optflag("W", "", "服务端加密");
-    opts.optflag("m", "", "模拟组播");
     opts.optopt("u", "", "自定义mtu(默认为1430)", "<mtu>");
     opts.optflag("", "tcp", "tcp");
     opts.optopt("", "ip", "指定虚拟ip", "<ip>");
     opts.optflag("", "relay", "仅使用服务器转发");
     opts.optopt("", "par", "任务并行度(必须为正整数)", "<parallel>");
-    opts.optopt("", "thread", "线程数(必须为正整数)", "<thread>");
     opts.optopt("", "model", "加密模式", "<model>");
     opts.optflag("", "finger", "指纹校验");
     opts.optopt("", "punch", "取值ipv4/ipv6", "<punch>");
-    opts.optopt("", "port", "监听的端口", "<port>");
+    opts.optopt("", "ports", "监听的端口", "<port,port>");
     opts.optflag("", "cmd", "开启窗口输入");
     opts.optflag("", "no-proxy", "关闭内置代理");
     opts.optflag("", "first-latency", "优先延迟");
@@ -119,7 +114,9 @@ fn main() {
             println!("parameter -k not found .");
             return;
         }
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         let tap = matches.opt_present("a");
+        let device_name = matches.opt_str("nic");
         let token: String = matches.opt_get("k").unwrap().unwrap();
         let device_id = matches.opt_get_default("d", String::new()).unwrap();
         let device_id = if device_id.is_empty() {
@@ -190,10 +187,9 @@ fn main() {
                 return;
             }
         }
-        let simulate_multicast = matches.opt_present("m");
         let mtu: Option<String> = matches.opt_get("u").unwrap();
         let mtu = if let Some(mtu) = mtu {
-            match u16::from_str(&mtu) {
+            match u32::from_str(&mtu) {
                 Ok(mtu) => Some(mtu),
                 Err(e) => {
                     print_usage(&program, opts);
@@ -260,12 +256,17 @@ fn main() {
             .opt_get::<PunchModel>("punch")
             .unwrap()
             .unwrap_or(PunchModel::All);
-        let port = matches.opt_get::<u16>("port").unwrap_or(None).unwrap_or(0);
+        let ports = matches
+            .opt_get::<String>("ports")
+            .unwrap_or(None)
+            .map(|v| v.split(",").map(|x| x.parse().unwrap_or(0)).collect());
+
         let cmd = matches.opt_present("cmd");
         #[cfg(feature = "ip_proxy")]
         let no_proxy = matches.opt_present("no-proxy");
         let first_latency = matches.opt_present("first-latency");
         let config = Config::new(
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             tap,
             token,
             device_id,
@@ -276,7 +277,6 @@ fn main() {
             in_ip,
             out_ip,
             password,
-            simulate_multicast,
             mtu,
             tcp_channel,
             virtual_ip,
@@ -288,8 +288,9 @@ fn main() {
             cipher_model,
             finger,
             punch_model,
-            port,
+            ports,
             first_latency,
+            device_name,
         )
         .unwrap();
         (config, cmd)
@@ -300,151 +301,35 @@ fn main() {
     std::process::exit(0);
 }
 
-#[tokio::main]
-async fn main0(config: Config, show_cmd: bool) {
-    let server_encrypt = config.server_encrypt;
-    let mut vnt_util = VntUtil::new(config).unwrap();
-    let mut conn_count = 0;
-    let response = loop {
-        if conn_count > 0 {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-        conn_count += 1;
-        if let Err(e) = vnt_util.connect() {
-            println!("connect server failed {}", e);
-            return;
-        }
-        match vnt_util.handshake() {
-            Ok(response) => {
-                if server_encrypt {
-                    let finger = response.unwrap().finger().unwrap();
-                    println!("{}{}", green("server fingerprint:".to_string()), finger);
-                    match vnt_util.secret_handshake() {
-                        Ok(_) => {}
-                        Err(e) => {
-                            match e {
-                                HandshakeEnum::NotSecret => {}
-                                HandshakeEnum::KeyError => {}
-                                HandshakeEnum::Timeout => {
-                                    println!("handshake timeout")
-                                }
-                                HandshakeEnum::ServerError(str) => {
-                                    println!("error:{}", str);
-                                }
-                                HandshakeEnum::Other(str) => {
-                                    println!("error:{}", str);
-                                }
-                            }
-                            continue;
-                        }
-                    }
-                }
-                match vnt_util.register() {
-                    Ok(response) => {
-                        break response;
-                    }
-                    Err(e) => match e {
-                        ReqEnum::TokenError => {
-                            println!("token error");
-                            return;
-                        }
-                        ReqEnum::AddressExhausted => {
-                            println!("address exhausted");
-                            return;
-                        }
-                        ReqEnum::Timeout => {
-                            println!("timeout...");
-                        }
-                        ReqEnum::ServerError(str) => {
-                            println!("error:{}", str);
-                        }
-                        ReqEnum::Other(str) => {
-                            println!("error:{}", str);
-                        }
-                        ReqEnum::IpAlreadyExists => {
-                            println!("ip already exists");
-                            return;
-                        }
-                        ReqEnum::InvalidIp => {
-                            println!("invalid ip");
-                            return;
-                        }
-                    },
-                }
-            }
-            Err(e) => match e {
-                HandshakeEnum::NotSecret => {
-                    println!("The server does not support encryption");
-                    return;
-                }
-                HandshakeEnum::KeyError => {}
-                HandshakeEnum::Timeout => {
-                    println!("handshake timeout")
-                }
-                HandshakeEnum::ServerError(str) => {
-                    println!("error:{}", str);
-                }
-                HandshakeEnum::Other(str) => {
-                    println!("error:{}", str);
-                }
-            },
-        }
-    };
-    println!(" ====== Connect Successfully ====== ");
-    println!("virtual_gateway:{}", response.virtual_gateway);
-    println!("virtual_ip:{}", green(response.virtual_ip.to_string()));
-    let driver_info = vnt_util.create_iface().unwrap();
-    println!(" ====== Create Network Interface Successfully ====== ");
-    println!("name:{}", driver_info.name);
-    println!("version:{}", driver_info.version);
-    let mut vnt = match vnt_util.build().await {
-        Ok(vnt) => vnt,
-        Err(e) => {
-            println!("error:{}", e);
-            return;
-        }
-    };
-    println!(" ====== Start Successfully ====== ");
-    let vnt_c = vnt.clone();
-    tokio::spawn(async {
-        if let Err(e) = command::server::CommandServer::new().start(vnt_c).await {
+mod callback;
+
+fn main0(config: Config, show_cmd: bool) {
+    let vnt_util = Vnt::new(config, callback::VntHandler {}).unwrap();
+    let vnt_c = vnt_util.clone();
+    thread::spawn(move || {
+        if let Err(e) = command::server::CommandServer::new().start(vnt_c) {
             log::warn!("cmd:{:?}", e);
-            println!("command error :{}", e);
         }
     });
     if show_cmd {
-        let stdin = tokio::io::stdin();
         let mut cmd = String::new();
-        let mut reader = BufReader::new(stdin);
         loop {
             cmd.clear();
-            println!("input:list,info,route,all,stop");
-            tokio::select! {
-                _ = vnt.wait_stop()=>{
-                    return;
-                }
-                _ = signal::ctrl_c()=>{
-                    let _ = vnt.stop();
-                    vnt.wait_stop_ms(std::time::Duration::from_secs(3)).await;
-                    std::process::exit(0);
-                }
-                rs = reader.read_line(&mut cmd)=>{
-                     match rs {
-                        Ok(len) => {
-                            if !command(&cmd[..len],&vnt){
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            println!("input err:{}",e);
-                            break;
-                        }
+            println!("======== input:list,info,route,all,stop ========");
+            match io::stdin().read_line(&mut cmd) {
+                Ok(len) => {
+                    if !command(&cmd[..len], &vnt_util) {
+                        break;
                     }
+                }
+                Err(e) => {
+                    println!("input err:{}", e);
+                    break;
                 }
             }
         }
     }
-    vnt.wait_stop().await;
+    vnt_util.wait()
 }
 
 fn command(cmd: &str, vnt: &Vnt) -> bool {
@@ -487,15 +372,14 @@ fn print_usage(program: &str, _opts: Options) {
         green("使用相同的token,就能组建一个局域网络".to_string())
     );
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
-    println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip");
+    println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip,注意不能重复");
     println!("  -s <server>         注册和中继服务器地址");
     println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可多次指定,如-e addr1 -e addr2");
     println!("  -a                  使用tap模式,默认使用tun模式");
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");
+    #[cfg(feature = "ip_proxy")]
     println!("  -o <out-ip>         配置点对网时使用,-o 192.168.0.0/24表示允许将数据转发到192.168.0.0/24,可指定多个网段");
-    #[cfg(not(feature = "ip_proxy"))]
-    println!("                      注意需要在系统配置ip转发才可正常使用");
     #[cfg(not(any(
         feature = "aes_gcm",
         feature = "server_encrypt",
@@ -525,7 +409,6 @@ fn print_usage(program: &str, _opts: Options) {
     }
     #[cfg(feature = "server_encrypt")]
     println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
-    println!("  -m                  模拟组播,默认情况下组播数据会被当作广播发送,开启后会模拟真实组播的数据发送");
     println!("  -u <mtu>            自定义mtu(不加密默认为1450，加密默认为1410)");
     println!("  -f <conf_file>      读取配置文件中的配置");
 
@@ -535,19 +418,20 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
     if !enums.is_empty() {
         println!(
-            "  --model <model>     加密模式(默认aes_gcm)，可选值{}",
+            "  --model <model>     加密模式(默认aes_gcm),可选值{}",
             &enums[1..]
         );
     }
     if !enums.is_empty() {
-        println!("  --finger            增加数据指纹校验，可增加安全性，如果服务端开启指纹校验，则客户端也必须开启");
+        println!("  --finger            增加数据指纹校验,可增加安全性,如果服务端开启指纹校验,则客户端也必须开启");
     }
-    println!("  --punch <punch>     取值ipv4/ipv6，ipv4表示仅使用ipv4打洞");
-    println!("  --port <port>       取值0~65535，指定本地监听的端口，默认取随机端口");
-    println!("  --cmd               开启交互式命令，使用此参数开启控制台输入");
+    println!("  --punch <punch>     取值ipv4/ipv6,ipv4表示仅使用ipv4打洞");
+    println!("  --ports <port,port> 取值0~65535,指定本地监听的一组端口,默认监听两个随机端口,使用过多端口会增加网络负担");
+    println!("  --cmd               开启交互式命令,使用此参数开启控制台输入");
     #[cfg(feature = "ip_proxy")]
-    println!("  --no-proxy          关闭内置代理，如需点对网则需要配置网卡NAT转发");
-    println!("  --first-latency     优先低延迟的通道，默认情况优先使用p2p通道");
+    println!("  --no-proxy          关闭内置代理,如需点对网则需要配置网卡NAT转发");
+    println!("  --first-latency     优先低延迟的通道,默认情况优先使用p2p通道");
+    println!("  --nic <tun0>        虚拟网卡名称,windows下使用tap模式则必须指定此参数");
 
     println!();
     println!(

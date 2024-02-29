@@ -22,7 +22,7 @@ pub fn command(cmd: CommandEnum) {
 }
 
 fn command_(cmd: CommandEnum) -> io::Result<()> {
-    let command_client = client::CommandClient::new()?;
+    let mut command_client = client::CommandClient::new()?;
     match cmd {
         CommandEnum::Route => {
             let list = command_client.route()?;
@@ -50,25 +50,27 @@ fn command_(cmd: CommandEnum) -> io::Result<()> {
 pub fn command_route(vnt: &Vnt) -> Vec<RouteItem> {
     let route_table = vnt.route_table();
     let mut route_list = Vec::with_capacity(route_table.len());
-    for (destination, route) in route_table {
-        let next_hop = vnt
-            .route_key(&route.route_key())
-            .map_or(String::new(), |v| v.to_string());
-        let metric = route.metric.to_string();
-        let rt = if route.rt < 0 {
-            "".to_string()
-        } else {
-            route.rt.to_string()
-        };
-        let interface = route.addr.to_string();
-        let item = RouteItem {
-            destination: destination.to_string(),
-            next_hop,
-            metric,
-            rt,
-            interface,
-        };
-        route_list.push(item);
+    for (destination, routes) in route_table {
+        for route in routes {
+            let next_hop = vnt
+                .route_key(&route.route_key())
+                .map_or(String::new(), |v| v.to_string());
+            let metric = route.metric.to_string();
+            let rt = if route.rt < 0 {
+                "".to_string()
+            } else {
+                route.rt.to_string()
+            };
+            let interface = route.addr.to_string();
+            let item = RouteItem {
+                destination: destination.to_string(),
+                next_hop,
+                metric,
+                rt,
+                interface,
+            };
+            route_list.push(item);
+        }
     }
     route_list
 }
@@ -111,10 +113,17 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
                 } else {
                     "p2p"
                 }
-            } else if route.addr == info.connect_server {
-                "server-relay"
             } else {
-                "client-relay"
+                let next_hop = vnt.route_key(&route.route_key());
+                if let Some(next_hop) = next_hop {
+                    if info.is_gateway(&next_hop) {
+                        "server-relay"
+                    } else {
+                        "client-relay"
+                    }
+                } else {
+                    "server-relay"
+                }
             }
             .to_string();
             let rt = if route.rt < 0 {
@@ -166,6 +175,8 @@ pub fn command_info(vnt: &Vnt) -> Info {
         .ipv6()
         .map(|v| v.to_string())
         .unwrap_or("None".to_string());
+    let up = vnt.up_stream();
+    let down = vnt.down_stream();
     Info {
         name,
         virtual_ip,
@@ -177,5 +188,7 @@ pub fn command_info(vnt: &Vnt) -> Info {
         public_ips,
         local_addr,
         ipv6_addr,
+        up,
+        down,
     }
 }

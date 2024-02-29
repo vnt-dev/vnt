@@ -18,6 +18,30 @@ pub fn console_info(status: Info) {
     println!("Public ips: {}", style(status.public_ips).green());
     println!("Local addr: {}", style(status.local_addr).green());
     println!("IPv6: {}", style(status.ipv6_addr).green());
+    println!("Up: {}", style(convert(status.up)).green());
+    println!("Down: {}", style(convert(status.down)).green());
+}
+fn convert(num: u64) -> String {
+    let gigabytes = num / (1024 * 1024 * 1024);
+    let remaining_bytes = num % (1024 * 1024 * 1024);
+    let megabytes = remaining_bytes / (1024 * 1024);
+    let remaining_bytes = remaining_bytes % (1024 * 1024);
+    let kilobytes = remaining_bytes / 1024;
+    let remaining_bytes = remaining_bytes % 1024;
+    let mut s = String::new();
+    if gigabytes > 0 {
+        s.push_str(&format!("{} GB ", gigabytes));
+    }
+    if megabytes > 0 {
+        s.push_str(&format!("{} MB ", megabytes));
+    }
+    if kilobytes > 0 {
+        s.push_str(&format!("{} KB ", kilobytes));
+    }
+    if remaining_bytes > 0 {
+        s.push_str(&format!("{} bytes", remaining_bytes));
+    }
+    s
 }
 
 pub fn console_route_table(mut list: Vec<RouteItem>) {

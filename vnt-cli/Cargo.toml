@@ -8,13 +8,12 @@ edition = "2021"
 [dependencies]
 vnt = { path = "../vnt", package = "vnt",default-features = false }
 common = { path = "../common" }
-tokio = { version = "1.32.0", features = ["full"] }
 getopts = "0.2.21"
 console = "0.15.2"
 os_info = "3.7.0"
 serde = "1.0"
-serde_json = "1.0.94"
-serde_yaml = "0.8.26"
+#serde_json = "1.0.94"
+serde_yaml = "0.9.32"
 log = "0.4.17"
 log4rs = "1.2.0"
 [dependencies.uuid]
