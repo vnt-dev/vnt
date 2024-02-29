@@ -1,6 +1,7 @@
 use std::io;
 use std::net::UdpSocket;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::ops::Sub;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,7 +11,7 @@ use parking_lot::Mutex;
 use crate::channel::punch::{NatInfo, NatType};
 use crate::proto::message::PunchNatType;
 
-mod stun_test;
+mod stun;
 
 pub fn local_ipv4_() -> io::Result<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -78,22 +79,20 @@ impl Into<NatType> for PunchNatType {
 impl NatTest {
     pub fn new(
         mut stun_server: Vec<String>,
-        public_ip: Ipv4Addr,
-        public_port: u16,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
-        udp_port: u16,
+        udp_ports: Vec<u16>,
         tcp_port: u16,
     ) -> NatTest {
         let server = stun_server[0].clone();
         stun_server.resize(3, server);
         let nat_info = NatInfo::new(
-            vec![public_ip],
-            public_port,
+            Vec::new(),
+            Vec::new(),
             0,
             local_ipv4,
             ipv6,
-            udp_port,
+            udp_ports,
             tcp_port,
             NatType::Cone,
         );
@@ -101,7 +100,9 @@ impl NatTest {
         NatTest {
             stun_server,
             info,
-            time: Arc::new(AtomicCell::new(Instant::now())),
+            time: Arc::new(AtomicCell::new(
+                Instant::now().sub(Duration::from_secs(100)),
+            )),
         }
     }
     pub fn can_update(&self) -> bool {
@@ -109,70 +110,62 @@ impl NatTest {
         last.elapsed() > Duration::from_secs(10)
             && self.time.compare_exchange(last, Instant::now()).is_ok()
     }
+
     pub fn nat_info(&self) -> NatInfo {
         self.info.lock().clone()
     }
-    pub fn update_addr(&self, ip: Ipv4Addr, port: u16) {
+    pub fn update_addr(&self, index: usize, ip: Ipv4Addr, port: u16) {
         let mut guard = self.info.lock();
-        guard.update_addr(ip, port)
+        guard.update_addr(index, ip, port)
     }
-    pub async fn re_test(
+    pub fn re_test(
         &self,
-        public_ip: Ipv4Addr,
-        public_port: u16,
+        public_ports: Vec<u16>,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
-        udp_port: u16,
+        udp_ports: Vec<u16>,
         tcp_port: u16,
     ) -> NatInfo {
         let info = NatTest::re_test_(
             &self.stun_server,
-            public_ip,
-            public_port,
+            public_ports,
             local_ipv4,
             ipv6,
-            udp_port,
+            udp_ports,
             tcp_port,
-        )
-        .await;
+        );
         log::info!("探测nat类型={:?}", info);
         *self.info.lock() = info.clone();
         info
     }
-    async fn re_test_(
+    fn re_test_(
         stun_server: &Vec<String>,
-        public_ip: Ipv4Addr,
-        public_port: u16,
+        public_ports: Vec<u16>,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
-        udp_port: u16,
+        udp_ports: Vec<u16>,
         tcp_port: u16,
     ) -> NatInfo {
-        return match stun_test::stun_test_nat(stun_server.clone()).await {
-            Ok((nat_type, mut public_ips, port_range)) => {
-                if !public_ips.contains(&public_ip) {
-                    public_ips.push(public_ip)
-                }
-                NatInfo::new(
-                    public_ips,
-                    public_port,
-                    port_range,
-                    local_ipv4,
-                    ipv6,
-                    udp_port,
-                    tcp_port,
-                    nat_type,
-                )
-            }
+        return match stun::stun_test_nat(stun_server.clone()) {
+            Ok((nat_type, public_ips, port_range)) => NatInfo::new(
+                public_ips,
+                public_ports,
+                port_range,
+                local_ipv4,
+                ipv6,
+                udp_ports,
+                tcp_port,
+                nat_type,
+            ),
             Err(e) => {
                 log::warn!("{:?}", e);
                 NatInfo::new(
-                    vec![public_ip],
-                    public_port,
+                    Vec::new(),
+                    public_ports,
                     0,
                     local_ipv4,
                     ipv6,
-                    udp_port,
+                    udp_ports,
                     tcp_port,
                     NatType::Cone,
                 )
