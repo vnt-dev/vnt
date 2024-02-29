@@ -28,14 +28,14 @@ pub mod service_packet;
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Version {
     V1,
-    UnKnow(u8),
+    Unknown(u8),
 }
 
 impl From<u8> for Version {
     fn from(value: u8) -> Self {
         match value {
             1 => Version::V1,
-            val => Version::UnKnow(val),
+            val => Version::Unknown(val),
         }
     }
 }
@@ -44,7 +44,7 @@ impl Into<u8> for Version {
     fn into(self) -> u8 {
         match self {
             Version::V1 => 1,
-            Version::UnKnow(val) => val,
+            Version::Unknown(val) => val,
         }
     }
 }
@@ -61,7 +61,7 @@ pub enum Protocol {
     IpTurn,
     /// 转发其他数据
     OtherTurn,
-    UnKnow(u8),
+    Unknown(u8),
 }
 
 impl From<u8> for Protocol {
@@ -72,7 +72,7 @@ impl From<u8> for Protocol {
             3 => Protocol::Control,
             4 => Protocol::IpTurn,
             5 => Protocol::OtherTurn,
-            val => Protocol::UnKnow(val),
+            val => Protocol::Unknown(val),
         }
     }
 }
@@ -85,7 +85,7 @@ impl Into<u8> for Protocol {
             Protocol::Control => 3,
             Protocol::IpTurn => 4,
             Protocol::OtherTurn => 5,
-            Protocol::UnKnow(val) => val,
+            Protocol::Unknown(val) => val,
         }
     }
 }
@@ -219,6 +219,11 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_ttl(&mut self, ttl: u8) {
         self.buffer.as_mut()[3] = (self.buffer.as_mut()[3] & MAX_SOURCE) | (MAX_TTL & ttl);
+    }
+    pub fn incr_ttl(&mut self) -> u8 {
+        let ttl = self.ttl() - 1;
+        self.set_ttl(ttl);
+        ttl
     }
     pub fn set_source_ttl(&mut self, source_ttl: u8) {
         self.buffer.as_mut()[3] = (source_ttl << 4) | (MAX_TTL & self.buffer.as_ref()[3]);
