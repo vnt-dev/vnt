@@ -2,8 +2,8 @@ use std::net::ToSocketAddrs;
 use std::str::FromStr;
 
 use jni::errors::Error;
-use jni::JNIEnv;
 use jni::objects::JObject;
+use jni::JNIEnv;
 
 use vnt::channel::punch::PunchModel;
 use vnt::cipher::CipherModel;
@@ -22,7 +22,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     let stun_server = to_string_array_not_null(env, &config, "stunServer")?;
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
     let punch_model = to_string(env, &config, "punchModel")?;
-    let mtu = to_integer(env, &config, "mtu")?.map(|v|v as u32);
+    let mtu = to_integer(env, &config, "mtu")?.map(|v| v as u32);
     let tcp = env.get_field(&config, "tcp", "Z")?.z()?;
     let server_encrypt = env.get_field(&config, "serverEncrypt", "Z")?.z()?;
     let relay = env.get_field(&config, "relay", "Z")?.z()?;
@@ -34,12 +34,13 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         to_i32_array(env, &config, "ports")?.map(|v| v.into_iter().map(|v| v as u16).collect());
     let ip = if let Some(ip) = to_string(env, &config, "ip")? {
         match ip.parse() {
-            Ok(ip) => {
-                Some(ip)
-            }
+            Ok(ip) => Some(ip),
             Err(e) => {
-                env.throw_new("java/lang/RuntimeException", format!("ip {} err: {}", ip, e))
-                    .expect("throw");
+                env.throw_new(
+                    "java/lang/RuntimeException",
+                    format!("ip {} err: {}", ip, e),
+                )
+                .expect("throw");
                 return Err(Error::JavaException);
             }
         }
@@ -86,7 +87,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
                 "java/lang/RuntimeException",
                 format!("server address {}", e),
             )
-                .expect("throw");
+            .expect("throw");
             return Err(Error::JavaException);
         }
     };
@@ -99,12 +100,12 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         }
     };
     #[cfg(not(target_os = "android"))]
-        let device_name = to_string(env, &config, "deviceName")?;
+    let device_name = to_string(env, &config, "deviceName")?;
     #[cfg(target_os = "android")]
-        let device_fd = env.get_field(&config, "deviceFd", "I")?.i()? as i32;
+    let device_fd = env.get_field(&config, "deviceFd", "I")?.i()? as i32;
     let config = match Config::new(
         #[cfg(any(target_os = "windows", target_os = "linux"))]
-            tap,
+        tap,
         token,
         device_id,
         name,
@@ -127,9 +128,9 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         ports,
         first_latency,
         #[cfg(not(target_os = "android"))]
-            device_name,
+        device_name,
         #[cfg(target_os = "android")]
-            device_fd,
+        device_fd,
     ) {
         Ok(config) => config,
         Err(e) => {
@@ -137,7 +138,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
                 "java/lang/RuntimeException",
                 format!("vnt start error {}", e),
             )
-                .expect("throw");
+            .expect("throw");
             return Err(Error::JavaException);
         }
     };

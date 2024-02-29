@@ -1,6 +1,6 @@
 use jni::errors::Error;
-use jni::JNIEnv;
 use jni::objects::{JIntArray, JObject, JObjectArray, JString};
+use jni::JNIEnv;
 
 pub fn to_string_not_null(
     env: &mut JNIEnv,
@@ -76,7 +76,7 @@ pub fn to_string_array(
                 "java/lang/NullPointerException",
                 format!("{},index={}", name, index),
             )
-                .expect("throw");
+            .expect("throw");
             return Err(Error::JavaException);
         }
         match env.get_string(JString::from(object).as_ref())?.to_str() {
@@ -93,7 +93,11 @@ pub fn to_string_array(
     Ok(Some(rs))
 }
 
-pub fn to_i32_array(env: &mut JNIEnv, config: &JObject, name: &str) -> Result<Option<Vec<i32>>, Error> {
+pub fn to_i32_array(
+    env: &mut JNIEnv,
+    config: &JObject,
+    name: &str,
+) -> Result<Option<Vec<i32>>, Error> {
     let obj = env.get_field(&config, name, "[I")?.l()?;
     if obj.is_null() {
         Ok(None)
@@ -111,5 +115,7 @@ pub fn to_integer(env: &mut JNIEnv, config: &JObject, name: &str) -> Result<Opti
         return Ok(None);
     }
     // 调用 intValue
-    return Ok(Some(env.call_method(value,"intValue","()I",&[])?.i()? as _))
+    return Ok(Some(
+        env.call_method(value, "intValue", "()I", &[])?.i()? as _
+    ));
 }
