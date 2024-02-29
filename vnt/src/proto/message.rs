@@ -1319,6 +1319,10 @@ pub struct PunchInfo {
     pub ipv6_port: u32,
     // @@protoc_insertion_point(field:PunchInfo.tcp_port)
     pub tcp_port: u32,
+    // @@protoc_insertion_point(field:PunchInfo.udp_ports)
+    pub udp_ports: ::std::vec::Vec<u32>,
+    // @@protoc_insertion_point(field:PunchInfo.public_ports)
+    pub public_ports: ::std::vec::Vec<u32>,
     // special fields
     // @@protoc_insertion_point(special_field:PunchInfo.special_fields)
     pub special_fields: ::protobuf::SpecialFields,
@@ -1336,7 +1340,7 @@ impl PunchInfo {
     }
 
     fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
-        let mut fields = ::std::vec::Vec::with_capacity(10);
+        let mut fields = ::std::vec::Vec::with_capacity(12);
         let mut oneofs = ::std::vec::Vec::with_capacity(0);
         fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
             "public_ip_list",
@@ -1387,6 +1391,16 @@ impl PunchInfo {
             "tcp_port",
             |m: &PunchInfo| { &m.tcp_port },
             |m: &mut PunchInfo| { &mut m.tcp_port },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
+            "udp_ports",
+            |m: &PunchInfo| { &m.udp_ports },
+            |m: &mut PunchInfo| { &mut m.udp_ports },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
+            "public_ports",
+            |m: &PunchInfo| { &m.public_ports },
+            |m: &mut PunchInfo| { &mut m.public_ports },
         ));
         ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<PunchInfo>(
             "PunchInfo",
@@ -1439,6 +1453,18 @@ impl ::protobuf::Message for PunchInfo {
                 88 => {
                     self.tcp_port = is.read_uint32()?;
                 },
+                98 => {
+                    is.read_repeated_packed_uint32_into(&mut self.udp_ports)?;
+                },
+                96 => {
+                    self.udp_ports.push(is.read_uint32()?);
+                },
+                106 => {
+                    is.read_repeated_packed_uint32_into(&mut self.public_ports)?;
+                },
+                104 => {
+                    self.public_ports.push(is.read_uint32()?);
+                },
                 tag => {
                     ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
                 },
@@ -1479,6 +1505,12 @@ impl ::protobuf::Message for PunchInfo {
         if self.tcp_port != 0 {
             my_size += ::protobuf::rt::uint32_size(11, self.tcp_port);
         }
+        for value in &self.udp_ports {
+            my_size += ::protobuf::rt::uint32_size(12, *value);
+        };
+        for value in &self.public_ports {
+            my_size += ::protobuf::rt::uint32_size(13, *value);
+        };
         my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
         self.special_fields.cached_size().set(my_size as u32);
         my_size
@@ -1515,6 +1547,12 @@ impl ::protobuf::Message for PunchInfo {
         if self.tcp_port != 0 {
             os.write_uint32(11, self.tcp_port)?;
         }
+        for v in &self.udp_ports {
+            os.write_uint32(12, *v)?;
+        };
+        for v in &self.public_ports {
+            os.write_uint32(13, *v)?;
+        };
         os.write_unknown_fields(self.special_fields.unknown_fields())?;
         ::std::result::Result::Ok(())
     }
@@ -1542,6 +1580,8 @@ impl ::protobuf::Message for PunchInfo {
         self.ipv6.clear();
         self.ipv6_port = 0;
         self.tcp_port = 0;
+        self.udp_ports.clear();
+        self.public_ports.clear();
         self.special_fields.clear();
     }
 
@@ -1557,6 +1597,8 @@ impl ::protobuf::Message for PunchInfo {
             ipv6: ::std::vec::Vec::new(),
             ipv6_port: 0,
             tcp_port: 0,
+            udp_ports: ::std::vec::Vec::new(),
+            public_ports: ::std::vec::Vec::new(),
             special_fields: ::protobuf::SpecialFields::new(),
         };
         &instance
@@ -1661,7 +1703,7 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \n\rdevice_status\x18\x03\x20\x01(\rR\x0cdeviceStatus\x12#\n\rclient_sec\
     ret\x18\x04\x20\x01(\x08R\x0cclientSecret\"Y\n\nDeviceList\x12\x14\n\x05\
     epoch\x18\x01\x20\x01(\rR\x05epoch\x125\n\x10device_info_list\x18\x02\
-    \x20\x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\xc4\x02\n\tPunchInfo\
+    \x20\x03(\x0b2\x0b.DeviceInfoR\x0edeviceInfoList\"\x84\x03\n\tPunchInfo\
     \x12$\n\x0epublic_ip_list\x18\x02\x20\x03(\x07R\x0cpublicIpList\x12\x1f\
     \n\x0bpublic_port\x18\x03\x20\x01(\rR\npublicPort\x12*\n\x11public_port_\
     range\x18\x04\x20\x01(\rR\x0fpublicPortRange\x12(\n\x08nat_type\x18\x05\
@@ -1669,8 +1711,10 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x01(\x08R\x05reply\x12\x19\n\x08local_ip\x18\x07\x20\x01(\x07R\x07local\
     Ip\x12\x1d\n\nlocal_port\x18\x08\x20\x01(\rR\tlocalPort\x12\x12\n\x04ipv\
     6\x18\t\x20\x01(\x0cR\x04ipv6\x12\x1b\n\tipv6_port\x18\n\x20\x01(\rR\x08\
-    ipv6Port\x12\x19\n\x08tcp_port\x18\x0b\x20\x01(\rR\x07tcpPort*'\n\x0cPun\
-    chNatType\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\x01b\x06proto3\
+    ipv6Port\x12\x19\n\x08tcp_port\x18\x0b\x20\x01(\rR\x07tcpPort\x12\x1b\n\
+    \tudp_ports\x18\x0c\x20\x03(\rR\x08udpPorts\x12!\n\x0cpublic_ports\x18\r\
+    \x20\x03(\rR\x0bpublicPorts*'\n\x0cPunchNatType\x12\r\n\tSymmetric\x10\0\
+    \x12\x08\n\x04Cone\x10\x01b\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
