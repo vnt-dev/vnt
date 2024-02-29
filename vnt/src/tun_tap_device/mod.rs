@@ -1,52 +1,62 @@
-#[cfg(target_os = "android")]
-mod android;
-#[cfg(any(target_os = "linux"))]
-mod linux;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-mod linux_mac;
-#[cfg(target_os = "macos")]
-mod mac;
-#[cfg(target_os = "windows")]
-mod windows;
+use std::io;
+use std::sync::Arc;
 
-#[cfg(target_os = "android")]
-pub use android::create;
-#[cfg(target_os = "android")]
-pub use android::{DeviceReader, DeviceWriter};
-#[cfg(any(target_os = "linux"))]
-pub use linux::create_device;
-#[cfg(any(target_os = "linux"))]
-pub use linux::delete_device;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use linux_mac::{DeviceReader, DeviceWriter};
-#[cfg(target_os = "macos")]
-pub use mac::create_device;
-#[cfg(target_os = "macos")]
-pub use mac::delete_device;
+use tun::device::IFace;
+use tun::Device;
 
-#[cfg(target_os = "windows")]
-pub use windows::create_device;
-#[cfg(target_os = "windows")]
-pub use windows::delete_device;
-#[cfg(target_os = "windows")]
-pub use windows::{DeviceReader, DeviceWriter};
+use crate::core::Config;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum DeviceType {
-    Tun,
-    Tap,
-}
+const DEFAULT_NAME: &str = "vnt0";
 
-impl DeviceType {
-    pub fn is_tun(&self) -> bool {
-        *self == DeviceType::Tun
+pub fn create_device(config: &Config) -> io::Result<Arc<Device>> {
+    #[cfg(target_os = "linux")]
+    let device = {
+        let device_name = config
+            .device_name
+            .clone()
+            .unwrap_or(DEFAULT_NAME.to_string());
+        if &device_name == DEFAULT_NAME {
+            delete_device();
+        }
+        Arc::new(Device::new(Some(&device_name), config.tap)?)
+    };
+    #[cfg(target_os = "macos")]
+    let device = Arc::new(Device::new(Some(&config.device_name.clone()))?);
+    #[cfg(target_os = "windows")]
+    let device = Arc::new(Device::new(
+        &config
+            .device_name
+            .as_ref()
+            .unwrap_or(&DEFAULT_NAME.to_string()),
+        config.tap,
+    )?);
+    #[cfg(target_os = "android")]
+    let device = Arc::new(Device::new(config.device_fd as _)?);
+    #[cfg(not(target_os = "android"))]
+    {
+        let mtu = config.mtu.unwrap_or_else(|| {
+            if config.password.is_none() {
+                1450
+            } else {
+                1410
+            }
+        });
+        device.set_mtu(mtu)?;
     }
+    Ok(device)
 }
 
-#[derive(Clone)]
-pub struct DriverInfo {
-    pub device_type: DeviceType,
-    pub name: String,
-    pub version: String,
-    pub mac: Option<String>,
+#[cfg(target_os = "linux")]
+fn delete_device() {
+    // 删除默认网卡，此操作有风险，后续可能去除
+    use std::process::Command;
+    let cmd = format!("ip link delete {}", DEFAULT_NAME);
+    let delete_tun = Command::new("sh")
+        .arg("-c")
+        .arg(&cmd)
+        .output()
+        .expect("sh exec error!");
+    if !delete_tun.status.success() {
+        log::warn!("删除网卡失败:{:?}", delete_tun);
+    }
 }
