@@ -5,16 +5,17 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ExternalRoute {
-    route_table: Arc<Vec<(u32, u32, Ipv4Addr)>>,
+    route_table: Vec<(u32, u32, Ipv4Addr)>,
 }
 
 impl ExternalRoute {
     pub fn new(route_table: Vec<(u32, u32, Ipv4Addr)>) -> Self {
-        Self {
-            route_table: Arc::new(route_table),
-        }
+        Self { route_table }
     }
     pub fn route(&self, ip: &Ipv4Addr) -> Option<Ipv4Addr> {
+        if self.route_table.is_empty() {
+            return None;
+        }
         let ip = u32::from_be_bytes(ip.octets());
         for (dest, mask, gateway) in self.route_table.iter() {
             if *mask & ip == *mask & *dest {
@@ -22,6 +23,12 @@ impl ExternalRoute {
             }
         }
         None
+    }
+    pub fn to_route(&self) -> Vec<(Ipv4Addr, Ipv4Addr)> {
+        self.route_table
+            .iter()
+            .map(|(dest, mask, _)| (Ipv4Addr::from(*dest & *mask), Ipv4Addr::from(*mask)))
+            .collect::<Vec<(Ipv4Addr, Ipv4Addr)>>()
     }
 }
 
