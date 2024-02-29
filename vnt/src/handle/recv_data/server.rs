@@ -1,7 +1,7 @@
 use std::io;
 use std::net::Ipv4Addr;
-use std::ops::Sub;
 use std::sync::Arc;
+#[cfg(feature = "server_encrypt")]
 use std::time::{Duration, Instant};
 
 use crossbeam_utils::atomic::AtomicCell;
@@ -21,10 +21,11 @@ use crate::cipher::Cipher;
 use crate::cipher::RsaCipher;
 use crate::external_route::ExternalRoute;
 use crate::handle::callback::{ErrorInfo, ErrorType, HandshakeInfo, RegisterInfo, VntCallback};
+#[cfg(feature = "server_encrypt")]
+use crate::handle::handshaker;
 use crate::handle::recv_data::PacketHandler;
 use crate::handle::{
-    handshaker, registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo,
-    GATEWAY_IP,
+    registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP,
 };
 use crate::nat::NatTest;
 use crate::proto;
@@ -46,7 +47,8 @@ pub struct ServerPacketHandler<Call> {
     config_info: BaseConfigInfo,
     nat_test: NatTest,
     callback: Call,
-    time: Arc<AtomicCell<Instant>>,
+    #[cfg(feature = "server_encrypt")]
+    up_key_time: Arc<AtomicCell<Instant>>,
     route_record: Arc<Mutex<Vec<(Ipv4Addr, Ipv4Addr)>>>,
     external_route: ExternalRoute,
 }
@@ -73,7 +75,8 @@ impl<Call> ServerPacketHandler<Call> {
             config_info,
             nat_test,
             callback,
-            time: Arc::new(AtomicCell::new(Instant::now().sub(Duration::from_secs(60)))),
+            #[cfg(feature = "server_encrypt")]
+            up_key_time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
             route_record: Arc::new(Mutex::default()),
             external_route,
         }
@@ -97,9 +100,12 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
             {
                 let mutex_guard = self.rsa_cipher.lock();
                 if let Some(rsa_cipher) = mutex_guard.as_ref() {
-                    let last = self.time.load();
+                    let last = self.up_key_time.load();
                     if last.elapsed() < Duration::from_secs(1)
-                        || self.time.compare_exchange(last, Instant::now()).is_err()
+                        || self
+                            .up_key_time
+                            .compare_exchange(last, Instant::now())
+                            .is_err()
                     {
                         //短时间不重复上传服务端密钥
                         return Ok(());

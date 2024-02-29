@@ -1,12 +1,16 @@
 use std::io;
 
+use protobuf::Message;
+
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
 use crate::handle::{GATEWAY_IP, SELF_IP};
-use crate::proto::message::{HandshakeRequest, SecretHandshakeRequest};
+use crate::proto::message::HandshakeRequest;
+#[cfg(feature = "server_encrypt")]
+use crate::proto::message::SecretHandshakeRequest;
+#[cfg(feature = "server_encrypt")]
 use crate::protocol::body::RSA_ENCRYPTION_RESERVED;
 use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
-use protobuf::Message;
 
 pub enum HandshakeEnum {
     NotSecret,
