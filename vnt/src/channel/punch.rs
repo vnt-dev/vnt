@@ -1,13 +1,14 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, TcpStream};
+use std::io;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 use std::time::Duration;
-use std::{io, thread};
 
+use mio::net::TcpStream;
 use rand::prelude::SliceRandom;
 
-use crate::channel::channel::{send_tcp, start_tcp_handle, Context};
-use crate::handle::recv_handler::ChannelDataHandler;
+use crate::channel::context::Context;
+use crate::channel::sender::AcceptSocketSender;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PunchModel {
@@ -28,15 +29,21 @@ impl FromStr for PunchModel {
     }
 }
 
+impl Default for PunchModel {
+    fn default() -> Self {
+        PunchModel::All
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct NatInfo {
     pub public_ips: Vec<Ipv4Addr>,
-    pub public_port: u16,
+    pub public_ports: Vec<u16>,
     pub public_port_range: u16,
     pub nat_type: NatType,
     pub(crate) local_ipv4: Option<Ipv4Addr>,
     pub(crate) ipv6: Option<Ipv6Addr>,
-    pub(crate) udp_port: u16,
+    pub(crate) udp_ports: Vec<u16>,
     pub tcp_port: u16,
 }
 
@@ -49,11 +56,11 @@ pub enum NatType {
 impl NatInfo {
     pub fn new(
         mut public_ips: Vec<Ipv4Addr>,
-        public_port: u16,
+        public_ports: Vec<u16>,
         public_port_range: u16,
         mut local_ipv4: Option<Ipv4Addr>,
         mut ipv6: Option<Ipv6Addr>,
-        udp_port: u16,
+        udp_ports: Vec<u16>,
         tcp_port: u16,
         mut nat_type: NatType,
     ) -> Self {
@@ -79,16 +86,16 @@ impl NatInfo {
         }
         Self {
             public_ips,
-            public_port,
+            public_ports,
             public_port_range,
             local_ipv4,
             ipv6,
-            udp_port,
+            udp_ports,
             tcp_port,
             nat_type,
         }
     }
-    pub fn update_addr(&mut self, ip: Ipv4Addr, port: u16) {
+    pub fn update_addr(&mut self, index: usize, ip: Ipv4Addr, port: u16) {
         if !ip.is_multicast()
             && !ip.is_broadcast()
             && !ip.is_unspecified()
@@ -96,7 +103,9 @@ impl NatInfo {
             && !ip.is_private()
             && port != 0
         {
-            self.public_port = port;
+            if let Some(public_port) = self.public_ports.get_mut(index) {
+                *public_port = port;
+            }
             if !self.public_ips.contains(&ip) {
                 self.public_ips.push(ip);
             }
@@ -108,22 +117,32 @@ impl NatInfo {
     pub fn ipv6(&self) -> Option<Ipv6Addr> {
         self.ipv6
     }
-    pub fn local_udp_ipv4addr(&self) -> Option<SocketAddr> {
-        if self.udp_port == 0 {
+    pub fn local_udp_ipv4addr(&self, index: usize) -> Option<SocketAddr> {
+        let len = self.udp_ports.len();
+        if len == 0 {
             return None;
         }
         if let Some(local_ipv4) = self.local_ipv4 {
-            Some(SocketAddr::V4(SocketAddrV4::new(local_ipv4, self.udp_port)))
+            Some(SocketAddr::V4(SocketAddrV4::new(
+                local_ipv4,
+                self.udp_ports[index % len],
+            )))
         } else {
             None
         }
     }
-    pub fn local_udp_ipv6addr(&self) -> Option<SocketAddr> {
-        if self.udp_port == 0 {
+    pub fn local_udp_ipv6addr(&self, index: usize) -> Option<SocketAddr> {
+        let len = self.udp_ports.len();
+        if len == 0 {
             return None;
         }
         if let Some(ipv6) = self.ipv6 {
-            Some(SocketAddr::V6(SocketAddrV6::new(ipv6, self.udp_port, 0, 0)))
+            Some(SocketAddr::V6(SocketAddrV6::new(
+                ipv6,
+                self.udp_ports[index % len],
+                0,
+                0,
+            )))
         } else {
             None
         }
@@ -158,7 +177,7 @@ pub struct Punch {
     port_index: HashMap<Ipv4Addr, usize>,
     punch_model: PunchModel,
     is_tcp: bool,
-    handler: ChannelDataHandler,
+    tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
 }
 
 impl Punch {
@@ -166,7 +185,7 @@ impl Punch {
         context: Context,
         punch_model: PunchModel,
         is_tcp: bool,
-        handler: ChannelDataHandler,
+        tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     ) -> Self {
         let mut port_vec: Vec<u16> = (1..65535).collect();
         port_vec.push(65535);
@@ -178,30 +197,23 @@ impl Punch {
             port_index: HashMap::new(),
             punch_model,
             is_tcp,
-            handler,
+            tcp_socket_sender,
         }
     }
 }
 
 impl Punch {
-    fn connect_tcp(&self, buf: &[u8], addr: &SocketAddr) -> bool {
-        match TcpStream::connect_timeout(&addr, Duration::from_secs(1)) {
-            Ok(mut tcp_stream) => {
-                let context = self.context.clone();
-                let handler = self.handler.clone();
-                match send_tcp(&mut tcp_stream, buf) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::warn!("发送到tcp失败,addr={},err={}", addr, e);
-                        return false;
-                    }
+    fn connect_tcp(&self, buf: &[u8], addr: SocketAddr) -> bool {
+        // mio是非阻塞的，不能立马判断是否能连接成功，所以用标准库的tcp
+        match std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)) {
+            Ok(tcp_stream) => {
+                if tcp_stream.set_nonblocking(true).is_err() {
+                    return false;
                 }
-                thread::spawn(move || {
-                    if let Err(e) = start_tcp_handle(tcp_stream, context, handler) {
-                        log::error!("{:?}", e);
-                    }
-                });
-                return true;
+                return self
+                    .tcp_socket_sender
+                    .try_add_socket((TcpStream::from_std(tcp_stream), addr, Some(buf.to_vec())))
+                    .is_ok();
             }
             Err(e) => {
                 log::warn!("连接到tcp失败,addr={},err={}", addr, e);
@@ -209,41 +221,48 @@ impl Punch {
         }
         false
     }
-    pub async fn punch(&mut self, buf: &[u8], id: Ipv4Addr, nat_info: NatInfo) -> io::Result<()> {
-        if !self.context.need_punch(&id) {
+    pub fn punch(&mut self, buf: &[u8], id: Ipv4Addr, nat_info: NatInfo) -> io::Result<()> {
+        if !self.context.route_table.need_punch(&id) {
             return Ok(());
         }
+        log::info!("nat_info={:?}", nat_info);
+
         if self.is_tcp {
             //向tcp发起连接
             if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
-                if self.connect_tcp(buf, &ipv6_addr) {
+                if self.connect_tcp(buf, ipv6_addr) {
                     return Ok(());
                 }
             }
-            log::info!("local_tcp_ipv4addr={:?}", nat_info.local_tcp_ipv4addr());
             //向tcp发起连接
             if let Some(ipv4_addr) = nat_info.local_tcp_ipv4addr() {
-                if self.connect_tcp(buf, &ipv4_addr) {
+                if self.connect_tcp(buf, ipv4_addr) {
                     return Ok(());
                 }
             }
             if nat_info.nat_type == NatType::Cone && nat_info.public_ips.len() == 1 {
                 let addr =
                     SocketAddr::V4(SocketAddrV4::new(nat_info.public_ips[0], nat_info.tcp_port));
-                if self.connect_tcp(buf, &addr) {
+                if self.connect_tcp(buf, addr) {
                     return Ok(());
                 }
             }
         }
-        if let Some(ipv4_addr) = nat_info.local_udp_ipv4addr() {
-            let _ = self.context.send_main_udp(buf, ipv4_addr);
+        let channel_num = self.context.channel_num();
+        for index in 0..channel_num {
+            if let Some(ipv4_addr) = nat_info.local_udp_ipv4addr(index) {
+                let _ = self.context.send_main_udp(index, buf, ipv4_addr);
+            }
         }
+
         if self.punch_model != PunchModel::IPv4 {
-            if let Some(ipv6_addr) = nat_info.local_udp_ipv6addr() {
-                let rs = self.context.send_main_udp(buf, ipv6_addr);
-                log::info!("发送到ipv6地址:{:?},rs={:?}", ipv6_addr, rs);
-                if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
-                    return Ok(());
+            for index in 0..channel_num {
+                if let Some(ipv6_addr) = nat_info.local_udp_ipv6addr(index) {
+                    let rs = self.context.send_main_udp(index, buf, ipv6_addr);
+                    log::info!("发送到ipv6地址:{:?},rs={:?}", ipv6_addr, rs);
+                    if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -258,16 +277,15 @@ impl Punch {
                 let max_k1 = 60;
                 //全局最多发送max_k2个包
                 let max_k2 = 800;
+                let port = nat_info.public_ports.get(0).map(|e| *e).unwrap_or(0);
                 if nat_info.public_port_range < max_k1 * 3 {
                     //端口变化不大时，在预测的范围内随机发送
-                    let min_port = if nat_info.public_port > nat_info.public_port_range {
-                        nat_info.public_port - nat_info.public_port_range
+                    let min_port = if port > nat_info.public_port_range {
+                        port - nat_info.public_port_range
                     } else {
                         1
                     };
-                    let (max_port, overflow) = nat_info
-                        .public_port
-                        .overflowing_add(nat_info.public_port_range);
+                    let (max_port, overflow) = port.overflowing_add(nat_info.public_port_range);
                     let max_port = if overflow { 65535 } else { max_port };
                     let k = if max_port - min_port + 1 > max_k1 {
                         max_k1 as usize
@@ -280,8 +298,7 @@ impl Punch {
                         let mut rng = rand::thread_rng();
                         nums.shuffle(&mut rng);
                     }
-                    self.punch_symmetric(&nums[..k], buf, &nat_info.public_ips, max_k1 as usize)
-                        .await?;
+                    self.punch_symmetric(&nums[..k], buf, &nat_info.public_ips, max_k1 as usize)?;
                 }
                 let start = *self.port_index.entry(id.clone()).or_insert(0);
                 let mut end = start + max_k2;
@@ -295,21 +312,23 @@ impl Punch {
                     buf,
                     &nat_info.public_ips,
                     max_k2,
-                )
-                .await?;
+                )?;
                 self.port_index.insert(id, index);
             }
             NatType::Cone => {
-                if nat_info.public_port != 0 {
+                for index in 0..channel_num {
                     let is_cone = self.context.is_cone();
-                    for ip in nat_info.public_ips {
-                        let addr = SocketAddr::V4(SocketAddrV4::new(ip, nat_info.public_port));
-                        self.context.send_main_udp(buf, addr)?;
+                    let len = nat_info.public_ports.len();
+                    for ip in &nat_info.public_ips {
+                        let addr = SocketAddr::V4(SocketAddrV4::new(
+                            *ip,
+                            nat_info.public_ports[index % len],
+                        ));
+                        self.context.send_main_udp(index, buf, addr)?;
                         if !is_cone {
                             //只有一方是对称，则对称方要使用全部端口发送数据，符合上述计算的概率
-                            self.context.try_send_all(buf, addr)?;
+                            self.context.try_send_all(buf, addr);
                         }
-                        tokio::time::sleep(Duration::from_millis(2)).await;
                     }
                 }
             }
@@ -317,7 +336,7 @@ impl Punch {
         Ok(())
     }
 
-    async fn punch_symmetric(
+    fn punch_symmetric(
         &self,
         ports: &[u16],
         buf: &[u8],
@@ -332,8 +351,7 @@ impl Punch {
                     return Ok(());
                 }
                 let addr = SocketAddr::V4(SocketAddrV4::new(*pub_ip, *port));
-                self.context.send_main_udp(buf, addr)?;
-                tokio::time::sleep(Duration::from_millis(2)).await;
+                self.context.send_main_udp(0, buf, addr)?;
             }
         }
         Ok(())
