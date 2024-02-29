@@ -6,20 +6,19 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+tun= {path = "tun"}
 packet = { path = "./packet" }
 bytes = "1.5.0"
 log = "0.4.17"
 libc = "0.2.137"
 crossbeam-utils = "0.8"
 crossbeam-epoch = "0.9.15"
-dashmap = {version = "5.5.3",optional = true}
 parking_lot = "0.12.1"
 rand = "0.8.5"
 sha2 = { version = "0.10.6", features = ["oid"] }
 thiserror = "1.0.37"
 protobuf = "3.2.0"
 socket2 = { version = "0.5.2", features = ["all"] }
-tokio = { version = "1.32.0", features = ["full"] }
 aes-gcm = { version = "0.10.2",optional = true }
 ring = { version = "0.17.0", optional = true }
 cbc = {version = "0.1.2",optional = true}
@@ -31,11 +30,9 @@ spki = { version = "0.7.2", features = ["fingerprint", "alloc","base64"] ,option
 openssl-sys = { git = "https://github.com/lbl8603/rust-openssl" ,optional = true}
 libsm = {git="https://github.com/lbl8603/libsm" ,optional = true}
 
-[target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
-tun = { path = "./rust-tun" }
+mio = {version = "0.8.10",features = ["os-poll","net"]}
 
 [target.'cfg(target_os = "windows")'.dependencies]
-win-tun-tap = { path = "./win-tun-tap" }
 libloading = "0.8.0"
 
 
@@ -54,4 +51,4 @@ aes_ecb=["ecb"]
 sm4_cbc=["libsm"]
 aes_gcm=["aes-gcm"]
 server_encrypt =["aes-gcm","rsa","spki"]
-ip_proxy=["dashmap"]
+ip_proxy=[]
