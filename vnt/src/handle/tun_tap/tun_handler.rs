@@ -1,25 +1,26 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
 
-use crate::channel::sender::ChannelSender;
-use crate::cipher::Cipher;
-use crate::core::status::VntWorker;
 use packet::icmp::icmp::IcmpPacket;
 use packet::icmp::Kind;
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
+use tun::device::IFace;
+use tun::Device;
 
-use crate::error::*;
+use crate::channel::context::Context;
+use crate::cipher::Cipher;
 use crate::external_route::ExternalRoute;
-use crate::handle::tun_tap::channel_group::{buf_channel_group, BufSenderGroup};
+use crate::handle::tun_tap::channel_group::{channel_group, GroupSyncSender};
 use crate::handle::CurrentDeviceInfo;
-use crate::igmp_server::IgmpServer;
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
-use crate::tun_tap_device::{DeviceReader, DeviceWriter};
-fn icmp(device_writer: &DeviceWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> Result<()> {
+use crate::util::StopManager;
+
+fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> io::Result<()> {
     if ipv4_packet.protocol() == ipv4::protocol::Protocol::Icmp {
         let mut icmp = IcmpPacket::new(ipv4_packet.payload_mut())?;
         if icmp.kind() == Kind::EchoRequest {
@@ -29,26 +30,28 @@ fn icmp(device_writer: &DeviceWriter, mut ipv4_packet: IpV4Packet<&mut [u8]>) ->
             ipv4_packet.set_source_ip(ipv4_packet.destination_ip());
             ipv4_packet.set_destination_ip(src);
             ipv4_packet.update_checksum();
-            device_writer.write_ipv4_tun(ipv4_packet.buffer)?;
+            device_writer.write(ipv4_packet.buffer)?;
         }
     }
     Ok(())
 }
 
 /// 接收tun数据，并且转发到udp上
-#[inline]
 fn handle(
-    sender: &ChannelSender,
+    context: &Context,
     data: &mut [u8],
     len: usize,
-    device_writer: &DeviceWriter,
-    igmp_server: &Option<IgmpServer>,
+    device_writer: &Device,
     current_device: CurrentDeviceInfo,
-    ip_route: &Option<ExternalRoute>,
+    ip_route: &ExternalRoute,
     #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
-) -> Result<()> {
+) -> io::Result<()> {
+    if len > 12 && data[12] >> 4 != 4 {
+        //忽略非ipv4包
+        return Ok(());
+    }
     let ipv4_packet = IpV4Packet::new(&mut data[12..len])?;
     let src_ip = ipv4_packet.source_ip();
     let dest_ip = ipv4_packet.destination_ip();
@@ -56,10 +59,9 @@ fn handle(
         return icmp(&device_writer, ipv4_packet);
     }
     return crate::handle::tun_tap::base_handle(
-        sender,
+        context,
         data,
         len,
-        igmp_server,
         current_device,
         ip_route,
         #[cfg(feature = "ip_proxy")]
@@ -70,143 +72,127 @@ fn handle(
 }
 
 pub fn start(
-    worker: VntWorker,
-    sender: ChannelSender,
-    device_reader: DeviceReader,
-    device_writer: DeviceWriter,
-    igmp_server: Option<IgmpServer>,
+    stop_manager: StopManager,
+    context: Context,
+    device: Arc<Device>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-    ip_route: Option<ExternalRoute>,
+    ip_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
     parallel: usize,
-) {
-    if parallel == 1 {
-        thread::Builder::new()
-            .name("tun_handler".into())
-            .spawn(move || {
-                if let Err(e) = start_simple(
-                    &sender,
-                    device_reader,
-                    &device_writer,
-                    igmp_server,
-                    current_device,
-                    ip_route,
-                    #[cfg(feature = "ip_proxy")]
-                    ip_proxy_map,
-                    client_cipher,
-                    server_cipher,
-                ) {
-                    log::warn!("stop:{}", e);
-                }
-                let _ = sender.close();
-                let _ = device_writer.close();
-                worker.stop_all();
-            })
-            .unwrap();
-    } else {
-        let (buf_sender, buf_receiver) = buf_channel_group(parallel);
-        for buf_receiver in buf_receiver.0 {
-            let sender = sender.clone();
-            let device_writer = device_writer.clone();
-            let igmp_server = igmp_server.clone();
+    up_counter: Arc<AtomicU64>,
+) -> io::Result<()> {
+    let worker = {
+        let device = device.clone();
+        stop_manager.add_listener("tun_device".into(), move || {
+            if let Err(e) = device.shutdown() {
+                log::warn!("{:?}", e);
+            }
+        })?
+    };
+    if parallel > 1 {
+        let (sender, receivers) = channel_group::<(Vec<u8>, usize)>(parallel, 16);
+        for (index, receiver) in receivers.into_iter().enumerate() {
+            let context = context.clone();
+            let device = device.clone();
             let current_device = current_device.clone();
             let ip_route = ip_route.clone();
             #[cfg(feature = "ip_proxy")]
             let ip_proxy_map = ip_proxy_map.clone();
             let client_cipher = client_cipher.clone();
             let server_cipher = server_cipher.clone();
-            thread::spawn(move || {
-                while let Ok((mut buf, start, len)) = buf_receiver.recv() {
-                    match handle(
-                        &sender,
-                        &mut buf[start..],
-                        len,
-                        &device_writer,
-                        &igmp_server,
-                        current_device.load(),
-                        &ip_route,
-                        #[cfg(feature = "ip_proxy")]
-                        &ip_proxy_map,
-                        &client_cipher,
-                        &server_cipher,
-                    ) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::warn!("{:?}", e)
+            thread::Builder::new()
+                .name(format!("tun_handler_{}", index))
+                .spawn(move || {
+                    while let Ok((mut buf, len)) = receiver.recv() {
+                        #[cfg(not(target_os = "macos"))]
+                        let start = 0;
+                        #[cfg(target_os = "macos")]
+                        let start = 4;
+                        match handle(
+                            &context,
+                            &mut buf[start..],
+                            len,
+                            &device,
+                            current_device.load(),
+                            &ip_route,
+                            #[cfg(feature = "ip_proxy")]
+                            &ip_proxy_map,
+                            &client_cipher,
+                            &server_cipher,
+                        ) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                log::warn!("{:?}", e)
+                            }
                         }
                     }
-                }
-                let _ = sender.close();
-                let _ = device_writer.close();
-            });
+                })?;
         }
-
         thread::Builder::new()
             .name("tun_handler".into())
             .spawn(move || {
-                if let Err(e) = start_(&sender, device_reader, buf_sender) {
+                if let Err(e) = start_multi(stop_manager, device, sender, &up_counter) {
                     log::warn!("stop:{}", e);
                 }
-                let _ = sender.close();
-                let _ = device_writer.close();
                 worker.stop_all();
-            })
-            .unwrap();
+            })?;
+    } else {
+        thread::Builder::new()
+            .name("tun_handler".into())
+            .spawn(move || {
+                if let Err(e) = start_simple(
+                    stop_manager,
+                    &context,
+                    device,
+                    current_device,
+                    ip_route,
+                    #[cfg(feature = "ip_proxy")]
+                    ip_proxy_map,
+                    client_cipher,
+                    server_cipher,
+                    &up_counter,
+                ) {
+                    log::warn!("stop:{}", e);
+                }
+                worker.stop_all();
+            })?;
     }
-}
-
-fn start_(
-    sender: &ChannelSender,
-    device_reader: DeviceReader,
-    mut buf_sender: BufSenderGroup,
-) -> io::Result<()> {
-    loop {
-        let mut buf = vec![0; 4096];
-        buf[..12].fill(0);
-        if sender.is_close() {
-            return Ok(());
-        }
-        let start = 0;
-        let len = device_reader.read(&mut buf[12..])? + 12;
-        #[cfg(any(target_os = "macos"))]
-        let start = 4;
-        if !buf_sender.send((buf, start, len)) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "tun buf_sender发送失败",
-            ));
-        }
-    }
+    Ok(())
 }
 
 fn start_simple(
-    sender: &ChannelSender,
-    device_reader: DeviceReader,
-    device_writer: &DeviceWriter,
-    igmp_server: Option<IgmpServer>,
+    stop_manager: StopManager,
+    context: &Context,
+    device: Arc<Device>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-    ip_route: Option<ExternalRoute>,
+    ip_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
+    up_counter: &AtomicU64,
 ) -> io::Result<()> {
-    let mut buf = [0; 4096];
+    let mut buf = [0; 1024 * 16];
     loop {
-        if sender.is_close() {
+        if stop_manager.is_stop() {
             return Ok(());
         }
-        buf[..12].fill(0);
-        let len = device_reader.read(&mut buf[12..])? + 12;
+        let len = device.read(&mut buf[12..])? + 12;
+        //单线程的
+        up_counter.store(
+            up_counter.load(Ordering::Relaxed) + len as u64,
+            Ordering::Relaxed,
+        );
         #[cfg(any(target_os = "macos"))]
         let mut buf = &mut buf[4..];
+        // buf是重复利用的，需要重置头部
+        buf[..12].fill(0);
         match handle(
-            sender,
+            context,
             &mut buf,
             len,
-            device_writer,
-            &igmp_server,
+            &device,
             current_device.load(),
             &ip_route,
             #[cfg(feature = "ip_proxy")]
@@ -218,6 +204,29 @@ fn start_simple(
             Err(e) => {
                 log::warn!("{:?}", e)
             }
+        }
+    }
+}
+
+fn start_multi(
+    stop_manager: StopManager,
+    device: Arc<Device>,
+    mut group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
+    up_counter: &AtomicU64,
+) -> io::Result<()> {
+    loop {
+        if stop_manager.is_stop() {
+            return Ok(());
+        }
+        let mut buf = vec![0; 1024 * 16];
+        let len = device.read(&mut buf[12..])? + 12;
+        //单线程的
+        up_counter.store(
+            up_counter.load(Ordering::Relaxed) + len as u64,
+            Ordering::Relaxed,
+        );
+        if group_sync_sender.send((buf, len)).is_err() {
+            return Ok(());
         }
     }
 }

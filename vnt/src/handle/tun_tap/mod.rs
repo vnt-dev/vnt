@@ -1,17 +1,13 @@
+use std::io;
 use std::net::Ipv4Addr;
-use std::sync::Arc;
 
-use parking_lot::RwLock;
-
+use crate::channel::context::Context;
 use packet::ip::ipv4::packet::IpV4Packet;
 use packet::ip::ipv4::protocol::Protocol;
 
-use crate::channel::sender::ChannelSender;
 use crate::cipher::Cipher;
-use crate::error::*;
 use crate::external_route::ExternalRoute;
 use crate::handle::{check_dest, CurrentDeviceInfo};
-use crate::igmp_server::{IgmpServer, Multicast};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::{IpProxyMap, ProxyHandler};
 use crate::protocol;
@@ -19,20 +15,17 @@ use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, Version, MAX_TTL};
 
-pub mod channel_group;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub mod tap_handler;
+mod channel_group;
 pub mod tun_handler;
 
 fn broadcast(
     server_cipher: &Cipher,
-    multicast_members: Option<Arc<RwLock<Multicast>>>,
-    sender: &ChannelSender,
+    sender: &Context,
     net_packet: &mut NetPacket<&mut [u8]>,
     current_device: &CurrentDeviceInfo,
-) -> Result<()> {
+) -> io::Result<()> {
     let mut peer_ips = Vec::with_capacity(8);
-    let vec = sender.route_table_one();
+    let vec = sender.route_table.route_table_one();
     let mut relay_count = 0;
     const MAX_COUNT: usize = 8;
     for (peer_ip, route) in vec {
@@ -42,14 +35,9 @@ fn broadcast(
         if peer_ips.len() == MAX_COUNT {
             break;
         }
-        if let Some(members) = &multicast_members {
-            if !members.read().is_send(&peer_ip) {
-                continue;
-            }
-        }
         if route.is_p2p()
             && sender
-                .try_send_by_key(net_packet.buffer(), &route.route_key())
+                .send_by_key(net_packet.buffer(), route.route_key())
                 .is_ok()
         {
             peer_ips.push(peer_ip);
@@ -63,7 +51,7 @@ fn broadcast(
     }
     //转发到服务端的可选择广播，还要进行服务端加密
     if peer_ips.is_empty() {
-        sender.send_main(net_packet.buffer(), current_device.connect_server)?;
+        sender.send_default(net_packet.buffer(), current_device.connect_server)?;
     } else {
         let buf =
             vec![0u8; 12 + 1 + peer_ips.len() * 4 + net_packet.data_len() + ENCRYPTION_RESERVED];
@@ -82,7 +70,7 @@ fn broadcast(
         broadcast.set_address(&peer_ips)?;
         broadcast.set_data(net_packet.buffer())?;
         server_cipher.encrypt_ipv4(&mut server_packet)?;
-        sender.send_main(server_packet.buffer(), current_device.connect_server)?;
+        sender.send_default(server_packet.buffer(), current_device.connect_server)?;
     }
     Ok(())
 }
@@ -92,16 +80,15 @@ fn broadcast(
 ///
 #[inline]
 pub fn base_handle(
-    sender: &ChannelSender,
+    context: &Context,
     buf: &mut [u8],
     data_len: usize, //数据总长度=12+ip包长度
-    igmp_server: &Option<IgmpServer>,
     current_device: CurrentDeviceInfo,
-    ip_route: &Option<ExternalRoute>,
+    ip_route: &ExternalRoute,
     #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
-) -> Result<()> {
+) -> io::Result<()> {
     let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
     let protocol = ipv4_packet.protocol();
     let src_ip = ipv4_packet.source_ip();
@@ -117,52 +104,26 @@ pub fn base_handle(
         if protocol == Protocol::Icmp {
             net_packet.set_gateway_flag(true);
             server_cipher.encrypt_ipv4(&mut net_packet)?;
-            sender.send_main(net_packet.buffer(), current_device.connect_server)?;
+            context.send_default(net_packet.buffer(), current_device.connect_server)?;
         }
         return Ok(());
     }
     if dest_ip.is_multicast() {
         match protocol {
-            Protocol::Igmp => {
-                if igmp_server.is_some() {
-                    //发送到服务端
-                    net_packet.set_destination(current_device.virtual_gateway);
-                    net_packet.set_gateway_flag(true);
-                    server_cipher.encrypt_ipv4(&mut net_packet)?;
-                    sender.send_main(net_packet.buffer(), current_device.connect_server)?;
-                }
-            }
             Protocol::Udp => {
-                let multicast_members = if let Some(igmp_server) = igmp_server {
-                    igmp_server.load(&dest_ip)
-                } else {
-                    //当作广播处理
-                    net_packet.set_destination(Ipv4Addr::BROADCAST);
-                    None
-                };
+                //当作广播处理
+                net_packet.set_destination(Ipv4Addr::BROADCAST);
                 client_cipher.encrypt_ipv4(&mut net_packet)?;
-                broadcast(
-                    server_cipher,
-                    multicast_members,
-                    sender,
-                    &mut net_packet,
-                    &current_device,
-                )?;
+                broadcast(server_cipher, context, &mut net_packet, &current_device)?;
             }
             _ => {}
         }
         return Ok(());
     }
-    if dest_ip.is_broadcast() || current_device.broadcast_address == dest_ip {
+    if dest_ip.is_broadcast() || current_device.broadcast_ip == dest_ip {
         // 广播 发送到直连目标
         client_cipher.encrypt_ipv4(&mut net_packet)?;
-        broadcast(
-            server_cipher,
-            None,
-            sender,
-            &mut net_packet,
-            &current_device,
-        )?;
+        broadcast(server_cipher, context, &mut net_packet, &current_device)?;
         return Ok(());
     }
     if !check_dest(
@@ -170,18 +131,14 @@ pub fn base_handle(
         current_device.virtual_netmask,
         current_device.virtual_network,
     ) {
-        if let Some(ip_route) = ip_route {
-            if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
-                //路由的目标不能是自己
-                if r_dest_ip == src_ip {
-                    return Ok(());
-                }
-                //需要修改目的地址
-                dest_ip = r_dest_ip;
-                net_packet.set_destination(r_dest_ip);
-            } else {
+        if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
+            //路由的目标不能是自己
+            if r_dest_ip == src_ip {
                 return Ok(());
             }
+            //需要修改目的地址
+            dest_ip = r_dest_ip;
+            net_packet.set_destination(r_dest_ip);
         } else {
             return Ok(());
         }
@@ -193,11 +150,8 @@ pub fn base_handle(
     }
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     //优先发到直连到地址
-    if sender
-        .try_send_by_id(net_packet.buffer(), &dest_ip)
-        .is_err()
-    {
-        sender.send_main(net_packet.buffer(), current_device.connect_server)?;
+    if context.send_by_id(net_packet.buffer(), &dest_ip).is_err() {
+        context.send_default(net_packet.buffer(), current_device.connect_server)?;
     }
     return Ok(());
 }
