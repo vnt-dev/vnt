@@ -57,6 +57,8 @@ message PunchInfo{
   bytes ipv6 = 9;
   uint32 ipv6_port = 10;
   uint32 tcp_port = 11;
+  repeated uint32 udp_ports = 12;
+  repeated uint32 public_ports = 13;
 }
 enum PunchNatType{
   Symmetric = 0;
