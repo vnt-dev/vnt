@@ -1,25 +1,68 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// 并发计数器，销毁计数器并不会释放计数槽，这不适用计数器会多次创建销毁的场景
+/// 不安全的并发计数器，谨慎使用
+
 pub struct U64Adder {
+    global_index: Arc<AtomicUsize>,
     inner: Arc<U64AdderInner>,
-    index: Option<usize>,
+    index: usize,
+}
+pub struct SingleU64Adder {
+    inner: Arc<SingleU64AdderInner>,
+}
+impl SingleU64Adder {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(SingleU64AdderInner::new()),
+        }
+    }
+    pub fn add(&mut self, num: u64) {
+        self.inner.add(num);
+    }
+    pub fn get(&self) -> u64 {
+        self.inner.get()
+    }
+    pub fn watch(&self) -> WatchSingleU64Adder {
+        WatchSingleU64Adder {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
+struct SingleU64AdderInner {
+    ptr: *mut u64,
+}
+
+impl SingleU64AdderInner {
+    fn new() -> Self {
+        Self {
+            ptr: Box::into_raw(Box::new(0)),
+        }
+    }
+    #[inline(always)]
+    fn add(&self, num: u64) {
+        unsafe { *self.ptr += num }
+    }
+
+    fn get(&self) -> u64 {
+        unsafe { *self.ptr }
+    }
+}
+
+unsafe impl Send for SingleU64AdderInner {}
+
+unsafe impl Sync for SingleU64AdderInner {}
+
 struct U64AdderInner {
-    global: AtomicU64,
-    base: Vec<AtomicU64>,
+    base: Vec<SingleU64AdderInner>,
 }
 
 impl U64AdderInner {
     pub fn get(&self) -> u64 {
-        let mut count = self.global.load(Ordering::Relaxed);
+        let mut count = 0;
         for counter in self.base.iter() {
-            let num = counter.load(Ordering::Relaxed);
-            if num > 1 {
-                count = count + num - 1;
-            }
+            count += counter.get()
         }
         count
     }
@@ -29,27 +72,18 @@ impl U64Adder {
     /// 计数槽容量
     pub fn with_capacity(capacity: usize) -> Self {
         let mut base = Vec::with_capacity(capacity);
-        base.push(AtomicU64::new(1));
-        for _ in 1..capacity {
-            base.push(AtomicU64::new(0))
+        for _ in 0..capacity {
+            base.push(SingleU64AdderInner::new())
         }
-        let inner = Arc::new(U64AdderInner {
-            global: AtomicU64::new(0),
-            base,
-        });
+        let inner = Arc::new(U64AdderInner { base });
         U64Adder {
+            global_index: Arc::new(AtomicUsize::new(1)),
             inner,
-            index: Some(0),
+            index: 0,
         }
     }
     pub fn add(&mut self, num: u64) {
-        if let Some(index) = self.index {
-            let counter = &self.inner.base[index];
-            let i = counter.load(Ordering::Relaxed);
-            counter.store(i + num, Ordering::Relaxed);
-        } else {
-            self.inner.global.fetch_add(num, Ordering::Relaxed);
-        }
+        self.inner.base[self.index].add(num);
     }
     pub fn get(&self) -> u64 {
         self.inner.get()
@@ -63,21 +97,13 @@ impl U64Adder {
 
 impl Clone for U64Adder {
     fn clone(&self) -> Self {
-        let mut index: Option<usize> = None;
-        for (i, counter) in self.inner.base.iter().enumerate() {
-            //占用一个空闲的计数槽
-            if counter.load(Ordering::Acquire) == 0 {
-                if counter
-                    .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    index = Some(i);
-                    break;
-                }
-            }
+        let index = self.global_index.fetch_add(1, Ordering::AcqRel);
+        if index > self.inner.base.len() {
+            panic!()
         }
 
         Self {
+            global_index: self.global_index.clone(),
             inner: self.inner.clone(),
             index,
         }
@@ -90,6 +116,15 @@ pub struct WatchU64Adder {
 }
 
 impl WatchU64Adder {
+    pub fn get(&self) -> u64 {
+        self.inner.get()
+    }
+}
+#[derive(Clone)]
+pub struct WatchSingleU64Adder {
+    inner: Arc<SingleU64AdderInner>,
+}
+impl WatchSingleU64Adder {
     pub fn get(&self) -> u64 {
         self.inner.get()
     }

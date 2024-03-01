@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +25,9 @@ use crate::handle::{
     maintain, tun_tap, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo,
 };
 use crate::nat::NatTest;
-use crate::util::{Scheduler, StopManager, U64Adder, WatchU64Adder};
+use crate::util::{
+    Scheduler, SingleU64Adder, StopManager, U64Adder, WatchSingleU64Adder, WatchU64Adder,
+};
 use crate::{nat, tun_tap_device, DeviceInfo, VntCallback};
 
 #[derive(Clone)]
@@ -39,7 +40,7 @@ pub struct Vnt {
     context: Context,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     down_count_watcher: WatchU64Adder,
-    up_count_watcher: Arc<AtomicU64>,
+    up_count_watcher: WatchSingleU64Adder,
 }
 
 impl Vnt {
@@ -135,7 +136,7 @@ impl Vnt {
         let (punch_sender, punch_receiver) = sync_channel(3);
         let peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>> =
             Arc::new(RwLock::new(HashMap::with_capacity(16)));
-        let down_counter = U64Adder::with_capacity(8);
+        let down_counter = U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
         let down_count_watcher = down_counter.watch();
         let handler = RecvDataHandler::new(
             #[cfg(feature = "server_encrypt")]
@@ -168,8 +169,8 @@ impl Vnt {
             config.tcp,
             tcp_socket_sender.clone(),
         );
-        let up_counter = Arc::new(AtomicU64::new(0));
-        let up_count_watcher = up_counter.clone();
+        let up_counter = SingleU64Adder::new();
+        let up_count_watcher = up_counter.watch();
         tun_tap::tun_handler::start(
             stop_manager.clone(),
             context.clone(),
@@ -345,7 +346,7 @@ impl Vnt {
         self.context.route_table.route_table()
     }
     pub fn up_stream(&self) -> u64 {
-        self.up_count_watcher.load(Ordering::Relaxed)
+        self.up_count_watcher.get()
     }
     pub fn down_stream(&self) -> u64 {
         self.down_count_watcher.get()

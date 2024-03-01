@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{io, thread};
 
@@ -18,7 +17,7 @@ use crate::handle::tun_tap::channel_group::{channel_group, GroupSyncSender};
 use crate::handle::CurrentDeviceInfo;
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
-use crate::util::StopManager;
+use crate::util::{SingleU64Adder, StopManager};
 
 fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> io::Result<()> {
     if ipv4_packet.protocol() == ipv4::protocol::Protocol::Icmp {
@@ -81,7 +80,7 @@ pub fn start(
     client_cipher: Cipher,
     server_cipher: Cipher,
     parallel: usize,
-    up_counter: Arc<AtomicU64>,
+    mut up_counter: SingleU64Adder,
 ) -> io::Result<()> {
     let worker = {
         let device = device.clone();
@@ -133,7 +132,7 @@ pub fn start(
         thread::Builder::new()
             .name("tun_handler".into())
             .spawn(move || {
-                if let Err(e) = start_multi(stop_manager, device, sender, &up_counter) {
+                if let Err(e) = start_multi(stop_manager, device, sender, &mut up_counter) {
                     log::warn!("stop:{}", e);
                 }
                 worker.stop_all();
@@ -152,7 +151,7 @@ pub fn start(
                     ip_proxy_map,
                     client_cipher,
                     server_cipher,
-                    &up_counter,
+                    &mut up_counter,
                 ) {
                     log::warn!("stop:{}", e);
                 }
@@ -171,7 +170,7 @@ fn start_simple(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: &AtomicU64,
+    up_counter: &mut SingleU64Adder,
 ) -> io::Result<()> {
     let mut buf = [0; 1024 * 16];
     loop {
@@ -180,10 +179,7 @@ fn start_simple(
         }
         let len = device.read(&mut buf[12..])? + 12;
         //单线程的
-        up_counter.store(
-            up_counter.load(Ordering::Relaxed) + len as u64,
-            Ordering::Relaxed,
-        );
+        up_counter.add(len as u64);
         #[cfg(any(target_os = "macos"))]
         let mut buf = &mut buf[4..];
         // buf是重复利用的，需要重置头部
@@ -212,7 +208,7 @@ fn start_multi(
     stop_manager: StopManager,
     device: Arc<Device>,
     mut group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
-    up_counter: &AtomicU64,
+    up_counter: &mut SingleU64Adder,
 ) -> io::Result<()> {
     loop {
         if stop_manager.is_stop() {
@@ -221,10 +217,7 @@ fn start_multi(
         let mut buf = vec![0; 1024 * 16];
         let len = device.read(&mut buf[12..])? + 12;
         //单线程的
-        up_counter.store(
-            up_counter.load(Ordering::Relaxed) + len as u64,
-            Ordering::Relaxed,
-        );
+        up_counter.add(len as u64);
         if group_sync_sender.send((buf, len)).is_err() {
             return Ok(());
         }
