@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, UdpSocket as StdUdpSocket};
+use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{sync_channel, Receiver};
 use std::{io, thread};
@@ -155,7 +155,9 @@ where
     H: RecvChannelHandler,
 {
     let port = context.main_udp_socket[index].local_addr()?.port();
+    let context_ = context.clone();
     let worker = stop_manager.add_listener(format!("main_udp_listen-{}", index), move || {
+        context_.stop();
         match StdUdpSocket::bind("127.0.0.1:0") {
             Ok(udp) => {
                 if let Err(e) = udp.send_to(
@@ -191,22 +193,8 @@ where
         match udp_socket.recv_from(&mut buf) {
             Ok((len, addr)) => {
                 if &buf[..len] == b"stop" {
-                    match addr.ip() {
-                        IpAddr::V4(ip) => {
-                            if ip.is_loopback() {
-                                return Ok(());
-                            }
-                        }
-                        IpAddr::V6(ip) => {
-                            if ip.is_loopback() {
-                                return Ok(());
-                            }
-                            if let Some(ip) = ip.to_ipv4_mapped() {
-                                if ip.is_loopback() {
-                                    return Ok(());
-                                }
-                            }
-                        }
+                    if context.is_stop() {
+                        return Ok(());
                     }
                 }
                 recv_handler.handle(&mut buf[..len], RouteKey::new(false, index, addr), &context);

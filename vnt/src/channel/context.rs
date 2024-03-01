@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,7 @@ impl Context {
             tcp_map: RwLock::new(HashMap::with_capacity(64)),
             route_table: RouteTable::new(use_channel_type, first_latency, channel_num),
             is_tcp,
+            state: AtomicBool::new(true),
         };
         Self {
             inner: Arc::new(inner),
@@ -67,9 +68,17 @@ pub struct ContextInner {
     pub route_table: RouteTable,
     // 是否使用tcp连接服务器
     is_tcp: bool,
+    //状态
+    state: AtomicBool,
 }
 
 impl ContextInner {
+    pub fn is_stop(&self) -> bool {
+        !self.state.load(Ordering::Acquire)
+    }
+    pub fn stop(&self) {
+        self.state.store(false, Ordering::Release);
+    }
     /// 通过sub_udp_socket是否为空来判断是否为锥形网络
     pub fn is_cone(&self) -> bool {
         self.sub_udp_socket.read().is_empty()
@@ -272,8 +281,9 @@ impl RouteTable {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
             }
             if self.channel_num > 1 {
-                //多通道的，则轮流使用
-                let index = count.fetch_add(1, Ordering::Relaxed);
+                //多通道的，则轮流使用,不需要精确轮询 不使用cas性能估计好点
+                let index = count.load(Ordering::Relaxed);
+                count.store(index + 1, Ordering::Relaxed);
                 if let Some((route, _time)) = v.get(index) {
                     if route.is_p2p() && route.rt != 199 {
                         return Ok(*route);
