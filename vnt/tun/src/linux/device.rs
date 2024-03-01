@@ -23,7 +23,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn new(name: Option<&str>, tap: bool) -> io::Result<Self> {
+    pub fn new(name: Option<String>, tap: bool) -> io::Result<Self> {
         let device = unsafe {
             let dev = match name {
                 Some(name) => {

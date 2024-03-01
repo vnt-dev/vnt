@@ -20,7 +20,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn new(name: Option<&str>) -> io::Result<Self> {
+    pub fn new(name: Option<String>) -> io::Result<Self> {
         let id = if let Some(name) = name {
             if name.len() > IFNAMSIZ {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "name too long"));

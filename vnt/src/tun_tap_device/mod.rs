@@ -18,16 +18,16 @@ pub fn create_device(config: &Config) -> io::Result<Arc<Device>> {
         if &device_name == DEFAULT_NAME {
             delete_device();
         }
-        Arc::new(Device::new(Some(&device_name), config.tap)?)
+        Arc::new(Device::new(Some(device_name), config.tap)?)
     };
     #[cfg(target_os = "macos")]
-    let device = Arc::new(Device::new(Some(&config.device_name.clone()))?);
+    let device = Arc::new(Device::new(config.device_name.clone())?);
     #[cfg(target_os = "windows")]
     let device = Arc::new(Device::new(
-        &config
+        config
             .device_name
-            .as_ref()
-            .unwrap_or(&DEFAULT_NAME.to_string()),
+            .clone()
+            .unwrap_or(DEFAULT_NAME.to_string()),
         config.tap,
     )?);
     #[cfg(target_os = "android")]

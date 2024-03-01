@@ -49,7 +49,7 @@ unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
 impl Device {
-    pub fn new(name: &str) -> io::Result<Self> {
+    pub fn new(name: String) -> io::Result<Self> {
         unsafe {
             let library = match Library::new("wintun.dll") {
                 Ok(library) => library,
@@ -69,7 +69,7 @@ impl Device {
                     ));
                 }
             };
-            let name_utf16 = encode_utf16(name);
+            let name_utf16 = encode_utf16(&name);
             if name_utf16.len() > MAX_POOL {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,

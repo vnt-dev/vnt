@@ -2,7 +2,6 @@ use crate::device::IFace;
 use crate::windows::{tap, tun};
 use std::io;
 use std::net::Ipv4Addr;
-use std::ops::Deref;
 
 pub enum Device {
     Tap(tap::Device),
@@ -10,7 +9,7 @@ pub enum Device {
 }
 
 impl Device {
-    pub fn new(name: &str, tap: bool) -> io::Result<Self> {
+    pub fn new(name: String, tap: bool) -> io::Result<Self> {
         if tap {
             Ok(Device::Tap(tap::Device::new(name)?))
         } else {

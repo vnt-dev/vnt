@@ -52,12 +52,11 @@ unsafe impl Sync for Device {}
 
 impl Device {
     /// 打开设备，设置为TUN模式，激活网卡
-    pub fn new(name_str: &str) -> io::Result<Self> {
-        let name = encode_utf16(name_str);
-        let luid = ffi::alias_to_luid(&name).map_err(|e| {
+    pub fn new(name: String) -> io::Result<Self> {
+        let luid = ffi::alias_to_luid(&encode_utf16(&name)).map_err(|e| {
             io::Error::new(
                 e.kind(),
-                format!("alias_to_luid name={},err={:?}", name_str, e),
+                format!("alias_to_luid name={},err={:?}", name, e),
             )
         })?;
         let guid = ffi::luid_to_guid(&luid)
@@ -65,7 +64,7 @@ impl Device {
             .map_err(|e| {
                 io::Error::new(
                     e.kind(),
-                    format!("luid_to_guid name={},err={:?}", name_str, e),
+                    format!("luid_to_guid name={},err={:?}", name, e),
                 )
             })?;
         let path = format!(r"\\.\Global\{}.tap", decode_utf16(&guid));
@@ -76,7 +75,7 @@ impl Device {
             OPEN_EXISTING,
             FILE_ATTRIBUTE_SYSTEM | FILE_FLAG_OVERLAPPED,
         )
-        .map_err(|e| io::Error::new(e.kind(), format!("tap name={},err={:?}", name_str, e)))?;
+        .map_err(|e| io::Error::new(e.kind(), format!("tap name={},err={:?}", name, e)))?;
 
         // ep保存tun网卡的IP地址和掩码
         // let mut ep = [0;3];
@@ -97,7 +96,7 @@ impl Device {
             .map_err(|e| {
                 io::Error::new(
                     e.kind(),
-                    format!("TAP_WIN_IOCTL_CONFIG_TUN name={},err={:?}", name_str, e),
+                    format!("TAP_WIN_IOCTL_CONFIG_TUN name={},err={:?}", name, e),
                 )
             })
             .map_err(|e| io::Error::new(e.kind(), format!("TAP_WIN_IOCTL_GET_MAC,err={:?}", e)))?;
