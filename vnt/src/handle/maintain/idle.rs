@@ -86,8 +86,10 @@ fn idle_route0<Call: VntCallback>(
             context.route_table.remove_route(&ip, route);
             if cur.is_gateway(&ip) {
                 //网关路由过期，则需要改变状态
-                let _ = context.change_status(current_device);
-                call.error(ErrorInfo::new(ErrorType::Disconnect));
+                let cur = context.change_status(current_device);
+                if cur.status.offline() {
+                    call.error(ErrorInfo::new(ErrorType::Disconnect));
+                }
             }
             Duration::from_millis(100)
         }
