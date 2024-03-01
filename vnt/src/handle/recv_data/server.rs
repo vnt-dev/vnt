@@ -271,11 +271,11 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         }
                         if let Err(e) =
                             self.device
-                                .add_route(Ipv4Addr::BROADCAST, Ipv4Addr::UNSPECIFIED, 1)
+                                .add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, 1)
                         {
                             log::warn!("添加广播路由失败 ={:?}", e);
                         } else {
-                            guard.push((Ipv4Addr::BROADCAST, Ipv4Addr::UNSPECIFIED));
+                            guard.push((Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST));
                         }
 
                         if let Err(e) = self.device.add_route(
