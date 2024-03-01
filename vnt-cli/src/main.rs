@@ -262,10 +262,10 @@ fn main() {
         let use_channel_type = matches
             .opt_get::<UseChannelType>("use-channel")
             .unwrap()
-            .unwrap_or_else(||{
-                if relay{
+            .unwrap_or_else(|| {
+                if relay {
                     UseChannelType::Relay
-                }else{
+                } else {
                     UseChannelType::All
                 }
             });
