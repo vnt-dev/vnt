@@ -24,9 +24,7 @@ use crate::handle::callback::{ErrorInfo, ErrorType, HandshakeInfo, RegisterInfo,
 #[cfg(feature = "server_encrypt")]
 use crate::handle::handshaker;
 use crate::handle::recv_data::PacketHandler;
-use crate::handle::{
-    registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP,
-};
+use crate::handle::{registrar, BaseConfigInfo, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP};
 use crate::nat::NatTest;
 use crate::proto;
 use crate::proto::message::{DeviceList, HandshakeResponse, RegistrationResponse};
@@ -271,6 +269,28 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         } else {
                             guard.push((virtual_network, virtual_netmask));
                         }
+                        if let Err(e) =
+                            self.device
+                                .add_route(Ipv4Addr::BROADCAST, Ipv4Addr::UNSPECIFIED, 1)
+                        {
+                            log::warn!("添加广播路由失败 ={:?}", e);
+                        } else {
+                            guard.push((Ipv4Addr::BROADCAST, Ipv4Addr::UNSPECIFIED));
+                        }
+
+                        if let Err(e) = self.device.add_route(
+                            Ipv4Addr::from([224, 0, 0, 0]),
+                            Ipv4Addr::from([240, 0, 0, 0]),
+                            1,
+                        ) {
+                            log::warn!("添加组播路由失败 ={:?}", e);
+                        } else {
+                            guard.push((
+                                Ipv4Addr::from([224, 0, 0, 0]),
+                                Ipv4Addr::from([240, 0, 0, 0]),
+                            ));
+                        }
+
                         for (dest, mask) in self.external_route.to_route() {
                             if let Err(e) = self.device.add_route(dest, mask, 1) {
                                 log::warn!("添加路由失败 ={:?}", e);
@@ -323,7 +343,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
         dev.1 = ip_list;
     }
     fn register(&self, current_device: &CurrentDeviceInfo, context: &Context) -> io::Result<()> {
-        if current_device.status == ConnectStatus::Connected {
+        if current_device.status.online() {
             //已连接的不需要注册
             return Ok(());
         }
