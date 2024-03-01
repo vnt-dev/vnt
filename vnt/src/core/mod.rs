@@ -4,6 +4,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 pub use conn::Vnt;
 
 use crate::channel::punch::PunchModel;
+use crate::channel::UseChannelType;
 use crate::cipher::CipherModel;
 
 mod conn;
@@ -24,7 +25,6 @@ pub struct Config {
     pub mtu: Option<u32>,
     pub tcp: bool,
     pub ip: Option<Ipv4Addr>,
-    pub relay: bool,
     #[cfg(feature = "ip_proxy")]
     pub no_proxy: bool,
     pub server_encrypt: bool,
@@ -38,6 +38,7 @@ pub struct Config {
     pub device_name: Option<String>,
     #[cfg(target_os = "android")]
     pub device_fd: i32,
+    pub use_channel_type: UseChannelType,
 }
 
 impl Config {
@@ -55,7 +56,6 @@ impl Config {
         mtu: Option<u32>,
         tcp: bool,
         ip: Option<Ipv4Addr>,
-        relay: bool,
         #[cfg(feature = "ip_proxy")] no_proxy: bool,
         server_encrypt: bool,
         parallel: usize,
@@ -66,6 +66,7 @@ impl Config {
         first_latency: bool,
         #[cfg(not(target_os = "android"))] device_name: Option<String>,
         #[cfg(target_os = "android")] device_fd: i32,
+        use_channel_type: UseChannelType,
     ) -> io::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -96,7 +97,6 @@ impl Config {
             mtu,
             tcp,
             ip,
-            relay,
             #[cfg(feature = "ip_proxy")]
             no_proxy,
             server_encrypt,
@@ -110,6 +110,7 @@ impl Config {
             device_name,
             #[cfg(target_os = "android")]
             device_fd,
+            use_channel_type,
         })
     }
 }

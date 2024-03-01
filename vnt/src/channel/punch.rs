@@ -24,7 +24,8 @@ impl FromStr for PunchModel {
         match s.to_lowercase().trim() {
             "ipv4" => Ok(PunchModel::IPv4),
             "ipv6" => Ok(PunchModel::IPv6),
-            _ => Ok(PunchModel::All),
+            "all" => Ok(PunchModel::All),
+            _ => Err(format!("not match '{}', enum: ipv4/ipv6/all", s)),
         }
     }
 }

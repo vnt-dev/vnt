@@ -15,7 +15,7 @@ use tun::Device;
 
 use crate::channel::context::Context;
 use crate::channel::punch::NatInfo;
-use crate::channel::{Route, RouteKey};
+use crate::channel::{Route, RouteKey, UseChannelType};
 use crate::cipher::Cipher;
 use crate::external_route::AllowExternalRoute;
 use crate::handle::recv_data::PacketHandler;
@@ -35,7 +35,7 @@ use crate::protocol::{
 pub struct ClientPacketHandler {
     device: Arc<Device>,
     client_cipher: Cipher,
-    relay: bool,
+    use_channel_type: UseChannelType,
     punch_sender: SyncSender<(Ipv4Addr, NatInfo)>,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     nat_test: NatTest,
@@ -48,7 +48,7 @@ impl ClientPacketHandler {
     pub fn new(
         device: Arc<Device>,
         client_cipher: Cipher,
-        relay: bool,
+        use_channel_type: UseChannelType,
         punch_sender: SyncSender<(Ipv4Addr, NatInfo)>,
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         nat_test: NatTest,
@@ -58,7 +58,7 @@ impl ClientPacketHandler {
         Self {
             device,
             client_cipher,
-            relay,
+            use_channel_type,
             punch_sender,
             peer_nat_info_map,
             nat_test,
@@ -189,7 +189,7 @@ impl ClientPacketHandler {
                 context.route_table.add_route(source, route);
             }
             ControlPacket::PunchRequest => {
-                if self.relay {
+                if self.use_channel_type.is_only_relay() {
                     return Ok(());
                 }
                 //回应
@@ -203,7 +203,7 @@ impl ClientPacketHandler {
                 context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::PunchResponse => {
-                if self.relay {
+                if self.use_channel_type.is_only_relay() {
                     return Ok(());
                 }
                 let route = Route::from(route_key, 1, 199);
@@ -237,7 +237,7 @@ impl ClientPacketHandler {
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
     ) -> io::Result<()> {
-        if self.relay {
+        if self.use_channel_type.is_only_relay() {
             return Ok(());
         }
         let source = net_packet.source();

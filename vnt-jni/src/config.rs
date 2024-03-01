@@ -6,6 +6,7 @@ use jni::objects::JObject;
 use jni::JNIEnv;
 
 use vnt::channel::punch::PunchModel;
+use vnt::channel::UseChannelType;
 use vnt::cipher::CipherModel;
 use vnt::core::Config;
 
@@ -25,7 +26,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     let mtu = to_integer(env, &config, "mtu")?.map(|v| v as u32);
     let tcp = env.get_field(&config, "tcp", "Z")?.z()?;
     let server_encrypt = env.get_field(&config, "serverEncrypt", "Z")?.z()?;
-    let relay = env.get_field(&config, "relay", "Z")?.z()?;
+    let use_channel = to_string(env, &config, "useChannel")?;
     let finger = env.get_field(&config, "finger", "Z")?.z()?;
     let first_latency = env.get_field(&config, "firstLatency", "Z")?.z()?;
     let in_ips = to_string_array(env, &config, "inIps")?;
@@ -118,7 +119,6 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         mtu,
         tcp,
         ip,
-        relay,
         false,
         server_encrypt,
         1,
@@ -131,6 +131,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         device_name,
         #[cfg(target_os = "android")]
         device_fd,
+        UseChannelType::from_str(&use_channel.unwrap_or_default()).unwrap_or_default(),
     ) {
         Ok(config) => config,
         Err(e) => {

@@ -5,6 +5,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use vnt::channel::punch::PunchModel;
+use vnt::channel::UseChannelType;
 use vnt::cipher::CipherModel;
 use vnt::core::Config;
 
@@ -24,7 +25,7 @@ pub struct FileConfig {
     pub mtu: Option<u32>,
     pub tcp: bool,
     pub ip: Option<String>,
-    pub relay: bool,
+    pub use_channel: String,
     #[cfg(feature = "ip_proxy")]
     pub no_proxy: bool,
     pub server_encrypt: bool,
@@ -58,14 +59,14 @@ impl Default for FileConfig {
             mtu: None,
             tcp: false,
             ip: None,
-            relay: false,
+            use_channel: "all".to_string(),
             #[cfg(feature = "ip_proxy")]
             no_proxy: false,
             server_encrypt: false,
             parallel: 1,
             cipher_model: "aes_gcm".to_string(),
             finger: false,
-            punch_model: "".to_string(),
+            punch_model: "all".to_string(),
             ports: None,
             cmd: false,
             first_latency: false,
@@ -137,6 +138,8 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
 
     let punch_model = PunchModel::from_str(&file_conf.punch_model)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let use_channel_type = UseChannelType::from_str(&file_conf.use_channel)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     let config = Config::new(
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         file_conf.tap,
@@ -152,7 +155,6 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         file_conf.mtu,
         file_conf.tcp,
         virtual_ip,
-        file_conf.relay,
         #[cfg(feature = "ip_proxy")]
         file_conf.no_proxy,
         file_conf.server_encrypt,
@@ -163,6 +165,7 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         file_conf.ports,
         file_conf.first_latency,
         file_conf.device_name,
+        use_channel_type,
     )
     .unwrap();
     Ok((config, file_conf.cmd))

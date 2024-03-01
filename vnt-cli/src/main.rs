@@ -8,6 +8,7 @@ use getopts::Options;
 
 use common::args_parse::{ips_parse, out_ips_parse};
 use vnt::channel::punch::PunchModel;
+use vnt::channel::UseChannelType;
 use vnt::cipher::CipherModel;
 use vnt::core::{Config, Vnt};
 
@@ -57,6 +58,7 @@ fn main() {
     opts.optflag("", "cmd", "开启窗口输入");
     opts.optflag("", "no-proxy", "关闭内置代理");
     opts.optflag("", "first-latency", "优先延迟");
+    opts.optflag("", "use-channel", "使用通道 relay/p2p,默认两者都使用");
     opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
@@ -213,6 +215,7 @@ fn main() {
         }
         let tcp_channel = matches.opt_present("tcp");
         let relay = matches.opt_present("relay");
+
         let parallel = matches.opt_get::<usize>("par").unwrap().unwrap_or(1);
         if parallel == 0 {
             println!("'--par {}' invalid", parallel);
@@ -256,6 +259,17 @@ fn main() {
             .opt_get::<PunchModel>("punch")
             .unwrap()
             .unwrap_or(PunchModel::All);
+        let use_channel_type = matches
+            .opt_get::<UseChannelType>("use-channel")
+            .unwrap()
+            .unwrap_or_else(||{
+                if relay{
+                    UseChannelType::Relay
+                }else{
+                    UseChannelType::All
+                }
+            });
+
         let ports = matches
             .opt_get::<String>("ports")
             .unwrap_or(None)
@@ -280,7 +294,6 @@ fn main() {
             mtu,
             tcp_channel,
             virtual_ip,
-            relay,
             #[cfg(feature = "ip_proxy")]
             no_proxy,
             server_encrypt,
@@ -291,6 +304,7 @@ fn main() {
             ports,
             first_latency,
             device_name,
+            use_channel_type,
         )
         .unwrap();
         (config, cmd)
@@ -414,7 +428,6 @@ fn print_usage(program: &str, _opts: Options) {
 
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
-    println!("  --relay             仅使用服务器转发,不使用p2p,默认情况允许使用p2p");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
     if !enums.is_empty() {
         println!(
@@ -425,12 +438,13 @@ fn print_usage(program: &str, _opts: Options) {
     if !enums.is_empty() {
         println!("  --finger            增加数据指纹校验,可增加安全性,如果服务端开启指纹校验,则客户端也必须开启");
     }
-    println!("  --punch <punch>     取值ipv4/ipv6,ipv4表示仅使用ipv4打洞");
+    println!("  --punch <punch>     取值ipv4/ipv6/all,ipv4表示仅使用ipv4打洞");
     println!("  --ports <port,port> 取值0~65535,指定本地监听的一组端口,默认监听两个随机端口,使用过多端口会增加网络负担");
     println!("  --cmd               开启交互式命令,使用此参数开启控制台输入");
     #[cfg(feature = "ip_proxy")]
     println!("  --no-proxy          关闭内置代理,如需点对网则需要配置网卡NAT转发");
     println!("  --first-latency     优先低延迟的通道,默认情况优先使用p2p通道");
+    println!("  --use-channel <p2p> 使用通道 relay/p2p/all,默认两者都使用");
     println!("  --nic <tun0>        虚拟网卡名称,windows下使用tap模式则必须指定此参数");
 
     println!();

@@ -1,5 +1,6 @@
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
+use std::str::FromStr;
 use std::time::Duration;
 
 use crate::channel::context::Context;
@@ -19,7 +20,40 @@ pub mod tcp_channel;
 pub mod udp_channel;
 
 const BUFFER_SIZE: usize = 1024 * 16;
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum UseChannelType {
+    Relay,
+    P2p,
+    All,
+}
+impl UseChannelType {
+    pub fn is_only_relay(&self) -> bool {
+        self == &UseChannelType::Relay
+    }
+    pub fn is_only_p2p(&self) -> bool {
+        self == &UseChannelType::P2p
+    }
+    pub fn is_all(&self) -> bool {
+        self == &UseChannelType::All
+    }
+}
+impl FromStr for UseChannelType {
+    type Err = String;
 
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().trim() {
+            "relay" => Ok(UseChannelType::Relay),
+            "p2p" => Ok(UseChannelType::P2p),
+            "all" => Ok(UseChannelType::All),
+            _ => Err(format!("not match '{}', enum: relay/p2p/all", s)),
+        }
+    }
+}
+impl Default for UseChannelType {
+    fn default() -> Self {
+        UseChannelType::All
+    }
+}
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Status {
     Cone,
@@ -104,6 +138,7 @@ impl RouteKey {
 
 pub fn init_context(
     ports: Vec<u16>,
+    use_channel_type: UseChannelType,
     first_latency: bool,
     is_tcp: bool,
 ) -> io::Result<(Context, mio::net::TcpListener)> {
@@ -123,7 +158,7 @@ pub fn init_context(
         main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
         udps.push(main_channel);
     }
-    let context = Context::new(udps, first_latency, is_tcp);
+    let context = Context::new(udps, use_channel_type, first_latency, is_tcp);
 
     let port = context.main_local_udp_port()?[0];
     //监听v6+v4双栈，tcp通道使用异步io

@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 
 use crate::channel::punch::NatType;
 use crate::channel::sender::{AcceptSocketSender, ChannelSender, PacketSender};
-use crate::channel::{Route, RouteKey};
+use crate::channel::{Route, RouteKey, UseChannelType};
 use crate::handle::{ConnectStatus, CurrentDeviceInfo};
 
 /// 传输通道上下文，持有udp socket、tcp socket和路由信息
@@ -21,14 +21,19 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(main_udp_socket: Vec<UdpSocket>, first_latency: bool, is_tcp: bool) -> Self {
+    pub fn new(
+        main_udp_socket: Vec<UdpSocket>,
+        use_channel_type: UseChannelType,
+        first_latency: bool,
+        is_tcp: bool,
+    ) -> Self {
         let channel_num = main_udp_socket.len();
         assert_ne!(channel_num, 0, "not channel");
         let inner = ContextInner {
             main_udp_socket,
             sub_udp_socket: RwLock::new(Vec::with_capacity(64)),
             tcp_map: RwLock::new(HashMap::with_capacity(64)),
-            route_table: RouteTable::new(first_latency, channel_num),
+            route_table: RouteTable::new(use_channel_type, first_latency, channel_num),
             is_tcp,
         };
         Self {
@@ -123,14 +128,14 @@ impl ContextInner {
         loop {
             let status = if self.route_table.route_one(&cur.virtual_gateway).is_some() {
                 //已连接
-                if cur.status == ConnectStatus::Connected {
+                if cur.status.online() {
                     return cur;
                 }
                 //状态变为已连接
                 ConnectStatus::Connected
             } else {
                 //未连接
-                if cur.status == ConnectStatus::Connecting {
+                if cur.status.offline() {
                     return cur;
                 }
                 //状态变为未连接
@@ -246,12 +251,14 @@ pub struct RouteTable {
         RwLock<HashMap<Ipv4Addr, (AtomicUsize, Vec<(Route, AtomicCell<Instant>)>)>>,
     first_latency: bool,
     channel_num: usize,
+    use_channel_type: UseChannelType,
 }
 
 impl RouteTable {
-    fn new(first_latency: bool, channel_num: usize) -> Self {
+    fn new(use_channel_type: UseChannelType, first_latency: bool, channel_num: usize) -> Self {
         Self {
             route_table: RwLock::new(HashMap::with_capacity(64)),
+            use_channel_type,
             first_latency,
             channel_num,
         }
@@ -295,6 +302,20 @@ impl RouteTable {
         self.add_route_(id, route, false)
     }
     fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) {
+        // 限制通道类型
+        match self.use_channel_type {
+            UseChannelType::Relay => {
+                if route.metric < 2 {
+                    return;
+                }
+            }
+            UseChannelType::P2p => {
+                if route.metric != 1 {
+                    return;
+                }
+            }
+            UseChannelType::All => {}
+        }
         let key = route.route_key();
         let mut route_table = self.route_table.write();
         let (_, list) = route_table
