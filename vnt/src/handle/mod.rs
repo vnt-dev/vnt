@@ -110,6 +110,15 @@ pub enum ConnectStatus {
     Connected,
 }
 
+impl ConnectStatus {
+    pub fn online(&self) -> bool {
+        self == &ConnectStatus::Connected
+    }
+    pub fn offline(&self) -> bool {
+        self == &ConnectStatus::Connecting
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CurrentDeviceInfo {
     //本机虚拟IP
