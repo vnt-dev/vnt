@@ -5,6 +5,7 @@ use std::os::fd::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{collections::HashMap, io, net::SocketAddr, thread};
 
 use bytes::{BufMut, BytesMut};
@@ -222,7 +223,7 @@ fn accept_handle(
                             mapping.insert(dest_fd, src_fd);
                         }
                         Err(e) => {
-                            log::error!("connect:{:?}", e);
+                            log::error!("connect:{:?} {}->{}", e, addr, dest_addr);
                         }
                     }
                 }
@@ -249,13 +250,9 @@ fn tcp_connect(src_port: u16, addr: SocketAddr) -> io::Result<TcpStream> {
     {
         socket.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into())?;
     }
-    socket.set_nonblocking(true)?;
     let _ = socket.set_nodelay(false);
-    if let Err(e) = socket.connect(&addr.into()) {
-        if e.kind() != io::ErrorKind::WouldBlock {
-            return Err(e);
-        }
-    }
+    socket.connect_timeout(&addr.into(), Duration::from_secs(3))?;
+    socket.set_nonblocking(true)?;
     Ok(TcpStream::from_std(socket.into()))
 }
 
