@@ -119,7 +119,10 @@ fn check_gateway_channel<Call: VntCallback>(
             log::warn!("{:?}", e);
             if context.is_main_tcp() {
                 //tcp需要重连
-                let tcp_stream = std::net::TcpStream::connect(current_device.connect_server)?;
+                let tcp_stream = std::net::TcpStream::connect_timeout(
+                    &current_device.connect_server,
+                    Duration::from_secs(5),
+                )?;
                 tcp_stream.set_nonblocking(true)?;
                 if let Err(e) = tcp_socket_sender.try_add_socket((
                     TcpStream::from_std(tcp_stream),
