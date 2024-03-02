@@ -49,7 +49,7 @@ impl SingleU64AdderInner {
         unsafe { *self.ptr }
     }
 }
-impl Drop for SingleU64AdderInner{
+impl Drop for SingleU64AdderInner {
     fn drop(&mut self) {
         unsafe {
             let _ = Box::from_raw(self.ptr);
