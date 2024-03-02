@@ -73,6 +73,9 @@ pub struct ContextInner {
 }
 
 impl ContextInner {
+    pub fn use_channel_type(&self) -> UseChannelType {
+        self.route_table.use_channel_type
+    }
     pub fn is_stop(&self) -> bool {
         !self.state.load(Ordering::Acquire)
     }

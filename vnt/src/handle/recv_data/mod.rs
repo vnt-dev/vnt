@@ -12,7 +12,7 @@ use tun::Device;
 use crate::channel::context::Context;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::punch::NatInfo;
-use crate::channel::{RouteKey, UseChannelType};
+use crate::channel::RouteKey;
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
@@ -60,7 +60,6 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         config_info: BaseConfigInfo,
         nat_test: NatTest,
         callback: Call,
-        use_channel_type: UseChannelType,
         punch_sender: SyncSender<(Ipv4Addr, NatInfo)>,
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         external_route: ExternalRoute,
@@ -83,7 +82,6 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         let client = ClientPacketHandler::new(
             device.clone(),
             client_cipher,
-            use_channel_type,
             punch_sender,
             peer_nat_info_map,
             nat_test,

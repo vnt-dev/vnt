@@ -14,7 +14,7 @@ use tun::device::IFace;
 use crate::channel::context::Context;
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
-use crate::channel::{init_channel, init_context, Route, RouteKey, UseChannelType};
+use crate::channel::{init_channel, init_context, Route, RouteKey};
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
@@ -136,7 +136,8 @@ impl Vnt {
         let (punch_sender, punch_receiver) = sync_channel(3);
         let peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>> =
             Arc::new(RwLock::new(HashMap::with_capacity(16)));
-        let down_counter = U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
+        let down_counter =
+            U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
         let down_count_watcher = down_counter.watch();
         let handler = RecvDataHandler::new(
             #[cfg(feature = "server_encrypt")]
@@ -149,7 +150,6 @@ impl Vnt {
             config_info.clone(),
             nat_test.clone(),
             callback.clone(),
-            config.use_channel_type,
             punch_sender,
             peer_nat_info_map.clone(),
             external_route.clone(),
@@ -198,8 +198,7 @@ impl Vnt {
             let nat_test = nat_test.clone();
             let device_list = device_list.clone();
             let current_device = current_device.clone();
-            let use_channel_type = config.use_channel_type;
-            if !use_channel_type.is_only_relay() {
+            if !config.use_channel_type.is_only_relay() {
                 // 定时nat探测
                 maintain::retrieve_nat_type(
                     &scheduler,
@@ -222,7 +221,6 @@ impl Vnt {
                     config_info,
                     punch,
                     callback,
-                    use_channel_type,
                 );
             });
         }
@@ -253,7 +251,6 @@ pub fn start<Call: VntCallback>(
     config_info: BaseConfigInfo,
     punch: Punch,
     callback: Call,
-    use_channel_type: UseChannelType,
 ) {
     // 定时心跳
     maintain::heartbeat(
@@ -275,13 +272,15 @@ pub fn start<Call: VntCallback>(
         callback,
     );
     // 定时客户端中继检测
-    maintain::client_relay(
-        &scheduler,
-        context.clone(),
-        current_device.clone(),
-        device_list.clone(),
-        client_cipher.clone(),
-    );
+    if !context.use_channel_type().is_only_p2p() {
+        maintain::client_relay(
+            &scheduler,
+            context.clone(),
+            current_device.clone(),
+            device_list.clone(),
+            client_cipher.clone(),
+        );
+    }
     // 定时地址探测
     maintain::addr_request(
         &scheduler,
@@ -290,7 +289,7 @@ pub fn start<Call: VntCallback>(
         server_cipher.clone(),
         config_info.clone(),
     );
-    if !use_channel_type.is_only_relay() {
+    if !context.use_channel_type().is_only_relay() {
         // 定时打洞
         maintain::punch(
             &scheduler,
