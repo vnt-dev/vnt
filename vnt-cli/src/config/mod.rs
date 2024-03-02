@@ -175,11 +175,19 @@ pub fn get_device_id() -> String {
     if let Some(id) = common::identifier::get_unique_identifier() {
         id
     } else {
-        let path_buf = crate::app_home().unwrap().join("device-id");
+        let id = uuid::Uuid::new_v4().to_string();
+        let path_buf = match crate::app_home() {
+            Ok(path_buf) => {
+                path_buf.join("device-id")
+            }
+            Err(e) => {
+                log::warn!("{:?}",e);
+                return id;
+            }
+        };
         if let Ok(id) = std::fs::read_to_string(path_buf.as_path()) {
             id
         } else {
-            let id = uuid::Uuid::new_v4().to_string();
             let _ = std::fs::write(path_buf, &id);
             id
         }
