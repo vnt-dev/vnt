@@ -130,6 +130,9 @@ fn udp_proxy(
                 return Err(e);
             }
         }
+        if stop_manager.is_stop() {
+            return Ok(());
+        }
         for event in events.iter() {
             match event.token() {
                 SERVER => server_handle(
@@ -141,9 +144,6 @@ fn udp_proxy(
                     &mut buf,
                 ),
                 NOTIFY => {
-                    if stop_manager.is_stop() {
-                        return Ok(());
-                    }
                     check = true;
                 }
                 token => {
