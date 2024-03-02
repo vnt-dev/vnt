@@ -270,7 +270,6 @@ fn main() {
             .opt_get::<UseChannelType>("use-channel")
             .unwrap()
             .unwrap_or_else(|| {
-                println!("use_channel_type  111 {:?}", UseChannelType::All);
                 if relay {
                     UseChannelType::Relay
                 } else {
