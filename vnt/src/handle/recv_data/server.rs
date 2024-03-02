@@ -89,11 +89,12 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
         context: &Context,
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()> {
+        context.route_table.update_read_time(&net_packet.source(), &route_key);
         if net_packet.protocol() == Protocol::Error
             && net_packet.transport_protocol()
                 == crate::protocol::error_packet::Protocol::NoKey.into()
         {
-            //开启服务端加密的情况下，只有这个回应是不加密的，是服务端通知客户端上传密钥
+            //服务端通知客户端上传密钥
             #[cfg(feature = "server_encrypt")]
             {
                 let mutex_guard = self.rsa_cipher.lock();

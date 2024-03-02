@@ -112,8 +112,6 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         }
         let current_device = self.current_device.load();
         let dest = net_packet.destination();
-        let source = net_packet.source();
-        context.route_table.update_read_time(&source, &route_key);
         if dest == current_device.virtual_ip
             || dest.is_broadcast()
             || dest.is_multicast()

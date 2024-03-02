@@ -165,6 +165,7 @@ impl ClientPacketHandler {
     ) -> io::Result<()> {
         let metric = net_packet.source_ttl() - net_packet.ttl() + 1;
         let source = net_packet.source();
+        context.route_table.update_read_time(&source, &route_key);
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PingPacket(_) => {
                 net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
