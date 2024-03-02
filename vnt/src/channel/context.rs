@@ -317,17 +317,12 @@ impl RouteTable {
     fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) {
         // 限制通道类型
         match self.use_channel_type {
-            UseChannelType::Relay => {
-                if route.metric < 2 {
-                    return;
-                }
-            }
             UseChannelType::P2p => {
                 if route.metric != 1 {
                     return;
                 }
             }
-            UseChannelType::All => {}
+            _ => {}
         }
         let key = route.route_key();
         let mut route_table = self.route_table.write();
