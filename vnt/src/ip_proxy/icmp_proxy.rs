@@ -86,40 +86,29 @@ fn icmp_proxy(
         .register(&mut icmp_socket, SERVER, Interest::READABLE)?;
     let mut events = Events::with_capacity(32);
     let stop = Waker::new(poll.registry(), NOTIFY)?;
-    let _worker = stop_manager.add_listener("icmp_proxy".into(), move || {
+    let worker = stop_manager.add_listener("icmp_proxy".into(), move || {
         if let Err(e) = stop.wake() {
             log::warn!("stop icmp_proxy:{:?}", e);
         }
     })?;
+    // linux上收不到通知，原因未知
+    drop(worker);
     let mut buf = [0u8; 65535 - 20 - 8];
     loop {
         poll.poll(&mut events, None)?;
-
+        if stop_manager.is_stop() {
+            return Ok(());
+        }
         for event in events.iter() {
             match event.token() {
-                SERVER => loop {
-                    let (len, addr) = match icmp_socket.recv_from(&mut buf[12..]) {
-                        Ok(rs) => rs,
-                        Err(e) => {
-                            if e.kind() == io::ErrorKind::WouldBlock {
-                                break;
-                            }
-                            log::warn!("icmp_socket {:?}", e);
-                            break;
-                        }
-                    };
-                    if let IpAddr::V4(peer_ip) = addr.ip() {
-                        recv_handle(
-                            &mut buf,
-                            12 + len,
-                            peer_ip,
-                            &nat_map,
-                            &context,
-                            &current_device,
-                            &client_cipher,
-                        );
-                    }
-                },
+                SERVER => readable_handle(
+                    &icmp_socket,
+                    &mut buf,
+                    &nat_map,
+                    &context,
+                    &current_device,
+                    &client_cipher,
+                ),
                 NOTIFY => {
                     return Ok(());
                 }
@@ -128,7 +117,38 @@ fn icmp_proxy(
         }
     }
 }
-
+fn readable_handle(
+    icmp_socket: &UdpSocket,
+    buf: &mut [u8],
+    nat_map: &Mutex<HashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
+    context: &Context,
+    current_device: &AtomicCell<CurrentDeviceInfo>,
+    client_cipher: &Cipher,
+) {
+    loop {
+        let (len, addr) = match icmp_socket.recv_from(&mut buf[12..]) {
+            Ok(rs) => rs,
+            Err(e) => {
+                if e.kind() == io::ErrorKind::WouldBlock {
+                    break;
+                }
+                log::warn!("icmp_socket {:?}", e);
+                continue;
+            }
+        };
+        if let IpAddr::V4(peer_ip) = addr.ip() {
+            recv_handle(
+                buf,
+                12 + len,
+                peer_ip,
+                &nat_map,
+                &context,
+                &current_device,
+                &client_cipher,
+            );
+        }
+    }
+}
 fn recv_handle(
     buf: &mut [u8],
     data_len: usize,
