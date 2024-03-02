@@ -206,7 +206,7 @@ impl Punch {
 impl Punch {
     fn connect_tcp(&self, buf: &[u8], addr: SocketAddr) -> bool {
         // mio是非阻塞的，不能立马判断是否能连接成功，所以用标准库的tcp
-        match std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)) {
+        match std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(3)) {
             Ok(tcp_stream) => {
                 if tcp_stream.set_nonblocking(true).is_err() {
                     return false;
