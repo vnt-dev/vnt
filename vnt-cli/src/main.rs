@@ -19,7 +19,11 @@ mod root_check;
 
 pub fn app_home() -> io::Result<PathBuf> {
     let path = std::env::current_exe()?
-        .parent().ok_or(io::Error::new(io::ErrorKind::Other,"current_exe parent error"))?
+        .parent()
+        .ok_or(io::Error::new(
+            io::ErrorKind::Other,
+            "current_exe parent error",
+        ))?
         .join("env");
     if !path.exists() {
         std::fs::create_dir_all(&path)?;
@@ -56,7 +60,12 @@ fn main() {
     opts.optflag("", "cmd", "开启窗口输入");
     opts.optflag("", "no-proxy", "关闭内置代理");
     opts.optflag("", "first-latency", "优先延迟");
-    opts.optflag("", "use-channel", "使用通道 relay/p2p,默认两者都使用");
+    opts.optopt(
+        "",
+        "use-channel",
+        "使用通道 relay/p2p,默认两者都使用",
+        "<use-channel>",
+    );
     opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
@@ -261,6 +270,7 @@ fn main() {
             .opt_get::<UseChannelType>("use-channel")
             .unwrap()
             .unwrap_or_else(|| {
+                println!("use_channel_type  111 {:?}", UseChannelType::All);
                 if relay {
                     UseChannelType::Relay
                 } else {

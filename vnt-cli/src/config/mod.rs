@@ -177,11 +177,9 @@ pub fn get_device_id() -> String {
     } else {
         let id = uuid::Uuid::new_v4().to_string();
         let path_buf = match crate::app_home() {
-            Ok(path_buf) => {
-                path_buf.join("device-id")
-            }
+            Ok(path_buf) => path_buf.join("device-id"),
             Err(e) => {
-                log::warn!("{:?}",e);
+                log::warn!("{:?}", e);
                 return id;
             }
         };
