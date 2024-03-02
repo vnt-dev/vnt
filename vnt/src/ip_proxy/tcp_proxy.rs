@@ -102,13 +102,18 @@ fn tcp_proxy(
     let mut tcp_map: HashMap<usize, ProxyValue> = HashMap::with_capacity(16);
     let mut mapping: HashMap<usize, usize> = HashMap::with_capacity(16);
     let stop = Waker::new(poll.registry(), NOTIFY)?;
-    let _worker = stop_manager.add_listener("tcp_proxy".into(), move || {
+    let worker = stop_manager.add_listener("tcp_proxy".into(), move || {
         if let Err(e) = stop.wake() {
             log::warn!("stop tcp_proxy:{:?}", e);
         }
     })?;
+    // linux上收不到通知，原因未知
+    drop(worker);
     loop {
         poll.poll(&mut events, None)?;
+        if stop_manager.is_stop() {
+            return Ok(());
+        }
         for event in events.iter() {
             match event.token() {
                 SERVER => {
@@ -137,29 +142,75 @@ fn tcp_proxy(
                             continue;
                         }
                     };
-                    let (stream1, stream2, buf1, buf2) = val.as_mut(index);
+                    let (stream1, stream2, buf1, buf2, state1, state2) = val.as_mut(index);
                     if event.is_readable() {
-                        if let Err(e) = readable_handle(stream1, stream2, buf1) {
-                            log::warn!("tcp proxy {:?}", e);
-                            close(src_index, &mut tcp_map, &mut mapping);
+                        if let Err(_) = readable_handle(stream1, stream2, buf1, state2) {
+                            if buf1.is_empty() {
+                                let _ = stream2.shutdown(Shutdown::Write);
+                            }
+                            and_shutdown_state(state1, Shutdown::Read)
                         }
-                    } else if event.is_writable() {
+                    }
+                    if event.is_writable() {
                         let read = buf2.len() >= BUF_LEN;
-                        if let Err(e) = writable_handle(stream1, buf2) {
-                            log::warn!("tcp proxy {:?}", e);
-                            close(src_index, &mut tcp_map, &mut mapping);
+                        if let Err(_) = writable_handle(stream1, buf2) {
+                            buf2.clear();
+                            let _ = stream2.shutdown(Shutdown::Read);
+                            and_shutdown_state(state1, Shutdown::Write)
                         } else if read {
-                            if let Err(e) = readable_handle(stream2, stream1, buf2) {
-                                log::warn!("tcp proxy {:?}", e);
-                                close(src_index, &mut tcp_map, &mut mapping);
+                            if readable_handle(stream2, stream1, buf2, state2).is_err() {
+                                if buf2.is_empty() {
+                                    let _ = stream1.shutdown(Shutdown::Write);
+                                }
+                                and_shutdown_state(state2, Shutdown::Read)
                             }
                         }
-                    } else {
-                        close(src_index, &mut tcp_map, &mut mapping);
+                    }
+                    if event.is_read_closed() {
+                        if buf1.is_empty() {
+                            let _ = stream2.shutdown(Shutdown::Write);
+                        }
+                        and_shutdown_state(state1, Shutdown::Read)
+                    }
+                    if event.is_write_closed() {
+                        let _ = stream2.shutdown(Shutdown::Read);
+                        and_shutdown_state(state1, Shutdown::Write)
+                    }
+                    if let Some(state1) = state1 {
+                        if let Some(state2) = state2 {
+                            if (state1 == &Shutdown::Both
+                                && (state2 == &Shutdown::Write || buf1.is_empty()))
+                                || (state2 == &Shutdown::Both && state1 == &Shutdown::Write
+                                    || buf2.is_empty())
+                            {
+                                close(src_index, &mut tcp_map, &mut mapping);
+                            } else if state2 == state1 {
+                                if state1 == &Shutdown::Both
+                                    || state1 == &Shutdown::Write
+                                    || (buf1.is_empty() && buf2.is_empty())
+                                {
+                                    close(src_index, &mut tcp_map, &mut mapping);
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+fn and_shutdown_state(s1: &mut Option<Shutdown>, s2: Shutdown) {
+    if let Some(s1) = s1 {
+        if s1 == &Shutdown::Read && s2 == Shutdown::Read {
+            *s1 = Shutdown::Read
+        } else if s1 == &Shutdown::Write && s2 == Shutdown::Write {
+            *s1 = Shutdown::Write
+        } else {
+            *s1 = Shutdown::Both
+        }
+    } else {
+        s1.replace(s2);
     }
 }
 
@@ -203,7 +254,7 @@ fn accept_handle(
                             if let Err(e) = registry.register(
                                 &mut src_stream,
                                 Token(src_fd),
-                                Interest::READABLE,
+                                Interest::READABLE.add(Interest::WRITABLE),
                             ) {
                                 log::error!("register src_stream:{:?}", e);
                                 continue;
@@ -211,7 +262,7 @@ fn accept_handle(
                             if let Err(e) = registry.register(
                                 &mut dest_stream,
                                 Token(dest_fd),
-                                Interest::READABLE,
+                                Interest::READABLE.add(Interest::WRITABLE),
                             ) {
                                 log::error!("register dest_stream:{:?}", e);
                                 continue;
@@ -256,6 +307,7 @@ fn tcp_connect(src_port: u16, addr: SocketAddr) -> io::Result<TcpStream> {
     Ok(TcpStream::from_std(socket.into()))
 }
 
+#[derive(Debug)]
 struct ProxyValue {
     src_stream: TcpStream,
     dest_stream: TcpStream,
@@ -263,6 +315,8 @@ struct ProxyValue {
     dest_fd: usize,
     src_buf: BytesMut,
     dest_buf: BytesMut,
+    src_state: Option<Shutdown>,
+    dest_state: Option<Shutdown>,
 }
 
 const BUF_LEN: usize = 10 * 4096;
@@ -276,18 +330,29 @@ impl ProxyValue {
             dest_fd,
             src_buf: BytesMut::with_capacity(BUF_LEN),
             dest_buf: BytesMut::with_capacity(BUF_LEN),
+            src_state: None,
+            dest_state: None,
         }
     }
     fn as_mut(
         &mut self,
         index: usize,
-    ) -> (&mut TcpStream, &mut TcpStream, &mut BytesMut, &mut BytesMut) {
+    ) -> (
+        &mut TcpStream,
+        &mut TcpStream,
+        &mut BytesMut,
+        &mut BytesMut,
+        &mut Option<Shutdown>,
+        &mut Option<Shutdown>,
+    ) {
         if index == self.src_fd {
             (
                 &mut self.src_stream,
                 &mut self.dest_stream,
                 &mut self.src_buf,
                 &mut self.dest_buf,
+                &mut self.src_state,
+                &mut self.dest_state,
             )
         } else {
             (
@@ -295,6 +360,8 @@ impl ProxyValue {
                 &mut self.src_stream,
                 &mut self.dest_buf,
                 &mut self.src_buf,
+                &mut self.dest_state,
+                &mut self.src_state,
             )
         }
     }
@@ -304,6 +371,7 @@ fn readable_handle(
     stream1: &mut TcpStream,
     stream2: &mut TcpStream,
     mid_buf: &mut BytesMut,
+    state2: &mut Option<Shutdown>,
 ) -> io::Result<()> {
     let mut buf = [0; BUF_LEN];
 
@@ -320,12 +388,16 @@ fn readable_handle(
                         match stream2.write(buf) {
                             Ok(end) => {
                                 if end == 0 {
+                                    mid_buf.clear();
+                                    and_shutdown_state(state2, Shutdown::Write);
                                     return Err(io::Error::from(io::ErrorKind::WriteZero));
                                 }
                                 buf = &buf[end..];
                             }
                             Err(e) => {
                                 if e.kind() != io::ErrorKind::WouldBlock {
+                                    mid_buf.clear();
+                                    and_shutdown_state(state2, Shutdown::Write);
                                     return Err(e);
                                 }
                                 break;
@@ -340,6 +412,7 @@ fn readable_handle(
                 mid_buf.put_slice(buf);
                 if mid_buf.len() >= BUF_LEN {
                     // 达到上限不再继续读取
+                    log::warn!("达到上限不再继续读取");
                     return Ok(());
                 }
             }
@@ -376,9 +449,9 @@ fn close(
     tcp_map: &mut HashMap<usize, ProxyValue>,
     mapping: &mut HashMap<usize, usize>,
 ) {
-    if let Some(val) = tcp_map.remove(&index) {
-        let _ = val.src_stream.shutdown(Shutdown::Both);
-        let _ = val.dest_stream.shutdown(Shutdown::Both);
+    if let Some(mut val) = tcp_map.remove(&index) {
+        let _ = val.src_stream.flush();
+        let _ = val.dest_stream.flush();
         mapping.remove(&val.src_fd);
         mapping.remove(&val.dest_fd);
     }
