@@ -256,6 +256,17 @@ impl ContextInner {
             Ok(())
         }
     }
+    pub fn remove_route(&self, ip: &Ipv4Addr, route_key: RouteKey) {
+        if self.route_table.remove_route(ip, route_key) {
+            if route_key.is_tcp {
+                if let Some(tcp) = self.tcp_map.write().remove(&route_key.addr) {
+                    if let Err(e) = tcp.shutdown() {
+                        log::warn!("{:?}", e);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub struct RouteTable {
@@ -428,11 +439,18 @@ impl RouteTable {
         }
         list
     }
-    pub fn remove_route(&self, id: &Ipv4Addr, route_key: RouteKey) {
-        if let Some((_, routes)) = self.route_table.write().get_mut(id) {
+    pub fn remove_route(&self, id: &Ipv4Addr, route_key: RouteKey) -> bool {
+        let mut write_guard = self.route_table.write();
+        if let Some((_, routes)) = write_guard.get_mut(id) {
             routes.retain(|(x, _)| x.route_key() != route_key);
+            if routes.is_empty() {
+                write_guard.remove(id);
+                true
+            } else {
+                false
+            }
         } else {
-            return;
+            return true;
         }
     }
     /// 更新路由入栈包的时刻，长时间没有收到数据的路由将会被剔除

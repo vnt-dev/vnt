@@ -83,7 +83,7 @@ fn idle_route0<Call: VntCallback>(
     let cur = current_device.load();
     match idle.next_idle() {
         IdleType::Timeout(ip, route) => {
-            context.route_table.remove_route(&ip, route);
+            context.remove_route(&ip, route);
             if cur.is_gateway(&ip) {
                 //网关路由过期，则需要改变状态
                 let cur = context.change_status(current_device);
