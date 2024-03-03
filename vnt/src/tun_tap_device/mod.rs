@@ -6,17 +6,23 @@ use tun::Device;
 
 use crate::core::Config;
 
-const DEFAULT_NAME: &str = "vnt0";
+const DEFAULT_TUN_NAME: &str = "vnt-tun";
+const DEFAULT_TAP_NAME: &str = "vnt-tap";
 
 pub fn create_device(config: &Config) -> io::Result<Arc<Device>> {
+    let default_name: &str = if config.tap {
+        DEFAULT_TAP_NAME
+    } else {
+        DEFAULT_TUN_NAME
+    };
     #[cfg(target_os = "linux")]
     let device = {
         let device_name = config
             .device_name
             .clone()
-            .unwrap_or(DEFAULT_NAME.to_string());
-        if &device_name == DEFAULT_NAME {
-            delete_device();
+            .unwrap_or(default_name.to_string());
+        if &device_name == default_name {
+            delete_device(default_name);
         }
         Arc::new(Device::new(Some(device_name), config.tap)?)
     };
@@ -27,7 +33,7 @@ pub fn create_device(config: &Config) -> io::Result<Arc<Device>> {
         config
             .device_name
             .clone()
-            .unwrap_or(DEFAULT_NAME.to_string()),
+            .unwrap_or(default_name.to_string()),
         config.tap,
     )?);
     #[cfg(target_os = "android")]
@@ -47,10 +53,10 @@ pub fn create_device(config: &Config) -> io::Result<Arc<Device>> {
 }
 
 #[cfg(target_os = "linux")]
-fn delete_device() {
+fn delete_device(name: &str) {
     // 删除默认网卡，此操作有风险，后续可能去除
     use std::process::Command;
-    let cmd = format!("ip link delete {}", DEFAULT_NAME);
+    let cmd = format!("ip link delete {}", name);
     let delete_tun = Command::new("sh")
         .arg("-c")
         .arg(&cmd)
