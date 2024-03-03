@@ -1,7 +1,8 @@
-use crate::command::entity::{DeviceItem, Info, RouteItem};
-use crate::console_out;
 use std::io;
 use vnt::core::Vnt;
+
+use crate::command::entity::{DeviceItem, Info, RouteItem};
+use crate::console_out;
 
 pub mod client;
 pub mod entity;
@@ -61,7 +62,11 @@ pub fn command_route(vnt: &Vnt) -> Vec<RouteItem> {
             } else {
                 route.rt.to_string()
             };
-            let interface = route.addr.to_string();
+            let interface = if route.is_tcp {
+                format!("tcp@{}", route.addr)
+            } else {
+                route.addr.to_string()
+            };
             let item = RouteItem {
                 destination: destination.to_string(),
                 next_hop,
