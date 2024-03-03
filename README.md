@@ -85,6 +85,7 @@ features说明
 | server_encrypt   | 支持服务端加密              | 是    |
 | ip_proxy         | 内置ip代理               | 是    |
 
+### ip转发/代理
 如果编译时去除了内置的ip代理(或使用--no-proxy关闭了代理)，则可以使用网卡NAT转发来实现点对网，
 一般来说使用网卡NAT转发会比内置的ip代理性能更好
 <details> <summary>NAT配置可参考如下示例,点击展开</summary>

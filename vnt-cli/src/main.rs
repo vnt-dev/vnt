@@ -460,7 +460,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --no-proxy          关闭内置代理,如需点对网则需要配置网卡NAT转发");
     println!("  --first-latency     优先低延迟的通道,默认情况优先使用p2p通道");
     println!("  --use-channel <p2p> 使用通道 relay/p2p/all,默认两者都使用");
-    println!("  --nic <tun0>        虚拟网卡名称,windows下使用tap模式则必须指定此参数");
+    println!("  --nic <tun0>        指定虚拟网卡名称");
 
     println!();
     println!(
