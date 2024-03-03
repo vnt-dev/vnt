@@ -18,13 +18,21 @@ mod console_out;
 mod root_check;
 
 pub fn app_home() -> io::Result<PathBuf> {
-    let path = std::env::current_exe()?
-        .parent()
-        .ok_or(io::Error::new(
-            io::ErrorKind::Other,
-            "current_exe parent error",
-        ))?
-        .join("env");
+    let root_path = match std::env::current_exe() {
+        Ok(path) => {
+            if let Some(v) = path.as_path().parent() {
+                v.to_path_buf()
+            } else {
+                log::warn!("current_exe parent none:{:?}", path);
+                PathBuf::new()
+            }
+        }
+        Err(e) => {
+            log::warn!("current_exe err:{:?}", e);
+            PathBuf::new()
+        }
+    };
+    let path = root_path.join("env");
     if !path.exists() {
         std::fs::create_dir_all(&path)?;
     }

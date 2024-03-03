@@ -89,7 +89,9 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
         context: &Context,
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()> {
-        context.route_table.update_read_time(&net_packet.source(), &route_key);
+        context
+            .route_table
+            .update_read_time(&net_packet.source(), &route_key);
         if net_packet.protocol() == Protocol::Error
             && net_packet.transport_protocol()
                 == crate::protocol::error_packet::Protocol::NoKey.into()

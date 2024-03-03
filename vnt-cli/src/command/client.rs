@@ -13,21 +13,10 @@ pub struct CommandClient {
 
 impl CommandClient {
     pub fn new() -> io::Result<Self> {
-        let path_buf = crate::app_home()?.join("command-port");
-        let port = if path_buf.exists() {
-            let port = std::fs::read_to_string(path_buf)?;
-            match u16::from_str(&port) {
-                Ok(port) => port,
-                Err(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "'command-port' file error",
-                    ));
-                }
-            }
-        } else {
+        let port = read_command_port().unwrap_or_else(|e| {
+            log::warn!("read_command_port:{:?}", e);
             39271
-        };
+        });
         let udp = UdpSocket::bind("127.0.0.1:0")?;
         udp.set_read_timeout(Some(Duration::from_secs(5)))?;
         udp.connect(SocketAddr::V4(SocketAddrV4::new(
@@ -38,6 +27,19 @@ impl CommandClient {
             udp,
             buf: [0; 10240],
         })
+    }
+}
+fn read_command_port() -> io::Result<u16> {
+    let path_buf = crate::app_home()?.join("command-port");
+    let port = std::fs::read_to_string(path_buf)?;
+    match u16::from_str(&port) {
+        Ok(port) => Ok(port),
+        Err(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "'command-port' file error",
+            ));
+        }
     }
 }
 
