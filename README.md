@@ -253,7 +253,7 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 ##### 解决方法：
 
 1. 使用TCP模式中继转发（vnt-cli增加--tcp参数）
-2. 如果p2p后效果很差，可以选择禁用p2p（vnt-cli增加--relay参数）
+2. 如果p2p后效果很差，可以选择禁用p2p（vnt-cli增加--use-channel relay参数）
 
 </details>
 
