@@ -85,14 +85,13 @@ fn icmp_proxy(
     poll.registry()
         .register(&mut icmp_socket, SERVER, Interest::READABLE)?;
     let mut events = Events::with_capacity(32);
-    let stop = Waker::new(poll.registry(), NOTIFY)?;
-    let worker = stop_manager.add_listener("icmp_proxy".into(), move || {
+    let stop = Arc::new(Waker::new(poll.registry(), NOTIFY)?);
+    let _stop = stop.clone();
+    let _worker = stop_manager.add_listener("icmp_proxy".into(), move || {
         if let Err(e) = stop.wake() {
             log::warn!("stop icmp_proxy:{:?}", e);
         }
     })?;
-    // linux上收不到通知，原因未知
-    drop(worker);
     let mut buf = [0u8; 65535 - 20 - 8];
     loop {
         poll.poll(&mut events, None)?;

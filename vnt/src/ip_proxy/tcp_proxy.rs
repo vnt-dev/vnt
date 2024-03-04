@@ -101,14 +101,13 @@ fn tcp_proxy(
     let mut events = Events::with_capacity(32);
     let mut tcp_map: HashMap<usize, ProxyValue> = HashMap::with_capacity(16);
     let mut mapping: HashMap<usize, usize> = HashMap::with_capacity(16);
-    let stop = Waker::new(poll.registry(), NOTIFY)?;
-    let worker = stop_manager.add_listener("tcp_proxy".into(), move || {
+    let stop = Arc::new(Waker::new(poll.registry(), NOTIFY)?);
+    let _stop = stop.clone();
+    let _worker = stop_manager.add_listener("tcp_proxy".into(), move || {
         if let Err(e) = stop.wake() {
             log::warn!("stop tcp_proxy:{:?}", e);
         }
     })?;
-    // linux上收不到通知，原因未知
-    drop(worker);
     loop {
         poll.poll(&mut events, None)?;
         if stop_manager.is_stop() {
@@ -376,6 +375,11 @@ fn readable_handle(
     let mut buf = [0; BUF_LEN];
 
     loop {
+        if mid_buf.len() >= BUF_LEN {
+            // 达到上限不再继续读取
+            log::warn!("达到上限不再继续读取 {:?}->{:?}",stream1,stream2);
+            return Ok(());
+        }
         match stream1.read(&mut buf) {
             Ok(len) => {
                 if len == 0 {
@@ -410,11 +414,6 @@ fn readable_handle(
                 }
                 mid_buf.reserve(buf.len());
                 mid_buf.put_slice(buf);
-                if mid_buf.len() >= BUF_LEN {
-                    // 达到上限不再继续读取
-                    log::warn!("达到上限不再继续读取");
-                    return Ok(());
-                }
             }
             Err(e) => {
                 if e.kind() == io::ErrorKind::WouldBlock {
