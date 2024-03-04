@@ -377,7 +377,7 @@ fn readable_handle(
     loop {
         if mid_buf.len() >= BUF_LEN {
             // 达到上限不再继续读取
-            log::warn!("达到上限不再继续读取 {:?}->{:?}",stream1,stream2);
+            log::warn!("达到上限不再继续读取 {:?}->{:?}", stream1, stream2);
             return Ok(());
         }
         match stream1.read(&mut buf) {
