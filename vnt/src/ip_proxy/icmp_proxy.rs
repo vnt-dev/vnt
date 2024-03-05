@@ -181,13 +181,12 @@ fn recv_handle(
                             log::warn!("加密失败:{}", e);
                             return;
                         }
-                        if context.send_by_id(net_packet.buffer(), &dest_ip).is_err() {
-                            let connect_server = current_device.connect_server;
-                            if let Err(e) =
-                                context.send_default(net_packet.buffer(), connect_server)
-                            {
-                                log::warn!("发送到目标失败:{},{}", e, connect_server);
-                            }
+                        if let Err(e) = context.send_ipv4_by_id(
+                            net_packet.buffer(),
+                            &dest_ip,
+                            current_device.connect_server,
+                        ) {
+                            log::warn!("发送到目标失败:{}", e);
                         }
                     }
                 }

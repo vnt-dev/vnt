@@ -300,6 +300,13 @@ fn tcp_connect(src_port: u16, addr: SocketAddr) -> io::Result<TcpStream> {
     {
         socket.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into())?;
     }
+    if let Err(e) = socket.set_tcp_keepalive(
+        &socket2::TcpKeepalive::new()
+            .with_time(Duration::from_secs(120))
+            .with_interval(Duration::from_secs(10)),
+    ) {
+        log::warn!("set_tcp_keepalive err {:?}", e);
+    }
     let _ = socket.set_nodelay(false);
     socket.connect_timeout(&addr.into(), Duration::from_secs(3))?;
     socket.set_nonblocking(true)?;
