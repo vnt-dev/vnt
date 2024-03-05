@@ -150,10 +150,5 @@ pub fn base_handle(
     }
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     //优先发到直连到地址
-    if context.send_by_id(net_packet.buffer(), &dest_ip).is_err() {
-        if !context.use_channel_type().is_only_p2p() {
-            context.send_default(net_packet.buffer(), current_device.connect_server)?;
-        }
-    }
-    return Ok(());
+    context.send_ipv4_by_id(net_packet.buffer(), &dest_ip, current_device.connect_server)
 }

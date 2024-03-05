@@ -39,6 +39,9 @@ pub struct Config {
     #[cfg(target_os = "android")]
     pub device_fd: i32,
     pub use_channel_type: UseChannelType,
+    //控制丢包率
+    pub packet_loss_rate: Option<f64>,
+    pub packet_delay: u32,
 }
 
 impl Config {
@@ -67,6 +70,8 @@ impl Config {
         #[cfg(not(target_os = "android"))] device_name: Option<String>,
         #[cfg(target_os = "android")] device_fd: i32,
         use_channel_type: UseChannelType,
+        packet_loss_rate: Option<f64>,
+        packet_delay: u32,
     ) -> io::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -111,6 +116,8 @@ impl Config {
             #[cfg(target_os = "android")]
             device_fd,
             use_channel_type,
+            packet_loss_rate,
+            packet_delay,
         })
     }
 }

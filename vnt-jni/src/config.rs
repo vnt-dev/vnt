@@ -132,6 +132,8 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         #[cfg(target_os = "android")]
         device_fd,
         UseChannelType::from_str(&use_channel.unwrap_or_default()).unwrap_or_default(),
+        None,
+        0,
     ) {
         Ok(config) => config,
         Err(e) => {

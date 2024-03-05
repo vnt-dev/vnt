@@ -68,12 +68,9 @@ fn main() {
     opts.optflag("", "cmd", "开启窗口输入");
     opts.optflag("", "no-proxy", "关闭内置代理");
     opts.optflag("", "first-latency", "优先延迟");
-    opts.optopt(
-        "",
-        "use-channel",
-        "使用通道 relay/p2p,默认两者都使用",
-        "<use-channel>",
-    );
+    opts.optopt("", "use-channel", "使用通道 relay/p2p", "<use-channel>");
+    opts.optopt("", "packet-loss", "丢包率", "<packet-loss>");
+    opts.optopt("", "packet-delay", "延迟", "<packet-delay>");
     opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
@@ -294,6 +291,12 @@ fn main() {
         #[cfg(feature = "ip_proxy")]
         let no_proxy = matches.opt_present("no-proxy");
         let first_latency = matches.opt_present("first-latency");
+        let packet_loss = matches
+            .opt_get::<f64>("packet-loss")
+            .expect("--packet-loss");
+        let packet_delay = matches
+            .opt_get::<u32>("packet-delay")
+            .expect("--packet-delay").unwrap_or(0);
         let config = Config::new(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             tap,
@@ -320,6 +323,8 @@ fn main() {
             first_latency,
             device_name,
             use_channel_type,
+            packet_loss,
+            packet_delay
         )
         .unwrap();
         (config, cmd)
@@ -461,6 +466,8 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --first-latency     优先低延迟的通道,默认情况优先使用p2p通道");
     println!("  --use-channel <p2p> 使用通道 relay/p2p/all,默认两者都使用");
     println!("  --nic <tun0>        指定虚拟网卡名称");
+    println!("  --packet-loss <0>   模拟丢包,取值0~1之间的小数,程序会按设定的概率主动丢包,可用于模拟弱网");
+    println!("  --packet-delay <0>  模拟延迟,整数,单位毫秒(ms),程序会按设定的值延迟发包,可用于模拟弱网");
 
     println!();
     println!(

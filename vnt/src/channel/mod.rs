@@ -141,6 +141,8 @@ pub fn init_context(
     use_channel_type: UseChannelType,
     first_latency: bool,
     is_tcp: bool,
+    packet_loss_rate: Option<f64>,
+    packet_delay: u32,
 ) -> io::Result<(Context, mio::net::TcpListener)> {
     assert!(!ports.is_empty(), "not channel");
     let mut udps = Vec::with_capacity(ports.len());
@@ -158,7 +160,14 @@ pub fn init_context(
         main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
         udps.push(main_channel);
     }
-    let context = Context::new(udps, use_channel_type, first_latency, is_tcp);
+    let context = Context::new(
+        udps,
+        use_channel_type,
+        first_latency,
+        is_tcp,
+        packet_loss_rate,
+        packet_delay,
+    );
 
     let port = context.main_local_udp_port()?[0];
     //监听v6+v4双栈，tcp通道使用异步io

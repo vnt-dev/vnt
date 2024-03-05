@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::RwLock;
+use rand::Rng;
 
 use crate::channel::punch::NatType;
 use crate::channel::sender::{AcceptSocketSender, ChannelSender, PacketSender};
@@ -26,9 +27,21 @@ impl Context {
         use_channel_type: UseChannelType,
         first_latency: bool,
         is_tcp: bool,
+        packet_loss_rate: Option<f64>,
+        packet_delay: u32,
     ) -> Self {
         let channel_num = main_udp_socket.len();
         assert_ne!(channel_num, 0, "not channel");
+        let packet_loss_rate = packet_loss_rate
+            .map(|v| {
+                let v = (v * PACKET_LOSS_RATE_DENOMINATOR as f64) as u32;
+                if v > PACKET_LOSS_RATE_DENOMINATOR {
+                    PACKET_LOSS_RATE_DENOMINATOR
+                } else {
+                    v
+                }
+            })
+            .unwrap_or(0);
         let inner = ContextInner {
             main_udp_socket,
             sub_udp_socket: RwLock::new(Vec::with_capacity(64)),
@@ -36,6 +49,8 @@ impl Context {
             route_table: RouteTable::new(use_channel_type, first_latency, channel_num),
             is_tcp,
             state: AtomicBool::new(true),
+            packet_loss_rate,
+            packet_delay,
         };
         Self {
             inner: Arc::new(inner),
@@ -56,7 +71,7 @@ impl Deref for Context {
 
 /// 对称网络增加的udp socket数目，有助于增加打洞成功率
 pub const SYMMETRIC_CHANNEL_NUM: usize = 64;
-
+const PACKET_LOSS_RATE_DENOMINATOR: u32 = 100_0000;
 pub struct ContextInner {
     // 核心udp socket
     pub(crate) main_udp_socket: Vec<UdpSocket>,
@@ -70,6 +85,10 @@ pub struct ContextInner {
     is_tcp: bool,
     //状态
     state: AtomicBool,
+    //控制丢包率，取值v=[0,100_0000] 丢包率r=v/100_0000
+    packet_loss_rate: u32,
+    //控制延迟
+    packet_delay: u32,
 }
 
 impl ContextInner {
@@ -228,6 +247,27 @@ impl ContextInner {
             if let Err(e) = udp.send_to(buf, addr) {
                 log::warn!("{:?},add={:?}", e, addr);
             }
+        }
+    }
+    /// 发送网络数据
+    pub fn send_ipv4_by_id(
+        &self,
+        buf: &[u8],
+        id: &Ipv4Addr,
+        server_addr: SocketAddr,
+    ) -> io::Result<()> {
+        if self.packet_loss_rate > 0 {
+            if rand::thread_rng().gen_ratio(self.packet_loss_rate, PACKET_LOSS_RATE_DENOMINATOR) {
+                return Ok(());
+            }
+        }
+        if self.packet_delay > 0 {
+            std::thread::sleep(Duration::from_millis(self.packet_delay as _));
+        }
+        if self.send_by_id(buf, id).is_err() && !self.route_table.use_channel_type.is_only_p2p() {
+            self.send_default(buf, server_addr)
+        } else {
+            Ok(())
         }
     }
     /// 将数据发到指定id

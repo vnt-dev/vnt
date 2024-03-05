@@ -37,6 +37,8 @@ pub struct FileConfig {
     pub cmd: bool,
     pub first_latency: bool,
     pub device_name: Option<String>,
+    pub packet_loss: Option<f64>,
+    pub packet_delay: u32,
 }
 
 impl Default for FileConfig {
@@ -71,6 +73,8 @@ impl Default for FileConfig {
             cmd: false,
             first_latency: false,
             device_name: None,
+            packet_loss: None,
+            packet_delay: 0,
         }
     }
 }
@@ -166,6 +170,8 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         file_conf.first_latency,
         file_conf.device_name,
         use_channel_type,
+        file_conf.packet_loss,
+        file_conf.packet_delay
     )
     .unwrap();
     Ok((config, file_conf.cmd))

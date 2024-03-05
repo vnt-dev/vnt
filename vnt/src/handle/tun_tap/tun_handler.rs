@@ -47,11 +47,11 @@ fn handle(
     client_cipher: &Cipher,
     server_cipher: &Cipher,
 ) -> io::Result<()> {
-    if len > 12 && data[12] >> 4 != 4 {
-        //忽略非ipv4包
-        return Ok(());
-    }
-    let ipv4_packet = IpV4Packet::new(&mut data[12..len])?;
+    //忽略掉结构不对的情况（ipv6数据、win tap会读到空数据），不然日志打印太多了
+    let ipv4_packet = match IpV4Packet::new(&mut data[12..len]) {
+        Ok(packet) => packet,
+        Err(_) => return Ok(()),
+    };
     let src_ip = ipv4_packet.source_ip();
     let dest_ip = ipv4_packet.destination_ip();
     if src_ip == dest_ip {

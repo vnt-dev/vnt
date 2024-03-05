@@ -93,6 +93,8 @@ impl Vnt {
             config.use_channel_type,
             config.first_latency,
             config.tcp,
+            config.packet_loss_rate,
+            config.packet_delay,
         )?;
         let local_ipv4 = nat::local_ipv4();
         let local_ipv6 = nat::local_ipv6();
