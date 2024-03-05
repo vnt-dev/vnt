@@ -123,7 +123,7 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
             ));
         }
         // 不能大于udp最大载荷长度
-        if data_len < 12 || buffer.as_ref().len() > 65535 - 20 - 8 {
+        if data_len < 12 || data_len > 65535 - 20 - 8 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "length overflow",
