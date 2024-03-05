@@ -54,18 +54,12 @@ impl Device {
     /// 打开设备，设置为TUN模式，激活网卡
     pub fn new(name: String) -> io::Result<Self> {
         let luid = ffi::alias_to_luid(&encode_utf16(&name)).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("alias_to_luid name={},err={:?}", name, e),
-            )
+            io::Error::new(e.kind(), format!("alias_to_luid name={},err={:?}", name, e))
         })?;
         let guid = ffi::luid_to_guid(&luid)
             .and_then(|guid| ffi::string_from_guid(&guid))
             .map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("luid_to_guid name={},err={:?}", name, e),
-                )
+                io::Error::new(e.kind(), format!("luid_to_guid name={},err={:?}", name, e))
             })?;
         let path = format!(r"\\.\Global\{}.tap", decode_utf16(&guid));
         let handle = ffi::create_file(
