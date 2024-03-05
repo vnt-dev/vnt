@@ -260,7 +260,10 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         if old.virtual_ip != Ipv4Addr::UNSPECIFIED {
                             log::info!("ip发生变化,old:{:?},response={:?}", old, response);
                         }
-                        self.device.set_ip(virtual_ip, virtual_netmask)?;
+                        if let Err(e) = self.device.set_ip(virtual_ip, virtual_netmask){
+                            self.callback.error(ErrorInfo::new_msg(ErrorType::Unknown,format!("set_ip {:?}",e)));
+                            return Ok(());
+                        }
                         let mut guard = self.route_record.lock();
                         for (dest, mask) in guard.drain(..) {
                             if let Err(e) = self.device.delete_route(dest, mask) {
