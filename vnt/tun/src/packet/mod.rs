@@ -13,8 +13,11 @@ where
     let mut eth_buf = [0; 65536];
     loop {
         let len = read_fn(&mut eth_buf)?;
+        if len == 0{
+            return Ok(len);
+        }
         //处理arp包
-        let mut ether = ethernet::packet::EthernetPacket::unchecked(&mut eth_buf[..len]);
+        let mut ether = ethernet::packet::EthernetPacket::new(&mut eth_buf[..len])?;
         match ether.protocol() {
             Protocol::Ipv4 => {
                 let len = ether.payload().len();
