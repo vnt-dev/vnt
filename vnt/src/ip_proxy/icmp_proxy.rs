@@ -132,7 +132,7 @@ fn readable_handle(
                     break;
                 }
                 log::warn!("icmp_socket {:?}", e);
-                continue;
+                return;
             }
         };
         if let IpAddr::V4(peer_ip) = addr.ip() {

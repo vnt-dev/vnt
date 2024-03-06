@@ -157,7 +157,7 @@ fn tcp_proxy(
                             let _ = stream2.shutdown(Shutdown::Read);
                             and_shutdown_state(state1, Shutdown::Write)
                         } else if read {
-                            if readable_handle(stream2, stream1, buf2, state2).is_err() {
+                            if readable_handle(stream2, stream1, buf2, state1).is_err() {
                                 if buf2.is_empty() {
                                     let _ = stream1.shutdown(Shutdown::Write);
                                 }
@@ -325,7 +325,7 @@ struct ProxyValue {
     dest_state: Option<Shutdown>,
 }
 
-const BUF_LEN: usize = 10 * 4096;
+const BUF_LEN: usize = 65536;
 
 impl ProxyValue {
     fn new(src_stream: TcpStream, dest_stream: TcpStream, src_fd: usize, dest_fd: usize) -> Self {
@@ -384,7 +384,6 @@ fn readable_handle(
     loop {
         if mid_buf.len() >= BUF_LEN {
             // 达到上限不再继续读取
-            log::warn!("达到上限不再继续读取 {:?}->{:?}", stream1, stream2);
             return Ok(());
         }
         match stream1.read(&mut buf) {
