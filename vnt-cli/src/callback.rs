@@ -7,6 +7,9 @@ use vnt::{DeviceInfo, ErrorInfo, HandshakeInfo, RegisterInfo, VntCallback};
 pub struct VntHandler {}
 
 impl VntCallback for VntHandler {
+    fn success(&self) {
+        println!(" ====== Connect Successfully ====== ")
+    }
     fn create_tun(&self, info: DeviceInfo) {
         println!("create_tun {}", info)
     }

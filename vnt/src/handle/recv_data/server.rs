@@ -307,6 +307,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                                 guard.push((dest, mask));
                             }
                         }
+                        self.callback.success();
                     }
                     self.set_device_info_list(response.device_info_list, response.epoch as _);
                 }

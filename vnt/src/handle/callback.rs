@@ -182,6 +182,9 @@ impl Into<u8> for ErrorType {
 }
 
 pub trait VntCallback: Clone + Send + Sync + 'static {
+    /// 启动成功
+    fn success(&self) {}
+
     /// 创建网卡的信息
     fn create_tun(&self, _info: DeviceInfo) {}
     /// 连接

@@ -145,6 +145,8 @@ impl CallBack {
 }
 
 impl VntCallback for CallBack {
+    fn success(&self) {
+    }
     fn create_tun(&self, info: DeviceInfo) {
         if let Err(e) = self.create_tun0(info) {
             log::warn!("create_tun {:?}", e);
