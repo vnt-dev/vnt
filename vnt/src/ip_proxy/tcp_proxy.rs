@@ -144,72 +144,48 @@ fn tcp_proxy(
                     let (stream1, stream2, buf1, buf2, state1, state2) = val.as_mut(index);
                     if event.is_readable() {
                         if let Err(_) = readable_handle(stream1, stream2, buf1, state2) {
-                            if buf1.is_empty() {
-                                let _ = stream2.shutdown(Shutdown::Write);
-                            }
-                            and_shutdown_state(state1, Shutdown::Read)
+                            *state1 |= READ_CLOSED;
                         }
                     }
                     if event.is_writable() {
                         let read = buf2.len() >= BUF_LEN;
                         if let Err(_) = writable_handle(stream1, buf2) {
-                            buf2.clear();
-                            let _ = stream2.shutdown(Shutdown::Read);
-                            and_shutdown_state(state1, Shutdown::Write)
+                            *state1 |= WRITE_CLOSED;
                         } else if read {
                             if readable_handle(stream2, stream1, buf2, state1).is_err() {
-                                if buf2.is_empty() {
-                                    let _ = stream1.shutdown(Shutdown::Write);
-                                }
-                                and_shutdown_state(state2, Shutdown::Read)
+                                *state2 |= READ_CLOSED;
                             }
                         }
                     }
-                    if event.is_read_closed() {
+                    if event.is_read_closed() || event.is_error() {
+                        *state1 |= READ_CLOSED;
+                    }
+                    if event.is_write_closed() || event.is_error() {
+                        *state1 |= WRITE_CLOSED;
+                    }
+                    if is_write_closed(*state1) {
+                        let _ = stream1.shutdown(Shutdown::Write);
+                        let _ = stream2.shutdown(Shutdown::Read);
+                    }
+                    if is_read_closed(*state1) {
+                        let _ = stream1.shutdown(Shutdown::Read);
                         if buf1.is_empty() {
                             let _ = stream2.shutdown(Shutdown::Write);
                         }
-                        and_shutdown_state(state1, Shutdown::Read)
                     }
-                    if event.is_write_closed() {
-                        let _ = stream2.shutdown(Shutdown::Read);
-                        and_shutdown_state(state1, Shutdown::Write)
-                    }
-                    if let Some(state1) = state1 {
-                        if let Some(state2) = state2 {
-                            if (state1 == &Shutdown::Both
-                                && (state2 == &Shutdown::Write || buf1.is_empty()))
-                                || (state2 == &Shutdown::Both && state1 == &Shutdown::Write
-                                    || buf2.is_empty())
-                            {
-                                close(src_index, &mut tcp_map, &mut mapping);
-                            } else if state2 == state1 {
-                                if state1 == &Shutdown::Both
-                                    || state1 == &Shutdown::Write
-                                    || (buf1.is_empty() && buf2.is_empty())
-                                {
-                                    close(src_index, &mut tcp_map, &mut mapping);
-                                }
-                            }
-                        }
+                    if (is_both_closed(*state1) && buf1.is_empty())
+                        || (is_both_closed(*state2) && buf2.is_empty())
+                        || (is_write_closed(*state1) && is_write_closed(*state2)
+                            || (is_read_closed(*state1)
+                                && is_read_closed(*state2)
+                                && buf1.is_empty()
+                                && buf2.is_empty()))
+                    {
+                        close(src_index, &mut tcp_map, &mut mapping);
                     }
                 }
             }
         }
-    }
-}
-
-fn and_shutdown_state(s1: &mut Option<Shutdown>, s2: Shutdown) {
-    if let Some(s1) = s1 {
-        if s1 == &Shutdown::Read && s2 == Shutdown::Read {
-            *s1 = Shutdown::Read
-        } else if s1 == &Shutdown::Write && s2 == Shutdown::Write {
-            *s1 = Shutdown::Write
-        } else {
-            *s1 = Shutdown::Both
-        }
-    } else {
-        s1.replace(s2);
     }
 }
 
@@ -321,8 +297,8 @@ struct ProxyValue {
     dest_fd: usize,
     src_buf: BytesMut,
     dest_buf: BytesMut,
-    src_state: Option<Shutdown>,
-    dest_state: Option<Shutdown>,
+    src_state: u8,
+    dest_state: u8,
 }
 
 const BUF_LEN: usize = 65536;
@@ -336,8 +312,8 @@ impl ProxyValue {
             dest_fd,
             src_buf: BytesMut::with_capacity(BUF_LEN),
             dest_buf: BytesMut::with_capacity(BUF_LEN),
-            src_state: None,
-            dest_state: None,
+            src_state: NORMAL,
+            dest_state: NORMAL,
         }
     }
     fn as_mut(
@@ -348,8 +324,8 @@ impl ProxyValue {
         &mut TcpStream,
         &mut BytesMut,
         &mut BytesMut,
-        &mut Option<Shutdown>,
-        &mut Option<Shutdown>,
+        &mut u8,
+        &mut u8,
     ) {
         if index == self.src_fd {
             (
@@ -377,7 +353,7 @@ fn readable_handle(
     stream1: &mut TcpStream,
     stream2: &mut TcpStream,
     mid_buf: &mut BytesMut,
-    state2: &mut Option<Shutdown>,
+    state2: &mut u8,
 ) -> io::Result<()> {
     let mut buf = [0; BUF_LEN];
 
@@ -398,16 +374,14 @@ fn readable_handle(
                         match stream2.write(buf) {
                             Ok(end) => {
                                 if end == 0 {
-                                    mid_buf.clear();
-                                    and_shutdown_state(state2, Shutdown::Write);
+                                    *state2 |= WRITE_CLOSED;
                                     return Err(io::Error::from(io::ErrorKind::WriteZero));
                                 }
                                 buf = &buf[end..];
                             }
                             Err(e) => {
                                 if e.kind() != io::ErrorKind::WouldBlock {
-                                    mid_buf.clear();
-                                    and_shutdown_state(state2, Shutdown::Write);
+                                    *state2 |= WRITE_CLOSED;
                                     return Err(e);
                                 }
                                 break;
@@ -454,10 +428,27 @@ fn close(
     tcp_map: &mut HashMap<usize, ProxyValue>,
     mapping: &mut HashMap<usize, usize>,
 ) {
-    if let Some(mut val) = tcp_map.remove(&index) {
-        let _ = val.src_stream.flush();
-        let _ = val.dest_stream.flush();
+    if let Some(val) = tcp_map.remove(&index) {
+        let _ = val.src_stream.shutdown(Shutdown::Both);
+        let _ = val.dest_stream.shutdown(Shutdown::Both);
         mapping.remove(&val.src_fd);
         mapping.remove(&val.dest_fd);
     }
+}
+
+const NORMAL: u8 = 0b00;
+const READ_CLOSED: u8 = 0b01;
+const WRITE_CLOSED: u8 = 0b10;
+const BOTH_CLOSED: u8 = 0b11;
+
+fn is_read_closed(state: u8) -> bool {
+    (state & READ_CLOSED == READ_CLOSED) || is_both_closed(state)
+}
+
+fn is_write_closed(state: u8) -> bool {
+    (state & WRITE_CLOSED == WRITE_CLOSED) || is_both_closed(state)
+}
+
+fn is_both_closed(state: u8) -> bool {
+    state & BOTH_CLOSED == BOTH_CLOSED
 }

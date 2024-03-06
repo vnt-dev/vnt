@@ -161,7 +161,7 @@ fn recv_handle(
         Ok(mut ipv4_packet) => match icmp::IcmpPacket::new(ipv4_packet.payload()) {
             Ok(icmp_packet) => match icmp_packet.header_other() {
                 HeaderOther::Identifier(id, seq) => {
-                    if let Some(dest_ip) = nat_map.lock().remove(&(peer_ip, id, seq)) {
+                    if let Some(dest_ip) = nat_map.lock().get(&(peer_ip, id, seq)).cloned() {
                         ipv4_packet.set_destination_ip(dest_ip);
                         ipv4_packet.update_checksum();
 
