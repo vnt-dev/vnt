@@ -78,6 +78,7 @@ impl Into<NatType> for PunchNatType {
 
 impl NatTest {
     pub fn new(
+        channel_num: usize,
         mut stun_server: Vec<String>,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
@@ -86,9 +87,11 @@ impl NatTest {
     ) -> NatTest {
         let server = stun_server[0].clone();
         stun_server.resize(3, server);
+        let mut ports = udp_ports.clone();
+        ports.resize(channel_num, 0);
         let nat_info = NatInfo::new(
             Vec::new(),
-            Vec::new(),
+            ports,
             0,
             local_ipv4,
             ipv6,
@@ -115,61 +118,23 @@ impl NatTest {
         self.info.lock().clone()
     }
     pub fn update_addr(&self, index: usize, ip: Ipv4Addr, port: u16) {
+        log::info!("update_addr={},{}:{}", index, ip, port);
         let mut guard = self.info.lock();
         guard.update_addr(index, ip, port)
     }
     pub fn re_test(
         &self,
-        public_ports: Vec<u16>,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
-        udp_ports: Vec<u16>,
-        tcp_port: u16,
-    ) -> NatInfo {
-        let info = NatTest::re_test_(
-            &self.stun_server,
-            public_ports,
-            local_ipv4,
-            ipv6,
-            udp_ports,
-            tcp_port,
-        );
-        log::info!("探测nat类型={:?}", info);
-        *self.info.lock() = info.clone();
-        info
-    }
-    fn re_test_(
-        stun_server: &Vec<String>,
-        public_ports: Vec<u16>,
-        local_ipv4: Option<Ipv4Addr>,
-        ipv6: Option<Ipv6Addr>,
-        udp_ports: Vec<u16>,
-        tcp_port: u16,
-    ) -> NatInfo {
-        return match stun::stun_test_nat(stun_server.clone()) {
-            Ok((nat_type, public_ips, port_range)) => NatInfo::new(
-                public_ips,
-                public_ports,
-                port_range,
-                local_ipv4,
-                ipv6,
-                udp_ports,
-                tcp_port,
-                nat_type,
-            ),
-            Err(e) => {
-                log::warn!("{:?}", e);
-                NatInfo::new(
-                    Vec::new(),
-                    public_ports,
-                    0,
-                    local_ipv4,
-                    ipv6,
-                    udp_ports,
-                    tcp_port,
-                    NatType::Cone,
-                )
-            }
-        };
+    ) -> io::Result<NatInfo> {
+        let (nat_type, public_ips, port_range) = stun::stun_test_nat(self.stun_server.clone())?;
+        let mut guard = self.info.lock();
+        guard.nat_type = nat_type;
+        guard.public_ips = public_ips;
+        guard.public_port_range = port_range;
+        guard.local_ipv4 = local_ipv4;
+        guard.ipv6 = ipv6;
+
+        Ok(guard.clone())
     }
 }

@@ -27,19 +27,19 @@ fn retrieve_nat_type0(
 ) {
     thread::spawn(move || {
         if nat_test.can_update() {
-            let nat_info = nat_test.nat_info();
             let local_ipv4 = nat::local_ipv4();
             let local_ipv6 = nat::local_ipv6();
-            let nat_info = nat_test.re_test(
-                nat_info.public_ports,
-                local_ipv4,
-                local_ipv6,
-                nat_info.udp_ports,
-                nat_info.tcp_port,
-            );
-            if let Err(e) = context.switch(nat_info.nat_type, &udp_socket_sender) {
-                log::warn!("{:?}", e);
-            }
+            match nat_test.re_test(local_ipv4, local_ipv6) {
+                Ok(nat_info) => {
+                    log::info!("当前nat信息:{:?}", nat_info);
+                    if let Err(e) = context.switch(nat_info.nat_type, &udp_socket_sender) {
+                        log::warn!("{:?}", e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("nat re_test {:?}", e);
+                }
+            };
         }
     });
 }

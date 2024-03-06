@@ -97,16 +97,17 @@ impl NatInfo {
         }
     }
     pub fn update_addr(&mut self, index: usize, ip: Ipv4Addr, port: u16) {
+        if port != 0 {
+            if let Some(public_port) = self.public_ports.get_mut(index) {
+                *public_port = port;
+            }
+        }
         if !ip.is_multicast()
             && !ip.is_broadcast()
             && !ip.is_unspecified()
             && !ip.is_loopback()
             && !ip.is_private()
-            && port != 0
         {
-            if let Some(public_port) = self.public_ports.get_mut(index) {
-                *public_port = port;
-            }
             if !self.public_ips.contains(&ip) {
                 self.public_ips.push(ip);
             }
@@ -226,9 +227,8 @@ impl Punch {
         if !self.context.route_table.need_punch(&id) {
             return Ok(());
         }
-        log::info!("nat_info={:?}", nat_info);
 
-        if self.is_tcp {
+        if self.is_tcp && nat_info.tcp_port != 0 {
             //向tcp发起连接
             if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
                 if self.connect_tcp(buf, ipv6_addr) {
@@ -321,10 +321,11 @@ impl Punch {
                     let is_cone = self.context.is_cone();
                     let len = nat_info.public_ports.len();
                     for ip in &nat_info.public_ips {
-                        let addr = SocketAddr::V4(SocketAddrV4::new(
-                            *ip,
-                            nat_info.public_ports[index % len],
-                        ));
+                        let port = nat_info.public_ports[index % len];
+                        if port == 0 || ip.is_unspecified() {
+                            continue;
+                        }
+                        let addr = SocketAddr::V4(SocketAddrV4::new(*ip, port));
                         self.context.send_main_udp(index, buf, addr)?;
                         if !is_cone {
                             //只有一方是对称，则对称方要使用全部端口发送数据，符合上述计算的概率

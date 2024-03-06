@@ -102,6 +102,7 @@ impl Vnt {
         let tcp_port = tcp_listener.local_addr()?.port();
         //nat检测工具
         let nat_test = NatTest::new(
+            context.channel_num(),
             config.stun_server.clone(),
             local_ipv4,
             local_ipv6,
