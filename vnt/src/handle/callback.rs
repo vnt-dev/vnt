@@ -165,6 +165,7 @@ pub enum ErrorType {
     AddressExhausted,
     IpAlreadyExists,
     InvalidIp,
+    LocalIpExists,
     Unknown,
 }
 
@@ -176,7 +177,8 @@ impl Into<u8> for ErrorType {
             ErrorType::AddressExhausted => 3,
             ErrorType::IpAlreadyExists => 4,
             ErrorType::InvalidIp => 5,
-            ErrorType::Unknown => 6,
+            ErrorType::LocalIpExists => 6,
+            ErrorType::Unknown => 255,
         }
     }
 }

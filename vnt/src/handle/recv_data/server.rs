@@ -262,7 +262,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         }
                         if let Err(e) = self.device.set_ip(virtual_ip, virtual_netmask) {
                             self.callback.error(ErrorInfo::new_msg(
-                                ErrorType::Unknown,
+                                ErrorType::LocalIpExists,
                                 format!("set_ip {:?}", e),
                             ));
                             return Ok(());

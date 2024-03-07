@@ -1,5 +1,7 @@
 use std::process;
 
+use console::style;
+
 use vnt::handle::callback::ConnectInfo;
 use vnt::{DeviceInfo, ErrorInfo, HandshakeInfo, RegisterInfo, VntCallback};
 
@@ -8,7 +10,7 @@ pub struct VntHandler {}
 
 impl VntCallback for VntHandler {
     fn success(&self) {
-        println!(" ====== Connect Successfully ====== ")
+        println!(" {} ", style("====== Connect Successfully ======").green())
     }
     fn create_tun(&self, info: DeviceInfo) {
         println!("create_tun {}", info)
@@ -24,12 +26,12 @@ impl VntCallback for VntHandler {
     }
 
     fn register(&self, info: RegisterInfo) -> bool {
-        println!("register {}", info);
+        println!("register {}", style(info).green());
         true
     }
 
     fn error(&self, info: ErrorInfo) {
-        println!("error {}", info);
+        println!("{}", style(format!("error {}", info)).red());
     }
 
     fn stop(&self) {
