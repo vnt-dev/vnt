@@ -317,8 +317,8 @@ impl Punch {
                 self.port_index.insert(id, index);
             }
             NatType::Cone => {
+                let is_cone = self.context.is_cone();
                 for index in 0..channel_num {
-                    let is_cone = self.context.is_cone();
                     let len = nat_info.public_ports.len();
                     for ip in &nat_info.public_ips {
                         let port = nat_info.public_ports[index % len];
@@ -331,6 +331,10 @@ impl Punch {
                             //只有一方是对称，则对称方要使用全部端口发送数据，符合上述计算的概率
                             self.context.try_send_all(buf, addr);
                         }
+                    }
+                    if !is_cone {
+                        //对称网络数据只发一遍
+                        break;
                     }
                 }
             }

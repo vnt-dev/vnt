@@ -330,47 +330,29 @@ impl RouteTable {
 
 impl RouteTable {
     fn get_route_by_id(&self, id: &Ipv4Addr) -> io::Result<Route> {
-        if let Some((count, v)) = self.route_table.read().get(id) {
+        if let Some((_count, v)) = self.route_table.read().get(id) {
             let len = v.len();
             if len == 0 {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
             }
-            let index = if self.channel_num > 1 {
-                let index = count.load(Ordering::Relaxed);
-                count.store(index + 1, Ordering::Relaxed);
-                index
-            } else {
-                0
-            };
-            // 基准延迟，选中的路由不能和这个延迟大太多
-            let mut rt0 = v[0].0.rt;
-            let (route, time) = &v[index % len];
+            // 因为列表是按延迟排序的，会一直变，直接取第一条是合理的
+            let (route, time) = &v[0];
 
             // 刚加入的或者长时间没通信的不使用
-            if route.rt - rt0 < 5
-                && route.rt != DEFAULT_RT
-                && time.load().elapsed() < Duration::from_secs(5)
-            {
+            if route.rt != DEFAULT_RT && time.load().elapsed() < Duration::from_secs(5) {
                 return Ok(*route);
             }
             // 如果指定路由不符合，则遍历路由表找到符合条件的
             if len > 1 {
-                let mut re_rt = false;
-                for (i, (route, time)) in v.iter().enumerate() {
-                    let recent = time.load().elapsed() < Duration::from_secs(5);
-                    if i == 0 && !recent {
-                        // 如果第一条路由不符合条件，则要重新选择基准延迟
-                        re_rt = true;
-                        continue;
-                    }
-                    if re_rt && recent {
-                        re_rt = false;
-                        rt0 = route.rt;
-                    }
-                    if recent && route.rt - rt0 < 5 && route.rt != DEFAULT_RT {
+                for (route, time) in v[1..].iter() {
+                    if route.rt != DEFAULT_RT && time.load().elapsed() < Duration::from_secs(5) {
                         return Ok(*route);
                     }
                 }
+            }
+            //加一条保底
+            if route.is_p2p() && route.rt != DEFAULT_RT {
+                return Ok(*route);
             }
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
@@ -397,6 +379,7 @@ impl RouteTable {
             .entry(id)
             .or_insert_with(|| (AtomicUsize::new(0), Vec::with_capacity(4)));
         let mut exist = false;
+        let mut p2p_num = 0;
         for (x, time) in list.iter_mut() {
             if x.metric < route.metric && !self.first_latency {
                 //非优先延迟的情况下 不能比当前的路径更长
@@ -412,6 +395,9 @@ impl RouteTable {
                 time.store(Instant::now());
                 break;
             }
+            if x.is_p2p() {
+                p2p_num += 1;
+            }
         }
         if exist {
             list.sort_by_key(|(k, _)| k.rt);
@@ -419,9 +405,13 @@ impl RouteTable {
             let limit_len = if self.first_latency {
                 self.channel_num
             } else {
+                if p2p_num >= self.channel_num {
+                    // p2p通道满员了则不再添加
+                    return;
+                }
                 if route.metric == 1 {
                     //非优先延迟的情况下 添加了直连的则排除非直连的
-                    list.retain(|(k, _)| k.metric == 1);
+                    list.retain(|(k, _)| k.is_p2p());
                 }
                 self.channel_num - 1
             };
