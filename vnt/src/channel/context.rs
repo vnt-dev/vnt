@@ -12,7 +12,7 @@ use rand::Rng;
 
 use crate::channel::punch::NatType;
 use crate::channel::sender::{AcceptSocketSender, ChannelSender, PacketSender};
-use crate::channel::{Route, RouteKey, UseChannelType};
+use crate::channel::{Route, RouteKey, UseChannelType, DEFAULT_RT};
 use crate::handle::{ConnectStatus, CurrentDeviceInfo};
 
 /// 传输通道上下文，持有udp socket、tcp socket和路由信息
@@ -331,31 +331,47 @@ impl RouteTable {
 impl RouteTable {
     fn get_route_by_id(&self, id: &Ipv4Addr) -> io::Result<Route> {
         if let Some((count, v)) = self.route_table.read().get(id) {
-            if v.is_empty() {
+            let len = v.len();
+            if len == 0 {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
             }
-            if self.channel_num > 1 {
-                //多通道的，则轮流使用,不需要精确轮询 不使用cas性能估计好点
+            let index = if self.channel_num > 1 {
                 let index = count.load(Ordering::Relaxed);
                 count.store(index + 1, Ordering::Relaxed);
-                if let Some((route, _time)) = v.get(index) {
-                    if route.is_p2p() && route.rt != 199 {
+                index
+            } else {
+                0
+            };
+            // 基准延迟，选中的路由不能和这个延迟大太多
+            let mut rt0 = v[0].0.rt;
+            let (route, time) = &v[index % len];
+
+            // 刚加入的或者长时间没通信的不使用
+            if route.rt - rt0 < 5
+                && route.rt != DEFAULT_RT
+                && time.load().elapsed() < Duration::from_secs(5)
+            {
+                return Ok(*route);
+            }
+            // 如果指定路由不符合，则遍历路由表找到符合条件的
+            if len > 1 {
+                let mut re_rt = false;
+                for (i, (route, time)) in v.iter().enumerate() {
+                    let recent = time.load().elapsed() < Duration::from_secs(5);
+                    if i == 0 && !recent {
+                        // 如果第一条路由不符合条件，则要重新选择基准延迟
+                        re_rt = true;
+                        continue;
+                    }
+                    if re_rt && recent {
+                        re_rt = false;
+                        rt0 = route.rt;
+                    }
+                    if recent && route.rt - rt0 < 5 && route.rt != DEFAULT_RT {
                         return Ok(*route);
                     }
                 }
             }
-            let (route, time) = &v[0];
-            if route.rt == 199 {
-                //这通常是刚加入路由，直接放弃使用,避免抖动
-                return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
-            }
-            if !route.is_p2p() {
-                //借道传输时，长时间不通信的通道不使用
-                if time.load().elapsed() > Duration::from_secs(5) {
-                    return Err(io::Error::new(io::ErrorKind::NotFound, "route time out"));
-                }
-            }
-            return Ok(*route);
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
     }
@@ -400,18 +416,18 @@ impl RouteTable {
         if exist {
             list.sort_by_key(|(k, _)| k.rt);
         } else {
-            let max_len = if self.first_latency {
-                self.channel_num + 1
+            let limit_len = if self.first_latency {
+                self.channel_num
             } else {
                 if route.metric == 1 {
                     //非优先延迟的情况下 添加了直连的则排除非直连的
                     list.retain(|(k, _)| k.metric == 1);
                 }
-                self.channel_num
+                self.channel_num - 1
             };
             list.sort_by_key(|(k, _)| k.rt);
-            if list.len() > max_len {
-                list.truncate(max_len);
+            if list.len() > limit_len {
+                list.truncate(limit_len);
             }
             list.push((route, AtomicCell::new(Instant::now())));
         }

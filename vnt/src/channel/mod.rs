@@ -75,7 +75,7 @@ pub struct RouteSortKey {
     pub metric: u8,
     pub rt: i64,
 }
-
+const DEFAULT_RT: i64 = 999;
 impl Route {
     pub fn new(is_tcp: bool, index: usize, addr: SocketAddr, metric: u8, rt: i64) -> Self {
         Self {
@@ -93,6 +93,15 @@ impl Route {
             addr: route_key.addr,
             metric,
             rt,
+        }
+    }
+    pub fn from_default_rt(route_key: RouteKey, metric: u8) -> Self {
+        Self {
+            is_tcp: route_key.is_tcp,
+            index: route_key.index,
+            addr: route_key.addr,
+            metric,
+            rt: DEFAULT_RT,
         }
     }
     pub fn route_key(&self) -> RouteKey {

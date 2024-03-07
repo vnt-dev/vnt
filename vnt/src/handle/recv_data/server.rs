@@ -226,7 +226,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                     Ipv4Addr::from(response.virtual_ip & response.virtual_netmask);
                 let register_info = RegisterInfo::new(virtual_ip, virtual_netmask, virtual_gateway);
                 if self.callback.register(register_info) {
-                    let route = Route::from(route_key, 1, 199);
+                    let route = Route::from_default_rt(route_key, 1);
                     context
                         .route_table
                         .add_route_if_absent(virtual_gateway, route);

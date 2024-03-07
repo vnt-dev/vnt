@@ -174,7 +174,7 @@ impl ClientPacketHandler {
                 net_packet.first_set_ttl(MAX_TTL);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
                 context.send_by_key(net_packet.buffer(), route_key)?;
-                let route = Route::from(route_key, metric, 199);
+                let route = Route::from_default_rt(route_key, metric);
                 context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::PongPacket(pong_packet) => {
@@ -197,14 +197,14 @@ impl ClientPacketHandler {
                 net_packet.first_set_ttl(1);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
                 context.send_by_key(net_packet.buffer(), route_key)?;
-                let route = Route::from(route_key, 1, 199);
+                let route = Route::from_default_rt(route_key, 1);
                 context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::PunchResponse => {
                 if context.use_channel_type().is_only_relay() {
                     return Ok(());
                 }
-                let route = Route::from(route_key, 1, 199);
+                let route = Route::from_default_rt(route_key, 1);
                 context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::AddrRequest => match route_key.addr.ip() {
