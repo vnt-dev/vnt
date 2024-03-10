@@ -100,7 +100,7 @@ impl Device {
                 ));
             }
             // 开启session
-            let session = win_tun.WintunStartSession(adapter, 128 * 1024);
+            let session = win_tun.WintunStartSession(adapter, MAX_RING_CAPACITY);
             if session.is_null() {
                 log::error!("session.is_null {:?}", io::Error::last_os_error());
                 return Err(io::Error::new(
@@ -249,9 +249,9 @@ impl Device {
     }
     pub fn receive_blocking(&self) -> io::Result<packet::TunPacket> {
         loop {
-            //Try 5 times to receive without blocking so we don't have to issue a syscall to wait
+            //Try 16 times to receive without blocking so we don't have to issue a syscall to wait
             //for the event if packets are being received at a rapid rate
-            for _ in 0..5 {
+            for _i in 0..20 {
                 match self.try_receive()? {
                     None => {
                         continue;
