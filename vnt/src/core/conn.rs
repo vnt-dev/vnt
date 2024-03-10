@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::Ipv4Addr;
-use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,6 +19,7 @@ use crate::cipher::Cipher;
 use crate::cipher::RsaCipher;
 use crate::core::Config;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
+use crate::handle::maintain::PunchReceiver;
 use crate::handle::recv_data::RecvDataHandler;
 use crate::handle::{
     maintain, tun_tap, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo,
@@ -45,6 +45,7 @@ pub struct Vnt {
 
 impl Vnt {
     pub fn new<Call: VntCallback>(config: Config, callback: Call) -> io::Result<Self> {
+        log::info!("config:{:?}", config);
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
         let rsa_cipher: Arc<Mutex<Option<RsaCipher>>> = Arc::new(Mutex::new(None));
@@ -136,7 +137,7 @@ impl Vnt {
         } else {
             None
         };
-        let (punch_sender, punch_receiver) = sync_channel(3);
+        let (punch_sender, punch_receiver) = maintain::punch_channel();
         let peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>> =
             Arc::new(RwLock::new(HashMap::with_capacity(16)));
         let down_counter =
@@ -250,7 +251,7 @@ pub fn start<Call: VntCallback>(
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    punch_receiver: Receiver<(Ipv4Addr, NatInfo)>,
+    punch_receiver: PunchReceiver,
     config_info: BaseConfigInfo,
     punch: Punch,
     callback: Call,
