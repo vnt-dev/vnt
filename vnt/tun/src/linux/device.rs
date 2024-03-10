@@ -86,6 +86,10 @@ impl Device {
             } else {
                 None
             };
+            let set_txqueuelen  = format!("ifconfig {} txqueuelen 1000", name);
+            if let Err(e) = exe_cmd(&set_txqueuelen){
+                log::warn!("{:?}",e);
+            }
             Device {
                 name,
                 tun,
