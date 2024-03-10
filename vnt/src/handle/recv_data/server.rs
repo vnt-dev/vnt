@@ -112,7 +112,7 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
                         return Ok(());
                     }
                     if let Some(key) = self.server_cipher.key() {
-                        log::warn!("上传密钥到服务端:{:?}", route_key);
+                        log::info!("上传密钥到服务端:{:?}", route_key);
                         let packet = handshaker::secret_handshake_request_packet(
                             rsa_cipher,
                             self.config_info.token.clone(),
@@ -139,7 +139,7 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
                     rsa_cipher.finger()?,
                     response.version,
                 );
-                log::warn!("加密握手请求:{:?}", handshake_info);
+                log::info!("加密握手请求:{:?}", handshake_info);
 
                 if self.callback.handshake(handshake_info) {
                     let packet = handshaker::secret_handshake_request_packet(
@@ -225,6 +225,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 let virtual_network =
                     Ipv4Addr::from(response.virtual_ip & response.virtual_netmask);
                 let register_info = RegisterInfo::new(virtual_ip, virtual_netmask, virtual_gateway);
+                log::info!("注册成功：{:?}", register_info);
                 if self.callback.register(register_info) {
                     let route = Route::from_default_rt(route_key, 1);
                     context
@@ -326,6 +327,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
             service_packet::Protocol::HandshakeResponse => {}
             service_packet::Protocol::SecretHandshakeRequest => {}
             service_packet::Protocol::SecretHandshakeResponse => {
+                log::info!("SecretHandshakeResponse");
                 //加密握手结束，发送注册数据
                 self.register(current_device, context)?;
             }
@@ -372,6 +374,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
             false,
             client_secret,
         )?;
+        log::info!("发送注册请求，{:?}", self.config_info);
         //注册请求只发送到默认通道
         context.send_default(response.buffer(), current_device.connect_server)
     }
