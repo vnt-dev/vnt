@@ -118,7 +118,6 @@ impl NatTest {
         self.info.lock().clone()
     }
     pub fn update_addr(&self, index: usize, ip: Ipv4Addr, port: u16) {
-        log::info!("update_addr={},{}:{}", index, ip, port);
         let mut guard = self.info.lock();
         guard.update_addr(index, ip, port)
     }
