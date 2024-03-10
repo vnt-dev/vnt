@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -18,6 +17,7 @@ use crate::channel::punch::NatInfo;
 use crate::channel::{Route, RouteKey};
 use crate::cipher::Cipher;
 use crate::external_route::AllowExternalRoute;
+use crate::handle::maintain::PunchSender;
 use crate::handle::recv_data::PacketHandler;
 use crate::handle::CurrentDeviceInfo;
 #[cfg(feature = "ip_proxy")]
@@ -35,7 +35,7 @@ use crate::protocol::{
 pub struct ClientPacketHandler {
     device: Arc<Device>,
     client_cipher: Cipher,
-    punch_sender: SyncSender<(Ipv4Addr, NatInfo)>,
+    punch_sender: PunchSender,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     nat_test: NatTest,
     route: AllowExternalRoute,
@@ -47,7 +47,7 @@ impl ClientPacketHandler {
     pub fn new(
         device: Arc<Device>,
         client_cipher: Cipher,
-        punch_sender: SyncSender<(Ipv4Addr, NatInfo)>,
+        punch_sender: PunchSender,
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         nat_test: NatTest,
         route: AllowExternalRoute,
@@ -75,6 +75,9 @@ impl PacketHandler for ClientPacketHandler {
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()> {
         self.client_cipher.decrypt_ipv4(&mut net_packet)?;
+        context
+            .route_table
+            .update_read_time(&net_packet.source(), &route_key);
         match net_packet.protocol() {
             Protocol::Service => {}
             Protocol::Error => {}
@@ -165,7 +168,6 @@ impl ClientPacketHandler {
     ) -> io::Result<()> {
         let metric = net_packet.source_ttl() - net_packet.ttl() + 1;
         let source = net_packet.source();
-        context.route_table.update_read_time(&source, &route_key);
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PingPacket(_) => {
                 net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
@@ -174,8 +176,8 @@ impl ClientPacketHandler {
                 net_packet.first_set_ttl(MAX_TTL);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
                 context.send_by_key(net_packet.buffer(), route_key)?;
-                let route = Route::from_default_rt(route_key, metric);
-                context.route_table.add_route_if_absent(source, route);
+                // let route = Route::from_default_rt(route_key, metric);
+                // context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::PongPacket(pong_packet) => {
                 let current_time = crate::handle::now_time() as u16;
@@ -187,6 +189,7 @@ impl ClientPacketHandler {
                 context.route_table.add_route(source, route);
             }
             ControlPacket::PunchRequest => {
+                log::info!("PunchRequest={:?},source={}", route_key, source);
                 if context.use_channel_type().is_only_relay() {
                     return Ok(());
                 }
@@ -201,6 +204,7 @@ impl ClientPacketHandler {
                 context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::PunchResponse => {
+                log::info!("PunchResponse={:?},source={}", route_key, source);
                 if context.use_channel_type().is_only_relay() {
                     return Ok(());
                 }
@@ -316,12 +320,14 @@ impl ClientPacketHandler {
                     punch_packet.set_source(current_device.virtual_ip());
                     punch_packet.set_destination(source);
                     punch_packet.set_payload(&bytes)?;
-                    if self.punch(source, peer_nat_info) {
+                    log::info!("接收打洞请求={:?}", peer_nat_info);
+                    if self.punch_sender.send(true, source, peer_nat_info) {
                         self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
                         context.send_by_key(punch_packet.buffer(), route_key)?;
                     }
                 } else {
-                    self.punch(source, peer_nat_info);
+                    log::info!("接收打洞请求回复={:?}", peer_nat_info);
+                    self.punch_sender.send(false, source, peer_nat_info);
                 }
             }
             other_turn_packet::Protocol::Unknown(e) => {
@@ -329,8 +335,5 @@ impl ClientPacketHandler {
             }
         }
         Ok(())
-    }
-    fn punch(&self, peer_ip: Ipv4Addr, peer_nat_info: NatInfo) -> bool {
-        self.punch_sender.try_send((peer_ip, peer_nat_info)).is_ok()
     }
 }

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 use std::{io, thread};
 
@@ -18,6 +17,7 @@ use crate::cipher::Cipher;
 use crate::cipher::RsaCipher;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
 use crate::handle::callback::VntCallback;
+use crate::handle::maintain::PunchSender;
 use crate::handle::recv_data::client::ClientPacketHandler;
 use crate::handle::recv_data::server::ServerPacketHandler;
 use crate::handle::recv_data::turn::TurnPacketHandler;
@@ -60,7 +60,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         config_info: BaseConfigInfo,
         nat_test: NatTest,
         callback: Call,
-        punch_sender: SyncSender<(Ipv4Addr, NatInfo)>,
+        punch_sender: PunchSender,
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         external_route: ExternalRoute,
         route: AllowExternalRoute,

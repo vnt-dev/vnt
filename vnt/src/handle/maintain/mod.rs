@@ -9,7 +9,7 @@ mod addr_request;
 pub use addr_request::addr_request;
 
 mod punch;
-pub use punch::punch;
+pub use punch::*;
 
 mod idle;
 pub use idle::idle_gateway;

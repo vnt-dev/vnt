@@ -1,5 +1,6 @@
+use std::cmp::Ordering;
 use std::net::Ipv4Addr;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{io, thread};
@@ -19,6 +20,39 @@ use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::{control_packet, other_turn_packet, NetPacket, Protocol, Version, MAX_TTL};
 use crate::util::Scheduler;
 
+#[derive(Clone)]
+pub struct PunchSender {
+    sender_self: SyncSender<(Ipv4Addr, NatInfo)>,
+    sender_peer: SyncSender<(Ipv4Addr, NatInfo)>,
+}
+impl PunchSender {
+    pub fn send(&self, src_peer: bool, ip: Ipv4Addr, info: NatInfo) -> bool {
+        if src_peer {
+            self.sender_peer.send((ip, info)).is_ok()
+        } else {
+            self.sender_self.send((ip, info)).is_ok()
+        }
+    }
+}
+pub struct PunchReceiver {
+    receiver_peer: Receiver<(Ipv4Addr, NatInfo)>,
+    receiver_self: Receiver<(Ipv4Addr, NatInfo)>,
+}
+pub fn punch_channel() -> (PunchSender, PunchReceiver) {
+    let (sender_self, receiver_self) = sync_channel(1);
+    let (sender_peer, receiver_peer) = sync_channel(1);
+    (
+        PunchSender {
+            sender_self,
+            sender_peer,
+        },
+        PunchReceiver {
+            receiver_peer,
+            receiver_self,
+        },
+    )
+}
+
 pub fn punch(
     scheduler: &Scheduler,
     context: Context,
@@ -26,7 +60,7 @@ pub fn punch(
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
-    receiver: Receiver<(Ipv4Addr, NatInfo)>,
+    receiver: PunchReceiver,
     punch: Punch,
 ) {
     punch_request(
@@ -38,8 +72,18 @@ pub fn punch(
         client_cipher.clone(),
         0,
     );
+    let receiver_peer = receiver.receiver_peer;
+    let receiver_self = receiver.receiver_self;
+    {
+        let punch = punch.clone();
+        let current_device = current_device.clone();
+        let client_cipher = client_cipher.clone();
+        thread::spawn(move || {
+            punch_start(receiver_peer, punch, current_device, client_cipher);
+        });
+    }
     thread::spawn(move || {
-        punch_start(receiver, punch, current_device, client_cipher);
+        punch_start(receiver_self, punch, current_device, client_cipher);
     });
 }
 
@@ -116,9 +160,26 @@ fn punch0(
 ) -> io::Result<()> {
     let current_device = current_device.load();
     let nat_info = nat_test.nat_info();
-    let mut list = device_list.lock().clone().1;
+    let current_ip = current_device.virtual_ip;
+    let mut list: Vec<PeerDeviceInfo> = device_list
+        .lock()
+        .1
+        .iter()
+        .filter(|info| info.status.is_online() && info.virtual_ip > current_ip)
+        .cloned()
+        .collect();
     list.shuffle(&mut rand::thread_rng());
     let mut count = 0;
+    // 优先没打洞的
+    list.sort_by(|v1, v2| {
+        if context.route_table.route_one_p2p(&v1.virtual_ip).is_none() {
+            Ordering::Less
+        } else if context.route_table.route_one_p2p(&v2.virtual_ip).is_none() {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    });
     for info in list {
         if !info.status.is_online() {
             continue;
@@ -169,6 +230,7 @@ fn punch_packet(
         punch_reply.ipv6 = ipv6.octets().to_vec();
     }
     punch_reply.nat_type = protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
+    log::info!("请求打洞={:?}", punch_reply);
     let bytes = punch_reply
         .write_to_bytes()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("punch_packet {:?}", e)))?;
