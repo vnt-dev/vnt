@@ -71,6 +71,10 @@ fn idle_gateway0<Call: VntCallback>(
     if let Err(e) =
         check_gateway_channel(context, cur, config, tcp_socket_sender, call, connect_count)
     {
+        call.error(ErrorInfo::new_msg(
+            ErrorType::Disconnect,
+            format!("connect:{},error:{:?}", cur.connect_server, e),
+        ));
         log::warn!("{:?}", e);
     }
 }
@@ -83,7 +87,8 @@ fn idle_route0<Call: VntCallback>(
     let cur = current_device.load();
     match idle.next_idle() {
         IdleType::Timeout(ip, route) => {
-            context.remove_route(&ip, route);
+            log::info!("route Timeout {:?},{:?}", ip, route);
+            context.remove_route(&ip, route.route_key());
             if cur.is_gateway(&ip) {
                 //网关路由过期，则需要改变状态
                 let cur = context.change_status(current_device);
@@ -111,6 +116,9 @@ fn check_gateway_channel<Call: VntCallback>(
         .route_one(&current_device.virtual_gateway);
     if gateway_route.is_none() {
         *count += 1;
+        if *count % 4 == 0 {
+            context.change_main_index();
+        }
         //需要重连
         call.connect(ConnectInfo::new(*count, current_device.connect_server));
         let request_packet = handshaker::handshake_request_packet(config.client_secret)?;
