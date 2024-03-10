@@ -1,7 +1,6 @@
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::str::FromStr;
-use std::time::Duration;
 
 use crate::channel::context::Context;
 use crate::channel::handler::RecvChannelHandler;
@@ -156,17 +155,26 @@ pub fn init_context(
     assert!(!ports.is_empty(), "not channel");
     let mut udps = Vec::with_capacity(ports.len());
     for port in &ports {
-        //监听v6+v4双栈，主通道使用同步io
+        //监听v6+v4双栈
         let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
         let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None)?;
         io_convert(socket.set_only_v6(false), |_| {
             format!("set_only_v6 failed: {}", &address)
         })?;
+        io_convert(socket.set_reuse_address(true), |_| {
+            format!("set_reuse_address failed: {}", &address)
+        })?;
+        io_convert(socket.set_send_buffer_size(2 * 1024 * 1024), |_| {
+            format!("set_send_buffer_size failed: {}", &address)
+        })?;
+        io_convert(socket.set_recv_buffer_size(2 * 1024 * 1024), |_| {
+            format!("set_recv_buffer_size failed: {}", &address)
+        })?;
         io_convert(socket.bind(&address.into()), |_| {
             format!("bind failed: {}", &address)
         })?;
         let main_channel: UdpSocket = socket.into();
-        main_channel.set_write_timeout(Some(Duration::from_secs(5)))?;
+        main_channel.set_nonblocking(true)?;
         udps.push(main_channel);
     }
     let context = Context::new(
@@ -185,7 +193,9 @@ pub fn init_context(
     io_convert(socket.set_only_v6(false), |_| {
         format!("set_only_v6 failed: {}", &address)
     })?;
-
+    io_convert(socket.set_reuse_address(true), |_| {
+        format!("set_reuse_address failed: {}", &address)
+    })?;
     if let Err(e) = socket.bind(&address.into()) {
         if ports[0] == 0 {
             //端口可能冲突，则使用任意端口
@@ -199,7 +209,7 @@ pub fn init_context(
             io_convert(Err(e), |_| format!("bind failed: {}", &address))?;
         }
     }
-    socket.listen(2)?;
+    socket.listen(128)?;
     socket.set_nonblocking(true)?;
     socket.set_nodelay(false)?;
     let tcp_listener = mio::net::TcpListener::from_std(socket.into());

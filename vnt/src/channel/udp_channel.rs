@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::net::UdpSocket as StdUdpSocket;
-use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::Arc;
 use std::{io, thread};
 
 use mio::event::Source;
@@ -23,15 +22,7 @@ pub fn udp_listen<H>(
 where
     H: RecvChannelHandler,
 {
-    //根据通道数创建对应线程进行读取
-    for index in 0..context.channel_num() {
-        main_udp_listen(
-            index,
-            stop_manager.clone(),
-            recv_handler.clone(),
-            context.clone(),
-        )?;
-    }
+    main_udp_listen(stop_manager.clone(), recv_handler.clone(), context.clone())?;
     sub_udp_listen(stop_manager, recv_handler, context)
 }
 
@@ -146,7 +137,6 @@ where
 
 /// 阻塞监听
 fn main_udp_listen<H>(
-    index: usize,
     stop_manager: StopManager,
     recv_handler: H,
     context: Context,
@@ -154,54 +144,135 @@ fn main_udp_listen<H>(
 where
     H: RecvChannelHandler,
 {
-    let port = context.main_udp_socket[index].local_addr()?.port();
-    let context_ = context.clone();
-    let worker = stop_manager.add_listener(format!("main_udp_listen-{}", index), move || {
-        context_.stop();
-        match StdUdpSocket::bind("127.0.0.1:0") {
-            Ok(udp) => {
-                if let Err(e) = udp.send_to(
-                    b"stop",
-                    SocketAddr::V4(std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
-                ) {
-                    log::error!("发送停止消息到udp失败:{:?}", e);
-                }
-            }
-            Err(e) => {
-                log::error!("发送停止-绑定udp失败:{:?}", e);
-            }
+    let poll = Poll::new()?;
+    let waker = Arc::new(Waker::new(poll.registry(), NOTIFY)?);
+    let _waker = waker.clone();
+    let worker = stop_manager.add_listener("main_udp".into(), move || {
+        if let Err(e) = waker.wake() {
+            log::error!("{:?}", e);
         }
     })?;
     thread::Builder::new()
-        .name("main_udp读事件处理线程".into())
+        .name("main_udp".into())
         .spawn(move || {
-            if let Err(e) = main_udp_listen0(index, recv_handler, context) {
+            if let Err(e) = main_udp_listen0(poll, recv_handler, context) {
                 log::error!("{:?}", e);
             }
+            drop(_waker);
             worker.stop_all();
         })?;
     Ok(())
 }
 
-pub fn main_udp_listen0<H>(index: usize, mut recv_handler: H, context: Context) -> io::Result<()>
+pub fn main_udp_listen0<H>(mut poll: Poll, mut recv_handler: H, context: Context) -> io::Result<()>
 where
     H: RecvChannelHandler,
 {
     let mut buf = [0; BUFFER_SIZE];
-    let udp_socket = &context.main_udp_socket[index];
+    let mut udps = Vec::with_capacity(context.main_udp_socket.len());
+
+    for (index, udp) in context.main_udp_socket.iter().enumerate() {
+        let udp_socket = udp.try_clone()?;
+        udp_socket.set_nonblocking(true)?;
+        let mut mio_udp = UdpSocket::from_std(udp_socket);
+        poll.registry()
+            .register(&mut mio_udp, Token(index + 1), Interest::READABLE)?;
+        udps.push(mio_udp);
+    }
+
+    let mut events = Events::with_capacity(udps.len());
     loop {
-        match udp_socket.recv_from(&mut buf) {
-            Ok((len, addr)) => {
-                if &buf[..len] == b"stop" {
-                    if context.is_stop() {
-                        return Ok(());
+        poll.poll(&mut events, None)?;
+        for x in events.iter() {
+            let index = match x.token() {
+                NOTIFY => return Ok(()),
+                Token(index) => index - 1,
+            };
+            loop {
+                match udps[index].recv_from(&mut buf) {
+                    Ok((len, addr)) => {
+                        recv_handler.handle(
+                            &mut buf[..len],
+                            RouteKey::new(false, index, addr),
+                            &context,
+                        );
+                    }
+                    Err(e) => {
+                        if e.kind() == io::ErrorKind::WouldBlock {
+                            break;
+                        }
+                        log::error!("main_udp_listen_{}={:?}", index, e);
                     }
                 }
-                recv_handler.handle(&mut buf[..len], RouteKey::new(false, index, addr), &context);
-            }
-            Err(e) => {
-                log::error!("main_udp_listen0={:?}", e);
             }
         }
     }
 }
+// /// 用recvmmsg没什么帮助，这里记录下，以下是完整代码
+// #[cfg(unix)]
+// pub fn main_udp_listen0<H>(index: usize, mut recv_handler: H, context: Context) -> io::Result<()>
+//     where
+//         H: RecvChannelHandler,
+// {
+//     use libc::{c_uint, mmsghdr, sockaddr_storage, socklen_t, timespec};
+//     use std::os::fd::AsRawFd;
+//
+//     let udp_socket = context.main_udp_socket[index].try_clone()?;
+//     let fd = udp_socket.as_raw_fd();
+//     const MAX_MESSAGES: usize = 16;
+//     let mut iov: [libc::iovec; MAX_MESSAGES] = unsafe { std::mem::zeroed() };
+//     let mut buf: [[u8; BUFFER_SIZE]; MAX_MESSAGES] = [[0; BUFFER_SIZE]; MAX_MESSAGES];
+//     let mut msgs: [mmsghdr; MAX_MESSAGES] = unsafe { std::mem::zeroed() };
+//     let mut addrs: [sockaddr_storage; MAX_MESSAGES] = unsafe { std::mem::zeroed() };
+//     for i in 0..MAX_MESSAGES {
+//         iov[i].iov_base = buf[i].as_mut_ptr() as *mut libc::c_void;
+//         iov[i].iov_len = BUFFER_SIZE;
+//         msgs[i].msg_hdr.msg_iov = &mut iov[i];
+//         msgs[i].msg_hdr.msg_iovlen = 1;
+//         msgs[i].msg_hdr.msg_name = &mut addrs[i] as *const _ as *mut libc::c_void;
+//         msgs[i].msg_hdr.msg_namelen = std::mem::size_of::<sockaddr_storage>() as socklen_t;
+//     }
+//     let mut time: timespec = unsafe { std::mem::zeroed() };
+//     loop {
+//         if context.is_stop() {
+//             return Ok(());
+//         }
+//         let res =
+//             unsafe { libc::recvmmsg(fd, msgs.as_mut_ptr(), MAX_MESSAGES as c_uint, 0, &mut time) };
+//         if res == -1 {
+//             log::error!("main_udp_listen_{}={:?}", index, io::Error::last_os_error());
+//             continue;
+//         }
+//
+//         let nmsgs = res as usize;
+//         for i in 0..nmsgs {
+//             let msg = &mut buf[i][0..msgs[i].msg_len as usize];
+//             let addr = sockaddr_to_socket_addr(&addrs[i], msgs[i].msg_hdr.msg_namelen);
+//             if msg == b"stop" {
+//                 if context.is_stop() {
+//                     return Ok(());
+//                 }
+//             }
+//             recv_handler.handle(msg, RouteKey::new(false, index, addr), &context);
+//         }
+//     }
+// }
+//
+// #[cfg(unix)]
+// fn sockaddr_to_socket_addr(addr: &libc::sockaddr_storage, _len: libc::socklen_t) -> SocketAddr {
+//     match addr.ss_family as libc::c_int {
+//         libc::AF_INET => {
+//             let addr_in = unsafe { *(addr as *const _ as *const libc::sockaddr_in) };
+//             let ip = u32::from_be(addr_in.sin_addr.s_addr);
+//             let port = u16::from_be(addr_in.sin_port);
+//             SocketAddr::V4(std::net::SocketAddrV4::new(Ipv4Addr::from(ip), port))
+//         }
+//         libc::AF_INET6 => {
+//             let addr_in6 = unsafe { *(addr as *const _ as *const libc::sockaddr_in6) };
+//             let ip = std::net::Ipv6Addr::from(addr_in6.sin6_addr.s6_addr);
+//             let port = u16::from_be(addr_in6.sin6_port);
+//             SocketAddr::V6(std::net::SocketAddrV6::new(ip, port, 0, 0))
+//         }
+//         _ => panic!("Unsupported address family"),
+//     }
+// }

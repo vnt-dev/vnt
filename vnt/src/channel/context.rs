@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::RwLock;
@@ -51,6 +51,7 @@ impl Context {
             state: AtomicBool::new(true),
             packet_loss_rate,
             packet_delay,
+            main_index: AtomicUsize::new(0),
         };
         Self {
             inner: Arc::new(inner),
@@ -89,6 +90,7 @@ pub struct ContextInner {
     packet_loss_rate: u32,
     //控制延迟
     packet_delay: u32,
+    main_index: AtomicUsize,
 }
 
 impl ContextInner {
@@ -222,8 +224,12 @@ impl ContextInner {
             //服务端地址只在重连时检测变化
             self.send_tcp(buf, addr)
         } else {
-            self.send_main_udp(0, buf, addr)
+            self.send_main_udp(self.main_index.load(Ordering::Relaxed), buf, addr)
         }
+    }
+    pub fn change_main_index(&self) {
+        let index = (self.main_index.load(Ordering::Relaxed) + 1) % self.main_udp_socket.len();
+        self.main_index.store(index, Ordering::Relaxed);
     }
     /// 此方法仅用于对称网络打洞
     pub fn try_send_all(&self, buf: &[u8], addr: SocketAddr) {
@@ -232,6 +238,7 @@ impl ContextInner {
             if let Err(e) = udp.send_to(buf, addr) {
                 log::warn!("{:?},add={:?}", e, addr);
             }
+            thread::sleep(Duration::from_millis(1));
         }
     }
     pub fn try_send_all_main(&self, buf: &[u8], mut addr: SocketAddr) {
@@ -262,18 +269,39 @@ impl ContextInner {
             }
         }
         if self.packet_delay > 0 {
-            std::thread::sleep(Duration::from_millis(self.packet_delay as _));
+            thread::sleep(Duration::from_millis(self.packet_delay as _));
         }
-        if self.send_by_id(buf, id).is_err() && !self.route_table.use_channel_type.is_only_p2p() {
-            self.send_default(buf, server_addr)
-        } else {
-            Ok(())
+        //优先发到直连到地址
+        if let Err(e) = self.send_by_id(buf, id) {
+            if e.kind() != io::ErrorKind::NotFound {
+                log::warn!("{}:{:?}", id, e);
+            }
+            if !self.route_table.use_channel_type.is_only_p2p() {
+                //符合条件再发到服务器转发
+                self.send_default(buf, server_addr)?;
+            }
         }
+        Ok(())
     }
     /// 将数据发到指定id
     pub fn send_by_id(&self, buf: &[u8], id: &Ipv4Addr) -> io::Result<()> {
-        let route = self.route_table.get_route_by_id(id)?;
-        self.send_by_key(buf, route.route_key())
+        let mut c = 0;
+        loop {
+            let route = self.route_table.get_route_by_id(c, id)?;
+            return if let Err(e) = self.send_by_key(buf, route.route_key()) {
+                //降低发送速率
+                if e.kind() == io::ErrorKind::WouldBlock {
+                    c += 1;
+                    if c < 10 {
+                        thread::sleep(Duration::from_micros(200));
+                        continue;
+                    }
+                }
+                Err(e)
+            } else {
+                Ok(())
+            };
+        }
     }
     /// 将数据发到指定路由
     pub fn send_by_key(&self, buf: &[u8], route_key: RouteKey) -> io::Result<()> {
@@ -329,30 +357,17 @@ impl RouteTable {
 }
 
 impl RouteTable {
-    fn get_route_by_id(&self, id: &Ipv4Addr) -> io::Result<Route> {
+    fn get_route_by_id(&self, index: usize, id: &Ipv4Addr) -> io::Result<Route> {
         if let Some((_count, v)) = self.route_table.read().get(id) {
-            let len = v.len();
-            if len == 0 {
-                return Err(io::Error::new(io::ErrorKind::NotFound, "route not found"));
-            }
-            // 因为列表是按延迟排序的，会一直变，直接取第一条是合理的
-            let (route, time) = &v[0];
-
-            // 刚加入的或者长时间没通信的不使用
-            if route.rt != DEFAULT_RT && time.load().elapsed() < Duration::from_secs(5) {
-                return Ok(*route);
-            }
-            // 如果指定路由不符合，则遍历路由表找到符合条件的
-            if len > 1 {
-                for (route, time) in v[1..].iter() {
-                    if route.rt != DEFAULT_RT && time.load().elapsed() < Duration::from_secs(5) {
-                        return Ok(*route);
-                    }
+            if self.first_latency {
+                if let Some((route, _)) = v.first() {
+                    return Ok(*route);
                 }
-            }
-            //加一条保底
-            if route.is_p2p() && route.rt != DEFAULT_RT {
-                return Ok(*route);
+            } else {
+                let len = v.len();
+                if len != 0 {
+                    return Ok(v[index % len].0);
+                }
             }
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
@@ -367,7 +382,7 @@ impl RouteTable {
         // 限制通道类型
         match self.use_channel_type {
             UseChannelType::P2p => {
-                if route.metric != 1 {
+                if !route.is_p2p() {
                     return;
                 }
             }
@@ -379,7 +394,6 @@ impl RouteTable {
             .entry(id)
             .or_insert_with(|| (AtomicUsize::new(0), Vec::with_capacity(4)));
         let mut exist = false;
-        let mut p2p_num = 0;
         for (x, time) in list.iter_mut() {
             if x.metric < route.metric && !self.first_latency {
                 //非优先延迟的情况下 不能比当前的路径更长
@@ -395,26 +409,25 @@ impl RouteTable {
                 time.store(Instant::now());
                 break;
             }
-            if x.is_p2p() {
-                p2p_num += 1;
-            }
         }
         if exist {
             list.sort_by_key(|(k, _)| k.rt);
-        } else {
-            let limit_len = if self.first_latency {
-                self.channel_num
-            } else {
-                if p2p_num >= self.channel_num {
-                    // p2p通道满员了则不再添加
+            //如果延迟都稳定了，则去除多余通道
+            for (route, _) in list.iter() {
+                if route.rt == DEFAULT_RT {
                     return;
                 }
-                if route.metric == 1 {
+            }
+            list.truncate(self.channel_num);
+        } else {
+            if !self.first_latency {
+                if route.is_p2p() {
                     //非优先延迟的情况下 添加了直连的则排除非直连的
                     list.retain(|(k, _)| k.is_p2p());
                 }
-                self.channel_num - 1
             };
+            //增加路由表容量，避免波动
+            let limit_len = self.channel_num * 2;
             list.sort_by_key(|(k, _)| k.rt);
             if list.len() > limit_len {
                 list.truncate(limit_len);
@@ -435,6 +448,16 @@ impl RouteTable {
         } else {
             None
         }
+    }
+    pub fn route_one_p2p(&self, id: &Ipv4Addr) -> Option<Route> {
+        if let Some((_, v)) = self.route_table.read().get(id) {
+            for (i, _) in v {
+                if i.is_p2p() {
+                    return Some(*i);
+                }
+            }
+        }
+        None
     }
     pub fn route_to_id(&self, route_key: &RouteKey) -> Option<Ipv4Addr> {
         let table = self.route_table.read();
