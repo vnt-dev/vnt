@@ -168,13 +168,16 @@ fn client_relay0(
     let peer_list = { device_list.lock().1.clone() };
     let mut routes = context.route_table.route_table_p2p();
     for peer in &peer_list {
-        if peer.virtual_ip == current_device.virtual_ip {
+        if !peer.status.is_online() || peer.virtual_ip == current_device.virtual_ip {
             continue;
         }
-        if let Some(route) = context.route_table.route_one(&peer.virtual_ip) {
-            if route.is_p2p() && !context.first_latency() {
-                continue;
-            }
+        if context
+            .route_table
+            .route_one_p2p(&peer.virtual_ip)
+            .is_some()
+            && !context.first_latency()
+        {
+            continue;
         }
         let client_packet =
             heartbeat_packet_client(client_cipher, current_device.virtual_ip, peer.virtual_ip)?;
