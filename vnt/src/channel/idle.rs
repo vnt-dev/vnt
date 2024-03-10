@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::channel::context::Context;
-use crate::channel::RouteKey;
+use crate::channel::Route;
 
 pub struct Idle {
     read_idle: Duration,
@@ -16,7 +16,7 @@ impl Idle {
 }
 
 pub enum IdleType {
-    Timeout(Ipv4Addr, RouteKey),
+    Timeout(Ipv4Addr, Route),
     Sleep(Duration),
     None,
 }
@@ -33,7 +33,7 @@ impl Idle {
             for (route, time) in routes {
                 let last_read = time.load().elapsed();
                 if last_read >= self.read_idle {
-                    return IdleType::Timeout(*ip, route.route_key());
+                    return IdleType::Timeout(*ip, *route);
                 } else if max < last_read {
                     max = last_read;
                 }
