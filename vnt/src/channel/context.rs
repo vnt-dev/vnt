@@ -453,7 +453,8 @@ impl RouteTable {
     }
     pub fn need_punch(&self, id: &Ipv4Addr) -> bool {
         if let Some((_, v)) = self.route_table.read().get(id) {
-            if v.iter().filter(|(k, _)| k.is_p2p()).count() >= self.channel_num {
+            //存在p2p的通道则不再打洞
+            if v.iter().filter(|(k, _)| k.is_p2p()).count() >= 1 {
                 return false;
             }
         }

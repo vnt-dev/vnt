@@ -350,11 +350,6 @@ impl Punch {
         max: usize,
     ) -> io::Result<()> {
         let mut count = 0;
-        let index = if self.context.channel_num() == 1 {
-            0
-        } else {
-            rand::thread_rng().gen_range(0..self.context.channel_num())
-        };
         for port in ports {
             for pub_ip in ips {
                 count += 1;
@@ -362,7 +357,7 @@ impl Punch {
                     return Ok(());
                 }
                 let addr = SocketAddr::V4(SocketAddrV4::new(*pub_ip, *port));
-                self.context.send_main_udp(index, buf, addr)?;
+                self.context.send_main_udp(0, buf, addr)?;
                 thread::sleep(Duration::from_millis(2));
             }
         }
