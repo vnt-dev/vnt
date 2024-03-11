@@ -1,7 +1,12 @@
 use std::io;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use crossbeam_utils::atomic::AtomicCell;
 use protobuf::Message;
 
+use crate::channel::context::Context;
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
 use crate::handle::{GATEWAY_IP, SELF_IP};
@@ -18,6 +23,29 @@ pub enum HandshakeEnum {
     Timeout,
     ServerError(String),
     Other(String),
+}
+#[derive(Clone)]
+pub struct Handshake {
+    time: Arc<AtomicCell<Instant>>,
+}
+impl Handshake {
+    pub fn new() -> Self {
+        Handshake {
+            time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
+        }
+    }
+    pub fn send(&self, context: &Context, secret: bool, addr: SocketAddr) -> io::Result<()> {
+        let last = self.time.load();
+        //短时间不重复发送
+        if last.elapsed() < Duration::from_secs(2) {
+            return Ok(());
+        }
+        let request_packet = handshake_request_packet(secret)?;
+        log::info!("发送握手请求,secret={},{:?}", secret, addr);
+        context.send_default(request_packet.buffer(), addr)?;
+        self.time.store(Instant::now());
+        Ok(())
+    }
 }
 
 /// 第一次握手数据

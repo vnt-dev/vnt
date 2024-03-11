@@ -19,6 +19,7 @@ use crate::cipher::Cipher;
 use crate::cipher::RsaCipher;
 use crate::core::Config;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
+use crate::handle::handshaker::Handshake;
 use crate::handle::maintain::PunchReceiver;
 use crate::handle::recv_data::RecvDataHandler;
 use crate::handle::{
@@ -143,6 +144,7 @@ impl Vnt {
         let down_counter =
             U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
         let down_count_watcher = down_counter.watch();
+        let handshake = Handshake::new();
         let handler = RecvDataHandler::new(
             #[cfg(feature = "server_encrypt")]
             rsa_cipher,
@@ -161,6 +163,7 @@ impl Vnt {
             #[cfg(feature = "ip_proxy")]
             proxy_map.clone(),
             down_counter,
+            handshake.clone(),
         );
 
         //初始化网络数据通道
@@ -196,6 +199,7 @@ impl Vnt {
             tcp_socket_sender.clone(),
             callback.clone(),
             0,
+            handshake,
         );
         {
             let context = context.clone();

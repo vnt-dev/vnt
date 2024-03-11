@@ -102,6 +102,9 @@ fn heartbeat0(
         if current_device.is_gateway(&peer.virtual_ip) {
             continue;
         }
+        if current_device.status.offline() {
+            continue;
+        }
         if context.route_table.route_one(&peer.virtual_ip).is_none() {
             //路由为空，则向服务端地址发送
             let net_packet = match heartbeat_packet_client(client_cipher, src_ip, peer.virtual_ip) {
@@ -165,6 +168,10 @@ fn client_relay0(
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
     client_cipher: &Cipher,
 ) -> io::Result<()> {
+    // 离线了不再探测
+    if current_device.status.offline() {
+        return Ok(());
+    }
     let peer_list = { device_list.lock().1.clone() };
     let mut routes = context.route_table.route_table_p2p();
     for peer in &peer_list {

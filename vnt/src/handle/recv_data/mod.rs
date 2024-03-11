@@ -17,6 +17,7 @@ use crate::cipher::Cipher;
 use crate::cipher::RsaCipher;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
 use crate::handle::callback::VntCallback;
+use crate::handle::handshaker::Handshake;
 use crate::handle::maintain::PunchSender;
 use crate::handle::recv_data::client::ClientPacketHandler;
 use crate::handle::recv_data::server::ServerPacketHandler;
@@ -66,6 +67,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         route: AllowExternalRoute,
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
         counter: U64Adder,
+        handshake: Handshake,
     ) -> Self {
         let server = ServerPacketHandler::new(
             #[cfg(feature = "server_encrypt")]
@@ -78,6 +80,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             nat_test.clone(),
             callback,
             external_route,
+            handshake,
         );
         let client = ClientPacketHandler::new(
             device.clone(),

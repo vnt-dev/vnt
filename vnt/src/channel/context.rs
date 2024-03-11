@@ -156,33 +156,14 @@ impl ContextInner {
     pub fn change_status(
         &self,
         current_device: &AtomicCell<CurrentDeviceInfo>,
+        connect_status: ConnectStatus,
     ) -> CurrentDeviceInfo {
-        let mut cur = current_device.load();
         loop {
-            let status = if self.route_table.route_one(&cur.virtual_gateway).is_some() {
-                //已连接
-                if cur.status.online() {
-                    return cur;
-                }
-                //状态变为已连接
-                ConnectStatus::Connected
-            } else {
-                //未连接
-                if cur.status.offline() {
-                    return cur;
-                }
-                //状态变为未连接
-                ConnectStatus::Connecting
-            };
+            let cur = current_device.load();
             let mut new_info = cur;
-            new_info.status = status;
-            match current_device.compare_exchange(cur, new_info) {
-                Ok(_) => {
-                    return new_info;
-                }
-                Err(c) => {
-                    cur = c;
-                }
+            new_info.status = connect_status;
+            if current_device.compare_exchange(cur, new_info).is_ok() {
+                return new_info;
             }
         }
     }

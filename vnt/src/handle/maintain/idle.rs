@@ -2,7 +2,8 @@ use crate::channel::context::Context;
 use crate::channel::idle::{Idle, IdleType};
 use crate::channel::sender::AcceptSocketSender;
 use crate::handle::callback::{ConnectInfo, ErrorType};
-use crate::handle::{handshaker, BaseConfigInfo, CurrentDeviceInfo};
+use crate::handle::handshaker::Handshake;
+use crate::handle::{handshaker, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
 use crate::util::Scheduler;
 use crate::{ErrorInfo, VntCallback};
 use crossbeam_utils::atomic::AtomicCell;
@@ -35,6 +36,7 @@ pub fn idle_gateway<Call: VntCallback>(
     tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     call: Call,
     mut connect_count: usize,
+    handshake: Handshake,
 ) {
     idle_gateway0(
         &context,
@@ -43,6 +45,7 @@ pub fn idle_gateway<Call: VntCallback>(
         &tcp_socket_sender,
         &call,
         &mut connect_count,
+        &handshake,
     );
     let rs = scheduler.timeout(Duration::from_secs(5), move |s| {
         idle_gateway(
@@ -53,6 +56,7 @@ pub fn idle_gateway<Call: VntCallback>(
             tcp_socket_sender,
             call,
             connect_count,
+            handshake,
         )
     });
     if !rs {
@@ -66,6 +70,7 @@ fn idle_gateway0<Call: VntCallback>(
     tcp_socket_sender: &AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     call: &Call,
     connect_count: &mut usize,
+    handshake: &Handshake,
 ) {
     if let Err(e) = check_gateway_channel(
         context,
@@ -74,6 +79,7 @@ fn idle_gateway0<Call: VntCallback>(
         tcp_socket_sender,
         call,
         connect_count,
+        handshake,
     ) {
         let cur = current_device.load();
         call.error(ErrorInfo::new_msg(
@@ -96,10 +102,8 @@ fn idle_route0<Call: VntCallback>(
             context.remove_route(&ip, route.route_key());
             if cur.is_gateway(&ip) {
                 //网关路由过期，则需要改变状态
-                let cur = context.change_status(current_device);
-                if cur.status.offline() {
-                    call.error(ErrorInfo::new(ErrorType::Disconnect));
-                }
+                context.change_status(current_device, ConnectStatus::Connecting);
+                call.error(ErrorInfo::new(ErrorType::Disconnect));
             }
             Duration::from_millis(100)
         }
@@ -115,21 +119,19 @@ fn check_gateway_channel<Call: VntCallback>(
     tcp_socket_sender: &AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     call: &Call,
     count: &mut usize,
+    handshake: &Handshake,
 ) -> io::Result<()> {
-    let current_device = context.change_status(current_device);
+    let current_device = current_device.load();
     if current_device.status.offline() {
         *count += 1;
-        if *count % 4 == 0 {
-            context.change_main_index();
-        }
         //需要重连
         call.connect(ConnectInfo::new(*count, current_device.connect_server));
-        let request_packet = handshaker::handshake_request_packet(config.client_secret)?;
         log::info!("发送握手请求,{:?}", config);
-        if let Err(e) = context.send_default(request_packet.buffer(), current_device.connect_server)
+        if let Err(e) = handshake.send(context, config.client_secret, current_device.connect_server)
         {
             log::warn!("{:?}", e);
             if context.is_main_tcp() {
+                let request_packet = handshaker::handshake_request_packet(config.client_secret)?;
                 //tcp需要重连
                 let tcp_stream = std::net::TcpStream::connect_timeout(
                     &current_device.connect_server,

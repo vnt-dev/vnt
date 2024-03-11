@@ -123,17 +123,16 @@ fn punch_request(
     client_cipher: Cipher,
     count: usize,
 ) {
-    if let Err(e) = punch0(
-        &context,
-        &nat_test,
-        &device_list,
-        &current_device,
-        &client_cipher,
-    ) {
-        log::warn!("{:?}", e)
-    }
-    let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
-    let secs = Duration::from_secs(sleep_time[count % sleep_time.len()]);
+    let curr = current_device.load();
+    let secs = if curr.status.online() {
+        if let Err(e) = punch0(&context, &nat_test, &device_list, curr, &client_cipher) {
+            log::warn!("{:?}", e)
+        }
+        let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
+        Duration::from_secs(sleep_time[count % sleep_time.len()])
+    } else {
+        Duration::from_secs(3)
+    };
     let rs = scheduler.timeout(secs, move |s| {
         punch_request(
             s,
@@ -155,10 +154,9 @@ fn punch0(
     context: &Context,
     nat_test: &NatTest,
     device_list: &Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-    current_device: &Arc<AtomicCell<CurrentDeviceInfo>>,
+    current_device: CurrentDeviceInfo,
     client_cipher: &Cipher,
 ) -> io::Result<()> {
-    let current_device = current_device.load();
     let nat_info = nat_test.nat_info();
     let current_ip = current_device.virtual_ip;
     let mut list: Vec<PeerDeviceInfo> = device_list

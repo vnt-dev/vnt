@@ -23,8 +23,11 @@ use crate::external_route::ExternalRoute;
 use crate::handle::callback::{ErrorInfo, ErrorType, HandshakeInfo, RegisterInfo, VntCallback};
 #[cfg(feature = "server_encrypt")]
 use crate::handle::handshaker;
+use crate::handle::handshaker::Handshake;
 use crate::handle::recv_data::PacketHandler;
-use crate::handle::{registrar, BaseConfigInfo, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP};
+use crate::handle::{
+    registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP,
+};
 use crate::nat::NatTest;
 use crate::proto;
 use crate::proto::message::{DeviceList, HandshakeResponse, RegistrationResponse};
@@ -49,6 +52,7 @@ pub struct ServerPacketHandler<Call> {
     up_key_time: Arc<AtomicCell<Instant>>,
     route_record: Arc<Mutex<Vec<(Ipv4Addr, Ipv4Addr)>>>,
     external_route: ExternalRoute,
+    handshake: Handshake,
 }
 
 impl<Call> ServerPacketHandler<Call> {
@@ -62,6 +66,7 @@ impl<Call> ServerPacketHandler<Call> {
         nat_test: NatTest,
         callback: Call,
         external_route: ExternalRoute,
+        handshake: Handshake,
     ) -> Self {
         Self {
             #[cfg(feature = "server_encrypt")]
@@ -77,6 +82,7 @@ impl<Call> ServerPacketHandler<Call> {
             up_key_time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
             route_record: Arc::new(Mutex::default()),
             external_route,
+            handshake,
         }
     }
 }
@@ -239,6 +245,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         new_current_device.virtual_ip = virtual_ip;
                         new_current_device.virtual_netmask = virtual_netmask;
                         new_current_device.virtual_gateway = virtual_gateway;
+                        new_current_device.status = crate::handle::ConnectStatus::Connected;
                         if let Err(c) = self
                             .current_device
                             .compare_exchange(cur, new_current_device)
@@ -248,7 +255,6 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                             break;
                         }
                     }
-                    let _ = context.change_status(&self.current_device);
 
                     let public_ip = response.public_ip.into();
                     let public_port = response.public_port as u16;
@@ -380,10 +386,10 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
     }
     fn error(
         &self,
-        _context: &Context,
+        context: &Context,
         _current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
-        _route_key: RouteKey,
+        route_key: RouteKey,
     ) -> io::Result<()> {
         match InErrorPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             InErrorPacket::TokenError => {
@@ -392,6 +398,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 self.callback.error(err);
             }
             InErrorPacket::Disconnect => {
+                context.change_status(&self.current_device, ConnectStatus::Connecting);
                 let err = ErrorInfo::new(ErrorType::Disconnect);
                 self.callback.error(err);
                 //掉线epoch要归零
@@ -400,6 +407,8 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                     dev.0 = 0;
                     drop(dev);
                 }
+                self.handshake
+                    .send(context, self.config_info.client_secret, route_key.addr)?;
                 // self.register(current_device, context, route_key)?;
             }
             InErrorPacket::AddressExhausted => {
