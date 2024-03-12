@@ -5,11 +5,13 @@ use tun::device::IFace;
 use tun::Device;
 
 use crate::core::Config;
-
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 const DEFAULT_TUN_NAME: &str = "vnt-tun";
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 const DEFAULT_TAP_NAME: &str = "vnt-tap";
 
 pub fn create_device(config: &Config) -> io::Result<Arc<Device>> {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     let default_name: &str = if config.tap {
         DEFAULT_TAP_NAME
     } else {
