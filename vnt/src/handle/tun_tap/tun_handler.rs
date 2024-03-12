@@ -83,10 +83,19 @@ pub fn start(
     mut up_counter: SingleU64Adder,
 ) -> io::Result<()> {
     let worker = {
+        #[cfg(target_os = "macos")]
+        let current_device = current_device.clone();
         let device = device.clone();
         stop_manager.add_listener("tun_device".into(), move || {
             if let Err(e) = device.shutdown() {
                 log::warn!("{:?}", e);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let ip = current_device.load().virtual_ip;
+                if let Ok(udp) = std::net::UdpSocket::bind("0.0.0.0:0"){
+                    let _ = udp.send_to(b"stop",format!("{:?}:1234",ip));
+                }
             }
         })?
     };

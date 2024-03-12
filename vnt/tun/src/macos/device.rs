@@ -235,7 +235,7 @@ impl IFace for Device {
     }
 
     fn shutdown(&self) -> io::Result<()> {
-        self.enabled(false)
+        Ok(())
     }
 
     fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()> {
@@ -281,6 +281,11 @@ impl IFace for Device {
     }
 
     fn write(&self, buf: &[u8]) -> io::Result<usize> {
-        self.tun.write(buf)
+        let mut packet = Vec::<u8>::with_capacity(4 + buf.len());
+        packet.push(0);
+        packet.push(0);
+        packet.extend_from_slice(&(libc::PF_INET as u16).to_be_bytes());
+        packet.extend_from_slice(buf);
+        self.tun.write(&packet)
     }
 }
