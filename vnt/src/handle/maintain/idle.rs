@@ -102,7 +102,7 @@ fn idle_route0<Call: VntCallback>(
             context.remove_route(&ip, route.route_key());
             if cur.is_gateway(&ip) {
                 //网关路由过期，则需要改变状态
-                context.change_status(current_device, ConnectStatus::Connecting);
+                crate::handle::change_status(current_device, ConnectStatus::Connecting);
                 call.error(ErrorInfo::new(ErrorType::Disconnect));
             }
             Duration::from_millis(100)

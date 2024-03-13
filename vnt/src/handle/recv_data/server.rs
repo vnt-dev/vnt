@@ -398,7 +398,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 self.callback.error(err);
             }
             InErrorPacket::Disconnect => {
-                context.change_status(&self.current_device, ConnectStatus::Connecting);
+                crate::handle::change_status(&self.current_device, ConnectStatus::Connecting);
                 let err = ErrorInfo::new(ErrorType::Disconnect);
                 self.callback.error(err);
                 //掉线epoch要归零

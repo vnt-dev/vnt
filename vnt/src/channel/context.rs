@@ -13,7 +13,6 @@ use rand::Rng;
 use crate::channel::punch::NatType;
 use crate::channel::sender::{AcceptSocketSender, ChannelSender, PacketSender};
 use crate::channel::{Route, RouteKey, UseChannelType, DEFAULT_RT};
-use crate::handle::{ConnectStatus, CurrentDeviceInfo};
 
 /// 传输通道上下文，持有udp socket、tcp socket和路由信息
 #[derive(Clone)]
@@ -153,20 +152,7 @@ impl ContextInner {
         }
         Ok(())
     }
-    pub fn change_status(
-        &self,
-        current_device: &AtomicCell<CurrentDeviceInfo>,
-        connect_status: ConnectStatus,
-    ) -> CurrentDeviceInfo {
-        loop {
-            let cur = current_device.load();
-            let mut new_info = cur;
-            new_info.status = connect_status;
-            if current_device.compare_exchange(cur, new_info).is_ok() {
-                return new_info;
-            }
-        }
-    }
+
     pub fn channel_num(&self) -> usize {
         self.main_udp_socket.len()
     }
@@ -392,6 +378,7 @@ impl RouteTable {
             }
         }
         if exist {
+            // 这个排序还有待优化，因为后加入的大概率排最后，被直接淘汰的概率也大，可能导致更好的通道被移除了
             list.sort_by_key(|(k, _)| k.rt);
             //如果延迟都稳定了，则去除多余通道
             for (route, _) in list.iter() {
@@ -399,7 +386,13 @@ impl RouteTable {
                     return;
                 }
             }
-            list.truncate(self.channel_num);
+            //延迟优先模式需要更多的通道探测延迟最低的路线
+            let limit_len = if self.first_latency {
+                self.channel_num + 2
+            } else {
+                self.channel_num
+            };
+            self.truncate_(list, limit_len);
         } else {
             if !self.first_latency {
                 if route.is_p2p() {
@@ -410,11 +403,31 @@ impl RouteTable {
             //增加路由表容量，避免波动
             let limit_len = self.channel_num * 2;
             list.sort_by_key(|(k, _)| k.rt);
-            if list.len() > limit_len {
-                list.truncate(limit_len);
-            }
+            self.truncate_(list, limit_len);
             list.push((route, AtomicCell::new(Instant::now())));
         }
+    }
+    fn truncate_(&self, list: &mut Vec<(Route, AtomicCell<Instant>)>, len: usize) {
+        if list.len() <= len {
+            return;
+        }
+        if self.first_latency {
+            //找到第一个p2p通道
+            if let Some(index) =
+                list.iter()
+                    .enumerate()
+                    .find_map(|(index, (route, _))| if route.is_p2p() { Some(index) } else { None })
+            {
+                if index >= len {
+                    //保留第一个p2p通道
+                    let route = list.remove(index);
+                    list.truncate(len - 1);
+                    list.push(route);
+                    return;
+                }
+            }
+        }
+        list.truncate(len);
     }
     pub fn route(&self, id: &Ipv4Addr) -> Option<Vec<Route>> {
         if let Some((_, v)) = self.route_table.read().get(id) {
