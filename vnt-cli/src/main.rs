@@ -296,8 +296,9 @@ fn main() {
             .expect("--packet-loss");
         let packet_delay = matches
             .opt_get::<u32>("packet-delay")
-            .expect("--packet-delay").unwrap_or(0);
-        let config = Config::new(
+            .expect("--packet-delay")
+            .unwrap_or(0);
+        let config = match Config::new(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             tap,
             token,
@@ -324,9 +325,14 @@ fn main() {
             device_name,
             use_channel_type,
             packet_loss,
-            packet_delay
-        )
-        .unwrap();
+            packet_delay,
+        ) {
+            Ok(config) => config,
+            Err(e) => {
+                println!("config error: {}", e);
+                return;
+            }
+        };
         (config, cmd)
     };
     println!("version {}", vnt::VNT_VERSION);
@@ -467,7 +473,9 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --use-channel <p2p> 使用通道 relay/p2p/all,默认两者都使用");
     println!("  --nic <tun0>        指定虚拟网卡名称");
     println!("  --packet-loss <0>   模拟丢包,取值0~1之间的小数,程序会按设定的概率主动丢包,可用于模拟弱网");
-    println!("  --packet-delay <0>  模拟延迟,整数,单位毫秒(ms),程序会按设定的值延迟发包,可用于模拟弱网");
+    println!(
+        "  --packet-delay <0>  模拟延迟,整数,单位毫秒(ms),程序会按设定的值延迟发包,可用于模拟弱网"
+    );
 
     println!();
     println!(

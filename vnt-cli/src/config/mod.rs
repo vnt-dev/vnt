@@ -171,7 +171,7 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         file_conf.device_name,
         use_channel_type,
         file_conf.packet_loss,
-        file_conf.packet_delay
+        file_conf.packet_delay,
     )
     .unwrap();
     Ok((config, file_conf.cmd))

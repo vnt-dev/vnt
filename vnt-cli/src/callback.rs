@@ -2,7 +2,7 @@ use std::process;
 
 use console::style;
 
-use vnt::handle::callback::ConnectInfo;
+use vnt::handle::callback::{ConnectInfo, ErrorType};
 use vnt::{DeviceInfo, ErrorInfo, HandshakeInfo, RegisterInfo, VntCallback};
 
 #[derive(Clone)]
@@ -32,6 +32,16 @@ impl VntCallback for VntHandler {
 
     fn error(&self, info: ErrorInfo) {
         println!("{}", style(format!("error {}", info)).red());
+        match info.code {
+            ErrorType::TokenError
+            | ErrorType::AddressExhausted
+            | ErrorType::IpAlreadyExists
+            | ErrorType::InvalidIp
+            | ErrorType::LocalIpExists => {
+                self.stop();
+            }
+            _ => {}
+        }
     }
 
     fn stop(&self) {

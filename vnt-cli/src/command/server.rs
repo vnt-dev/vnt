@@ -30,7 +30,6 @@ impl CommandServer {
             let (len, addr) = udp.recv_from(&mut buf)?;
             match std::str::from_utf8(&buf[..len]) {
                 Ok(cmd) => {
-                    log::info!("收到cmd={:?}", cmd);
                     if let Ok(out) = command(cmd, &vnt) {
                         if let Err(e) = udp.send_to(out.as_bytes(), addr) {
                             log::warn!("cmd={},err={:?}", cmd, e);
@@ -56,6 +55,7 @@ fn save_port(port: u16) -> io::Result<()> {
 }
 
 fn command(cmd: &str, vnt: &Vnt) -> io::Result<String> {
+    let cmd = cmd.trim();
     let out_str = match cmd {
         "route" => serde_yaml::to_string(&crate::command::command_route(vnt))
             .unwrap_or_else(|e| format!("error {:?}", e)),
@@ -68,7 +68,10 @@ fn command(cmd: &str, vnt: &Vnt) -> io::Result<String> {
             "stopped".to_string()
         }
         _ => {
-            format!("command '{}' not found. \n Try to enter: 'help'\n", cmd)
+            format!(
+                "command '{}' not found.  Try to enter: 'route'/'list'/'stop' \n",
+                cmd
+            )
         }
     };
     Ok(out_str)
