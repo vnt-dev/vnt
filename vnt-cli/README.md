@@ -118,6 +118,9 @@ ports:
 cmd: false #关闭控制台输入
 no_proxy: false #是否关闭内置代理，true为关闭
 first_latency: false #是否优先低延迟通道，默认为false，表示优先使用p2p通道
+device_name: vnt-tun #网卡名称
+packet_loss: 0 #指定丢包率 取值0~1之间的数 用于模拟弱网
+packet_delay: 0 #指定延迟 单位毫秒 用于模拟弱网
 ```
 
 或者需要哪个配置就加哪个，当然token是必须的
