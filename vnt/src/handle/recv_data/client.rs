@@ -176,8 +176,8 @@ impl ClientPacketHandler {
                 net_packet.first_set_ttl(MAX_TTL);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
                 context.send_by_key(net_packet.buffer(), route_key)?;
-                // let route = Route::from_default_rt(route_key, metric);
-                // context.route_table.add_route_if_absent(source, route);
+                let route = Route::from_default_rt(route_key, metric);
+                context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::PongPacket(pong_packet) => {
                 let current_time = crate::handle::now_time() as u16;
@@ -320,13 +320,11 @@ impl ClientPacketHandler {
                     punch_packet.set_source(current_device.virtual_ip());
                     punch_packet.set_destination(source);
                     punch_packet.set_payload(&bytes)?;
-                    log::info!("接收打洞请求={:?}", peer_nat_info);
                     if self.punch_sender.send(true, source, peer_nat_info) {
                         self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
                         context.send_by_key(punch_packet.buffer(), route_key)?;
                     }
                 } else {
-                    log::info!("接收打洞请求回复={:?}", peer_nat_info);
                     self.punch_sender.send(false, source, peer_nat_info);
                 }
             }

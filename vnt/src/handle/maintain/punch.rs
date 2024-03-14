@@ -27,6 +27,7 @@ pub struct PunchSender {
 }
 impl PunchSender {
     pub fn send(&self, src_peer: bool, ip: Ipv4Addr, info: NatInfo) -> bool {
+        log::info!("发送打洞协商消息,是否对端发起:{},ip:{},info:{:?}",src_peer,ip, info);
         if src_peer {
             self.sender_peer.send((ip, info)).is_ok()
         } else {
@@ -198,6 +199,7 @@ fn punch0(
             &nat_info,
             info.virtual_ip,
         )?;
+        log::info!("发起打洞协商请求，目标:{:?},{:?}", info.virtual_ip, nat_info);
         context.send_default(packet.buffer(), current_device.connect_server)?;
     }
     Ok(())
