@@ -226,9 +226,9 @@ impl Punch {
     }
     pub fn punch(&mut self, buf: &[u8], id: Ipv4Addr, nat_info: NatInfo) -> io::Result<()> {
         if !self.context.route_table.need_punch(&id) {
+            log::info!("已打洞成功,无需打洞:{:?}",id);
             return Ok(());
         }
-
         if self.is_tcp && nat_info.tcp_port != 0 {
             //向tcp发起连接
             if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
@@ -301,25 +301,26 @@ impl Punch {
                 }
                 let start = *self.port_index.entry(id.clone()).or_insert(0);
                 let mut end = start + max_k2;
-                let mut index = end;
-                if end >= self.port_vec.len() {
+                if end > self.port_vec.len() {
                     end = self.port_vec.len();
+                }
+                let mut index = start
+                    + self.punch_symmetric(
+                        &self.port_vec[start..end],
+                        buf,
+                        &nat_info.public_ips,
+                        max_k2,
+                    )?;
+                if index >= self.port_vec.len() {
                     index = 0
                 }
-                self.punch_symmetric(
-                    &self.port_vec[start..end],
-                    buf,
-                    &nat_info.public_ips,
-                    max_k2,
-                )?;
                 self.port_index.insert(id, index);
             }
             NatType::Cone => {
                 let is_cone = self.context.is_cone();
-                for index in 0..channel_num {
-                    let len = nat_info.public_ports.len();
+                'a: for index in 0..nat_info.public_ports.len().min(channel_num) {
                     for ip in &nat_info.public_ips {
-                        let port = nat_info.public_ports[index % len];
+                        let port = nat_info.public_ports[index];
                         if port == 0 || ip.is_unspecified() {
                             continue;
                         }
@@ -334,7 +335,7 @@ impl Punch {
                     }
                     if !is_cone {
                         //对称网络数据只发一遍
-                        break;
+                        break 'a;
                     }
                 }
             }
@@ -348,19 +349,19 @@ impl Punch {
         buf: &[u8],
         ips: &Vec<Ipv4Addr>,
         max: usize,
-    ) -> io::Result<()> {
+    ) -> io::Result<usize> {
         let mut count = 0;
-        for port in ports {
+        for (index, port) in ports.iter().enumerate() {
             for pub_ip in ips {
                 count += 1;
                 if count == max {
-                    return Ok(());
+                    return Ok(index);
                 }
                 let addr = SocketAddr::V4(SocketAddrV4::new(*pub_ip, *port));
                 self.context.send_main_udp(0, buf, addr)?;
                 thread::sleep(Duration::from_millis(2));
             }
         }
-        Ok(())
+        Ok(ports.len())
     }
 }

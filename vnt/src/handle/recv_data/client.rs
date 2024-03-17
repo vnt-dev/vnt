@@ -320,8 +320,8 @@ impl ClientPacketHandler {
                     punch_packet.set_source(current_device.virtual_ip());
                     punch_packet.set_destination(source);
                     punch_packet.set_payload(&bytes)?;
+                    self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
                     if self.punch_sender.send(true, source, peer_nat_info) {
-                        self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
                         context.send_by_key(punch_packet.buffer(), route_key)?;
                     }
                 } else {

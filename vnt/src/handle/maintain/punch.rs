@@ -11,7 +11,7 @@ use protobuf::Message;
 use rand::prelude::SliceRandom;
 
 use crate::channel::context::Context;
-use crate::channel::punch::{NatInfo, Punch};
+use crate::channel::punch::{NatInfo, NatType, Punch};
 use crate::cipher::Cipher;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
@@ -24,32 +24,59 @@ use crate::util::Scheduler;
 pub struct PunchSender {
     sender_self: SyncSender<(Ipv4Addr, NatInfo)>,
     sender_peer: SyncSender<(Ipv4Addr, NatInfo)>,
+    sender_cone_self: SyncSender<(Ipv4Addr, NatInfo)>,
+    sender_cone_peer: SyncSender<(Ipv4Addr, NatInfo)>,
 }
 impl PunchSender {
     pub fn send(&self, src_peer: bool, ip: Ipv4Addr, info: NatInfo) -> bool {
-        log::info!("发送打洞协商消息,是否对端发起:{},ip:{},info:{:?}",src_peer,ip, info);
-        if src_peer {
-            self.sender_peer.send((ip, info)).is_ok()
-        } else {
-            self.sender_self.send((ip, info)).is_ok()
-        }
+        log::info!(
+            "发送打洞协商消息,是否对端发起:{},ip:{},info:{:?}",
+            src_peer,
+            ip,
+            info
+        );
+        let sender = match info.nat_type {
+            NatType::Symmetric => {
+                if src_peer {
+                    &self.sender_peer
+                } else {
+                    &self.sender_self
+                }
+            }
+            NatType::Cone => {
+                if src_peer {
+                    &self.sender_cone_peer
+                } else {
+                    &self.sender_cone_self
+                }
+            }
+        };
+        sender.try_send((ip, info)).is_ok()
     }
 }
 pub struct PunchReceiver {
     receiver_peer: Receiver<(Ipv4Addr, NatInfo)>,
     receiver_self: Receiver<(Ipv4Addr, NatInfo)>,
+    receiver_cone_peer: Receiver<(Ipv4Addr, NatInfo)>,
+    receiver_cone_self: Receiver<(Ipv4Addr, NatInfo)>,
 }
 pub fn punch_channel() -> (PunchSender, PunchReceiver) {
     let (sender_self, receiver_self) = sync_channel(1);
     let (sender_peer, receiver_peer) = sync_channel(1);
+    let (sender_cone_peer, receiver_cone_peer) = sync_channel(1);
+    let (sender_cone_self, receiver_cone_self) = sync_channel(1);
     (
         PunchSender {
             sender_self,
             sender_peer,
+            sender_cone_peer,
+            sender_cone_self,
         },
         PunchReceiver {
             receiver_peer,
             receiver_self,
+            receiver_cone_peer,
+            receiver_cone_self,
         },
     )
 }
@@ -73,19 +100,21 @@ pub fn punch(
         client_cipher.clone(),
         0,
     );
-    let receiver_peer = receiver.receiver_peer;
-    let receiver_self = receiver.receiver_self;
-    {
+    let f = |receiver: Receiver<(Ipv4Addr, NatInfo)>| {
         let punch = punch.clone();
         let current_device = current_device.clone();
         let client_cipher = client_cipher.clone();
-        thread::spawn(move || {
-            punch_start(receiver_peer, punch, current_device, client_cipher);
-        });
-    }
-    thread::spawn(move || {
-        punch_start(receiver_self, punch, current_device, client_cipher);
-    });
+        thread::Builder::new()
+            .name("punch".into())
+            .spawn(move || {
+                punch_start(receiver, punch, current_device, client_cipher);
+            })
+            .expect("punch");
+    };
+    f(receiver.receiver_peer);
+    f(receiver.receiver_self);
+    f(receiver.receiver_cone_peer);
+    f(receiver.receiver_cone_self);
 }
 
 /// 接收打洞消息，配合对端打洞
@@ -199,7 +228,11 @@ fn punch0(
             &nat_info,
             info.virtual_ip,
         )?;
-        log::info!("发起打洞协商请求，目标:{:?},{:?}", info.virtual_ip, nat_info);
+        log::info!(
+            "发起打洞协商请求，目标:{:?},{:?}",
+            info.virtual_ip,
+            nat_info
+        );
         context.send_default(packet.buffer(), current_device.connect_server)?;
     }
     Ok(())
