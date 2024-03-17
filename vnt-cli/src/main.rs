@@ -16,6 +16,7 @@ mod command;
 mod config;
 mod console_out;
 mod root_check;
+mod generated_serial_number;
 
 pub fn app_home() -> io::Result<PathBuf> {
     let root_path = match std::env::current_exe() {
@@ -336,7 +337,7 @@ fn main() {
         (config, cmd)
     };
     println!("version {}", vnt::VNT_VERSION);
-
+    println!("Serial:{}", generated_serial_number::SERIAL_NUMBER);
     main0(config, cmd);
     std::process::exit(0);
 }
@@ -346,11 +347,14 @@ mod callback;
 fn main0(config: Config, show_cmd: bool) {
     let vnt_util = Vnt::new(config, callback::VntHandler {}).unwrap();
     let vnt_c = vnt_util.clone();
-    thread::spawn(move || {
-        if let Err(e) = command::server::CommandServer::new().start(vnt_c) {
-            log::warn!("cmd:{:?}", e);
-        }
-    });
+    thread::Builder::new()
+        .name("CommandServer".into())
+        .spawn(move || {
+            if let Err(e) = command::server::CommandServer::new().start(vnt_c) {
+                log::warn!("cmd:{:?}", e);
+            }
+        })
+        .expect("CommandServer");
     if show_cmd {
         let mut cmd = String::new();
         loop {
@@ -406,6 +410,7 @@ fn command(cmd: &str, vnt: &Vnt) -> bool {
 fn print_usage(program: &str, _opts: Options) {
     println!("Usage: {} [options]", program);
     println!("version:{}", vnt::VNT_VERSION);
+    println!("Serial:{}", generated_serial_number::SERIAL_NUMBER);
     println!("Options:");
     println!(
         "  -k <token>          {}",

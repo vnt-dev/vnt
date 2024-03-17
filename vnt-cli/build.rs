@@ -1,10 +1,17 @@
-// use embed_manifest::{embed_manifest, new_manifest};
-// use embed_manifest::manifest::ExecutionLevel;
+use std::fs::File;
+use std::io::Write;
+use rand::Rng;
 
 fn main() {
-    ////强制用管理员运行貌似体验更差了
-    // if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
-    //     embed_manifest(new_manifest("vnt")
-    //         .requested_execution_level(ExecutionLevel::RequireAdministrator)).expect("unable to embed manifest file");
-    // }
+    // 生成随机序列号
+    let serial_number = format!("{}-{}-{}",rand::thread_rng().gen_range(100..1000)
+                                ,rand::thread_rng().gen_range(100..1000)
+                                ,rand::thread_rng().gen_range(100..1000));
+    let generated_code = format!(
+        r#"pub const SERIAL_NUMBER: &str = "{}";"#,
+        serial_number
+    );
+    let dest_path = "src/generated_serial_number.rs";
+    let mut file = File::create(&dest_path).unwrap();
+    file.write_all(generated_code.as_bytes()).unwrap();
 }
