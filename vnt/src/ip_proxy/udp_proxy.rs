@@ -40,11 +40,14 @@ impl UdpProxy {
         let port = udp.local_addr()?.port();
         {
             let nat_map = nat_map.clone();
-            thread::spawn(move || {
-                if let Err(e) = udp_proxy(udp, nat_map, scheduler, stop_manager) {
-                    log::warn!("udp_proxy:{:?}", e);
-                }
-            });
+            thread::Builder::new()
+                .name("udpProxy".into())
+                .spawn(move || {
+                    if let Err(e) = udp_proxy(udp, nat_map, scheduler, stop_manager) {
+                        log::warn!("udp_proxy:{:?}", e);
+                    }
+                })
+                .expect("udpProxy");
         }
         Ok(Self { port, nat_map })
     }

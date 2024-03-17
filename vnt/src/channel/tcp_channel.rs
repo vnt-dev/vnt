@@ -49,7 +49,7 @@ where
     };
 
     thread::Builder::new()
-        .name("tcp读事件处理线程".into())
+        .name("tcpRead".into())
         .spawn(move || {
             if let Err(e) = tcp_listen0(
                 poll,
@@ -173,7 +173,7 @@ fn init_writable_handler(
     {
         let writable_notify = writable_notify.clone();
         thread::Builder::new()
-            .name("tcp-writeable-listen".into())
+            .name("tcpWriteableListen".into())
             .spawn(move || {
                 if let Err(e) = tcp_writable_listen(receiver, poll, writable_notify, &context) {
                     log::error!("{:?}", e);

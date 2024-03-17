@@ -49,7 +49,7 @@ where
     };
     let accept = AcceptSocketSender::new(waker.clone(), udp_sender);
     thread::Builder::new()
-        .name("sub_udp读事件处理线程".into())
+        .name("subUdp".into())
         .spawn(move || {
             if let Err(e) = sub_udp_listen0(poll, recv_handler, context, waker, udp_receiver) {
                 log::error!("{:?}", e);
@@ -153,7 +153,7 @@ where
         }
     })?;
     thread::Builder::new()
-        .name("main_udp".into())
+        .name("mainUdp".into())
         .spawn(move || {
             if let Err(e) = main_udp_listen0(poll, recv_handler, context) {
                 log::error!("{:?}", e);

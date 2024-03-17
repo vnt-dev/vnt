@@ -52,7 +52,7 @@ impl Scheduler {
                 run(receiver, s_inner);
                 worker.stop_all();
             })
-            .unwrap();
+            .expect("Scheduler");
         Ok(s)
     }
     pub fn timeout<F>(&self, time: Duration, f: F) -> bool

@@ -111,7 +111,7 @@ pub fn start(
             let client_cipher = client_cipher.clone();
             let server_cipher = server_cipher.clone();
             thread::Builder::new()
-                .name(format!("tun_handler_{}", index))
+                .name(format!("tunHandler-{}", index))
                 .spawn(move || {
                     while let Ok((mut buf, len)) = receiver.recv() {
                         #[cfg(not(target_os = "macos"))]
@@ -139,7 +139,7 @@ pub fn start(
                 })?;
         }
         thread::Builder::new()
-            .name("tun_handler".into())
+            .name("tunHandlerM".into())
             .spawn(move || {
                 if let Err(e) = start_multi(stop_manager, device, sender, &mut up_counter) {
                     log::warn!("stop:{}", e);
@@ -148,7 +148,7 @@ pub fn start(
             })?;
     } else {
         thread::Builder::new()
-            .name("tun_handler".into())
+            .name("tunHandlerS".into())
             .spawn(move || {
                 if let Err(e) = start_simple(
                     stop_manager,

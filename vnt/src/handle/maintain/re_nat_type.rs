@@ -25,21 +25,24 @@ fn retrieve_nat_type0(
     nat_test: NatTest,
     udp_socket_sender: AcceptSocketSender<Option<Vec<mio::net::UdpSocket>>>,
 ) {
-    thread::spawn(move || {
-        if nat_test.can_update() {
-            let local_ipv4 = nat::local_ipv4();
-            let local_ipv6 = nat::local_ipv6();
-            match nat_test.re_test(local_ipv4, local_ipv6) {
-                Ok(nat_info) => {
-                    log::info!("当前nat信息:{:?}", nat_info);
-                    if let Err(e) = context.switch(nat_info.nat_type, &udp_socket_sender) {
-                        log::warn!("{:?}", e);
+    thread::Builder::new()
+        .name("natTest".into())
+        .spawn(move || {
+            if nat_test.can_update() {
+                let local_ipv4 = nat::local_ipv4();
+                let local_ipv6 = nat::local_ipv6();
+                match nat_test.re_test(local_ipv4, local_ipv6) {
+                    Ok(nat_info) => {
+                        log::info!("当前nat信息:{:?}", nat_info);
+                        if let Err(e) = context.switch(nat_info.nat_type, &udp_socket_sender) {
+                            log::warn!("{:?}", e);
+                        }
                     }
-                }
-                Err(e) => {
-                    log::warn!("nat re_test {:?}", e);
-                }
-            };
-        }
-    });
+                    Err(e) => {
+                        log::warn!("nat re_test {:?}", e);
+                    }
+                };
+            }
+        })
+        .expect("natTest");
 }

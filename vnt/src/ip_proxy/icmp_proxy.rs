@@ -47,18 +47,21 @@ impl IcmpProxy {
             Arc::new(Mutex::new(HashMap::with_capacity(16)));
         {
             let nat_map = nat_map.clone();
-            thread::spawn(move || {
-                if let Err(e) = icmp_proxy(
-                    mio_icmp_socket,
-                    nat_map,
-                    context,
-                    stop_manager,
-                    current_device,
-                    client_cipher,
-                ) {
-                    log::warn!("icmp_proxy:{:?}", e);
-                }
-            });
+            thread::Builder::new()
+                .name("icmpProxy".into())
+                .spawn(move || {
+                    if let Err(e) = icmp_proxy(
+                        mio_icmp_socket,
+                        nat_map,
+                        context,
+                        stop_manager,
+                        current_device,
+                        client_cipher,
+                    ) {
+                        log::warn!("icmp_proxy:{:?}", e);
+                    }
+                })
+                .expect("icmpProxy");
         }
         Ok(Self {
             icmp_socket: Arc::new(std_socket),

@@ -38,11 +38,14 @@ impl TcpProxy {
         let port = tcp_listener.local_addr()?.port();
         {
             let nat_map = nat_map.clone();
-            thread::spawn(move || {
-                if let Err(e) = tcp_proxy(tcp_listener, nat_map, stop_manager) {
-                    log::warn!("tcp_proxy:{:?}", e);
-                }
-            });
+            thread::Builder::new()
+                .name("tcpProxy".into())
+                .spawn(move || {
+                    if let Err(e) = tcp_proxy(tcp_listener, nat_map, stop_manager) {
+                        log::warn!("tcp_proxy:{:?}", e);
+                    }
+                })
+                .expect("tcpProxy");
         }
         Ok(Self { port, nat_map })
     }
