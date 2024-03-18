@@ -117,7 +117,9 @@ impl Device {
             win_tun.WintunGetAdapterLUID(adapter, &mut luid as *mut wintun_raw::NET_LUID);
             let index = ffi::luid_to_index(&std::mem::transmute(luid)).map(|index| index as u32)?;
             // 设置网卡跃点
-            netsh::set_interface_metric(index, 0)?;
+            if let Err(e) = netsh::set_interface_metric(index, 0) {
+                log::warn!("{:?}",e);
+            }
             Ok(Self {
                 luid: std::mem::transmute(luid),
                 index,

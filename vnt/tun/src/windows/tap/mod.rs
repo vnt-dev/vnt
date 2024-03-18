@@ -96,7 +96,9 @@ impl Device {
             .map_err(|e| io::Error::new(e.kind(), format!("TAP_WIN_IOCTL_GET_MAC,err={:?}", e)))?;
         let index = ffi::luid_to_index(&luid).map(|index| index as u32)?;
         // 设置网卡跃点
-        netsh::set_interface_metric(index, 0)?;
+        if let Err(e) = netsh::set_interface_metric(index, 0) {
+            log::warn!("{:?}",e);
+        }
         let device = Self {
             handle,
             index,
