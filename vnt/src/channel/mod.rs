@@ -154,13 +154,31 @@ pub fn init_context(
 ) -> io::Result<(Context, mio::net::TcpListener)> {
     assert!(!ports.is_empty(), "not channel");
     let mut udps = Vec::with_capacity(ports.len());
+    //检查系统是否支持ipv6
+    let use_ipv6 = match socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None) {
+        Ok(_) => true,
+        Err(e) => {
+            log::warn!("{:?}", e);
+            false
+        }
+    };
     for port in &ports {
         //监听v6+v4双栈
-        let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
-        let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None)?;
-        io_convert(socket.set_only_v6(false), |_| {
-            format!("set_only_v6 failed: {}", &address)
-        })?;
+        let (socket, address) = if use_ipv6 {
+            let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
+            let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None)?;
+            io_convert(socket.set_only_v6(false), |_| {
+                format!("set_only_v6 failed: {}", &address)
+            })?;
+            (socket, address)
+        } else {
+            let address: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+            (
+                socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?,
+                address,
+            )
+        };
+
         io_convert(socket.set_reuse_address(true), |_| {
             format!("set_reuse_address failed: {}", &address)
         })?;
@@ -184,15 +202,24 @@ pub fn init_context(
         is_tcp,
         packet_loss_rate,
         packet_delay,
+        use_ipv6,
     );
 
     let port = context.main_local_udp_port()?[0];
     //监听v6+v4双栈，tcp通道使用异步io
-    let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
-    let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None)?;
-    io_convert(socket.set_only_v6(false), |_| {
-        format!("set_only_v6 failed: {}", &address)
-    })?;
+    let (socket, address) = if use_ipv6 {
+        let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
+        let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None)?;
+        io_convert(socket.set_only_v6(false), |_| {
+            format!("set_only_v6 failed: {}", &address)
+        })?;
+        (socket, address)
+    } else {
+        let address: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+        let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)?;
+        (socket, address)
+    };
+
     io_convert(socket.set_reuse_address(true), |_| {
         format!("set_reuse_address failed: {}", &address)
     })?;
@@ -200,7 +227,11 @@ pub fn init_context(
         if ports[0] == 0 {
             //端口可能冲突，则使用任意端口
             log::warn!("监听tcp端口失败 {:?},重试一次", address);
-            let address: SocketAddr = format!("[::]:{}", 0).parse().unwrap();
+            let address: SocketAddr = if use_ipv6 {
+                format!("[::]:{}", 0).parse().unwrap()
+            } else {
+                format!("0.0.0.0:{}", port).parse().unwrap()
+            };
             io_convert(socket.bind(&address.into()), |_| {
                 format!("bind failed: {}", &address)
             })?;

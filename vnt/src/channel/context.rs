@@ -28,6 +28,7 @@ impl Context {
         is_tcp: bool,
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
+        use_ipv6: bool,
     ) -> Self {
         let channel_num = main_udp_socket.len();
         assert_ne!(channel_num, 0, "not channel");
@@ -51,6 +52,7 @@ impl Context {
             packet_loss_rate,
             packet_delay,
             main_index: AtomicUsize::new(0),
+            use_ipv6,
         };
         Self {
             inner: Arc::new(inner),
@@ -70,7 +72,7 @@ impl Deref for Context {
 }
 
 /// 对称网络增加的udp socket数目，有助于增加打洞成功率
-pub const SYMMETRIC_CHANNEL_NUM: usize = 64;
+pub const SYMMETRIC_CHANNEL_NUM: usize = 100;
 const PACKET_LOSS_RATE_DENOMINATOR: u32 = 100_0000;
 pub struct ContextInner {
     // 核心udp socket
@@ -90,6 +92,7 @@ pub struct ContextInner {
     //控制延迟
     packet_delay: u32,
     main_index: AtomicUsize,
+    use_ipv6: bool,
 }
 
 impl ContextInner {
@@ -172,15 +175,16 @@ impl ContextInner {
         }
     }
     pub fn send_main_udp(&self, index: usize, buf: &[u8], mut addr: SocketAddr) -> io::Result<()> {
-        //核心udp socket都是ipv6模式,如果是v4地址则需要转换成v6
-        //只有服务器地址可能需要这样转换
-        if let SocketAddr::V4(ipv4) = addr {
-            addr = SocketAddr::V6(SocketAddrV6::new(
-                ipv4.ip().to_ipv6_mapped(),
-                ipv4.port(),
-                0,
-                0,
-            ));
+        if self.use_ipv6 {
+            //如果是v4地址则需要转换成v6
+            if let SocketAddr::V4(ipv4) = addr {
+                addr = SocketAddr::V6(SocketAddrV6::new(
+                    ipv4.ip().to_ipv6_mapped(),
+                    ipv4.port(),
+                    0,
+                    0,
+                ));
+            }
         }
         self.main_udp_socket[index].send_to(buf, addr)?;
         Ok(())
@@ -208,17 +212,9 @@ impl ContextInner {
             thread::sleep(Duration::from_millis(1));
         }
     }
-    pub fn try_send_all_main(&self, buf: &[u8], mut addr: SocketAddr) {
-        if let SocketAddr::V4(ipv4) = addr {
-            addr = SocketAddr::V6(SocketAddrV6::new(
-                ipv4.ip().to_ipv6_mapped(),
-                ipv4.port(),
-                0,
-                0,
-            ));
-        }
-        for udp in &self.main_udp_socket {
-            if let Err(e) = udp.send_to(buf, addr) {
+    pub fn try_send_all_main(&self, buf: &[u8], addr: SocketAddr) {
+        for index in 0..self.channel_num() {
+            if let Err(e) = self.send_main_udp(index, buf, addr) {
                 log::warn!("{:?},add={:?}", e, addr);
             }
         }
