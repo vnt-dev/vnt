@@ -86,7 +86,6 @@ fn idle_gateway0<Call: VntCallback>(
             ErrorType::Disconnect,
             format!("connect:{},error:{:?}", cur.connect_server, e),
         ));
-        log::warn!("{:?}", e);
     }
 }
 fn idle_route0<Call: VntCallback>(

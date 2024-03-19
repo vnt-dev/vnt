@@ -15,8 +15,8 @@ use vnt::core::{Config, Vnt};
 mod command;
 mod config;
 mod console_out;
-mod root_check;
 mod generated_serial_number;
+mod root_check;
 
 pub fn app_home() -> io::Result<PathBuf> {
     let root_path = match std::env::current_exe() {

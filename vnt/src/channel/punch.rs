@@ -226,7 +226,7 @@ impl Punch {
     }
     pub fn punch(&mut self, buf: &[u8], id: Ipv4Addr, nat_info: NatInfo) -> io::Result<()> {
         if !self.context.route_table.need_punch(&id) {
-            log::info!("已打洞成功,无需打洞:{:?}",id);
+            log::info!("已打洞成功,无需打洞:{:?}", id);
             return Ok(());
         }
         if self.is_tcp && nat_info.tcp_port != 0 {

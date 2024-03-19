@@ -19,8 +19,8 @@ pub fn addr_request(
     config: BaseConfigInfo,
 ) {
     addr_request0(&context, &current_device_info, &server_cipher, &config);
-    // 9秒发送一次
-    let rs = scheduler.timeout(Duration::from_secs(9), |s| {
+    // 17秒发送一次
+    let rs = scheduler.timeout(Duration::from_secs(17), |s| {
         addr_request(s, context, current_device_info, server_cipher, config)
     });
     if !rs {

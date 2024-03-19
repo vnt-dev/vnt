@@ -268,6 +268,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                             log::info!("ip发生变化,old:{:?},response={:?}", old, response);
                         }
                         if let Err(e) = self.device.set_ip(virtual_ip, virtual_netmask) {
+                            log::error!("LocalIpExists {:?}", e);
                             self.callback.error(ErrorInfo::new_msg(
                                 ErrorType::LocalIpExists,
                                 format!("set_ip {:?}", e),
@@ -421,12 +422,10 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 self.callback.error(err);
             }
             InErrorPacket::IpAlreadyExists => {
-                log::error!("IpAlreadyExists");
                 let err = ErrorInfo::new(ErrorType::IpAlreadyExists);
                 self.callback.error(err);
             }
             InErrorPacket::InvalidIp => {
-                log::error!("InvalidIp");
                 let err = ErrorInfo::new(ErrorType::InvalidIp);
                 self.callback.error(err);
             }

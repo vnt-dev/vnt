@@ -31,6 +31,7 @@ impl VntCallback for VntHandler {
     }
 
     fn error(&self, info: ErrorInfo) {
+        log::error!("error {:?}", info);
         println!("{}", style(format!("error {}", info)).red());
         match info.code {
             ErrorType::TokenError

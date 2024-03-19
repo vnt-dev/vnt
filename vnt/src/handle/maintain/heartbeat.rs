@@ -12,7 +12,7 @@ use crate::cipher::Cipher;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::PingPacket;
-use crate::protocol::{control_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::{control_packet, NetPacket, Protocol, Version};
 use crate::util::Scheduler;
 
 /// 定时发送心跳包
@@ -216,7 +216,7 @@ fn heartbeat_packet(
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(Protocol::Control);
     net_packet.set_transport_protocol(control_packet::Protocol::Ping.into());
-    net_packet.first_set_ttl(MAX_TTL);
+    net_packet.first_set_ttl(5);
     net_packet.set_source(src);
     net_packet.set_destination(dest);
     let mut ping = PingPacket::new(net_packet.payload_mut())?;

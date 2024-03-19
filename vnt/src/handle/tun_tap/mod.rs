@@ -97,7 +97,7 @@ pub fn base_handle(
     net_packet.set_version(Version::V1);
     net_packet.set_protocol(protocol::Protocol::IpTurn);
     net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
-    net_packet.first_set_ttl(3);
+    net_packet.first_set_ttl(6);
     net_packet.set_source(src_ip);
     net_packet.set_destination(dest_ip);
     if dest_ip == current_device.virtual_gateway {
