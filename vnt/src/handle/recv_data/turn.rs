@@ -18,7 +18,7 @@ impl PacketHandler for TurnPacketHandler {
     fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
-        _route_key: RouteKey,
+        route_key: RouteKey,
         context: &Context,
         _current_device: &CurrentDeviceInfo,
     ) -> std::io::Result<()> {
@@ -27,6 +27,16 @@ impl PacketHandler for TurnPacketHandler {
         if ttl > 0 {
             let destination = net_packet.destination();
             if let Some(route) = context.route_table.route_one(&destination) {
+                if route.addr == route_key.addr {
+                    //防止环路
+                    log::warn!(
+                        "来源和目标相同 {:?},{},{}",
+                        route_key,
+                        net_packet.source(),
+                        net_packet.destination()
+                    );
+                    return Ok(());
+                }
                 if route.metric <= ttl {
                     context.send_by_key(net_packet.buffer(), route.route_key())?;
                 }
