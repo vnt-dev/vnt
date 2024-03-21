@@ -188,6 +188,7 @@ fn recv_handle(
                             net_packet.buffer(),
                             &dest_ip,
                             current_device.connect_server,
+                            current_device.status.online(),
                         ) {
                             log::warn!("发送到目标失败:{}", e);
                         }

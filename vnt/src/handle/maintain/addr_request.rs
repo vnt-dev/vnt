@@ -52,7 +52,7 @@ pub fn addr_request0(
             }
         }
     }
-    if current_dev.connect_server.is_ipv4() {
+    if current_dev.connect_server.is_ipv4() && current_dev.status.online() {
         // 如果连接的是ipv4服务，则探测公网端口
         let gateway_ip = current_dev.virtual_gateway;
         let src_ip = current_dev.virtual_ip;

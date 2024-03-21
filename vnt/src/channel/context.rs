@@ -225,6 +225,7 @@ impl ContextInner {
         buf: &[u8],
         id: &Ipv4Addr,
         server_addr: SocketAddr,
+        send_default: bool,
     ) -> io::Result<()> {
         if self.packet_loss_rate > 0 {
             if rand::thread_rng().gen_ratio(self.packet_loss_rate, PACKET_LOSS_RATE_DENOMINATOR) {
@@ -239,7 +240,7 @@ impl ContextInner {
             if e.kind() != io::ErrorKind::NotFound {
                 log::warn!("{}:{:?}", id, e);
             }
-            if !self.route_table.use_channel_type.is_only_p2p() {
+            if !self.route_table.use_channel_type.is_only_p2p() && send_default {
                 //符合条件再发到服务器转发
                 self.send_default(buf, server_addr)?;
             }

@@ -33,6 +33,7 @@ fn broadcast(
             continue;
         }
         if peer_ips.len() == MAX_COUNT {
+            relay_count += 1;
             break;
         }
         if route.is_p2p()
@@ -45,7 +46,7 @@ fn broadcast(
             relay_count += 1;
         }
     }
-    if relay_count == 0 && !peer_ips.is_empty() && peer_ips.len() != MAX_COUNT {
+    if (relay_count == 0 && !peer_ips.is_empty()) || current_device.status.offline() {
         //不需要转发
         return Ok(());
     }
@@ -143,5 +144,10 @@ pub fn base_handle(
         proxy_map.send_handle(&mut ipv4_packet)?;
     }
     client_cipher.encrypt_ipv4(&mut net_packet)?;
-    context.send_ipv4_by_id(net_packet.buffer(), &dest_ip, current_device.connect_server)
+    context.send_ipv4_by_id(
+        net_packet.buffer(),
+        &dest_ip,
+        current_device.connect_server,
+        current_device.status.online(),
+    )
 }

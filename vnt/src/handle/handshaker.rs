@@ -37,7 +37,7 @@ impl Handshake {
     pub fn send(&self, context: &Context, secret: bool, addr: SocketAddr) -> io::Result<()> {
         let last = self.time.load();
         //短时间不重复发送
-        if last.elapsed() < Duration::from_secs(5) {
+        if last.elapsed() < Duration::from_secs(3) {
             return Ok(());
         }
         let request_packet = handshake_request_packet(secret)?;
