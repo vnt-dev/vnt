@@ -198,16 +198,16 @@ fn punch0(
         .collect();
     list.shuffle(&mut rand::thread_rng());
     let mut count = 0;
-    // 优先没打洞的
-    list.sort_by(|v1, v2| {
-        if context.route_table.route_one_p2p(&v1.virtual_ip).is_none() {
-            Ordering::Less
-        } else if context.route_table.route_one_p2p(&v2.virtual_ip).is_none() {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
-        }
-    });
+    // // 优先没打洞的 need_punch会过滤掉已经打洞成功的
+    // list.sort_by(|v1, v2| {
+    //     if context.route_table.route_one_p2p(&v1.virtual_ip).is_none() {
+    //         Ordering::Less
+    //     } else if context.route_table.route_one_p2p(&v2.virtual_ip).is_none() {
+    //         Ordering::Greater
+    //     } else {
+    //         Ordering::Equal
+    //     }
+    // });
     for info in list {
         if !info.status.is_online() {
             continue;
