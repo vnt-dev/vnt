@@ -18,20 +18,40 @@ pub fn addr_request(
     server_cipher: Cipher,
     config: BaseConfigInfo,
 ) {
-    addr_request0(&context, &current_device_info, &server_cipher, &config);
+    pub_address_request(scheduler, context, current_device_info.clone(), server_cipher);
+    domain_request(scheduler,current_device_info,config);
+}
+pub fn pub_address_request(
+    scheduler: &Scheduler,
+    context: Context,
+    current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
+    server_cipher: Cipher,
+) {
+    addr_request0(&context, &current_device_info, &server_cipher);
     // 17秒发送一次
     let rs = scheduler.timeout(Duration::from_secs(17), |s| {
-        addr_request(s, context, current_device_info, server_cipher, config)
+        pub_address_request(s, context, current_device_info, server_cipher)
     });
     if !rs {
         log::info!("定时任务停止");
     }
 }
-
-pub fn addr_request0(
-    context: &Context,
+pub fn domain_request(
+    scheduler: &Scheduler,
+    current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
+    config: BaseConfigInfo,
+) {
+    domain_request0(&current_device_info, &config);
+    // 120秒发送一次
+    let rs = scheduler.timeout(Duration::from_secs(120), |s| {
+        domain_request(s,  current_device_info, config)
+    });
+    if !rs {
+        log::info!("定时任务停止");
+    }
+}
+pub fn domain_request0(
     current_device: &AtomicCell<CurrentDeviceInfo>,
-    server_cipher: &Cipher,
     config: &BaseConfigInfo,
 ) {
     let mut current_dev = current_device.load();
@@ -52,6 +72,13 @@ pub fn addr_request0(
             }
         }
     }
+}
+pub fn addr_request0(
+    context: &Context,
+    current_device: &AtomicCell<CurrentDeviceInfo>,
+    server_cipher: &Cipher,
+) {
+    let current_dev = current_device.load();
     if current_dev.connect_server.is_ipv4() && current_dev.status.online() {
         // 如果连接的是ipv4服务，则探测公网端口
         let gateway_ip = current_dev.virtual_gateway;
