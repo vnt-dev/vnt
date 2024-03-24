@@ -1,4 +1,3 @@
-use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,10 +15,14 @@ pub fn addr_request(
     context: Context,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     server_cipher: Cipher,
-    config: BaseConfigInfo,
+    _config: BaseConfigInfo,
 ) {
-    pub_address_request(scheduler, context, current_device_info.clone(), server_cipher);
-    domain_request(scheduler,current_device_info,config);
+    pub_address_request(
+        scheduler,
+        context,
+        current_device_info.clone(),
+        server_cipher,
+    );
 }
 pub fn pub_address_request(
     scheduler: &Scheduler,
@@ -36,43 +39,7 @@ pub fn pub_address_request(
         log::info!("定时任务停止");
     }
 }
-pub fn domain_request(
-    scheduler: &Scheduler,
-    current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
-    config: BaseConfigInfo,
-) {
-    domain_request0(&current_device_info, &config);
-    // 120秒发送一次
-    let rs = scheduler.timeout(Duration::from_secs(120), |s| {
-        domain_request(s,  current_device_info, config)
-    });
-    if !rs {
-        log::info!("定时任务停止");
-    }
-}
-pub fn domain_request0(
-    current_device: &AtomicCell<CurrentDeviceInfo>,
-    config: &BaseConfigInfo,
-) {
-    let mut current_dev = current_device.load();
-    // 探测服务端地址变化
-    if let Ok(mut addr) = config.server_addr.to_socket_addrs() {
-        if let Some(addr) = addr.next() {
-            if addr != current_dev.connect_server {
-                let mut tmp = current_dev.clone();
-                tmp.connect_server = addr;
-                let rs = current_device.compare_exchange(current_dev, tmp);
-                current_dev.connect_server = addr;
-                log::info!(
-                    "服务端地址变化,旧地址:{}，新地址:{},替换结果:{}",
-                    current_dev.connect_server,
-                    addr,
-                    rs.is_ok()
-                );
-            }
-        }
-    }
-}
+
 pub fn addr_request0(
     context: &Context,
     current_device: &AtomicCell<CurrentDeviceInfo>,
