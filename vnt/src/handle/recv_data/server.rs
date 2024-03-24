@@ -320,26 +320,22 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                     self.set_device_info_list(response.device_info_list, response.epoch as _);
                 }
             }
-            service_packet::Protocol::RegistrationRequest => {
-                //不处理注册包
-            }
-            service_packet::Protocol::PollDeviceList => {}
             service_packet::Protocol::PushDeviceList => {
                 let response = DeviceList::parse_from_bytes(net_packet.payload()).map_err(|e| {
                     io::Error::new(io::ErrorKind::Other, format!("PushDeviceList {:?}", e))
                 })?;
                 self.set_device_info_list(response.device_info_list, response.epoch as _);
             }
-            service_packet::Protocol::HandshakeRequest => {}
-            service_packet::Protocol::HandshakeResponse => {}
-            service_packet::Protocol::SecretHandshakeRequest => {}
             service_packet::Protocol::SecretHandshakeResponse => {
                 log::info!("SecretHandshakeResponse");
                 //加密握手结束，发送注册数据
                 self.register(current_device, context)?;
             }
-            service_packet::Protocol::Unknown(e) => {
-                log::warn!("service_packet::Protocol::Unknown = {}", e);
+            _ => {
+                log::warn!(
+                    "service_packet::Protocol::Unknown = {:?}",
+                    net_packet.head()
+                );
             }
         }
         Ok(())
@@ -370,7 +366,10 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
         let device_id = self.config_info.device_id.clone();
         let name = self.config_info.name.clone();
         let client_secret = self.config_info.client_secret;
-        let ip = self.config_info.ip;
+        let mut ip = self.config_info.ip;
+        if ip.is_none() {
+            ip = Some(current_device.virtual_ip)
+        }
         let response = registrar::registration_request_packet(
             &self.server_cipher,
             token,

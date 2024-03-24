@@ -29,12 +29,7 @@ impl PacketHandler for TurnPacketHandler {
             if let Some(route) = context.route_table.route_one(&destination) {
                 if route.addr == route_key.addr {
                     //防止环路
-                    log::warn!(
-                        "来源和目标相同 {:?},{},{}",
-                        route_key,
-                        net_packet.source(),
-                        net_packet.destination()
-                    );
+                    log::warn!("来源和目标相同 {:?},{:?}", route_key, net_packet.head());
                     return Ok(());
                 }
                 if route.metric <= ttl {
