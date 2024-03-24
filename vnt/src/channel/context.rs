@@ -482,9 +482,10 @@ impl RouteTable {
         let table = self.route_table.read();
         let mut list = Vec::with_capacity(8);
         for (ip, (_, routes)) in table.iter() {
-            if let Some((route, _)) = routes.first() {
+            for (route, _) in routes.iter() {
                 if route.is_p2p() {
                     list.push((*ip, *route));
+                    break;
                 }
             }
         }

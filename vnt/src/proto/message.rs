@@ -1622,6 +1622,323 @@ impl ::protobuf::reflect::ProtobufValue for PunchInfo {
     type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
 }
 
+#[derive(PartialEq,Clone,Default,Debug)]
+// @@protoc_insertion_point(message:ClientStatusInfo)
+pub struct ClientStatusInfo {
+    // message fields
+    // @@protoc_insertion_point(field:ClientStatusInfo.source)
+    pub source: u32,
+    // @@protoc_insertion_point(field:ClientStatusInfo.p2p_list)
+    pub p2p_list: ::std::vec::Vec<RouteItem>,
+    // @@protoc_insertion_point(field:ClientStatusInfo.up_stream)
+    pub up_stream: u64,
+    // @@protoc_insertion_point(field:ClientStatusInfo.down_stream)
+    pub down_stream: u64,
+    // @@protoc_insertion_point(field:ClientStatusInfo.nat_type)
+    pub nat_type: ::protobuf::EnumOrUnknown<PunchNatType>,
+    // special fields
+    // @@protoc_insertion_point(special_field:ClientStatusInfo.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a ClientStatusInfo {
+    fn default() -> &'a ClientStatusInfo {
+        <ClientStatusInfo as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl ClientStatusInfo {
+    pub fn new() -> ClientStatusInfo {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(5);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "source",
+            |m: &ClientStatusInfo| { &m.source },
+            |m: &mut ClientStatusInfo| { &mut m.source },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_vec_simpler_accessor::<_, _>(
+            "p2p_list",
+            |m: &ClientStatusInfo| { &m.p2p_list },
+            |m: &mut ClientStatusInfo| { &mut m.p2p_list },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "up_stream",
+            |m: &ClientStatusInfo| { &m.up_stream },
+            |m: &mut ClientStatusInfo| { &mut m.up_stream },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "down_stream",
+            |m: &ClientStatusInfo| { &m.down_stream },
+            |m: &mut ClientStatusInfo| { &mut m.down_stream },
+        ));
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "nat_type",
+            |m: &ClientStatusInfo| { &m.nat_type },
+            |m: &mut ClientStatusInfo| { &mut m.nat_type },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<ClientStatusInfo>(
+            "ClientStatusInfo",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for ClientStatusInfo {
+    const NAME: &'static str = "ClientStatusInfo";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                13 => {
+                    self.source = is.read_fixed32()?;
+                },
+                18 => {
+                    self.p2p_list.push(is.read_message()?);
+                },
+                24 => {
+                    self.up_stream = is.read_uint64()?;
+                },
+                32 => {
+                    self.down_stream = is.read_uint64()?;
+                },
+                40 => {
+                    self.nat_type = is.read_enum_or_unknown()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if self.source != 0 {
+            my_size += 1 + 4;
+        }
+        for value in &self.p2p_list {
+            let len = value.compute_size();
+            my_size += 1 + ::protobuf::rt::compute_raw_varint64_size(len) + len;
+        };
+        if self.up_stream != 0 {
+            my_size += ::protobuf::rt::uint64_size(3, self.up_stream);
+        }
+        if self.down_stream != 0 {
+            my_size += ::protobuf::rt::uint64_size(4, self.down_stream);
+        }
+        if self.nat_type != ::protobuf::EnumOrUnknown::new(PunchNatType::Symmetric) {
+            my_size += ::protobuf::rt::int32_size(5, self.nat_type.value());
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if self.source != 0 {
+            os.write_fixed32(1, self.source)?;
+        }
+        for v in &self.p2p_list {
+            ::protobuf::rt::write_message_field_with_cached_size(2, v, os)?;
+        };
+        if self.up_stream != 0 {
+            os.write_uint64(3, self.up_stream)?;
+        }
+        if self.down_stream != 0 {
+            os.write_uint64(4, self.down_stream)?;
+        }
+        if self.nat_type != ::protobuf::EnumOrUnknown::new(PunchNatType::Symmetric) {
+            os.write_enum(5, ::protobuf::EnumOrUnknown::value(&self.nat_type))?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> ClientStatusInfo {
+        ClientStatusInfo::new()
+    }
+
+    fn clear(&mut self) {
+        self.source = 0;
+        self.p2p_list.clear();
+        self.up_stream = 0;
+        self.down_stream = 0;
+        self.nat_type = ::protobuf::EnumOrUnknown::new(PunchNatType::Symmetric);
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static ClientStatusInfo {
+        static instance: ClientStatusInfo = ClientStatusInfo {
+            source: 0,
+            p2p_list: ::std::vec::Vec::new(),
+            up_stream: 0,
+            down_stream: 0,
+            nat_type: ::protobuf::EnumOrUnknown::from_i32(0),
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for ClientStatusInfo {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("ClientStatusInfo").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for ClientStatusInfo {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for ClientStatusInfo {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
+#[derive(PartialEq,Clone,Default,Debug)]
+// @@protoc_insertion_point(message:RouteItem)
+pub struct RouteItem {
+    // message fields
+    // @@protoc_insertion_point(field:RouteItem.next_ip)
+    pub next_ip: u32,
+    // special fields
+    // @@protoc_insertion_point(special_field:RouteItem.special_fields)
+    pub special_fields: ::protobuf::SpecialFields,
+}
+
+impl<'a> ::std::default::Default for &'a RouteItem {
+    fn default() -> &'a RouteItem {
+        <RouteItem as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl RouteItem {
+    pub fn new() -> RouteItem {
+        ::std::default::Default::default()
+    }
+
+    fn generated_message_descriptor_data() -> ::protobuf::reflect::GeneratedMessageDescriptorData {
+        let mut fields = ::std::vec::Vec::with_capacity(1);
+        let mut oneofs = ::std::vec::Vec::with_capacity(0);
+        fields.push(::protobuf::reflect::rt::v2::make_simpler_field_accessor::<_, _>(
+            "next_ip",
+            |m: &RouteItem| { &m.next_ip },
+            |m: &mut RouteItem| { &mut m.next_ip },
+        ));
+        ::protobuf::reflect::GeneratedMessageDescriptorData::new_2::<RouteItem>(
+            "RouteItem",
+            fields,
+            oneofs,
+        )
+    }
+}
+
+impl ::protobuf::Message for RouteItem {
+    const NAME: &'static str = "RouteItem";
+
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::Result<()> {
+        while let Some(tag) = is.read_raw_tag_or_eof()? {
+            match tag {
+                13 => {
+                    self.next_ip = is.read_fixed32()?;
+                },
+                tag => {
+                    ::protobuf::rt::read_unknown_or_skip_group(tag, is, self.special_fields.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u64 {
+        let mut my_size = 0;
+        if self.next_ip != 0 {
+            my_size += 1 + 4;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.special_fields.unknown_fields());
+        self.special_fields.cached_size().set(my_size as u32);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::Result<()> {
+        if self.next_ip != 0 {
+            os.write_fixed32(1, self.next_ip)?;
+        }
+        os.write_unknown_fields(self.special_fields.unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn special_fields(&self) -> &::protobuf::SpecialFields {
+        &self.special_fields
+    }
+
+    fn mut_special_fields(&mut self) -> &mut ::protobuf::SpecialFields {
+        &mut self.special_fields
+    }
+
+    fn new() -> RouteItem {
+        RouteItem::new()
+    }
+
+    fn clear(&mut self) {
+        self.next_ip = 0;
+        self.special_fields.clear();
+    }
+
+    fn default_instance() -> &'static RouteItem {
+        static instance: RouteItem = RouteItem {
+            next_ip: 0,
+            special_fields: ::protobuf::SpecialFields::new(),
+        };
+        &instance
+    }
+}
+
+impl ::protobuf::MessageFull for RouteItem {
+    fn descriptor() -> ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::Lazy::new();
+        descriptor.get(|| file_descriptor().message_by_package_relative_name("RouteItem").unwrap()).clone()
+    }
+}
+
+impl ::std::fmt::Display for RouteItem {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for RouteItem {
+    type RuntimeType = ::protobuf::reflect::rt::RuntimeTypeMessage<Self>;
+}
+
 #[derive(Clone,Copy,PartialEq,Eq,Debug,Hash)]
 // @@protoc_insertion_point(enum:PunchNatType)
 pub enum PunchNatType {
@@ -1713,8 +2030,14 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     6\x18\t\x20\x01(\x0cR\x04ipv6\x12\x1b\n\tipv6_port\x18\n\x20\x01(\rR\x08\
     ipv6Port\x12\x19\n\x08tcp_port\x18\x0b\x20\x01(\rR\x07tcpPort\x12\x1b\n\
     \tudp_ports\x18\x0c\x20\x03(\rR\x08udpPorts\x12!\n\x0cpublic_ports\x18\r\
-    \x20\x03(\rR\x0bpublicPorts*'\n\x0cPunchNatType\x12\r\n\tSymmetric\x10\0\
-    \x12\x08\n\x04Cone\x10\x01b\x06proto3\
+    \x20\x03(\rR\x0bpublicPorts\"\xb9\x01\n\x10ClientStatusInfo\x12\x16\n\
+    \x06source\x18\x01\x20\x01(\x07R\x06source\x12%\n\x08p2p_list\x18\x02\
+    \x20\x03(\x0b2\n.RouteItemR\x07p2pList\x12\x1b\n\tup_stream\x18\x03\x20\
+    \x01(\x04R\x08upStream\x12\x1f\n\x0bdown_stream\x18\x04\x20\x01(\x04R\nd\
+    ownStream\x12(\n\x08nat_type\x18\x05\x20\x01(\x0e2\r.PunchNatTypeR\x07na\
+    tType\"$\n\tRouteItem\x12\x17\n\x07next_ip\x18\x01\x20\x01(\x07R\x06next\
+    Ip*'\n\x0cPunchNatType\x12\r\n\tSymmetric\x10\0\x12\x08\n\x04Cone\x10\
+    \x01b\x06proto3\
 ";
 
 /// `FileDescriptorProto` object which was a source for this generated file
@@ -1732,7 +2055,7 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
     file_descriptor.get(|| {
         let generated_file_descriptor = generated_file_descriptor_lazy.get(|| {
             let mut deps = ::std::vec::Vec::with_capacity(0);
-            let mut messages = ::std::vec::Vec::with_capacity(8);
+            let mut messages = ::std::vec::Vec::with_capacity(10);
             messages.push(HandshakeRequest::generated_message_descriptor_data());
             messages.push(HandshakeResponse::generated_message_descriptor_data());
             messages.push(SecretHandshakeRequest::generated_message_descriptor_data());
@@ -1741,6 +2064,8 @@ pub fn file_descriptor() -> &'static ::protobuf::reflect::FileDescriptor {
             messages.push(DeviceInfo::generated_message_descriptor_data());
             messages.push(DeviceList::generated_message_descriptor_data());
             messages.push(PunchInfo::generated_message_descriptor_data());
+            messages.push(ClientStatusInfo::generated_message_descriptor_data());
+            messages.push(RouteItem::generated_message_descriptor_data());
             let mut enums = ::std::vec::Vec::with_capacity(1);
             enums.push(PunchNatType::generated_enum_descriptor_data());
             ::protobuf::reflect::GeneratedFileDescriptor::new_generated(

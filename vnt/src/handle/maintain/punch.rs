@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;

@@ -188,8 +188,14 @@ where
                 NOTIFY => return Ok(()),
                 Token(index) => index - 1,
             };
+            let udp = if let Some(udp) = udps.get(index) {
+                udp
+            } else {
+                log::error!("{:?}", x);
+                continue;
+            };
             loop {
-                match udps[index].recv_from(&mut buf) {
+                match udp.recv_from(&mut buf) {
                     Ok((len, addr)) => {
                         recv_handler.handle(
                             &mut buf[..len],

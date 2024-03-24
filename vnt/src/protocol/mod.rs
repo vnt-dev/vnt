@@ -183,6 +183,9 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
     pub fn payload(&self) -> &[u8] {
         &self.buffer.as_ref()[12..self.data_len]
     }
+    pub fn head(&self) -> &[u8] {
+        &self.buffer.as_ref()[..12]
+    }
 }
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
@@ -213,6 +216,9 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_transport_protocol(&mut self, transport_protocol: u8) {
         self.buffer.as_mut()[2] = transport_protocol;
+    }
+    pub fn set_transport_protocol_into<P: Into<u8>>(&mut self, transport_protocol: P) {
+        self.buffer.as_mut()[2] = transport_protocol.into();
     }
     pub fn first_set_ttl(&mut self, ttl: u8) {
         self.buffer.as_mut()[3] = ttl << 4 | ttl;

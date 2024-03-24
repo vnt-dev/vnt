@@ -205,6 +205,8 @@ impl Vnt {
             let context = context.clone();
             let nat_test = nat_test.clone();
             let device_list = device_list.clone();
+            let down_count_watcher = down_count_watcher.clone();
+            let up_count_watcher = up_count_watcher.clone();
             let current_device = current_device.clone();
             if !config.use_channel_type.is_only_relay() {
                 // 定时nat探测
@@ -229,6 +231,8 @@ impl Vnt {
                     config_info,
                     punch,
                     callback,
+                    down_count_watcher,
+                    up_count_watcher,
                 );
             });
         }
@@ -259,6 +263,8 @@ pub fn start<Call: VntCallback>(
     config_info: BaseConfigInfo,
     punch: Punch,
     callback: Call,
+    down_count_watcher: WatchU64Adder,
+    up_count_watcher: WatchSingleU64Adder,
 ) {
     // 定时心跳
     maintain::heartbeat(
@@ -310,6 +316,13 @@ pub fn start<Call: VntCallback>(
             punch,
         );
     }
+    maintain::up_status(
+        scheduler,
+        context.clone(),
+        current_device.clone(),
+        down_count_watcher,
+        up_count_watcher,
+    )
 }
 
 impl Vnt {
