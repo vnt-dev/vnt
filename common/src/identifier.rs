@@ -51,6 +51,13 @@ pub fn get_unique_identifier() -> Option<String> {
 #[cfg(target_os = "linux")]
 pub fn get_unique_identifier() -> Option<String> {
     use std::process::Command;
+
+    // 对 linux 或 wsl 来说，读取 /etc/machine-id 即可获取当前操作系统的
+    // 唯一标识，而且某些环境没有预装`dmidecode`命令
+    if let Ok(identifier) = std::fs::read_to_string("/etc/machine-id") {
+        return Some(identifier);
+    }
+
     let output = match Command::new("dmidecode")
         .arg("-s")
         .arg("system-uuid")
