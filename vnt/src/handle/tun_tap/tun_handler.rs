@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
+use parking_lot::Mutex;
 
 use packet::icmp::icmp::IcmpPacket;
 use packet::icmp::Kind;
@@ -14,7 +15,7 @@ use crate::channel::context::Context;
 use crate::cipher::Cipher;
 use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::{channel_group, GroupSyncSender};
-use crate::handle::CurrentDeviceInfo;
+use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::util::{SingleU64Adder, StopManager};
@@ -46,6 +47,7 @@ fn handle(
     #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
+    device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
 ) -> io::Result<()> {
     //忽略掉结构不对的情况（ipv6数据、win tap会读到空数据），不然日志打印太多了
     let ipv4_packet = match IpV4Packet::new(&mut data[12..len]) {
@@ -67,6 +69,7 @@ fn handle(
         proxy_map,
         client_cipher,
         server_cipher,
+        device_list,
     );
 }
 
@@ -81,6 +84,7 @@ pub fn start(
     server_cipher: Cipher,
     parallel: usize,
     mut up_counter: SingleU64Adder,
+    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
 ) -> io::Result<()> {
     let worker = {
         #[cfg(target_os = "macos")]
@@ -110,6 +114,7 @@ pub fn start(
             let ip_proxy_map = ip_proxy_map.clone();
             let client_cipher = client_cipher.clone();
             let server_cipher = server_cipher.clone();
+            let device_list = device_list.clone();
             thread::Builder::new()
                 .name(format!("tunHandler-{}", index))
                 .spawn(move || {
@@ -129,6 +134,7 @@ pub fn start(
                             &ip_proxy_map,
                             &client_cipher,
                             &server_cipher,
+                            &device_list,
                         ) {
                             Ok(_) => {}
                             Err(e) => {
@@ -161,6 +167,7 @@ pub fn start(
                     client_cipher,
                     server_cipher,
                     &mut up_counter,
+                    device_list,
                 ) {
                     log::warn!("stop:{}", e);
                 }
@@ -180,6 +187,7 @@ fn start_simple(
     client_cipher: Cipher,
     server_cipher: Cipher,
     up_counter: &mut SingleU64Adder,
+    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
 ) -> io::Result<()> {
     let mut buf = [0; 1024 * 16];
     loop {
@@ -204,6 +212,7 @@ fn start_simple(
             &ip_proxy_map,
             &client_cipher,
             &server_cipher,
+            &device_list,
         ) {
             Ok(_) => {}
             Err(e) => {

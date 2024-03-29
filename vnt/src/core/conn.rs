@@ -190,6 +190,7 @@ impl Vnt {
             server_cipher.clone(),
             config.parallel,
             up_counter,
+            device_list.clone(),
         )?;
         maintain::idle_gateway(
             &scheduler,
