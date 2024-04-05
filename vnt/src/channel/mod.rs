@@ -179,9 +179,6 @@ pub fn init_context(
             )
         };
 
-        io_convert(socket.set_reuse_address(true), |_| {
-            format!("set_reuse_address failed: {}", &address)
-        })?;
         io_convert(socket.set_send_buffer_size(2 * 1024 * 1024), |_| {
             format!("set_send_buffer_size failed: {}", &address)
         })?;
@@ -220,9 +217,6 @@ pub fn init_context(
         (socket, address)
     };
 
-    io_convert(socket.set_reuse_address(true), |_| {
-        format!("set_reuse_address failed: {}", &address)
-    })?;
     if let Err(e) = socket.bind(&address.into()) {
         if ports[0] == 0 {
             //端口可能冲突，则使用任意端口
