@@ -78,7 +78,7 @@ impl Into<NatType> for PunchNatType {
 
 impl NatTest {
     pub fn new(
-        channel_num: usize,
+        _channel_num: usize,
         mut stun_server: Vec<String>,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
@@ -87,8 +87,7 @@ impl NatTest {
     ) -> NatTest {
         let server = stun_server[0].clone();
         stun_server.resize(3, server);
-        let mut ports = udp_ports.clone();
-        ports.resize(channel_num, 0);
+        let ports = vec![0; udp_ports.len()];
         let nat_info = NatInfo::new(
             Vec::new(),
             ports,
