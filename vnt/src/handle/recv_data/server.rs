@@ -237,6 +237,10 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                     context
                         .route_table
                         .add_route_if_absent(virtual_gateway, route);
+                    let public_ip = response.public_ip.into();
+                    let public_port = response.public_port as u16;
+                    self.nat_test
+                        .update_addr(route_key.index(), public_ip, public_port);
                     let old = current_device;
                     let mut cur = *current_device;
                     loop {
@@ -245,7 +249,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         new_current_device.virtual_ip = virtual_ip;
                         new_current_device.virtual_netmask = virtual_netmask;
                         new_current_device.virtual_gateway = virtual_gateway;
-                        new_current_device.status = crate::handle::ConnectStatus::Connected;
+                        new_current_device.status = ConnectStatus::Connected;
                         if let Err(c) = self
                             .current_device
                             .compare_exchange(cur, new_current_device)
@@ -256,10 +260,6 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         }
                     }
 
-                    let public_ip = response.public_ip.into();
-                    let public_port = response.public_port as u16;
-                    self.nat_test
-                        .update_addr(route_key.index(), public_ip, public_port);
                     if old.virtual_ip != virtual_ip
                         || old.virtual_gateway != virtual_gateway
                         || old.virtual_netmask != virtual_netmask
