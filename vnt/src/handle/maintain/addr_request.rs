@@ -31,8 +31,8 @@ pub fn pub_address_request(
     server_cipher: Cipher,
 ) {
     addr_request0(&context, &current_device_info, &server_cipher);
-    // 17秒发送一次
-    let rs = scheduler.timeout(Duration::from_secs(17), |s| {
+    // 9秒发送一次
+    let rs = scheduler.timeout(Duration::from_secs(9), |s| {
         pub_address_request(s, context, current_device_info, server_cipher)
     });
     if !rs {
