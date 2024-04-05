@@ -3,11 +3,9 @@ use std::fs::File;
 use std::io::Write;
 
 fn main() {
-    // 生成随机序列号
+    let now_time = chrono::Local::now();
     let serial_number = format!(
-        "{}-{}-{}",
-        rand::thread_rng().gen_range(100..1000),
-        rand::thread_rng().gen_range(100..1000),
+        "{}-{}", &now_time.format("%y%m%d%H%M").to_string(),
         rand::thread_rng().gen_range(100..1000)
     );
     let generated_code = format!(r#"pub const SERIAL_NUMBER: &str = "{}";"#, serial_number);
