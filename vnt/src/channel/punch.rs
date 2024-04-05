@@ -100,6 +100,9 @@ impl NatInfo {
     pub fn update_addr(&mut self, index: usize, ip: Ipv4Addr, port: u16) {
         if port != 0 {
             if let Some(public_port) = self.public_ports.get_mut(index) {
+                if *public_port != port {
+                    log::info!("端口变化={}:{}", ip, port)
+                }
                 *public_port = port;
             }
         }
@@ -111,6 +114,7 @@ impl NatInfo {
         {
             if !self.public_ips.contains(&ip) {
                 self.public_ips.push(ip);
+                log::info!("ip变化={},{:?}", ip, self.public_ips)
             }
         }
     }
@@ -208,7 +212,7 @@ impl Punch {
 impl Punch {
     fn connect_tcp(&self, buf: &[u8], addr: SocketAddr) -> bool {
         // mio是非阻塞的，不能立马判断是否能连接成功，所以用标准库的tcp
-        match std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(3)) {
+        match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
             Ok(tcp_stream) => {
                 if tcp_stream.set_nonblocking(true).is_err() {
                     return false;
@@ -224,29 +228,35 @@ impl Punch {
         }
         false
     }
-    pub fn punch(&mut self, buf: &[u8], id: Ipv4Addr, nat_info: NatInfo) -> io::Result<()> {
+    pub fn punch(
+        &mut self,
+        buf: &[u8],
+        id: Ipv4Addr,
+        nat_info: NatInfo,
+        punch_tcp: bool,
+    ) -> io::Result<()> {
         if !self.context.route_table.need_punch(&id) {
             log::info!("已打洞成功,无需打洞:{:?}", id);
             return Ok(());
         }
-        if self.is_tcp && nat_info.tcp_port != 0 {
+        if punch_tcp && self.is_tcp && nat_info.tcp_port != 0 {
             //向tcp发起连接
             if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
                 if self.connect_tcp(buf, ipv6_addr) {
-                    return Ok(());
+                    // return Ok(());
                 }
             }
             //向tcp发起连接
             if let Some(ipv4_addr) = nat_info.local_tcp_ipv4addr() {
                 if self.connect_tcp(buf, ipv4_addr) {
-                    return Ok(());
+                    // return Ok(());
                 }
             }
             if nat_info.nat_type == NatType::Cone && nat_info.public_ips.len() == 1 {
                 let addr =
                     SocketAddr::V4(SocketAddrV4::new(nat_info.public_ips[0], nat_info.tcp_port));
                 if self.connect_tcp(buf, addr) {
-                    return Ok(());
+                    // return Ok(());
                 }
             }
         }

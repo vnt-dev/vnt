@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub struct PunchSender {
     sender_cone_self: SyncSender<(Ipv4Addr, NatInfo)>,
     sender_cone_peer: SyncSender<(Ipv4Addr, NatInfo)>,
 }
+
 impl PunchSender {
     pub fn send(&self, src_peer: bool, ip: Ipv4Addr, info: NatInfo) -> bool {
         log::info!(
@@ -53,12 +55,14 @@ impl PunchSender {
         sender.try_send((ip, info)).is_ok()
     }
 }
+
 pub struct PunchReceiver {
     receiver_peer: Receiver<(Ipv4Addr, NatInfo)>,
     receiver_self: Receiver<(Ipv4Addr, NatInfo)>,
     receiver_cone_peer: Receiver<(Ipv4Addr, NatInfo)>,
     receiver_cone_self: Receiver<(Ipv4Addr, NatInfo)>,
 }
+
 pub fn punch_channel() -> (PunchSender, PunchReceiver) {
     let (sender_self, receiver_self) = sync_channel(1);
     let (sender_peer, receiver_peer) = sync_channel(1);
@@ -90,6 +94,8 @@ pub fn punch(
     receiver: PunchReceiver,
     punch: Punch,
 ) {
+    let punch_record = Arc::new(Mutex::new(HashMap::new()));
+    let last_punch_record = HashMap::new();
     punch_request(
         scheduler,
         context,
@@ -98,15 +104,18 @@ pub fn punch(
         current_device.clone(),
         client_cipher.clone(),
         0,
+        punch_record.clone(),
+        last_punch_record,
     );
     let f = |receiver: Receiver<(Ipv4Addr, NatInfo)>| {
         let punch = punch.clone();
         let current_device = current_device.clone();
         let client_cipher = client_cipher.clone();
+        let punch_record = punch_record.clone();
         thread::Builder::new()
             .name("punch".into())
             .spawn(move || {
-                punch_start(receiver, punch, current_device, client_cipher);
+                punch_start(receiver, punch, current_device, client_cipher, punch_record);
             })
             .expect("punch");
     };
@@ -122,6 +131,7 @@ fn punch_start(
     mut punch: Punch,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
+    punch_record: Arc<Mutex<HashMap<Ipv4Addr, usize>>>,
 ) {
     while let Ok((peer_ip, nat_info)) = receiver.recv() {
         let mut packet = NetPacket::new_encrypt([0u8; 12 + ENCRYPTION_RESERVED]).unwrap();
@@ -131,12 +141,23 @@ fn punch_start(
         packet.set_transport_protocol(control_packet::Protocol::PunchRequest.into());
         packet.set_source(current_device.load().virtual_ip());
         packet.set_destination(peer_ip);
-        log::info!("发起打洞，目标:{:?},{:?}", peer_ip, nat_info);
+        let count = {
+            let mut guard = punch_record.lock();
+            if let Some(v) = guard.get_mut(&peer_ip) {
+                *v += 1;
+                *v
+            } else {
+                guard.insert(peer_ip, 1);
+                0
+            }
+        };
+        log::info!("第{}次发起打洞,目标:{:?},{:?} ", count, peer_ip, nat_info);
+
         if let Err(e) = client_cipher.encrypt_ipv4(&mut packet) {
             log::error!("{:?}", e);
             continue;
         }
-        if let Err(e) = punch.punch(packet.buffer(), peer_ip, nat_info) {
+        if let Err(e) = punch.punch(packet.buffer(), peer_ip, nat_info, count < 2) {
             log::warn!("{:?}", e)
         }
     }
@@ -151,16 +172,27 @@ fn punch_request(
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
     count: usize,
+    punch_record: Arc<Mutex<HashMap<Ipv4Addr, usize>>>,
+    mut last_punch_record: HashMap<Ipv4Addr, usize>,
 ) {
     let curr = current_device.load();
     let secs = if curr.status.online() {
-        if let Err(e) = punch0(&context, &nat_test, &device_list, curr, &client_cipher) {
+        if let Err(e) = punch0(
+            &context,
+            &nat_test,
+            &device_list,
+            curr,
+            &client_cipher,
+            &punch_record,
+            &mut last_punch_record,
+            count,
+        ) {
             log::warn!("{:?}", e)
         }
-        let sleep_time = [3, 5, 7, 11, 13, 17, 19, 23, 29];
+        let sleep_time = [5, 6, 7];
         Duration::from_secs(sleep_time[count % sleep_time.len()])
     } else {
-        Duration::from_secs(3)
+        Duration::from_secs(5)
     };
     let rs = scheduler.timeout(secs, move |s| {
         punch_request(
@@ -171,6 +203,8 @@ fn punch_request(
             current_device,
             client_cipher,
             count + 1,
+            punch_record,
+            last_punch_record,
         );
     });
     if !rs {
@@ -185,8 +219,19 @@ fn punch0(
     device_list: &Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: CurrentDeviceInfo,
     client_cipher: &Cipher,
+    punch_record: &Mutex<HashMap<Ipv4Addr, usize>>,
+    last_punch_record: &mut HashMap<Ipv4Addr, usize>,
+    total_count: usize,
 ) -> io::Result<()> {
     let nat_info = nat_test.nat_info();
+    if total_count < 10
+        && (nat_info.public_ips.is_empty()
+            || nat_info.public_ports.is_empty()
+            || nat_info.public_ports[0] == 0)
+    {
+        log::info!("公网地址为空，暂时放弃打洞,第{}轮", total_count);
+        return Ok(());
+    }
     let current_ip = current_device.virtual_ip;
     let mut list: Vec<PeerDeviceInfo> = device_list
         .lock()
@@ -196,43 +241,40 @@ fn punch0(
         .cloned()
         .collect();
     list.shuffle(&mut rand::thread_rng());
-    let mut count = 0;
-    // // 优先没打洞的 need_punch会过滤掉已经打洞成功的
-    // list.sort_by(|v1, v2| {
-    //     if context.route_table.route_one_p2p(&v1.virtual_ip).is_none() {
-    //         Ordering::Less
-    //     } else if context.route_table.route_one_p2p(&v2.virtual_ip).is_none() {
-    //         Ordering::Greater
-    //     } else {
-    //         Ordering::Equal
-    //     }
-    // });
     for info in list {
-        if !info.status.is_online() {
-            continue;
-        }
-        if info.virtual_ip <= current_device.virtual_ip {
-            continue;
-        }
         if !context.route_table.need_punch(&info.virtual_ip) {
+            punch_record.lock().remove(&info.virtual_ip);
             continue;
         }
-        count += 1;
-        if count > 2 {
+        // 能发起打洞的前提是自己空闲，这里会间隔5秒以上发起一次打洞，所以假定上一轮打洞已结束
+        let punch_count = punch_record
+            .lock()
+            .get(&info.virtual_ip)
+            .cloned()
+            .unwrap_or(0);
+        let last_punch = last_punch_record
+            .get(&info.virtual_ip)
+            .cloned()
+            .unwrap_or(0);
+        // 梯度减少打洞频率
+        if total_count > last_punch + punch_count.min(35) {
+            last_punch_record.insert(info.virtual_ip, total_count);
+            let packet = punch_packet(
+                client_cipher,
+                current_device.virtual_ip(),
+                &nat_info,
+                info.virtual_ip,
+            )?;
+            log::info!(
+                "目标:{:?},当前nat:{:?} 第{}次发起打洞协商请求， 第:{}轮",
+                info.virtual_ip,
+                nat_info,
+                punch_count,
+                total_count,
+            );
+            context.send_default(packet.buffer(), current_device.connect_server)?;
             break;
         }
-        let packet = punch_packet(
-            client_cipher,
-            current_device.virtual_ip(),
-            &nat_info,
-            info.virtual_ip,
-        )?;
-        log::info!(
-            "发起打洞协商请求，目标:{:?},{:?}",
-            info.virtual_ip,
-            nat_info
-        );
-        context.send_default(packet.buffer(), current_device.connect_server)?;
     }
     Ok(())
 }
