@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{sync_channel, Receiver};
-use std::sync::Arc;
 use std::{io, thread};
 
 use mio::event::Source;
@@ -135,7 +134,74 @@ where
     }
 }
 
-/// 阻塞监听
+// /// 阻塞
+// fn main_udp_listen<H>(
+//     stop_manager: StopManager,
+//     recv_handler: H,
+//     context: Context,
+// ) -> io::Result<()>
+// where
+//     H: RecvChannelHandler,
+// {
+//     for index in 0..context.main_udp_socket.len() {
+//         let stop_manager = stop_manager.clone();
+//         let context = context.clone();
+//         let recv_handler = recv_handler.clone();
+//         thread::Builder::new()
+//             .name(format!("mainUdp{}", index))
+//             .spawn(move || {
+//                 if let Err(e) = main_udp_listen0(stop_manager, index, recv_handler, context) {
+//                     log::error!("{:?}", e);
+//                 }
+//             })?;
+//     }
+//     Ok(())
+// }
+//
+// pub fn main_udp_listen0<H>(
+//     stop_manager: StopManager,
+//     index: usize,
+//     mut recv_handler: H,
+//     context: Context,
+// ) -> io::Result<()>
+// where
+//     H: RecvChannelHandler,
+// {
+//     use std::time::Duration;
+//     let udp_socket = &context.main_udp_socket[index];
+//     udp_socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+//     udp_socket.set_write_timeout(Some(Duration::from_secs(1)))?;
+//     let local_addr = udp_socket.local_addr()?;
+//     let worker = stop_manager.add_listener(format!("main_udp_{}", index), move || {
+//         if let Ok(udp) = std::net::UdpSocket::bind("0.0.0.0:0") {
+//             let _ = udp.send_to(b"stop", format!("127.0.0.1:{}", local_addr.port()));
+//         }
+//     })?;
+//
+//     let mut buf = [0; BUFFER_SIZE];
+//     loop {
+//         match udp_socket.recv_from(&mut buf) {
+//             Ok((len, addr)) => {
+//                 if &buf[..len] == b"stop" {
+//                     if stop_manager.is_stop() {
+//                         break;
+//                     }
+//                 }
+//                 recv_handler.handle(&mut buf[..len], RouteKey::new(false, index, addr), &context);
+//             }
+//             Err(e) => {
+//                 if stop_manager.is_stop() {
+//                     break;
+//                 }
+//                 log::error!("index={},{:?},{}", index, udp_socket.local_addr(), e)
+//             }
+//         }
+//     }
+//     worker.stop_all();
+//     Ok(())
+// }
+
+/// 非阻塞
 fn main_udp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
@@ -144,6 +210,7 @@ fn main_udp_listen<H>(
 where
     H: RecvChannelHandler,
 {
+    use std::sync::Arc;
     let poll = Poll::new()?;
     let waker = Arc::new(Waker::new(poll.registry(), NOTIFY)?);
     let _waker = waker.clone();

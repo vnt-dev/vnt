@@ -189,7 +189,6 @@ pub fn init_context(
             format!("bind failed: {}", &address)
         })?;
         let main_channel: UdpSocket = socket.into();
-        main_channel.set_nonblocking(true)?;
         udps.push(main_channel);
     }
     let context = Context::new(
