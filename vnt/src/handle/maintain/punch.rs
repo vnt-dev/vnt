@@ -64,10 +64,10 @@ pub struct PunchReceiver {
 }
 
 pub fn punch_channel() -> (PunchSender, PunchReceiver) {
-    let (sender_self, receiver_self) = sync_channel(1);
-    let (sender_peer, receiver_peer) = sync_channel(1);
-    let (sender_cone_peer, receiver_cone_peer) = sync_channel(1);
-    let (sender_cone_self, receiver_cone_self) = sync_channel(1);
+    let (sender_self, receiver_self) = sync_channel(0);
+    let (sender_peer, receiver_peer) = sync_channel(0);
+    let (sender_cone_peer, receiver_cone_peer) = sync_channel(0);
+    let (sender_cone_self, receiver_cone_self) = sync_channel(0);
     (
         PunchSender {
             sender_self,
