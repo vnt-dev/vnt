@@ -338,6 +338,11 @@ fn main() {
     };
     println!("version {}", vnt::VNT_VERSION);
     println!("Serial:{}", generated_serial_number::SERIAL_NUMBER);
+    log::info!(
+        "version:{},Serial:{}",
+        vnt::VNT_VERSION,
+        generated_serial_number::SERIAL_NUMBER
+    );
     main0(config, cmd);
     std::process::exit(0);
 }
