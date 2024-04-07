@@ -267,57 +267,64 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         if old.virtual_ip != Ipv4Addr::UNSPECIFIED {
                             log::info!("ip发生变化,old:{:?},response={:?}", old, response);
                         }
-                        if let Err(e) = self.device.set_ip(virtual_ip, virtual_netmask) {
-                            log::error!("LocalIpExists {:?}", e);
-                            self.callback.error(ErrorInfo::new_msg(
-                                ErrorType::LocalIpExists,
-                                format!("set_ip {:?}", e),
-                            ));
-                            return Ok(());
-                        }
-                        let mut guard = self.route_record.lock();
-                        for (dest, mask) in guard.drain(..) {
-                            if let Err(e) = self.device.delete_route(dest, mask) {
-                                log::warn!("删除路由失败 ={:?}", e);
-                            }
-                        }
-                        if let Err(e) = self.device.add_route(virtual_network, virtual_netmask, 1) {
-                            log::warn!("添加默认路由失败 ={:?}", e);
-                        } else {
-                            guard.push((virtual_network, virtual_netmask));
-                        }
-                        if let Err(e) =
-                            self.device
-                                .add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, 1)
+                        #[cfg(not(target_os = "android"))]
                         {
-                            log::warn!("添加广播路由失败 ={:?}", e);
-                        } else {
-                            guard.push((Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST));
-                        }
+                            if let Err(e) = self.device.set_ip(virtual_ip, virtual_netmask) {
+                                log::error!("LocalIpExists {:?}", e);
+                                self.callback.error(ErrorInfo::new_msg(
+                                    ErrorType::LocalIpExists,
+                                    format!("set_ip {:?}", e),
+                                ));
+                                return Ok(());
+                            }
+                            let mut guard = self.route_record.lock();
+                            for (dest, mask) in guard.drain(..) {
+                                if let Err(e) = self.device.delete_route(dest, mask) {
+                                    log::warn!("删除路由失败 ={:?}", e);
+                                }
+                            }
+                            if let Err(e) =
+                                self.device.add_route(virtual_network, virtual_netmask, 1)
+                            {
+                                log::warn!("添加默认路由失败 ={:?}", e);
+                            } else {
+                                guard.push((virtual_network, virtual_netmask));
+                            }
+                            if let Err(e) =
+                                self.device
+                                    .add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, 1)
+                            {
+                                log::warn!("添加广播路由失败 ={:?}", e);
+                            } else {
+                                guard.push((Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST));
+                            }
 
-                        if let Err(e) = self.device.add_route(
-                            Ipv4Addr::from([224, 0, 0, 0]),
-                            Ipv4Addr::from([240, 0, 0, 0]),
-                            1,
-                        ) {
-                            log::warn!("添加组播路由失败 ={:?}", e);
-                        } else {
-                            guard.push((
+                            if let Err(e) = self.device.add_route(
                                 Ipv4Addr::from([224, 0, 0, 0]),
                                 Ipv4Addr::from([240, 0, 0, 0]),
-                            ));
-                        }
-
-                        for (dest, mask) in self.external_route.to_route() {
-                            if let Err(e) = self.device.add_route(dest, mask, 1) {
-                                log::warn!("添加路由失败 ={:?}", e);
+                                1,
+                            ) {
+                                log::warn!("添加组播路由失败 ={:?}", e);
                             } else {
-                                guard.push((dest, mask));
+                                guard.push((
+                                    Ipv4Addr::from([224, 0, 0, 0]),
+                                    Ipv4Addr::from([240, 0, 0, 0]),
+                                ));
+                            }
+
+                            for (dest, mask) in self.external_route.to_route() {
+                                if let Err(e) = self.device.add_route(dest, mask, 1) {
+                                    log::warn!("添加路由失败 ={:?}", e);
+                                } else {
+                                    guard.push((dest, mask));
+                                }
                             }
                         }
-                        self.callback.success();
                     }
                     self.set_device_info_list(response.device_info_list, response.epoch as _);
+                    if old.status.offline() {
+                        self.callback.success();
+                    }
                 }
             }
             service_packet::Protocol::PushDeviceList => {
