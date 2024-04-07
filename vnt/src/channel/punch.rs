@@ -235,7 +235,7 @@ impl Punch {
         nat_info: NatInfo,
         punch_tcp: bool,
     ) -> io::Result<()> {
-        if !self.context.route_table.need_punch(&id) {
+        if self.context.route_table.no_need_punch(&id) {
             log::info!("已打洞成功,无需打洞:{:?}", id);
             return Ok(());
         }

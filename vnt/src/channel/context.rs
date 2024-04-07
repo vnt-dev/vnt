@@ -453,14 +453,19 @@ impl RouteTable {
         }
         None
     }
-    pub fn need_punch(&self, id: &Ipv4Addr) -> bool {
+    pub fn no_need_punch(&self, id: &Ipv4Addr) -> bool {
         if let Some((_, v)) = self.route_table.read().get(id) {
-            //存在p2p的通道则不再打洞
-            if v.iter().filter(|(k, _)| k.is_p2p()).count() >= 1 {
-                return false;
-            }
+            //p2p的通道数符合要求
+            return v.iter().filter(|(k, _)| k.is_p2p()).count() >= self.channel_num;
         }
-        true
+        false
+    }
+    pub fn p2p_num(&self, id: &Ipv4Addr) -> usize {
+        if let Some((_, v)) = self.route_table.read().get(id) {
+            v.iter().filter(|(k, _)| k.is_p2p()).count()
+        } else {
+            0
+        }
     }
     /// 返回所有路由
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Vec<Route>)> {

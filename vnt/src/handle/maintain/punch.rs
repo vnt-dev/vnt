@@ -227,7 +227,9 @@ fn punch0(
     if total_count < 10
         && (nat_info.public_ips.is_empty()
             || nat_info.public_ports.is_empty()
-            || nat_info.public_ports[0] == 0)
+            || nat_info.public_ports[0] == 0
+            || nat_info.public_ports.iter().filter(|&&v| v == 0).count()
+                > nat_info.public_ports.len() / 2)
     {
         log::info!("公网地址为空，暂时放弃打洞,第{}轮", total_count);
         return Ok(());
@@ -242,22 +244,33 @@ fn punch0(
         .collect();
     list.shuffle(&mut rand::thread_rng());
     for info in list {
-        if !context.route_table.need_punch(&info.virtual_ip) {
-            punch_record.lock().remove(&info.virtual_ip);
-            continue;
-        }
-        // 能发起打洞的前提是自己空闲，这里会间隔5秒以上发起一次打洞，所以假定上一轮打洞已结束
         let punch_count = punch_record
             .lock()
             .get(&info.virtual_ip)
             .cloned()
             .unwrap_or(0);
+        let p2p_num = context.route_table.p2p_num(&info.virtual_ip);
+        let mut max_punch_interval = 70;
+        if p2p_num > 0 {
+            if punch_count == 0 {
+                continue;
+            }
+            if p2p_num >= context.channel_num() {
+                //通道数满足要求，不再打洞
+                punch_record.lock().remove(&info.virtual_ip);
+                continue;
+            }
+            //有p2p通道，但是通道数量不够，则继续打洞
+            // 提高等待上限
+            max_punch_interval = 300;
+        }
+        // 能发起打洞的前提是自己空闲，这里会间隔5秒以上发起一次打洞，所以假定上一轮打洞已结束
         let last_punch = last_punch_record
             .get(&info.virtual_ip)
             .cloned()
             .unwrap_or(0);
-        // 梯度减少打洞频率
-        if total_count > last_punch + punch_count.min(35) {
+        // 梯度增加打洞时间间隔
+        if total_count > last_punch + punch_count.min(max_punch_interval) {
             last_punch_record.insert(info.virtual_ip, total_count);
             let packet = punch_packet(
                 client_cipher,
