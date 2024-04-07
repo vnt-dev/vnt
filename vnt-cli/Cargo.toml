@@ -40,5 +40,5 @@ server_encrypt=["vnt/server_encrypt"]
 ip_proxy=["vnt/ip_proxy"]
 [build-dependencies]
 embed-manifest = "1.4.0"
-rand = "0.9.0-alpha.0"
+rand = "0.8.5"
 chrono = "0.4.23"
