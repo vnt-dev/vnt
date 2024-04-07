@@ -9,6 +9,10 @@ import top.wherewego.vnt.jni.param.*;
  */
 public interface CallBack {
     /**
+     * 连接成功的回调
+     */
+    void success();
+    /**
      * 创建虚拟网卡成功的回调方法
      *
      * @param info 网卡信息

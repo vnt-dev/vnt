@@ -90,6 +90,18 @@ public class Config {
      * 虚拟网卡fd 仅在android上支持
      */
     private int deviceFd;
+    /**
+     * enum: relay/p2p/all
+     */
+    private String useChannel;
+    /**
+     * 模拟丢包率，取0~1之间的数，为null表示不丢包，1表示全部丢包
+     */
+    private Double packetLossRate;
+    /**
+     * 模拟延迟 单位毫秒(ms)
+     */
+    private Integer packetDelay;
 
     public Config() {
     }
@@ -260,5 +272,29 @@ public class Config {
 
     public void setDeviceFd(int deviceFd) {
         this.deviceFd = deviceFd;
+    }
+
+    public String getUseChannel() {
+        return useChannel;
+    }
+
+    public void setUseChannel(String useChannel) {
+        this.useChannel = useChannel;
+    }
+
+    public Double getPacketLossRate() {
+        return packetLossRate;
+    }
+
+    public void setPacketLossRate(Double packetLossRate) {
+        this.packetLossRate = packetLossRate;
+    }
+
+    public Integer getPacketDelay() {
+        return packetDelay;
+    }
+
+    public void setPacketDelay(Integer packetDelay) {
+        this.packetDelay = packetDelay;
     }
 }

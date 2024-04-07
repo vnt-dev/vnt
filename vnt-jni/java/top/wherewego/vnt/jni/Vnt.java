@@ -11,11 +11,8 @@ import java.io.IOException;
 public class Vnt implements Closeable {
     private final long raw;
 
-    public Vnt(Config config, CallBack callBack) {
+    public Vnt(Config config, CallBack callBack) throws Exception{
         this.raw = new0(config, callBack);
-        if(this.raw == 0){
-            throw new RuntimeException();
-        }
     }
 
     public void stop() {
@@ -30,7 +27,7 @@ public class Vnt implements Closeable {
         return list0(raw);
     }
 
-    private native long new0(Config config, CallBack callBack);
+    private native long new0(Config config, CallBack callBack) throws Exception;
 
     private native void stop0(long raw);
 

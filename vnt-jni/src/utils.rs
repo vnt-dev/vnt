@@ -119,3 +119,13 @@ pub fn to_integer(env: &mut JNIEnv, config: &JObject, name: &str) -> Result<Opti
         env.call_method(value, "intValue", "()I", &[])?.i()? as _
     ));
 }
+pub fn to_double(env: &mut JNIEnv, config: &JObject, name: &str) -> Result<Option<f64>, Error> {
+    let value = env.get_field(config, name, "Ljava/lang/Double;")?.l()?;
+    if value.is_null() {
+        return Ok(None);
+    }
+    // 调用 intValue
+    return Ok(Some(
+        env.call_method(value, "doubleValue", "()D", &[])?.d()? as _,
+    ));
+}

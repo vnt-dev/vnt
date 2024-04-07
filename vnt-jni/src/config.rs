@@ -29,6 +29,11 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     let use_channel = to_string(env, &config, "useChannel")?;
     let finger = env.get_field(&config, "finger", "Z")?.z()?;
     let first_latency = env.get_field(&config, "firstLatency", "Z")?.z()?;
+    let packet_delay = to_integer(env, &config, "packetDelay")?
+        .map(|v| v as u32)
+        .unwrap_or_default();
+    let packet_loss_rate = to_double(env, &config, "packetLossRate")?;
+
     let in_ips = to_string_array(env, &config, "inIps")?;
     let out_ips = to_string_array(env, &config, "outIps")?;
     let ports =
@@ -132,8 +137,8 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         #[cfg(target_os = "android")]
         device_fd,
         UseChannelType::from_str(&use_channel.unwrap_or_default()).unwrap_or_default(),
-        None,
-        0,
+        packet_loss_rate,
+        packet_delay,
     ) {
         Ok(config) => config,
         Err(e) => {

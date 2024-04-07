@@ -1,8 +1,9 @@
 package top.wherewego.vnt.jni;
 
 /**
- * @author lubeilin
- * @date: 2024/02/27 18:31
+ * ip转换
+ *
+ * @author https://github.com/lbl8603/vnt
  */
 public class IpUtils {
     public static String intToIpAddress(int ipAddress) {

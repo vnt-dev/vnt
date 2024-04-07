@@ -26,6 +26,11 @@ impl CallBack {
 }
 
 impl CallBack {
+    fn success0(&self) -> jni::errors::Result<()> {
+        let env = &mut self.jvm.attach_current_thread()? as &mut JNIEnv;
+        env.call_method(&self.this, "success", "()V", &[])?;
+        Ok(())
+    }
     fn create_tun0(&self, info: DeviceInfo) -> jni::errors::Result<()> {
         let env = &mut self.jvm.attach_current_thread()? as &mut JNIEnv;
         let param = env.new_object(
@@ -139,13 +144,16 @@ impl CallBack {
     }
     fn stop0(&self) -> jni::errors::Result<()> {
         let env = &mut self.jvm.attach_current_thread()? as &mut JNIEnv;
-        env.call_method(&self.this, "error", "()V", &[])?;
+        env.call_method(&self.this, "stop", "()V", &[])?;
         Ok(())
     }
 }
 
 impl VntCallback for CallBack {
     fn success(&self) {
+        if let Err(e) = self.success0() {
+            log::warn!("success {:?}", e);
+        }
     }
     fn create_tun(&self, info: DeviceInfo) {
         if let Err(e) = self.create_tun0(info) {
