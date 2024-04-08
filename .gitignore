@@ -1,4 +1,4 @@
 target/*
-vnt/src/proto/message.rs
+vnt/src/proto/*
 vnt-cli/src/generated_serial_number.rs
 Cargo.lock
