@@ -1,7 +1,7 @@
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crossbeam_utils::atomic::AtomicCell;
 use mio::net::TcpStream;
@@ -30,30 +30,8 @@ pub fn idle_route<Call: VntCallback>(
         log::info!("定时任务停止");
     }
 }
+
 pub fn idle_gateway<Call: VntCallback>(
-    scheduler: &Scheduler,
-    context: Context,
-    current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
-    config: BaseConfigInfo,
-    tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
-    call: Call,
-    connect_count: usize,
-    handshake: Handshake,
-) {
-    let time = Instant::now();
-    idle_gateway_(
-        scheduler,
-        context,
-        current_device_info,
-        config,
-        tcp_socket_sender,
-        call,
-        connect_count,
-        handshake,
-        time,
-    );
-}
-pub fn idle_gateway_<Call: VntCallback>(
     scheduler: &Scheduler,
     context: Context,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -62,7 +40,6 @@ pub fn idle_gateway_<Call: VntCallback>(
     call: Call,
     mut connect_count: usize,
     handshake: Handshake,
-    mut time: Instant,
 ) {
     idle_gateway0(
         &context,
@@ -72,10 +49,9 @@ pub fn idle_gateway_<Call: VntCallback>(
         &call,
         &mut connect_count,
         &handshake,
-        &mut time,
     );
     let rs = scheduler.timeout(Duration::from_secs(5), move |s| {
-        idle_gateway_(
+        idle_gateway(
             s,
             context,
             current_device_info,
@@ -84,13 +60,13 @@ pub fn idle_gateway_<Call: VntCallback>(
             call,
             connect_count,
             handshake,
-            time,
         )
     });
     if !rs {
         log::info!("定时任务停止");
     }
 }
+
 fn idle_gateway0<Call: VntCallback>(
     context: &Context,
     current_device: &AtomicCell<CurrentDeviceInfo>,
@@ -99,7 +75,6 @@ fn idle_gateway0<Call: VntCallback>(
     call: &Call,
     connect_count: &mut usize,
     handshake: &Handshake,
-    time: &mut Instant,
 ) {
     if let Err(e) = check_gateway_channel(
         context,
@@ -109,7 +84,6 @@ fn idle_gateway0<Call: VntCallback>(
         call,
         connect_count,
         handshake,
-        time,
     ) {
         let cur = current_device.load();
         call.error(ErrorInfo::new_msg(
@@ -118,6 +92,7 @@ fn idle_gateway0<Call: VntCallback>(
         ));
     }
 }
+
 fn idle_route0<Call: VntCallback>(
     idle: &Idle,
     context: &Context,
@@ -149,16 +124,12 @@ fn check_gateway_channel<Call: VntCallback>(
     call: &Call,
     count: &mut usize,
     handshake: &Handshake,
-    time: &mut Instant,
 ) -> io::Result<()> {
     let mut current_device = current_device_info.load();
     if current_device.status.offline() {
         *count += 1;
-        if time.elapsed() < Duration::from_secs(6 * 60) {
-            // 探测服务器地址
-            current_device = domain_request0(current_device_info, config);
-            *time = Instant::now()
-        }
+        // 探测服务器地址
+        current_device = domain_request0(current_device_info, config);
         //需要重连
         call.connect(ConnectInfo::new(*count, current_device.connect_server));
         log::info!("发送握手请求,{:?}", config);
@@ -185,6 +156,7 @@ fn check_gateway_channel<Call: VntCallback>(
     }
     Ok(())
 }
+
 pub fn domain_request0(
     current_device: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
@@ -197,13 +169,15 @@ pub fn domain_request0(
                 let mut tmp = current_dev.clone();
                 tmp.connect_server = addr;
                 let rs = current_device.compare_exchange(current_dev, tmp);
-                current_dev.connect_server = addr;
                 log::info!(
                     "服务端地址变化,旧地址:{}，新地址:{},替换结果:{}",
                     current_dev.connect_server,
                     addr,
                     rs.is_ok()
                 );
+                if rs.is_ok() {
+                    current_dev.connect_server = addr;
+                }
             }
         }
     }
