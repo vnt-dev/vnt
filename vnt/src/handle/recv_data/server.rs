@@ -366,7 +366,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
     }
     fn register(&self, current_device: &CurrentDeviceInfo, context: &Context) -> io::Result<()> {
         if current_device.status.online() {
-            //已连接的不需要注册
+            log::info!("已连接的不需要注册，{:?}", self.config_info);
             return Ok(());
         }
         let token = self.config_info.token.clone();
