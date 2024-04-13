@@ -111,7 +111,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         self.counter.add(buf.len() as _);
         let net_packet = NetPacket::new(buf)?;
         if net_packet.ttl() == 0 || net_packet.source_ttl() < net_packet.ttl() {
-            log::warn!("丢弃过时包:{:?}",net_packet.head());
+            log::warn!("丢弃过时包:{:?}", net_packet.head());
             return Ok(());
         }
         let current_device = self.current_device.load();

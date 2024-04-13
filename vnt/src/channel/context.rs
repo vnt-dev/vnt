@@ -200,7 +200,8 @@ impl ContextInner {
         }
     }
     pub fn is_default_route(&self, route_key: RouteKey) -> bool {
-        self.is_tcp == route_key.is_tcp && self.main_index.load(Ordering::Relaxed) == route_key.index
+        self.is_tcp == route_key.is_tcp
+            && self.main_index.load(Ordering::Relaxed) == route_key.index
     }
     pub fn change_main_index(&self) {
         let index = (self.main_index.load(Ordering::Relaxed) + 1) % self.main_udp_socket.len();
@@ -299,7 +300,7 @@ impl ContextInner {
 
 pub struct RouteTable {
     pub(crate) route_table:
-    RwLock<HashMap<Ipv4Addr, (AtomicUsize, Vec<(Route, AtomicCell<Instant>)>)>>,
+        RwLock<HashMap<Ipv4Addr, (AtomicUsize, Vec<(Route, AtomicCell<Instant>)>)>>,
     first_latency: bool,
     channel_num: usize,
     use_channel_type: UseChannelType,

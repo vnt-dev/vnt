@@ -5,14 +5,20 @@ use std::{fmt, io};
 pub enum Protocol {
     /// ping请求
     /*
-     0                   1                   2                   3
-     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |              time             |             echo              |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+         0                                            15                                              31
+         0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |              time                          |                    echo                        |
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     */
     Ping,
-    /// 维持连接，内容同ping
+    /*
+         0                                            15                                              31
+         0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |              time                          |                    echo                        |
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    */
     Pong,
     /// 打洞请求
     PunchRequest,
@@ -85,8 +91,8 @@ pub type PongPacket<B> = PingPacket<B>;
 impl<B: AsRef<[u8]>> PingPacket<B> {
     pub fn new(buffer: B) -> io::Result<PingPacket<B>> {
         let len = buffer.as_ref().len();
-        if len != 4 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "len != 4"));
+        if len < 4 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "len < 4"));
         }
         Ok(PingPacket { buffer })
     }
@@ -126,8 +132,8 @@ pub struct AddrPacket<B> {
 impl<B: AsRef<[u8]>> AddrPacket<B> {
     pub fn new(buffer: B) -> io::Result<AddrPacket<B>> {
         let len = buffer.as_ref().len();
-        if len != 6 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "len != 6"));
+        if len < 6 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "len < 6"));
         }
         Ok(AddrPacket { buffer })
     }

@@ -1,7 +1,7 @@
 use std::io;
 
 use {
-    crate::protocol::body::{RSA_ENCRYPTION_RESERVED, RsaSecretBody},
+    crate::protocol::body::{RsaSecretBody, RSA_ENCRYPTION_RESERVED},
     rand::Rng,
     rsa::pkcs8::der::Decode,
     rsa::RsaPublicKey,
@@ -18,7 +18,7 @@ pub struct RsaCipher {
 #[derive(Clone)]
 struct Inner {
     public_key: RsaPublicKey,
-    finger:String,
+    finger: String,
 }
 
 impl RsaCipher {
@@ -26,7 +26,7 @@ impl RsaCipher {
         match RsaPublicKey::from_public_key_der(der) {
             Ok(public_key) => {
                 let finger = finger(&public_key)?;
-                let inner = Inner { public_key,finger };
+                let inner = Inner { public_key, finger };
                 Ok(Self { inner })
             }
             Err(e) => Err(io::Error::new(
@@ -35,7 +35,7 @@ impl RsaCipher {
             )),
         }
     }
-    pub fn finger(&self) ->&String{
+    pub fn finger(&self) -> &String {
         &self.inner.finger
     }
     pub fn public_key(&self) -> io::Result<&RsaPublicKey> {

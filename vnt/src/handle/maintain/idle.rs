@@ -6,14 +6,14 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use mio::net::TcpStream;
 
-use crate::{ErrorInfo, VntCallback};
 use crate::channel::context::Context;
 use crate::channel::idle::{Idle, IdleType};
 use crate::channel::sender::AcceptSocketSender;
-use crate::handle::{BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
 use crate::handle::callback::{ConnectInfo, ErrorType};
 use crate::handle::handshaker::Handshake;
+use crate::handle::{BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
 use crate::util::Scheduler;
+use crate::{ErrorInfo, VntCallback};
 
 pub fn idle_route<Call: VntCallback>(
     scheduler: &Scheduler,
@@ -163,22 +163,29 @@ pub fn domain_request0(
 ) -> CurrentDeviceInfo {
     let mut current_dev = current_device.load();
     // 探测服务端地址变化
-    if let Ok(mut addr) = config.server_addr.to_socket_addrs() {
-        if let Some(addr) = addr.next() {
-            if addr != current_dev.connect_server {
-                let mut tmp = current_dev.clone();
-                tmp.connect_server = addr;
-                let rs = current_device.compare_exchange(current_dev, tmp);
-                log::info!(
-                    "服务端地址变化,旧地址:{}，新地址:{},替换结果:{}",
-                    current_dev.connect_server,
-                    addr,
-                    rs.is_ok()
-                );
-                if rs.is_ok() {
-                    current_dev.connect_server = addr;
+    match config.server_addr.to_socket_addrs() {
+        Ok(mut addr) => {
+            if let Some(addr) = addr.next() {
+                if addr != current_dev.connect_server {
+                    let mut tmp = current_dev.clone();
+                    tmp.connect_server = addr;
+                    let rs = current_device.compare_exchange(current_dev, tmp);
+                    log::info!(
+                        "服务端地址变化,旧地址:{}，新地址:{},替换结果:{}",
+                        current_dev.connect_server,
+                        addr,
+                        rs.is_ok()
+                    );
+                    if rs.is_ok() {
+                        current_dev.connect_server = addr;
+                    }
                 }
+            } else {
+                log::error!("域名解析值为空,domain={}", config.server_addr);
             }
+        }
+        Err(e) => {
+            log::error!("域名解析失败:{:?},domain={}", e, config.server_addr);
         }
     }
     current_dev

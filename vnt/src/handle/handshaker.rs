@@ -28,13 +28,13 @@ pub enum HandshakeEnum {
 #[derive(Clone)]
 pub struct Handshake {
     time: Arc<AtomicCell<Instant>>,
-    rsa_cipher: Arc<Mutex<Option<RsaCipher>>>
+    rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
 }
 impl Handshake {
-    pub fn new( rsa_cipher: Arc<Mutex<Option<RsaCipher>>>) -> Self {
+    pub fn new(rsa_cipher: Arc<Mutex<Option<RsaCipher>>>) -> Self {
         Handshake {
             time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
-            rsa_cipher
+            rsa_cipher,
         }
     }
     pub fn send(&self, context: &Context, secret: bool, addr: SocketAddr) -> io::Result<()> {
@@ -50,12 +50,11 @@ impl Handshake {
         Ok(())
     }
     /// 第一次握手数据
-    pub fn handshake_request_packet(&self,secret: bool) -> io::Result<NetPacket<Vec<u8>>> {
-
+    pub fn handshake_request_packet(&self, secret: bool) -> io::Result<NetPacket<Vec<u8>>> {
         let mut request = HandshakeRequest::new();
         request.secret = secret;
         request.version = crate::VNT_VERSION.to_string();
-        if let Some(finger) =  self.rsa_cipher.lock().as_ref().map(|v| v.finger().clone()){
+        if let Some(finger) = self.rsa_cipher.lock().as_ref().map(|v| v.finger().clone()) {
             request.key_finger = finger;
         }
         let bytes = request.write_to_bytes().map_err(|e| {
@@ -77,8 +76,6 @@ impl Handshake {
         Ok(net_packet)
     }
 }
-
-
 
 /// 第二次加密握手
 #[cfg(feature = "server_encrypt")]
