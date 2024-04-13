@@ -79,6 +79,7 @@ impl Vnt {
             config.token.clone(),
             config.ip,
             config.password.is_some(),
+            config.server_encrypt,
             config.device_id.clone(),
             config.server_address_str.clone(),
         );
@@ -144,7 +145,7 @@ impl Vnt {
         let down_counter =
             U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
         let down_count_watcher = down_counter.watch();
-        let handshake = Handshake::new();
+        let handshake = Handshake::new(rsa_cipher.clone());
         let handler = RecvDataHandler::new(
             #[cfg(feature = "server_encrypt")]
             rsa_cipher,

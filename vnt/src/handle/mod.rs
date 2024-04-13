@@ -51,6 +51,7 @@ pub struct BaseConfigInfo {
     pub token: String,
     pub ip: Option<Ipv4Addr>,
     pub client_secret: bool,
+    pub server_secret: bool,
     pub device_id: String,
     pub server_addr: String,
 }
@@ -61,6 +62,7 @@ impl BaseConfigInfo {
         token: String,
         ip: Option<Ipv4Addr>,
         client_secret: bool,
+        server_secret: bool,
         device_id: String,
         server_addr: String,
     ) -> Self {
@@ -69,6 +71,7 @@ impl BaseConfigInfo {
             token,
             ip,
             client_secret,
+            server_secret,
             device_id,
             server_addr,
         }

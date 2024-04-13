@@ -6,14 +6,14 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use mio::net::TcpStream;
 
+use crate::{ErrorInfo, VntCallback};
 use crate::channel::context::Context;
 use crate::channel::idle::{Idle, IdleType};
 use crate::channel::sender::AcceptSocketSender;
+use crate::handle::{BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
 use crate::handle::callback::{ConnectInfo, ErrorType};
 use crate::handle::handshaker::Handshake;
-use crate::handle::{handshaker, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
 use crate::util::Scheduler;
-use crate::{ErrorInfo, VntCallback};
 
 pub fn idle_route<Call: VntCallback>(
     scheduler: &Scheduler,
@@ -133,11 +133,11 @@ fn check_gateway_channel<Call: VntCallback>(
         //需要重连
         call.connect(ConnectInfo::new(*count, current_device.connect_server));
         log::info!("发送握手请求,{:?}", config);
-        if let Err(e) = handshake.send(context, config.client_secret, current_device.connect_server)
+        if let Err(e) = handshake.send(context, config.server_secret, current_device.connect_server)
         {
             log::warn!("{:?}", e);
             if context.is_main_tcp() {
-                let request_packet = handshaker::handshake_request_packet(config.client_secret)?;
+                let request_packet = handshake.handshake_request_packet(config.server_secret)?;
                 //tcp需要重连
                 let tcp_stream = std::net::TcpStream::connect_timeout(
                     &current_device.connect_server,

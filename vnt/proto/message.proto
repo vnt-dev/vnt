@@ -3,6 +3,7 @@ syntax = "proto3";
 message HandshakeRequest {
     string version = 1;
     bool secret = 2;
+    string key_finger = 3;
 }
 message HandshakeResponse {
     string version = 1;

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_utils::atomic::AtomicCell;
+use parking_lot::Mutex;
 use protobuf::Message;
 
 use crate::channel::context::Context;
@@ -27,11 +28,13 @@ pub enum HandshakeEnum {
 #[derive(Clone)]
 pub struct Handshake {
     time: Arc<AtomicCell<Instant>>,
+    rsa_cipher: Arc<Mutex<Option<RsaCipher>>>
 }
 impl Handshake {
-    pub fn new() -> Self {
+    pub fn new( rsa_cipher: Arc<Mutex<Option<RsaCipher>>>) -> Self {
         Handshake {
             time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
+            rsa_cipher
         }
     }
     pub fn send(&self, context: &Context, secret: bool, addr: SocketAddr) -> io::Result<()> {
@@ -40,37 +43,42 @@ impl Handshake {
         if last.elapsed() < Duration::from_secs(3) {
             return Ok(());
         }
-        let request_packet = handshake_request_packet(secret)?;
+        let request_packet = self.handshake_request_packet(secret)?;
         log::info!("发送握手请求,secret={},{:?}", secret, addr);
         context.send_default(request_packet.buffer(), addr)?;
         self.time.store(Instant::now());
         Ok(())
     }
+    /// 第一次握手数据
+    pub fn handshake_request_packet(&self,secret: bool) -> io::Result<NetPacket<Vec<u8>>> {
+
+        let mut request = HandshakeRequest::new();
+        request.secret = secret;
+        request.version = crate::VNT_VERSION.to_string();
+        if let Some(finger) =  self.rsa_cipher.lock().as_ref().map(|v| v.finger().clone()){
+            request.key_finger = finger;
+        }
+        let bytes = request.write_to_bytes().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("handshake_request_packet {:?}", e),
+            )
+        })?;
+        let buf = vec![0u8; 12 + bytes.len()];
+        let mut net_packet = NetPacket::new(buf)?;
+        net_packet.set_version(Version::V1);
+        net_packet.set_gateway_flag(true);
+        net_packet.set_destination(GATEWAY_IP);
+        net_packet.set_source(SELF_IP);
+        net_packet.set_protocol(Protocol::Service);
+        net_packet.set_transport_protocol(service_packet::Protocol::HandshakeRequest.into());
+        net_packet.first_set_ttl(MAX_TTL);
+        net_packet.set_payload(&bytes)?;
+        Ok(net_packet)
+    }
 }
 
-/// 第一次握手数据
-pub fn handshake_request_packet(secret: bool) -> io::Result<NetPacket<Vec<u8>>> {
-    let mut request = HandshakeRequest::new();
-    request.secret = secret;
-    request.version = crate::VNT_VERSION.to_string();
-    let bytes = request.write_to_bytes().map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("handshake_request_packet {:?}", e),
-        )
-    })?;
-    let buf = vec![0u8; 12 + bytes.len()];
-    let mut net_packet = NetPacket::new(buf)?;
-    net_packet.set_version(Version::V1);
-    net_packet.set_gateway_flag(true);
-    net_packet.set_destination(GATEWAY_IP);
-    net_packet.set_source(SELF_IP);
-    net_packet.set_protocol(Protocol::Service);
-    net_packet.set_transport_protocol(service_packet::Protocol::HandshakeRequest.into());
-    net_packet.first_set_ttl(MAX_TTL);
-    net_packet.set_payload(&bytes)?;
-    Ok(net_packet)
-}
+
 
 /// 第二次加密握手
 #[cfg(feature = "server_encrypt")]

@@ -11,30 +11,30 @@ use protobuf::Message;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
-use tun::device::IFace;
 use tun::Device;
+use tun::device::IFace;
 
-use crate::channel::context::Context;
 use crate::channel::{Route, RouteKey};
+use crate::channel::context::Context;
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
 use crate::external_route::ExternalRoute;
+use crate::handle::{
+    BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, GATEWAY_IP, PeerDeviceInfo, registrar,
+};
 use crate::handle::callback::{ErrorInfo, ErrorType, HandshakeInfo, RegisterInfo, VntCallback};
 #[cfg(feature = "server_encrypt")]
 use crate::handle::handshaker;
 use crate::handle::handshaker::Handshake;
 use crate::handle::recv_data::PacketHandler;
-use crate::handle::{
-    registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP,
-};
 use crate::nat::NatTest;
 use crate::proto;
 use crate::proto::message::{DeviceList, HandshakeResponse, RegistrationResponse};
+use crate::protocol::{ip_turn_packet, MAX_TTL, NetPacket, Protocol, service_packet, Version};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::error_packet::InErrorPacket;
-use crate::protocol::{ip_turn_packet, service_packet, NetPacket, Protocol, Version, MAX_TTL};
 
 /// 处理来源于服务端的包
 #[derive(Clone)]
@@ -136,13 +136,35 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
                 HandshakeResponse::parse_from_bytes(net_packet.payload()).map_err(|e| {
                     io::Error::new(io::ErrorKind::Other, format!("HandshakeResponse {:?}", e))
                 })?;
+            log::info!("握手响应:{:?},{}",route_key, response);
             //如果开启了加密，则发送加密握手请求
             #[cfg(feature = "server_encrypt")]
             if let Some(key) = self.server_cipher.key() {
+                {
+                    let guard = self.rsa_cipher.lock();
+                    if let Some(rsa_cipher) = guard.as_ref(){
+                        if rsa_cipher.finger()==&response.key_finger{
+                            let packet = handshaker::secret_handshake_request_packet(
+                                rsa_cipher,
+                                self.config_info.token.clone(),
+                                key,
+                            )?;
+                            drop(guard);
+                            context.send_by_key(packet.buffer(), route_key)?;
+                            return Ok(());
+                        }
+                        log::info!("服务端密钥对变化,原指纹:{:?}，新指纹:{:?}", rsa_cipher.finger(),response.key_finger);
+                    }
+                    drop(guard);
+                }
                 let rsa_cipher = RsaCipher::new(&response.public_key)?;
+                if rsa_cipher.finger() != &response.key_finger {
+                    log::info!("服务端密钥和指纹不匹 配拒绝握手,指纹1:{:?}，指纹2:{:?}", rsa_cipher.finger(),response.key_finger);
+                    return Ok(());
+                }
                 let handshake_info = HandshakeInfo::new(
                     rsa_cipher.public_key()?.clone(),
-                    rsa_cipher.finger()?,
+                    response.key_finger,
                     response.version,
                 );
                 log::info!("加密握手请求:{:?}", handshake_info);
@@ -158,7 +180,9 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
                 }
                 return Ok(());
             }
-
+            if let Ok(rsa_cipher) = RsaCipher::new(&response.public_key){
+                self.rsa_cipher.lock().replace(rsa_cipher);
+            }
             let handshake_info = HandshakeInfo::new_no_secret(response.version);
             if self.callback.handshake(handshake_info) {
                 //没有加密，则发送注册请求
@@ -334,9 +358,11 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 self.set_device_info_list(response.device_info_list, response.epoch as _);
             }
             service_packet::Protocol::SecretHandshakeResponse => {
-                log::info!("SecretHandshakeResponse");
-                //加密握手结束，发送注册数据
-                self.register(current_device, context)?;
+                if context.is_default_route(route_key){
+                    log::info!("SecretHandshakeResponse");
+                    //加密握手结束，发送注册数据
+                    self.register(current_device, context)?;
+                }
             }
             _ => {
                 log::warn!(
@@ -415,7 +441,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                     drop(dev);
                 }
                 self.handshake
-                    .send(context, self.config_info.client_secret, route_key.addr)?;
+                    .send(context, self.config_info.server_secret, route_key.addr)?;
                 // self.register(current_device, context, route_key)?;
             }
             InErrorPacket::AddressExhausted => {
