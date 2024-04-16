@@ -1,24 +1,22 @@
 use std::collections::HashSet;
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
-use std::{io, thread};
 
 use crate::channel::punch::NatType;
 use std::net::UdpSocket;
 use stun_format::Attr;
 
 pub fn stun_test_nat(stun_servers: Vec<String>) -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
-    let mut h = Vec::new();
-    for x in stun_servers {
-        let handle = thread::spawn(move || test_nat(x));
-        h.push(handle);
-    }
+    let udp = UdpSocket::bind("0.0.0.0:0")?;
+    udp.set_read_timeout(Some(Duration::from_millis(300)))?;
     let mut nat_type = NatType::Cone;
     let mut port_range = 0;
     let mut hash_set = HashSet::new();
-    for x in h {
-        if let Ok(rs) = x.join() {
-            if let Ok((nat_type_t, ip_list_t, port_range_t)) = rs {
+    let mut pub_addrs = HashSet::new();
+    for x in &stun_servers {
+        match test_nat(&udp, x) {
+            Ok((addr, nat_type_t, ip_list_t, port_range_t)) => {
                 if nat_type_t == NatType::Symmetric {
                     nat_type = NatType::Symmetric;
                 }
@@ -28,45 +26,65 @@ pub fn stun_test_nat(stun_servers: Vec<String>) -> io::Result<(NatType, Vec<Ipv4
                 if port_range < port_range_t {
                     port_range = port_range_t;
                 }
+                pub_addrs.insert(addr);
+            }
+            Err(e) => {
+                log::warn!("stun {} error {:?} ", x, e);
             }
         }
+    }
+    if pub_addrs.len() > 1 {
+        nat_type = NatType::Symmetric;
     }
     Ok((nat_type, hash_set.into_iter().collect(), port_range))
 }
 
-fn test_nat(stun_server: String) -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
-    let udp = UdpSocket::bind("0.0.0.0:0")?;
-    udp.set_read_timeout(Some(Duration::from_millis(300)))?;
+fn test_nat(
+    udp: &UdpSocket,
+    stun_server: &String,
+) -> io::Result<(SocketAddr, NatType, Vec<Ipv4Addr>, u16)> {
     udp.connect(stun_server)?;
     let mut port_range = 0;
     let mut hash_set = HashSet::new();
     let mut nat_type = NatType::Cone;
-    match test_nat_(&udp, true, true) {
-        Ok((mapped_addr1, changed_addr1)) => {
-            match mapped_addr1.ip() {
-                IpAddr::V4(ip) => {
-                    hash_set.insert(ip);
-                }
-                IpAddr::V6(_) => {}
-            }
-            if udp.connect(changed_addr1).is_ok() {
-                if let Ok((mapped_addr2, _)) = test_nat_(&udp, false, false) {
-                    match mapped_addr2.ip() {
-                        IpAddr::V4(ip) => {
-                            hash_set.insert(ip);
-                            if mapped_addr1 != mapped_addr2 {
-                                nat_type = NatType::Symmetric;
-                            }
+    let (mapped_addr1, changed_addr1) = test_nat_(&udp, true, true)?;
+    match mapped_addr1.ip() {
+        IpAddr::V4(ip) => {
+            hash_set.insert(ip);
+        }
+        IpAddr::V6(_) => {}
+    }
+    if udp.connect(changed_addr1).is_ok() {
+        match test_nat_(&udp, false, false) {
+            Ok((mapped_addr2, _)) => {
+                match mapped_addr2.ip() {
+                    IpAddr::V4(ip) => {
+                        hash_set.insert(ip);
+                        if mapped_addr1 != mapped_addr2 {
+                            nat_type = NatType::Symmetric;
                         }
-                        IpAddr::V6(_) => {}
                     }
-                    port_range = mapped_addr2.port().abs_diff(mapped_addr1.port());
+                    IpAddr::V6(_) => {}
                 }
+                port_range = mapped_addr2.port().abs_diff(mapped_addr1.port());
+            }
+            Err(e) => {
+                log::warn!("stun {} error {:?} ", stun_server, e);
             }
         }
-        Err(_) => {}
     }
-    Ok((nat_type, hash_set.into_iter().collect(), port_range))
+    log::warn!(
+        "stun {} mapped_addr {:?} nat_type {:?}",
+        stun_server,
+        mapped_addr1,
+        nat_type
+    );
+    Ok((
+        mapped_addr1,
+        nat_type,
+        hash_set.into_iter().collect(),
+        port_range,
+    ))
 }
 
 fn test_nat_(
@@ -88,7 +106,8 @@ fn test_nat_(
         let mut buf = [0; 10240];
         let (len, _addr) = match udp.recv_from(&mut buf) {
             Ok(rs) => rs,
-            Err(_) => {
+            Err(e) => {
+                log::warn!("stun error {:?}", e);
                 continue;
             }
         };
