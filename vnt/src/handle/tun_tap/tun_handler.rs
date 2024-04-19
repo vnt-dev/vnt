@@ -87,14 +87,14 @@ pub fn start(
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
 ) -> io::Result<()> {
     let worker = {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "android"))]
         let current_device = current_device.clone();
         let device = device.clone();
         stop_manager.add_listener("tun_device".into(), move || {
             if let Err(e) = device.shutdown() {
                 log::warn!("{:?}", e);
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "android"))]
             {
                 let ip = current_device.load().virtual_ip;
                 if let Ok(udp) = std::net::UdpSocket::bind("0.0.0.0:0") {

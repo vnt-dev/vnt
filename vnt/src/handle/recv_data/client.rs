@@ -1,16 +1,13 @@
+use parking_lot::RwLock;
+use protobuf::Message;
 use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-use protobuf::Message;
-
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
-use tun::device::IFace;
-use tun::Device;
 
 use crate::channel::context::Context;
 use crate::channel::punch::NatInfo;
@@ -29,11 +26,13 @@ use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::{
     control_packet, ip_turn_packet, other_turn_packet, NetPacket, Protocol, Version, MAX_TTL,
 };
-
+use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+use tun::device::IFace;
 /// 处理来源于客户端的包
 #[derive(Clone)]
 pub struct ClientPacketHandler {
-    device: Arc<Device>,
+    device: DeviceAdapter,
     client_cipher: Cipher,
     punch_sender: PunchSender,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
@@ -45,7 +44,7 @@ pub struct ClientPacketHandler {
 
 impl ClientPacketHandler {
     pub fn new(
-        device: Arc<Device>,
+        device: DeviceAdapter,
         client_cipher: Cipher,
         punch_sender: PunchSender,
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,

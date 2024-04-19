@@ -11,8 +11,6 @@ use protobuf::Message;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
-use tun::device::IFace;
-use tun::Device;
 
 use crate::channel::context::Context;
 use crate::channel::{Route, RouteKey};
@@ -29,12 +27,15 @@ use crate::handle::{
     registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP,
 };
 use crate::nat::NatTest;
-use crate::proto;
 use crate::proto::message::{DeviceList, HandshakeResponse, RegistrationResponse};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::{ip_turn_packet, service_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
+use crate::{proto, PeerClientInfo};
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+use tun::device::IFace;
 
 /// 处理来源于服务端的包
 #[derive(Clone)]
@@ -43,13 +44,14 @@ pub struct ServerPacketHandler<Call> {
     rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
     server_cipher: Cipher,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-    device: Arc<Device>,
+    device: DeviceAdapter,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     config_info: BaseConfigInfo,
     nat_test: NatTest,
     callback: Call,
     #[cfg(feature = "server_encrypt")]
     up_key_time: Arc<AtomicCell<Instant>>,
+    #[cfg(not(target_os = "android"))]
     route_record: Arc<Mutex<Vec<(Ipv4Addr, Ipv4Addr)>>>,
     external_route: ExternalRoute,
     handshake: Handshake,
@@ -60,7 +62,7 @@ impl<Call> ServerPacketHandler<Call> {
         #[cfg(feature = "server_encrypt")] rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
         server_cipher: Cipher,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-        device: Arc<Device>,
+        device: DeviceAdapter,
         device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
         config_info: BaseConfigInfo,
         nat_test: NatTest,
@@ -80,6 +82,7 @@ impl<Call> ServerPacketHandler<Call> {
             callback,
             #[cfg(feature = "server_encrypt")]
             up_key_time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
+            #[cfg(not(target_os = "android"))]
             route_record: Arc::new(Mutex::default()),
             external_route,
             handshake,
@@ -299,6 +302,31 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                         if old.virtual_ip != Ipv4Addr::UNSPECIFIED {
                             log::info!("ip发生变化,old:{:?},response={:?}", old, response);
                         }
+                        #[cfg(target_os = "android")]
+                        {
+                            let device_config = crate::handle::callback::DeviceConfig::new(
+                                virtual_ip,
+                                virtual_netmask,
+                                virtual_gateway,
+                                virtual_network,
+                                self.external_route.to_route(),
+                            );
+                            let device_fd = self.callback.generate_tun(device_config);
+                            if device_fd == 0 {
+                                self.callback.error(ErrorInfo::new_msg(
+                                    ErrorType::Unknown,
+                                    "device_fd == 0".into(),
+                                ));
+                            } else {
+                                let device = Arc::new(tun::Device::new(device_fd as _)?);
+                                if let Err(e) = self.device.start(device) {
+                                    self.callback.error(ErrorInfo::new_msg(
+                                        ErrorType::Unknown,
+                                        format!("{:?}", e),
+                                    ));
+                                }
+                            }
+                        }
                         #[cfg(not(target_os = "android"))]
                         {
                             if let Err(e) = self.device.set_ip(virtual_ip, virtual_netmask) {
@@ -393,10 +421,18 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 )
             })
             .collect();
-        let mut dev = self.device_list.lock();
-        //这里可能会收到旧的消息，但是随着时间推移总会收到新的
-        dev.0 = epoch;
-        dev.1 = ip_list;
+        {
+            let mut dev = self.device_list.lock();
+            //这里可能会收到旧的消息，但是随着时间推移总会收到新的
+            dev.0 = epoch;
+            dev.1 = ip_list.clone();
+        }
+        self.callback.peer_client_list(
+            ip_list
+                .into_iter()
+                .map(|v| PeerClientInfo::new(v.virtual_ip, v.name, v.status, v.client_secret))
+                .collect(),
+        );
     }
     fn register(&self, current_device: &CurrentDeviceInfo, context: &Context) -> io::Result<()> {
         if current_device.status.online() {

@@ -5,13 +5,13 @@ package top.wherewego.vnt.jni;
  *
  * @author https://github.com/lbl8603/vnt
  */
-public class PeerDeviceInfo {
+public class PeerRouteInfo {
     private final int virtualIp;
     private final String name;
     private final String status;
     private final Route route;
 
-    public PeerDeviceInfo(int virtualIp, String name, String status, Route route) {
+    public PeerRouteInfo(int virtualIp, String name, String status, Route route) {
         this.virtualIp = virtualIp;
         this.name = name;
         this.status = status;

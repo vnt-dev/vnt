@@ -31,7 +31,7 @@ openssl-sys = { git = "https://github.com/lbl8603/rust-openssl" ,optional = true
 libsm = {git="https://github.com/lbl8603/libsm" ,optional = true}
 
 mio = {version = "0.8.10",features = ["os-poll","net"]}
-
+crossbeam-queue = "0.3.11"
 [target.'cfg(target_os = "windows")'.dependencies]
 libloading = "0.8.0"
 

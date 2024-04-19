@@ -3,11 +3,11 @@ package top.wherewego.vnt.jni.param;
 import top.wherewego.vnt.jni.IpUtils;
 
 /**
- * 注册回调信息
+ * 创建网卡所需信息，仅在android上使用
  *
  * @author https://github.com/lbl8603/vnt
  */
-public class RegisterInfo {
+public class DeviceConfig {
     /**
      * 虚拟IP
      */
@@ -20,11 +20,16 @@ public class RegisterInfo {
      * 网关
      */
     public final int virtualGateway;
+    /**
+     * 虚拟网段
+     */
+    public final int virtualNetwork;
 
-    public RegisterInfo(int virtualIp, int virtualNetmask, int virtualGateway) {
+    public DeviceConfig(int virtualIp, int virtualNetmask, int virtualGateway, int virtualNetwork) {
         this.virtualIp = virtualIp;
         this.virtualNetmask = virtualNetmask;
         this.virtualGateway = virtualGateway;
+        this.virtualNetwork = virtualNetwork;
     }
 
     public int getVirtualIp() {
@@ -39,12 +44,17 @@ public class RegisterInfo {
         return virtualGateway;
     }
 
+    public int getVirtualNetwork() {
+        return virtualNetwork;
+    }
+
     @Override
     public String toString() {
-        return "RegisterInfo{" +
-                "virtualIp='" + IpUtils.intToIpAddress(virtualIp) + '\'' +
-                ", virtualNetmask='" + IpUtils.intToIpAddress(virtualNetmask) + '\'' +
-                ", virtualGateway='" + IpUtils.intToIpAddress(virtualGateway) + '\'' +
+        return "DeviceConfig{" +
+                "virtualIp=" + IpUtils.intToIpAddress(virtualIp) +
+                ", virtualNetmask=" + IpUtils.intToIpAddress(virtualNetmask) +
+                ", virtualGateway=" + IpUtils.intToIpAddress(virtualGateway) +
+                ", virtualNetwork=" + IpUtils.intToIpAddress(virtualNetwork) +
                 '}';
     }
 }

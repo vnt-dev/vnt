@@ -16,15 +16,25 @@ public class ErrorInfo {
     public final String msg;
 
     public ErrorInfo(int code, String msg) {
-        this.code = switch (code) {
-            case 1 -> ErrorCodeEnum.TokenError;
-            case 2 -> ErrorCodeEnum.Disconnect;
-            case 3 -> ErrorCodeEnum.AddressExhausted;
-            case 4 -> ErrorCodeEnum.IpAlreadyExists;
-            case 5 -> ErrorCodeEnum.InvalidIp;
-            case 6 -> ErrorCodeEnum.Unknown;
-            default -> null;
-        };
+        switch (code) {
+            case 1:
+                this.code = ErrorCodeEnum.TokenError;
+                break;
+            case 2:
+                this.code = ErrorCodeEnum.Disconnect;
+                break;
+            case 3:
+                this.code = ErrorCodeEnum.AddressExhausted;
+                break;
+            case 4:
+                this.code = ErrorCodeEnum.IpAlreadyExists;
+                break;
+            case 5:
+                this.code = ErrorCodeEnum.InvalidIp;
+                break;
+            default:
+                this.code = ErrorCodeEnum.Unknown;
+        }
         this.msg = msg;
     }
 

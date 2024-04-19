@@ -6,8 +6,6 @@ use std::{io, thread};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 
-use tun::Device;
-
 use crate::channel::context::Context;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::punch::NatInfo;
@@ -27,6 +25,7 @@ use crate::handle::{BaseConfigInfo, CurrentDeviceInfo, PeerDeviceInfo, SELF_IP};
 use crate::ip_proxy::IpProxyMap;
 use crate::nat::NatTest;
 use crate::protocol::NetPacket;
+use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
 use crate::util::U64Adder;
 
 mod client;
@@ -56,7 +55,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         server_cipher: Cipher,
         client_cipher: Cipher,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-        device: Arc<Device>,
+        device: DeviceAdapter,
         device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
         config_info: BaseConfigInfo,
         nat_test: NatTest,

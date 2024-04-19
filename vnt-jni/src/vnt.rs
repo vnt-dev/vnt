@@ -2,7 +2,7 @@ use std::ptr;
 
 use jni::errors::Error;
 use jni::objects::{JClass, JObject, JValue};
-use jni::sys::{jbyte, jint, jlong, jobject, jobjectArray, jsize};
+use jni::sys::{jint, jlong, jobject, jobjectArray, jsize};
 use jni::JNIEnv;
 
 use vnt::channel::Route;
@@ -30,7 +30,13 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_new0(
             } else {
                 return 0;
             };
-            let vnt_util = match Vnt::new(config, CallBack::new(jvm, call_back)) {
+            let call_back = match CallBack::new(jvm, call_back) {
+                Ok(call_back) => call_back,
+                Err(_) => {
+                    return 0;
+                }
+            };
+            let vnt_util = match Vnt::new(config, call_back) {
                 Ok(vnt_util) => vnt_util,
                 Err(e) => {
                     env.throw_new(
@@ -58,6 +64,7 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_stop0(
     let vnt = raw_vnt as *mut Vnt;
     let _ = (&*vnt).stop();
 }
+
 #[no_mangle]
 pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_wait0(
     _env: JNIEnv,
@@ -90,7 +97,7 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_list0(
 
     let arr = match env.new_object_array(
         list.len() as jsize,
-        "top/wherewego/vnt/jni/PeerDeviceInfo",
+        "top/wherewego/vnt/jni/PeerRouteInfo",
         JObject::null(),
     ) {
         Ok(arr) => arr,
@@ -131,16 +138,14 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_list0(
 }
 
 fn route_parse(env: &mut JNIEnv, route: Route) -> Result<jobject, Error> {
-    let address = route.addr.to_string();
-    let metric = route.metric;
-    let rt = route.rt;
     let rs = env.new_object(
         "top/wherewego/vnt/jni/Route",
-        "(Ljava/lang/String;BI)V",
+        "(ZLjava/lang/String;BI)V",
         &[
-            JValue::Object(&env.new_string(address)?.into()),
-            JValue::Byte(metric as jbyte),
-            JValue::Int(rt as jint),
+            JValue::Bool(route.is_tcp as _),
+            JValue::Object(&env.new_string(route.addr.to_string())?.into()),
+            JValue::Byte(route.metric as _),
+            JValue::Int(route.rt as _),
         ],
     )?;
     Ok(rs.as_raw())
@@ -155,7 +160,7 @@ fn peer_device_info_parse(
     let name = peer.name.to_string();
     let status = format!("{:?}", peer.status);
     let rs = env.new_object(
-        "top/wherewego/vnt/jni/PeerDeviceInfo",
+        "top/wherewego/vnt/jni/PeerRouteInfo",
         "(ILjava/lang/String;Ljava/lang/String;Ltop/wherewego/vnt/jni/Route;)V",
         &[
             JValue::Int(virtual_ip as jint),

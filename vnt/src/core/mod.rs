@@ -36,8 +36,6 @@ pub struct Config {
     pub first_latency: bool,
     #[cfg(not(target_os = "android"))]
     pub device_name: Option<String>,
-    #[cfg(target_os = "android")]
-    pub device_fd: i32,
     pub use_channel_type: UseChannelType,
     //控制丢包率
     pub packet_loss_rate: Option<f64>,
@@ -68,7 +66,6 @@ impl Config {
         ports: Option<Vec<u16>>,
         first_latency: bool,
         #[cfg(not(target_os = "android"))] device_name: Option<String>,
-        #[cfg(target_os = "android")] device_fd: i32,
         use_channel_type: UseChannelType,
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
@@ -113,8 +110,6 @@ impl Config {
             first_latency,
             #[cfg(not(target_os = "android"))]
             device_name,
-            #[cfg(target_os = "android")]
-            device_fd,
             use_channel_type,
             packet_loss_rate,
             packet_delay,

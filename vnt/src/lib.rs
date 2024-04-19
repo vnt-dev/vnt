@@ -13,4 +13,4 @@ pub mod protocol;
 pub mod tun_tap_device;
 pub mod util;
 
-pub use handle::callback::{DeviceInfo, ErrorInfo, HandshakeInfo, RegisterInfo, VntCallback};
+pub use handle::callback::*;

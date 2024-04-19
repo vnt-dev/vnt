@@ -7,7 +7,7 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 use rand::Rng;
-
+#[cfg(not(target_os = "android"))]
 use tun::device::IFace;
 
 use crate::channel::context::Context;
@@ -22,14 +22,15 @@ use crate::external_route::{AllowExternalRoute, ExternalRoute};
 use crate::handle::handshaker::Handshake;
 use crate::handle::maintain::PunchReceiver;
 use crate::handle::recv_data::RecvDataHandler;
-use crate::handle::{
-    maintain, tun_tap, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo,
-};
+use crate::handle::{maintain, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
+use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
 use crate::util::{
     Scheduler, SingleU64Adder, StopManager, U64Adder, WatchSingleU64Adder, WatchU64Adder,
 };
-use crate::{nat, tun_tap_device, DeviceInfo, VntCallback};
+use crate::{nat, VntCallback};
+#[cfg(not(target_os = "android"))]
+use crate::{tun_tap_device, DeviceInfo};
 
 #[derive(Clone)]
 pub struct Vnt {
@@ -113,10 +114,14 @@ impl Vnt {
             tcp_port,
         );
 
-        // 虚拟网卡
-        let device = tun_tap_device::create_device(&config)?;
-        let tun_info = DeviceInfo::new(device.name()?, device.version()?);
-        callback.create_tun(tun_info);
+        // pc上先创建虚拟网卡
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        let device = {
+            let device = tun_tap_device::create_device(&config)?;
+            let tun_info = DeviceInfo::new(device.name()?, device.version()?);
+            callback.create_tun(tun_info);
+            device
+        };
         // 服务停止管理器
         let stop_manager = {
             let callback = callback.clone();
@@ -146,13 +151,33 @@ impl Vnt {
             U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
         let down_count_watcher = down_counter.watch();
         let handshake = Handshake::new(rsa_cipher.clone());
+        let up_counter = SingleU64Adder::new();
+        let up_count_watcher = up_counter.watch();
+        let tun_helper = TunDeviceHelper::new(
+            stop_manager.clone(),
+            context.clone(),
+            current_device.clone(),
+            external_route.clone(),
+            #[cfg(feature = "ip_proxy")]
+            proxy_map.clone(),
+            client_cipher.clone(),
+            server_cipher.clone(),
+            config.parallel,
+            up_counter,
+            device_list.clone(),
+        );
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        let device_adapter = DeviceAdapter::new(device.clone());
+        #[cfg(target_os = "android")]
+        let device_adapter = DeviceAdapter::new(tun_helper);
+
         let handler = RecvDataHandler::new(
             #[cfg(feature = "server_encrypt")]
             rsa_cipher,
             server_cipher.clone(),
             client_cipher.clone(),
             current_device.clone(),
-            device.clone(),
+            device_adapter,
             device_list.clone(),
             config_info.clone(),
             nat_test.clone(),
@@ -177,22 +202,10 @@ impl Vnt {
             config.tcp,
             tcp_socket_sender.clone(),
         );
-        let up_counter = SingleU64Adder::new();
-        let up_count_watcher = up_counter.watch();
-        tun_tap::tun_handler::start(
-            stop_manager.clone(),
-            context.clone(),
-            device.clone(),
-            current_device.clone(),
-            external_route,
-            #[cfg(feature = "ip_proxy")]
-            proxy_map,
-            client_cipher.clone(),
-            server_cipher.clone(),
-            config.parallel,
-            up_counter,
-            device_list.clone(),
-        )?;
+
+        #[cfg(not(target_os = "android"))]
+        tun_helper.start(device)?;
+
         maintain::idle_gateway(
             &scheduler,
             context.clone(),

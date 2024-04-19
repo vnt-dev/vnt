@@ -107,8 +107,6 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     };
     #[cfg(not(target_os = "android"))]
     let device_name = to_string(env, &config, "deviceName")?;
-    #[cfg(target_os = "android")]
-    let device_fd = env.get_field(&config, "deviceFd", "I")?.i()? as i32;
     let config = match Config::new(
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         tap,
@@ -134,8 +132,6 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         first_latency,
         #[cfg(not(target_os = "android"))]
         device_name,
-        #[cfg(target_os = "android")]
-        device_fd,
         UseChannelType::from_str(&use_channel.unwrap_or_default()).unwrap_or_default(),
         packet_loss_rate,
         packet_delay,

@@ -1,7 +1,7 @@
 package top.wherewego.vnt.jni.param;
 
 /**
- * 网卡信息
+ * 网卡信息 仅在 windows/linux/macos上使用
  *
  * @author https://github.com/lbl8603/vnt
  */

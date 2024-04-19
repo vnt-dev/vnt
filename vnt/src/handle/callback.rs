@@ -1,21 +1,25 @@
+use crate::handle::PeerDeviceStatus;
 #[cfg(feature = "server_encrypt")]
 use rsa::RsaPublicKey;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 #[derive(Debug)]
 pub struct DeviceInfo {
     pub name: String,
     pub version: String,
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 impl Display for DeviceInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!("name={} ,version={}", self.name, self.version))
     }
 }
 
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 impl DeviceInfo {
     pub fn new(name: String, version: String) -> Self {
         return Self { name, version };
@@ -68,6 +72,7 @@ impl Display for HandshakeInfo {
         f.write_str(&format!("server version={}", self.version))
     }
 }
+
 #[cfg(feature = "server_encrypt")]
 impl HandshakeInfo {
     pub fn new(public_key: RsaPublicKey, finger: String, version: String) -> Self {
@@ -85,6 +90,7 @@ impl HandshakeInfo {
         }
     }
 }
+
 #[cfg(not(feature = "server_encrypt"))]
 impl HandshakeInfo {
     pub fn new_no_secret(version: String) -> Self {
@@ -183,11 +189,89 @@ impl Into<u8> for ErrorType {
     }
 }
 
+#[cfg(target_os = "android")]
+#[derive(Debug)]
+pub struct DeviceConfig {
+    //本机虚拟IP
+    pub virtual_ip: Ipv4Addr,
+    //子网掩码
+    pub virtual_netmask: Ipv4Addr,
+    //虚拟网关
+    pub virtual_gateway: Ipv4Addr,
+    //虚拟网段
+    pub virtual_network: Ipv4Addr,
+    // 额外的路由
+    pub external_route: Vec<(Ipv4Addr, Ipv4Addr)>,
+}
+
+#[cfg(target_os = "android")]
+impl DeviceConfig {
+    pub fn new(
+        virtual_ip: Ipv4Addr,
+        virtual_netmask: Ipv4Addr,
+        virtual_gateway: Ipv4Addr,
+        virtual_network: Ipv4Addr,
+        external_route: Vec<(Ipv4Addr, Ipv4Addr)>,
+    ) -> Self {
+        Self {
+            virtual_ip,
+            virtual_netmask,
+            virtual_gateway,
+            virtual_network,
+            external_route,
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Display for DeviceConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!(
+            "ip={} ,netmask={} ,gateway={}, external_route={:?}",
+            self.virtual_ip, self.virtual_netmask, self.virtual_gateway, self.external_route
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub struct PeerClientInfo {
+    pub virtual_ip: Ipv4Addr,
+    pub name: String,
+    pub status: PeerDeviceStatus,
+    pub client_secret: bool,
+}
+
+impl PeerClientInfo {
+    pub fn new(
+        virtual_ip: Ipv4Addr,
+        name: String,
+        status: PeerDeviceStatus,
+        client_secret: bool,
+    ) -> Self {
+        Self {
+            virtual_ip,
+            name,
+            status,
+            client_secret,
+        }
+    }
+}
+
+impl Display for PeerClientInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!(
+            "ip={} ,name={} ,status={:?}, client_secret={}",
+            self.virtual_ip, self.name, self.status, self.client_secret
+        ))
+    }
+}
+
 pub trait VntCallback: Clone + Send + Sync + 'static {
     /// 启动成功
     fn success(&self) {}
 
     /// 创建网卡的信息
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     fn create_tun(&self, _info: DeviceInfo) {}
     /// 连接
     fn connect(&self, _info: ConnectInfo) {}
@@ -199,6 +283,11 @@ pub trait VntCallback: Clone + Send + Sync + 'static {
     fn register(&self, _info: RegisterInfo) -> bool {
         true
     }
+    #[cfg(target_os = "android")]
+    fn generate_tun(&self, _info: DeviceConfig) -> u32 {
+        0
+    }
+    fn peer_client_list(&self, _info: Vec<PeerClientInfo>) {}
     /// 异常信息
     fn error(&self, _info: ErrorInfo) {}
     /// 服务停止

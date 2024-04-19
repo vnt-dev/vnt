@@ -12,8 +12,10 @@ public interface CallBack {
      * 连接成功的回调
      */
     void success();
+
     /**
      * 创建虚拟网卡成功的回调方法
+     * 仅在 windows/linux/macos上使用
      *
      * @param info 网卡信息
      */
@@ -41,6 +43,24 @@ public interface CallBack {
      * @return 是否确认注册信息
      */
     boolean register(RegisterInfo info);
+
+    /**
+     * 创建网卡回调
+     * 仅在android上使用
+     *
+     * @param info 创建配置
+     * @return 网卡fd
+     */
+
+    int generateTun(DeviceConfig info);
+
+    /**
+     * 对端用户列表
+     *
+     * @param infoArray
+     */
+    void peerClientList(PeerClientInfo[] infoArray);
+
 
     /**
      * 异常回调

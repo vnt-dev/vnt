@@ -13,6 +13,9 @@ public class Vnt implements Closeable {
 
     public Vnt(Config config, CallBack callBack) throws Exception{
         this.raw = new0(config, callBack);
+        if (this.raw == 0) {
+            throw new RuntimeException();
+        }
     }
 
     public void stop() {
@@ -23,7 +26,7 @@ public class Vnt implements Closeable {
         wait0(raw);
     }
 
-    public PeerDeviceInfo[] list() {
+    public PeerRouteInfo[] list() {
         return list0(raw);
     }
 
@@ -35,7 +38,7 @@ public class Vnt implements Closeable {
 
     private native void drop0(long raw);
 
-    private native PeerDeviceInfo[] list0(long raw);
+    private native PeerRouteInfo[] list0(long raw);
 
     @Override
     public void close() throws IOException {
