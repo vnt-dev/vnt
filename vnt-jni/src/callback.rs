@@ -176,6 +176,17 @@ impl CallBack {
     fn generate_tun0(&self, info: DeviceConfig) -> jni::errors::Result<u32> {
         let mut env = self.jvm.attach_current_thread_as_daemon()?;
         let class = unsafe { JClass::from_raw(self.device_config_class.as_raw()) };
+
+        let object_array = env.new_object_array(
+            info.external_route.len() as _,
+            "java/lang/String",
+            JObject::null(),
+        )?;
+        for (index, (network, mask)) in info.external_route.into_iter().enumerate() {
+            let param =
+                env.new_string(format!("{}/{}", network, u32::from(mask).leading_ones()))?;
+            env.set_object_array_element(&object_array, index as _, &param)?;
+        }
         let param = env.new_object(
             class,
             "(IIII)V",
@@ -184,6 +195,7 @@ impl CallBack {
                 JValue::Int(Into::<u32>::into(info.virtual_netmask) as _),
                 JValue::Int(Into::<u32>::into(info.virtual_gateway) as _),
                 JValue::Int(Into::<u32>::into(info.virtual_network) as _),
+                JValue::Object(&object_array),
             ],
         )?;
         let rs = env.call_method(
