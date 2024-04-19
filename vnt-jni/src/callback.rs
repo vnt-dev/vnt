@@ -159,9 +159,9 @@ impl CallBack {
             class,
             "(III)V",
             &[
-                JValue::Int(Into::<u32>::into(info.virtual_ip) as _),
-                JValue::Int(Into::<u32>::into(info.virtual_netmask) as _),
-                JValue::Int(Into::<u32>::into(info.virtual_gateway) as _),
+                JValue::Int(u32::from(info.virtual_ip) as _),
+                JValue::Int(u32::from(info.virtual_netmask) as _),
+                JValue::Int(u32::from(info.virtual_gateway) as _),
             ],
         )?;
         let rs = env.call_method(
@@ -191,10 +191,10 @@ impl CallBack {
             class,
             "(IIII)V",
             &[
-                JValue::Int(Into::<u32>::into(info.virtual_ip) as _),
-                JValue::Int(Into::<u32>::into(info.virtual_netmask) as _),
-                JValue::Int(Into::<u32>::into(info.virtual_gateway) as _),
-                JValue::Int(Into::<u32>::into(info.virtual_network) as _),
+                JValue::Int(u32::from(info.virtual_ip) as _),
+                JValue::Int(u32::from(info.virtual_netmask) as _),
+                JValue::Int(u32::from(info.virtual_gateway) as _),
+                JValue::Int(u32::from(info.virtual_network) as _),
                 JValue::Object(&object_array),
             ],
         )?;
@@ -215,7 +215,7 @@ impl CallBack {
                 &class,
                 "(ILjava/lang/String;ZZ)V",
                 &[
-                    JValue::Int(Into::<u32>::into(info.virtual_ip) as _),
+                    JValue::Int(u32::from(info.virtual_ip) as _),
                     JValue::Object(&env.new_string(info.name)?.into()),
                     JValue::Bool(info.status.is_online() as _),
                     JValue::Bool(info.client_secret as _),
