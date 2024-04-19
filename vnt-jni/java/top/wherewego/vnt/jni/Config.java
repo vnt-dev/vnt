@@ -43,6 +43,10 @@ public class Config {
      */
     private boolean relay;
     /**
+     * 设备id，请使用唯一值
+     */
+    private String deviceId;
+    /**
      * 服务端地址
      */
     private String server;
@@ -82,10 +86,6 @@ public class Config {
      * 虚拟网卡名称 仅在linux、windows、macos上支持
      */
     private String deviceName;
-    /**
-     * 虚拟网卡fd 仅在android上支持
-     */
-    private int deviceFd;
     /**
      * enum: relay/p2p/all
      */
@@ -174,6 +174,13 @@ public class Config {
         this.relay = relay;
     }
 
+    public String getDeviceId() {
+        return deviceId;
+    }
+
+    public void setDeviceId(String deviceId) {
+        this.deviceId = deviceId;
+    }
 
     public String getServer() {
         return server;
@@ -253,14 +260,6 @@ public class Config {
 
     public void setDeviceName(String deviceName) {
         this.deviceName = deviceName;
-    }
-
-    public int getDeviceFd() {
-        return deviceFd;
-    }
-
-    public void setDeviceFd(int deviceFd) {
-        this.deviceFd = deviceFd;
     }
 
     public String getUseChannel() {
