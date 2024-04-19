@@ -43,10 +43,6 @@ public class Config {
      */
     private boolean relay;
     /**
-     * 设备id，请使用唯一值
-     */
-    private String deviceId;
-    /**
      * 服务端地址
      */
     private String server;
