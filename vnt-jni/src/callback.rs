@@ -189,7 +189,7 @@ impl CallBack {
         }
         let param = env.new_object(
             class,
-            "(IIII)V",
+            "(IIII[Ljava/lang/String;)V",
             &[
                 JValue::Int(Into::<u32>::into(info.virtual_ip) as _),
                 JValue::Int(Into::<u32>::into(info.virtual_netmask) as _),
