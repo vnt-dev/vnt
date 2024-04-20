@@ -7,6 +7,7 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 use rand::Rng;
+use rsa::signature::digest::Digest;
 #[cfg(not(target_os = "android"))]
 use tun::device::IFace;
 
@@ -43,6 +44,7 @@ pub struct Vnt {
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     down_count_watcher: WatchU64Adder,
     up_count_watcher: WatchSingleU64Adder,
+    client_secret_hash: Option<[u8; 16]>,
 }
 
 impl Vnt {
@@ -79,7 +81,14 @@ impl Vnt {
             config.name.clone(),
             config.token.clone(),
             config.ip,
-            config.password.is_some(),
+            config.password.as_ref().map(|v| {
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(config.cipher_model.to_string().as_bytes());
+                hasher.update(v.as_bytes());
+                hasher.update(config.token.as_bytes());
+                let key: [u8; 32] = hasher.finalize().into();
+                key[16..].try_into().unwrap()
+            }),
             config.server_encrypt,
             config.device_id.clone(),
             config.server_address_str.clone(),
@@ -222,6 +231,7 @@ impl Vnt {
             let device_list = device_list.clone();
             let down_count_watcher = down_count_watcher.clone();
             let up_count_watcher = up_count_watcher.clone();
+            let config_info = config_info.clone();
             let current_device = current_device.clone();
             if !config.use_channel_type.is_only_relay() {
                 // 定时nat探测
@@ -262,6 +272,7 @@ impl Vnt {
             peer_nat_info_map,
             down_count_watcher,
             up_count_watcher,
+            client_secret_hash: config_info.client_secret_hash,
         })
     }
 }
@@ -349,6 +360,9 @@ impl Vnt {
     }
     pub fn client_encrypt(&self) -> bool {
         self.config.password.is_some()
+    }
+    pub fn client_encrypt_hash(&self) -> Option<&[u8]> {
+        self.client_secret_hash.as_ref().map(|v| v.as_ref())
     }
     pub fn current_device(&self) -> CurrentDeviceInfo {
         self.current_device.load()

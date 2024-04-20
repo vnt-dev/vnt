@@ -85,6 +85,7 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
     let device_list = vnt.device_list();
     let mut list = Vec::new();
     let current_client_secret = vnt.client_encrypt();
+    let client_encrypt_hash = vnt.client_encrypt_hash().unwrap_or(&[]);
     for peer in device_list {
         let name = peer.name;
         let virtual_ip = peer.virtual_ip.to_string();
@@ -153,7 +154,9 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
             rt,
             status,
             client_secret,
+            client_secret_hash: peer.client_secret_hash,
             current_client_secret,
+            current_client_secret_hash: client_encrypt_hash.to_vec(),
         };
         list.push(item);
     }

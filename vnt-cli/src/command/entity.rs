@@ -36,5 +36,7 @@ pub struct DeviceItem {
     pub rt: String,
     pub status: String,
     pub client_secret: bool,
+    pub client_secret_hash: Vec<u8>,
     pub current_client_secret: bool,
+    pub current_client_secret_hash: Vec<u8>,
 }

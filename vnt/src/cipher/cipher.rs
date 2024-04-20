@@ -1,6 +1,7 @@
 #[cfg(feature = "aes_ecb")]
 #[cfg(not(any(feature = "openssl-vendored", feature = "openssl")))]
 use crate::cipher::aes_ecb::AesEcbCipher;
+use std::fmt::Display;
 
 #[cfg(feature = "aes_cbc")]
 use crate::cipher::aes_cbc::AesCbcCipher;
@@ -48,6 +49,18 @@ pub enum CipherModel {
     None,
 }
 
+impl Display for CipherModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            CipherModel::AesGcm => "aes_gcm".to_string(),
+            CipherModel::AesCbc => "aes_cbc".to_string(),
+            CipherModel::AesEcb => "aes_ecb".to_string(),
+            CipherModel::Sm4Cbc => "sm4_cbc".to_string(),
+            CipherModel::None => "none".to_string(),
+        };
+        write!(f, "{}", str)
+    }
+}
 impl FromStr for CipherModel {
     type Err = String;
 

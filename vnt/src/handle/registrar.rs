@@ -18,7 +18,7 @@ pub fn registration_request_packet(
     ip: Option<Ipv4Addr>,
     is_fast: bool,
     allow_ip_change: bool,
-    client_secret: bool,
+    client_secret_hash: Option<&[u8]>,
 ) -> io::Result<NetPacket<Vec<u8>>> {
     let mut request = RegistrationRequest::new();
     request.token = token;
@@ -30,7 +30,12 @@ pub fn registration_request_packet(
     request.allow_ip_change = allow_ip_change;
     request.is_fast = is_fast;
     request.version = crate::VNT_VERSION.to_string();
-    request.client_secret = client_secret;
+    if let Some(client_secret_hash) = client_secret_hash {
+        request.client_secret = true;
+        request
+            .client_secret_hash
+            .extend_from_slice(client_secret_hash);
+    }
     let bytes = request.write_to_bytes().map_err(|e| {
         io::Error::new(io::ErrorKind::Other, format!("RegistrationRequest {:?}", e))
     })?;

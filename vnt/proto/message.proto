@@ -24,6 +24,7 @@ message RegistrationRequest {
     fixed32 virtual_ip = 6;
     bool allow_ip_change = 7;
     bool client_secret = 8;
+    bytes client_secret_hash = 9;
 }
 
 message RegistrationResponse {
@@ -41,6 +42,7 @@ message DeviceInfo {
     fixed32 virtual_ip = 2;
     uint32 device_status = 3;
     bool client_secret = 4;
+    bytes client_secret_hash = 5;
 }
 
 message DeviceList {

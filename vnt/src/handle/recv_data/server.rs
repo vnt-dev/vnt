@@ -418,6 +418,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                     info.name,
                     info.device_status as u8,
                     info.client_secret,
+                    info.client_secret_hash,
                 )
             })
             .collect();
@@ -442,7 +443,11 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
         let token = self.config_info.token.clone();
         let device_id = self.config_info.device_id.clone();
         let name = self.config_info.name.clone();
-        let client_secret = self.config_info.client_secret;
+        let client_secret = self
+            .config_info
+            .client_secret_hash
+            .as_ref()
+            .map(|v| v.as_ref());
         let mut ip = self.config_info.ip;
         if ip.is_none() {
             ip = Some(current_device.virtual_ip)

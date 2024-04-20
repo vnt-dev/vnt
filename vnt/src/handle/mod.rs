@@ -32,15 +32,23 @@ pub struct PeerDeviceInfo {
     pub name: String,
     pub status: PeerDeviceStatus,
     pub client_secret: bool,
+    pub client_secret_hash: Vec<u8>,
 }
 
 impl PeerDeviceInfo {
-    pub fn new(virtual_ip: Ipv4Addr, name: String, status: u8, client_secret: bool) -> Self {
+    pub fn new(
+        virtual_ip: Ipv4Addr,
+        name: String,
+        status: u8,
+        client_secret: bool,
+        client_secret_hash: Vec<u8>,
+    ) -> Self {
         Self {
             virtual_ip,
             name,
             status: PeerDeviceStatus::from(status),
             client_secret,
+            client_secret_hash,
         }
     }
 }
@@ -50,7 +58,7 @@ pub struct BaseConfigInfo {
     pub name: String,
     pub token: String,
     pub ip: Option<Ipv4Addr>,
-    pub client_secret: bool,
+    pub client_secret_hash: Option<[u8; 16]>,
     pub server_secret: bool,
     pub device_id: String,
     pub server_addr: String,
@@ -61,7 +69,7 @@ impl BaseConfigInfo {
         name: String,
         token: String,
         ip: Option<Ipv4Addr>,
-        client_secret: bool,
+        client_secret_hash: Option<[u8; 16]>,
         server_secret: bool,
         device_id: String,
         server_addr: String,
@@ -70,7 +78,7 @@ impl BaseConfigInfo {
             name,
             token,
             ip,
-            client_secret,
+            client_secret_hash,
             server_secret,
             device_id,
             server_addr,

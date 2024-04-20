@@ -21,6 +21,7 @@ pub fn console_info(status: Info) {
     println!("Up: {}", style(convert(status.up)).green());
     println!("Down: {}", style(convert(status.down)).green());
 }
+
 fn convert(num: u64) -> String {
     let gigabytes = num / (1024 * 1024 * 1024);
     let remaining_bytes = num % (1024 * 1024 * 1024);
@@ -90,13 +91,17 @@ pub fn console_device_list(mut list: Vec<DeviceItem>) {
     ]);
     for item in list {
         if &item.status == "Online" {
-            if item.client_secret != item.current_client_secret {
+            if item.client_secret != item.current_client_secret
+                || (!item.current_client_secret_hash.is_empty()
+                    && !item.client_secret_hash.is_empty()
+                    && item.current_client_secret_hash != item.client_secret_hash)
+            {
                 //加密状态不一致，无法通信的
                 out_list.push(vec![
                     (item.name, Style::new().red()),
                     (item.virtual_ip, Style::new().red()),
                     (item.status, Style::new().red()),
-                    ("".to_string(), Style::new().red()),
+                    ("Mismatch".to_string(), Style::new().red()),
                     ("".to_string(), Style::new().red()),
                 ]);
             } else {
