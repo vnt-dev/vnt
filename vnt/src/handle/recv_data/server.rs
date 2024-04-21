@@ -394,11 +394,9 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 self.set_device_info_list(response.device_info_list, response.epoch as _);
             }
             service_packet::Protocol::SecretHandshakeResponse => {
-                if context.is_default_route(route_key) {
-                    log::info!("SecretHandshakeResponse");
-                    //加密握手结束，发送注册数据
-                    self.register(current_device, context)?;
-                }
+                log::info!("SecretHandshakeResponse");
+                //加密握手结束，发送注册数据
+                self.register(current_device, context)?;
             }
             _ => {
                 log::warn!(

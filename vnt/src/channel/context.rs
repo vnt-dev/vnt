@@ -199,10 +199,7 @@ impl ContextInner {
             self.send_main_udp(self.main_index.load(Ordering::Relaxed), buf, addr)
         }
     }
-    pub fn is_default_route(&self, route_key: RouteKey) -> bool {
-        self.is_tcp == route_key.is_tcp
-            && self.main_index.load(Ordering::Relaxed) == route_key.index
-    }
+
     pub fn change_main_index(&self) {
         let index = (self.main_index.load(Ordering::Relaxed) + 1) % self.main_udp_socket.len();
         self.main_index.store(index, Ordering::Relaxed);
