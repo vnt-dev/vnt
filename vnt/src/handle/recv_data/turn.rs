@@ -33,12 +33,12 @@ impl PacketHandler for TurnPacketHandler {
                     return Ok(());
                 }
                 if route.metric <= ttl {
-                    context.send_by_key(net_packet.buffer(), route.route_key())?;
+                    return context.send_by_key(net_packet.buffer(), route.route_key());
                 }
             }
             //其他没有路由的不转发
         }
-
+        log::info!("没有路由 {:?},{:?}", route_key, net_packet.head());
         Ok(())
     }
 }
