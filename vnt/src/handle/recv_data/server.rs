@@ -156,11 +156,13 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
                             context.send_by_key(packet.buffer(), route_key)?;
                             return Ok(());
                         }
-                        log::info!(
-                            "服务端密钥对变化,原指纹:{:?}，新指纹:{:?}",
+                        log::warn!(
+                            "拒绝服务端密钥对变化,原指纹:{:?}，新指纹:{:?}，addr:{:?}",
                             rsa_cipher.finger(),
-                            response.key_finger
+                            response.key_finger,
+                            route_key
                         );
+                        return Ok(());
                     }
                     drop(guard);
                 }
