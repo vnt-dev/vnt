@@ -62,6 +62,7 @@ pub struct BaseConfigInfo {
     pub server_secret: bool,
     pub device_id: String,
     pub server_addr: String,
+    pub name_servers:Vec<SocketAddr>,
 }
 
 impl BaseConfigInfo {
@@ -73,6 +74,7 @@ impl BaseConfigInfo {
         server_secret: bool,
         device_id: String,
         server_addr: String,
+        name_servers:Vec<SocketAddr>,
     ) -> Self {
         Self {
             name,
@@ -82,6 +84,7 @@ impl BaseConfigInfo {
             server_secret,
             device_id,
             server_addr,
+            name_servers,
         }
     }
 }

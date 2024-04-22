@@ -12,7 +12,7 @@ use crate::channel::sender::AcceptSocketSender;
 use crate::handle::callback::{ConnectInfo, ErrorType};
 use crate::handle::handshaker::Handshake;
 use crate::handle::{BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
-use crate::util::Scheduler;
+use crate::util::{dns_query_all, Scheduler};
 use crate::{ErrorInfo, VntCallback};
 
 pub fn idle_route<Call: VntCallback>(
@@ -162,10 +162,18 @@ pub fn domain_request0(
     config: &BaseConfigInfo,
 ) -> CurrentDeviceInfo {
     let mut current_dev = current_device.load();
+
     // 探测服务端地址变化
-    match config.server_addr.to_socket_addrs() {
-        Ok(mut addr) => {
-            if let Some(addr) = addr.next() {
+    match dns_query_all(&config.server_addr,config.name_servers.clone()) {
+        Ok(mut addrs) => {
+            for x in &addrs {
+                //选出一个能用的地址
+                if x.is_ipv4(){
+                }
+                todo!()
+
+            }
+            if let Some(addr) = addrs.pop() {
                 if addr != current_dev.connect_server {
                     let mut tmp = current_dev.clone();
                     tmp.connect_server = addr;

@@ -6,6 +6,7 @@ pub use conn::Vnt;
 use crate::channel::punch::PunchModel;
 use crate::channel::UseChannelType;
 use crate::cipher::CipherModel;
+use crate::util::RecordPriority;
 
 mod conn;
 
@@ -16,8 +17,9 @@ pub struct Config {
     pub token: String,
     pub device_id: String,
     pub name: String,
-    pub server_address: SocketAddr,
     pub server_address_str: String,
+    pub name_servers:Vec<SocketAddr>,
+    pub record_priority:RecordPriority,
     pub stun_server: Vec<String>,
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub out_ips: Vec<(u32, u32)>,
@@ -48,8 +50,9 @@ impl Config {
         token: String,
         device_id: String,
         name: String,
-        server_address: SocketAddr,
         server_address_str: String,
+        name_servers:Vec<SocketAddr>,
+        record_priority:RecordPriority,
         mut stun_server: Vec<String>,
         in_ips: Vec<(u32, u32, Ipv4Addr)>,
         out_ips: Vec<(u32, u32)>,
@@ -90,8 +93,9 @@ impl Config {
             token,
             device_id,
             name,
-            server_address,
             server_address_str,
+            name_servers,
+            record_priority,
             stun_server,
             in_ips,
             out_ips,
