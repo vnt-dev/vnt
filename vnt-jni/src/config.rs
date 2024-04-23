@@ -1,4 +1,3 @@
-use std::net::ToSocketAddrs;
 use std::str::FromStr;
 
 use jni::errors::Error;
@@ -21,7 +20,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     let password = to_string(env, &config, "password")?;
     let server_address_str = to_string_not_null(env, &config, "server")?;
     let stun_server = to_string_array_not_null(env, &config, "stunServer")?;
-    let dns = to_string_array_not_null(env, &config, "dns")?;
+    let dns = to_string_array(env, &config, "dns")?.unwrap_or_else(|| vec![]);
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
     let punch_model = to_string(env, &config, "punchModel")?;
     let mtu = to_integer(env, &config, "mtu")?.map(|v| v as u32);

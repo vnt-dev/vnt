@@ -51,7 +51,7 @@ public class Config {
      */
     private String server;
     /**
-     * 服务端地址
+     * dns地址
      */
     private String[] dns;
     /**
@@ -192,6 +192,14 @@ public class Config {
 
     public void setServer(String server) {
         this.server = server;
+    }
+
+    public String[] getDns() {
+        return dns;
+    }
+
+    public void setDns(String[] dns) {
+        this.dns = dns;
     }
 
     public String[] getStunServer() {
