@@ -121,6 +121,8 @@ first_latency: false #是否优先低延迟通道，默认为false，表示优�
 device_name: vnt-tun #网卡名称
 packet_loss: 0 #指定丢包率 取值0~1之间的数 用于模拟弱网
 packet_delay: 0 #指定延迟 单位毫秒 用于模拟弱网
+dns:
+  - 8.8.8.8:53
 ```
 
 或者需要哪个配置就加哪个，当然token是必须的

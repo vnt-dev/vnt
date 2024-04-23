@@ -21,6 +21,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     let password = to_string(env, &config, "password")?;
     let server_address_str = to_string_not_null(env, &config, "server")?;
     let stun_server = to_string_array_not_null(env, &config, "stunServer")?;
+    let dns = to_string_array_not_null(env, &config, "dns")?;
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
     let punch_model = to_string(env, &config, "punchModel")?;
     let mtu = to_integer(env, &config, "mtu")?.map(|v| v as u32);
@@ -78,25 +79,6 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         vec![]
     };
 
-    let server_address = match server_address_str.to_socket_addrs() {
-        Ok(mut rs) => {
-            if let Some(addr) = rs.next() {
-                addr
-            } else {
-                env.throw_new("java/lang/RuntimeException", "server address err")
-                    .expect("throw");
-                return Err(Error::JavaException);
-            }
-        }
-        Err(e) => {
-            env.throw_new(
-                "java/lang/RuntimeException",
-                format!("server address {}", e),
-            )
-            .expect("throw");
-            return Err(Error::JavaException);
-        }
-    };
     let cipher_model = match CipherModel::from_str(&cipher_model) {
         Ok(cipher_model) => cipher_model,
         Err(e) => {
@@ -113,8 +95,8 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         token,
         device_id,
         name,
-        server_address,
         server_address_str,
+        dns,
         stun_server,
         in_ips,
         out_ips,

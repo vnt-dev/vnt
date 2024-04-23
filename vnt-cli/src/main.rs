@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, ToSocketAddrs};
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{io, thread};
@@ -72,6 +72,7 @@ fn main() {
     opts.optopt("", "use-channel", "使用通道 relay/p2p", "<use-channel>");
     opts.optopt("", "packet-loss", "丢包率", "<packet-loss>");
     opts.optopt("", "packet-delay", "延迟", "<packet-delay>");
+    opts.optmulti("", "dns", "dns", "<dns>");
     opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
@@ -150,27 +151,14 @@ fn main() {
         let server_address_str = matches
             .opt_get_default("s", "nat1.wherewego.top:29872".to_string())
             .unwrap();
-        let server_address = match server_address_str.to_socket_addrs() {
-            Ok(mut addr) => {
-                if let Some(addr) = addr.next() {
-                    addr
-                } else {
-                    println!("parameter '-s {}' error .", server_address_str);
-                    return;
-                }
-            }
-            Err(e) => {
-                println!("parameter '-s {}' error {}.", server_address_str, e);
-                return;
-            }
-        };
+
         let mut stun_server = matches.opt_strs("e");
         if stun_server.is_empty() {
             stun_server.push("stun1.l.google.com:19302".to_string());
             stun_server.push("stun2.l.google.com:19302".to_string());
             stun_server.push("stun.qq.com:3478".to_string());
         }
-
+        let dns = matches.opt_strs("dns");
         let in_ip = matches.opt_strs("i");
         let in_ip = match ips_parse(&in_ip) {
             Ok(in_ip) => in_ip,
@@ -305,8 +293,8 @@ fn main() {
             token,
             device_id,
             name,
-            server_address,
             server_address_str,
+            dns,
             stun_server,
             in_ip,
             out_ip,
@@ -423,7 +411,7 @@ fn print_usage(program: &str, _opts: Options) {
     );
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip,注意不能重复");
-    println!("  -s <server>         注册和中继服务器地址");
+    println!("  -s <server>         注册和中继服务器地址,以'TXT:'开头表示解析TXT记录");
     println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可多次指定,如-e addr1 -e addr2");
     println!("  -a                  使用tap模式,默认使用tun模式");
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
@@ -486,6 +474,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!(
         "  --packet-delay <0>  模拟延迟,整数,单位毫秒(ms),程序会按设定的值延迟发包,可用于模拟弱网"
     );
+    println!("  --dns <host:port>   DNS服务器地址,可使用多个dns,默认使用8.8.8.8:53");
 
     println!();
     println!(

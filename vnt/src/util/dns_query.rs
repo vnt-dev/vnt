@@ -1,38 +1,40 @@
-use std::{io, thread};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::str::FromStr;
 use std::time::Duration;
+use std::{io, thread};
 
 use anyhow::Context;
 use trust_dns_proto::op::{Edns, Message, MessageType, OpCode, Query};
 use trust_dns_proto::rr::{Name, RecordType};
 use trust_dns_proto::xfer::DnsRequestOptions;
 
-/// 解析记录优先级
-pub enum RecordPriority{
-    Ipv4,
-    Ipv6,
-}
-impl FromStr for RecordPriority {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().trim() {
-            "ipv4" => Ok(RecordPriority::Ipv4),
-            "ipv6" => Ok(RecordPriority::Ipv6),
-            _ => Err(format!("not match '{}', enum: ipv4/ipv6", s)),
+/// 后续实现选择延迟最低的可用地址，需要服务端配合
+/// 现在是选择第一个地址，优先ipv6
+pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
+    let v4: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv4()).map(|v| *v).collect();
+    let v6: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv6()).map(|v| *v).collect();
+    let check_addr = |addrs: &Vec<SocketAddr>| -> anyhow::Result<SocketAddr> {
+        if !addrs.is_empty() {
+            let udp = if addrs[0].is_ipv6() {
+                UdpSocket::bind("[::]:0")?
+            } else {
+                UdpSocket::bind("0.0.0.0:0")?
+            };
+            for addr in addrs {
+                if udp.connect(addr).is_ok() {
+                    return Ok(*addr);
+                }
+            }
         }
+        Err(anyhow::anyhow!("not connect address"))
+    };
+    if let Ok(addr) = check_addr(&v6) {
+        return Ok(addr);
     }
+    check_addr(&v4)
 }
-impl Default for RecordPriority {
-    fn default() -> Self {
-        RecordPriority::Ipv6
-    }
-}
-pub fn dns_query_all(
-    domain: &str,
-    name_servers: Vec<SocketAddr>,
-) -> anyhow::Result<Vec<SocketAddr>> {
+
+pub fn dns_query_all(domain: &str, name_servers: Vec<String>) -> anyhow::Result<Vec<SocketAddr>> {
     match SocketAddr::from_str(domain) {
         Ok(addr) => {
             return Ok(vec![addr]);
@@ -43,7 +45,7 @@ pub fn dns_query_all(
             }
             let mut err: Option<anyhow::Error> = None;
             for name_server in name_servers {
-                if let Some(domain) = domain.strip_prefix("txt:") {
+                if let Some(domain) = domain.to_lowercase().strip_prefix("txt:") {
                     return txt_dns(domain, name_server);
                 }
                 let end_index = domain
@@ -54,10 +56,12 @@ pub fn dns_query_all(
                     .with_context(|| format!("{:?} not port", domain))?;
                 let th1 = {
                     let host = host.to_string();
+                    let name_server = name_server.clone();
                     thread::spawn(move || a_dns(host, name_server))
                 };
                 let th2 = {
                     let host = host.to_string();
+                    let name_server = name_server.clone();
                     thread::spawn(move || aaaa_dns(host, name_server))
                 };
                 let mut addr = Vec::new();
@@ -68,7 +72,7 @@ pub fn dns_query_all(
                         }
                     }
                     Err(e) => {
-                        err.replace(anyhow::anyhow!("{}",e));
+                        err.replace(anyhow::anyhow!("{}", e));
                     }
                 }
                 match th2.join().unwrap() {
@@ -80,9 +84,9 @@ pub fn dns_query_all(
                     Err(e) => {
                         if addr.is_empty() {
                             if let Some(err) = &mut err {
-                                *err = anyhow::anyhow!("{},{}",err,e);
+                                *err = anyhow::anyhow!("{},{}", err, e);
                             } else {
-                                err.replace(anyhow::anyhow!("{}",e));
+                                err.replace(anyhow::anyhow!("{}", e));
                             }
                             continue;
                         }
@@ -102,10 +106,6 @@ pub fn dns_query_all(
     }
 }
 
-pub fn dns_query(domain: &str, name_server: SocketAddr) -> anyhow::Result<Vec<SocketAddr>> {
-    dns_query_all(domain, vec![name_server])
-}
-
 fn query(
     udp: &UdpSocket,
     domain: &str,
@@ -120,7 +120,7 @@ fn query(
 
     let request = request.to_vec()?;
     udp.connect(name_server)
-        .with_context(|| format!("name server {:?} error ", name_server));
+        .with_context(|| format!("name server {:?} error ", name_server))?;
     let mut count = 0;
     let mut buf = [0; 65536];
     let len = loop {
@@ -150,8 +150,9 @@ fn query(
     Ok(message)
 }
 
-pub fn txt_dns(domain: &str, name_server: SocketAddr) -> anyhow::Result<Vec<SocketAddr>> {
-    let udp = bind_udp(name_server.is_ipv4())?;
+pub fn txt_dns(domain: &str, name_server: String) -> anyhow::Result<Vec<SocketAddr>> {
+    let name_server: SocketAddr = name_server.parse()?;
+    let udp = bind_udp(name_server)?;
     let message = query(&udp, domain, name_server, RecordType::TXT)?;
     let mut rs = Vec::new();
     for record in message.answers() {
@@ -166,8 +167,8 @@ pub fn txt_dns(domain: &str, name_server: SocketAddr) -> anyhow::Result<Vec<Sock
     Ok(rs)
 }
 
-fn bind_udp(is_ipv4: bool) -> io::Result<UdpSocket> {
-    let udp = if is_ipv4 {
+fn bind_udp(name_server: SocketAddr) -> anyhow::Result<UdpSocket> {
+    let udp = if name_server.is_ipv4() {
         UdpSocket::bind("0.0.0.0:0")?
     } else {
         UdpSocket::bind("[::]:0")?
@@ -176,8 +177,9 @@ fn bind_udp(is_ipv4: bool) -> io::Result<UdpSocket> {
     Ok(udp)
 }
 
-pub fn a_dns(domain: String, name_server: SocketAddr) -> anyhow::Result<Vec<Ipv4Addr>> {
-    let udp = bind_udp(name_server.is_ipv4())?;
+pub fn a_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv4Addr>> {
+    let name_server: SocketAddr = name_server.parse()?;
+    let udp = bind_udp(name_server)?;
     let message = query(&udp, &domain, name_server, RecordType::A)?;
     let mut rs = Vec::new();
     for record in message.answers() {
@@ -191,8 +193,9 @@ pub fn a_dns(domain: String, name_server: SocketAddr) -> anyhow::Result<Vec<Ipv4
     Ok(rs)
 }
 
-pub fn aaaa_dns(domain: String, name_server: SocketAddr) -> anyhow::Result<Vec<Ipv6Addr>> {
-    let udp = bind_udp(name_server.is_ipv4())?;
+pub fn aaaa_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv6Addr>> {
+    let name_server: SocketAddr = name_server.parse()?;
+    let udp = bind_udp(name_server)?;
     let message = query(&udp, &domain, name_server, RecordType::AAAA)?;
     let mut rs = Vec::new();
     for record in message.answers() {

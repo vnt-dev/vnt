@@ -1,12 +1,13 @@
-use std::io;
-use std::net::{Ipv4Addr, SocketAddr};
+use anyhow::anyhow;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::str::FromStr;
 
 pub use conn::Vnt;
 
 use crate::channel::punch::PunchModel;
 use crate::channel::UseChannelType;
 use crate::cipher::CipherModel;
-use crate::util::RecordPriority;
+use crate::util::{address_choose, dns_query_all};
 
 mod conn;
 
@@ -17,9 +18,9 @@ pub struct Config {
     pub token: String,
     pub device_id: String,
     pub name: String,
+    pub server_address: SocketAddr,
     pub server_address_str: String,
-    pub name_servers:Vec<SocketAddr>,
-    pub record_priority:RecordPriority,
+    pub name_servers: Vec<String>,
     pub stun_server: Vec<String>,
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub out_ips: Vec<(u32, u32)>,
@@ -51,8 +52,7 @@ impl Config {
         device_id: String,
         name: String,
         server_address_str: String,
-        name_servers:Vec<SocketAddr>,
-        record_priority:RecordPriority,
+        mut name_servers: Vec<String>,
         mut stun_server: Vec<String>,
         in_ips: Vec<(u32, u32, Ipv4Addr)>,
         out_ips: Vec<(u32, u32)>,
@@ -72,30 +72,42 @@ impl Config {
         use_channel_type: UseChannelType,
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
-    ) -> io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
                 x.push_str(":3478");
             }
         }
+        for x in name_servers.iter_mut() {
+            if Ipv6Addr::from_str(x).is_ok() {
+                x.push_str(":53");
+            } else if !x.contains(":") {
+                x.push_str(":53");
+            }
+        }
         if token.is_empty() || token.len() > 128 {
-            return Err(io::Error::new(io::ErrorKind::Other, "token too long"));
+            return Err(anyhow!("token too long"));
         }
         if device_id.is_empty() || device_id.len() > 128 {
-            return Err(io::Error::new(io::ErrorKind::Other, "device_id too long"));
+            return Err(anyhow!("device_id too long"));
         }
         if name.is_empty() || name.len() > 128 {
-            return Err(io::Error::new(io::ErrorKind::Other, "name too long"));
+            return Err(anyhow!("name too long"));
         }
+        if name_servers.is_empty() {
+            name_servers.push("8.8.8.8:53".to_string());
+        }
+        let server_address =
+            address_choose(dns_query_all(&server_address_str, name_servers.clone())?)?;
         Ok(Self {
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             tap,
             token,
             device_id,
             name,
+            server_address,
             server_address_str,
             name_servers,
-            record_priority,
             stun_server,
             in_ips,
             out_ips,

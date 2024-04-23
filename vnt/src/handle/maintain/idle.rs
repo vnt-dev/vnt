@@ -1,5 +1,5 @@
 use std::io;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +12,7 @@ use crate::channel::sender::AcceptSocketSender;
 use crate::handle::callback::{ConnectInfo, ErrorType};
 use crate::handle::handshaker::Handshake;
 use crate::handle::{BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
-use crate::util::{dns_query_all, Scheduler};
+use crate::util::{address_choose, dns_query_all, Scheduler};
 use crate::{ErrorInfo, VntCallback};
 
 pub fn idle_route<Call: VntCallback>(
@@ -164,32 +164,35 @@ pub fn domain_request0(
     let mut current_dev = current_device.load();
 
     // 探测服务端地址变化
-    match dns_query_all(&config.server_addr,config.name_servers.clone()) {
-        Ok(mut addrs) => {
-            for x in &addrs {
-                //选出一个能用的地址
-                if x.is_ipv4(){
-                }
-                todo!()
+    match dns_query_all(&config.server_addr, config.name_servers.clone()) {
+        Ok(addrs) => {
+            log::info!(
+                "domain {} dns {:?} addr {:?}",
+                config.server_addr,
+                config.name_servers,
+                addrs
+            );
 
-            }
-            if let Some(addr) = addrs.pop() {
-                if addr != current_dev.connect_server {
-                    let mut tmp = current_dev.clone();
-                    tmp.connect_server = addr;
-                    let rs = current_device.compare_exchange(current_dev, tmp);
-                    log::info!(
-                        "服务端地址变化,旧地址:{}，新地址:{},替换结果:{}",
-                        current_dev.connect_server,
-                        addr,
-                        rs.is_ok()
-                    );
-                    if rs.is_ok() {
-                        current_dev.connect_server = addr;
+            match address_choose(addrs) {
+                Ok(addr) => {
+                    if addr != current_dev.connect_server {
+                        let mut tmp = current_dev.clone();
+                        tmp.connect_server = addr;
+                        let rs = current_device.compare_exchange(current_dev, tmp);
+                        log::info!(
+                            "服务端地址变化,旧地址:{}，新地址:{},替换结果:{}",
+                            current_dev.connect_server,
+                            addr,
+                            rs.is_ok()
+                        );
+                        if rs.is_ok() {
+                            current_dev.connect_server = addr;
+                        }
                     }
                 }
-            } else {
-                log::error!("域名解析值为空,domain={}", config.server_addr);
+                Err(e) => {
+                    log::error!("域名地址选择失败:{:?},domain={}", e, config.server_addr);
+                }
             }
         }
         Err(e) => {

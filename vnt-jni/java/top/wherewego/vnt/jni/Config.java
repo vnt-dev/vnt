@@ -51,6 +51,10 @@ public class Config {
      */
     private String server;
     /**
+     * 服务端地址
+     */
+    private String[] dns;
+    /**
      * stun服务地址
      */
     private String[] stunServer;

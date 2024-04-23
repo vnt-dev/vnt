@@ -92,6 +92,7 @@ impl Vnt {
             config.server_encrypt,
             config.device_id.clone(),
             config.server_address_str.clone(),
+            config.name_servers.clone(),
         );
         let ports = config.ports.as_ref().map_or(vec![0, 0], |v| {
             if v.is_empty() {

@@ -1,5 +1,5 @@
 use std::io;
-use std::net::{Ipv4Addr, ToSocketAddrs};
+use std::net::Ipv4Addr;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,7 @@ pub struct FileConfig {
     pub name: String,
     pub server_address: String,
     pub stun_server: Vec<String>,
+    pub dns: Vec<String>,
     pub in_ips: Vec<String>,
     pub out_ips: Vec<String>,
     pub password: Option<String>,
@@ -55,6 +56,7 @@ impl Default for FileConfig {
                 "stun2.l.google.com:19302".to_string(),
                 "stun.qq.com:3478".to_string(),
             ],
+            dns: vec![],
             in_ips: vec![],
             out_ips: vec![],
             password: None,
@@ -91,24 +93,7 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
     if file_conf.token.is_empty() {
         return Err(io::Error::new(io::ErrorKind::Other, "token is_empty"));
     }
-    let server_address = match file_conf.server_address.to_socket_addrs() {
-        Ok(mut addr) => {
-            if let Some(addr) = addr.next() {
-                addr
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("server_address {:?} error", &file_conf.server_address),
-                ));
-            }
-        }
-        Err(e) => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("server_address {:?} error:{}", &file_conf.server_address, e),
-            ));
-        }
-    };
+
     let in_ips = match common::args_parse::ips_parse(&file_conf.in_ips) {
         Ok(in_ips) => in_ips,
         Err(e) => {
@@ -150,8 +135,8 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         file_conf.token,
         file_conf.device_id,
         file_conf.name,
-        server_address,
         file_conf.server_address,
+        file_conf.dns,
         file_conf.stun_server,
         in_ips,
         out_ips,
