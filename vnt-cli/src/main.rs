@@ -474,7 +474,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!(
         "  --packet-delay <0>  模拟延迟,整数,单位毫秒(ms),程序会按设定的值延迟发包,可用于模拟弱网"
     );
-    println!("  --dns <host:port>   DNS服务器地址,可使用多个dns,默认使用8.8.8.8:53");
+    println!("  --dns <host:port>   DNS服务器地址,可使用多个dns,默认使用114.114.114.114和8.8.8.8");
 
     println!();
     println!(

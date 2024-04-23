@@ -4,9 +4,7 @@ use std::time::Duration;
 use std::{io, thread};
 
 use anyhow::Context;
-use trust_dns_proto::op::{Edns, Message, MessageType, OpCode, Query};
-use trust_dns_proto::rr::{Name, RecordType};
-use trust_dns_proto::xfer::DnsRequestOptions;
+use dns_parser::{Builder, Packet, QueryClass, QueryType, RData, ResponseCode};
 
 /// 后续实现选择延迟最低的可用地址，需要服务端配合
 /// 现在是选择第一个地址，优先ipv6
@@ -26,7 +24,7 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
                 }
             }
         }
-        Err(anyhow::anyhow!("not connect address"))
+        Err(anyhow::anyhow!("Unable to connect to address {:?}", addrs))
     };
     if let Ok(addr) = check_addr(&v6) {
         return Ok(addr);
@@ -100,33 +98,30 @@ pub fn dns_query_all(domain: &str, name_servers: Vec<String>) -> anyhow::Result<
             if let Some(e) = err {
                 Err(e)
             } else {
-                Err(anyhow::anyhow!("dns query failed"))
+                Err(anyhow::anyhow!("DNS query failed"))
             }
         }
     }
 }
 
-fn query(
+fn query<'a>(
     udp: &UdpSocket,
     domain: &str,
     name_server: SocketAddr,
-    record_type: RecordType,
-) -> anyhow::Result<Message> {
-    let name = Name::from_str(domain).context("domain error")?;
-    let query = Query::query(name.clone(), record_type);
-    let mut options = DnsRequestOptions::default();
-    options.use_edns = true;
-    let request = build_message(query, options);
+    record_type: QueryType,
+    buf: &'a mut [u8],
+) -> anyhow::Result<Packet<'a>> {
+    let mut builder = Builder::new_query(1, true);
+    builder.add_question(domain, false, record_type, QueryClass::IN);
+    let packet = builder.build().unwrap();
 
-    let request = request.to_vec()?;
     udp.connect(name_server)
-        .with_context(|| format!("name server {:?} error ", name_server))?;
+        .with_context(|| format!("DNS {:?} error ", name_server))?;
     let mut count = 0;
-    let mut buf = [0; 65536];
     let len = loop {
-        udp.send(&request)?;
+        udp.send(&packet)?;
 
-        match udp.recv(&mut buf) {
+        match udp.recv(buf) {
             Ok(len) => {
                 break len;
             }
@@ -137,32 +132,47 @@ fn query(
                         continue;
                     }
                 }
-                Err(e).with_context(|| format!("name server {:?} recv error ", name_server))?
+                Err(e).with_context(|| format!("DNS {:?} recv error ", name_server))?
             }
         };
     };
 
-    let message = Message::from_vec(&buf[..len])
-        .with_context(|| format!("name server {:?} data error ", name_server))?;
-    if message.answers().is_empty() {
-        Err(anyhow::anyhow!("{:?} no {} record", domain, record_type))?
+    let pkt = Packet::parse(&buf[..len])
+        .with_context(|| format!("domain {:?} DNS {:?} data error ", domain, name_server))?;
+    if pkt.header.response_code != ResponseCode::NoError {
+        return Err(anyhow::anyhow!(
+            "response_code {} DNS {:?} domain {:?}",
+            pkt.header.response_code,
+            name_server,
+            domain
+        ));
     }
-    Ok(message)
+    if pkt.answers.len() == 0 {
+        return Err(anyhow::anyhow!(
+            "No records received DNS {:?} domain {:?}",
+            name_server,
+            domain
+        ));
+    }
+
+    Ok(pkt)
 }
 
 pub fn txt_dns(domain: &str, name_server: String) -> anyhow::Result<Vec<SocketAddr>> {
     let name_server: SocketAddr = name_server.parse()?;
     let udp = bind_udp(name_server)?;
-    let message = query(&udp, domain, name_server, RecordType::TXT)?;
+    let mut buf = [0; 65536];
+    let message = query(&udp, domain, name_server, QueryType::TXT, &mut buf)?;
     let mut rs = Vec::new();
-    for record in message.answers() {
-        let txt = record
-            .data()
-            .context("data none")?
-            .as_txt()
-            .context("record type txt is none")?;
-        let addr = SocketAddr::from_str(&txt.to_string())?;
-        rs.push(addr);
+    for record in message.answers {
+        if let RData::TXT(txt) = record.data {
+            for x in txt.iter() {
+                let txt = std::str::from_utf8(x).context("record type txt is not string")?;
+                let addr = SocketAddr::from_str(&txt.to_string())
+                    .context("record type txt is not SocketAddr")?;
+                rs.push(addr);
+            }
+        }
     }
     Ok(rs)
 }
@@ -180,15 +190,13 @@ fn bind_udp(name_server: SocketAddr) -> anyhow::Result<UdpSocket> {
 pub fn a_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv4Addr>> {
     let name_server: SocketAddr = name_server.parse()?;
     let udp = bind_udp(name_server)?;
-    let message = query(&udp, &domain, name_server, RecordType::A)?;
+    let mut buf = [0; 65536];
+    let message = query(&udp, &domain, name_server, QueryType::A, &mut buf)?;
     let mut rs = Vec::new();
-    for record in message.answers() {
-        let a = record
-            .data()
-            .context("data none")?
-            .as_a()
-            .context("record type A is none")?;
-        rs.push(a.0);
+    for record in message.answers {
+        if let RData::A(a) = record.data {
+            rs.push(a.0);
+        }
     }
     Ok(rs)
 }
@@ -196,36 +204,13 @@ pub fn a_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv4Addr
 pub fn aaaa_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv6Addr>> {
     let name_server: SocketAddr = name_server.parse()?;
     let udp = bind_udp(name_server)?;
-    let message = query(&udp, &domain, name_server, RecordType::AAAA)?;
+    let mut buf = [0; 65536];
+    let message = query(&udp, &domain, name_server, QueryType::AAAA, &mut buf)?;
     let mut rs = Vec::new();
-    for record in message.answers() {
-        let a = record
-            .data()
-            .context("data none")?
-            .as_aaaa()
-            .context("record type AAAA is none")?;
-        rs.push(a.0);
+    for record in message.answers {
+        if let RData::AAAA(a) = record.data {
+            rs.push(a.0);
+        }
     }
     Ok(rs)
-}
-
-pub const MAX_PAYLOAD_LEN: u16 = 1232;
-
-fn build_message(query: Query, options: DnsRequestOptions) -> Message {
-    // build the message
-    let mut message: Message = Message::new();
-    message
-        .add_query(query)
-        .set_message_type(MessageType::Query)
-        .set_op_code(OpCode::Query)
-        .set_recursion_desired(options.recursion_desired);
-    // Extended dns
-    if options.use_edns {
-        message
-            .extensions_mut()
-            .get_or_insert_with(Edns::new)
-            .set_max_payload(MAX_PAYLOAD_LEN)
-            .set_version(0);
-    }
-    message
 }

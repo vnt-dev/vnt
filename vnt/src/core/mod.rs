@@ -95,6 +95,7 @@ impl Config {
             return Err(anyhow!("name too long"));
         }
         if name_servers.is_empty() {
+            name_servers.push("114.114.114.114:53".to_string());
             name_servers.push("8.8.8.8:53".to_string());
         }
         let server_address =
