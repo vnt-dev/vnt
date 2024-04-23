@@ -26,10 +26,19 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
         }
         Err(anyhow::anyhow!("Unable to connect to address {:?}", addrs))
     };
-    if let Ok(addr) = check_addr(&v6) {
-        return Ok(addr);
+    if v6.is_empty() {
+        return check_addr(&v4);
     }
-    check_addr(&v4)
+    if v4.is_empty() {
+        return check_addr(&v6);
+    }
+    match check_addr(&v6) {
+        Ok(addr) => Ok(addr),
+        Err(e1) => match check_addr(&v4) {
+            Ok(addr) => Ok(addr),
+            Err(e2) => Err(anyhow::anyhow!("{} , {}", e1, e2)),
+        },
+    }
 }
 
 pub fn dns_query_all(domain: &str, name_servers: Vec<String>) -> anyhow::Result<Vec<SocketAddr>> {
