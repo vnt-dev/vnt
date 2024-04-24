@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
@@ -10,6 +10,7 @@ use rand::Rng;
 
 use crate::channel::context::Context;
 use crate::channel::sender::AcceptSocketSender;
+use crate::external_route::ExternalRoute;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PunchModel {
@@ -185,6 +186,7 @@ pub struct Punch {
     punch_model: PunchModel,
     is_tcp: bool,
     tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
+    external_route: ExternalRoute,
 }
 
 impl Punch {
@@ -193,6 +195,7 @@ impl Punch {
         punch_model: PunchModel,
         is_tcp: bool,
         tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
+        external_route: ExternalRoute,
     ) -> Self {
         let mut port_vec: Vec<u16> = (1..65535).collect();
         port_vec.push(65535);
@@ -205,12 +208,20 @@ impl Punch {
             punch_model,
             is_tcp,
             tcp_socket_sender,
+            external_route,
         }
     }
 }
 
 impl Punch {
     fn connect_tcp(&self, buf: &[u8], addr: SocketAddr) -> bool {
+        if let IpAddr::V4(ip) = addr.ip() {
+            if self.external_route.route(&ip).is_some() {
+                log::warn!("跳过打洞目标{}，防止环路 ", addr);
+                return false;
+            }
+        }
+
         // mio是非阻塞的，不能立马判断是否能连接成功，所以用标准库的tcp
         match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
             Ok(tcp_stream) => {
@@ -263,6 +274,12 @@ impl Punch {
         let channel_num = self.context.channel_num();
         for index in 0..channel_num {
             if let Some(ipv4_addr) = nat_info.local_udp_ipv4addr(index) {
+                if let IpAddr::V4(ip) = ipv4_addr.ip() {
+                    if self.external_route.route(&ip).is_some() {
+                        log::warn!("跳过打洞目标{}，防止环路", ipv4_addr);
+                        continue;
+                    }
+                }
                 let _ = self.context.send_main_udp(index, buf, ipv4_addr);
             }
         }

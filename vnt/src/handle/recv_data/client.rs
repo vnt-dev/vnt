@@ -2,7 +2,7 @@ use parking_lot::RwLock;
 use protobuf::Message;
 use std::collections::HashMap;
 use std::io;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 use packet::icmp::{icmp, Kind};
@@ -13,7 +13,7 @@ use crate::channel::context::Context;
 use crate::channel::punch::NatInfo;
 use crate::channel::{Route, RouteKey};
 use crate::cipher::Cipher;
-use crate::external_route::AllowExternalRoute;
+use crate::external_route::{AllowExternalRoute, ExternalRoute};
 use crate::handle::maintain::PunchSender;
 use crate::handle::recv_data::PacketHandler;
 use crate::handle::CurrentDeviceInfo;
@@ -24,7 +24,7 @@ use crate::proto::message::{PunchInfo, PunchNatType};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::{
-    control_packet, ip_turn_packet, other_turn_packet, NetPacket, Protocol, Version, MAX_TTL,
+    control_packet, ip_turn_packet, other_turn_packet, NetPacket, Protocol, MAX_TTL,
 };
 use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -38,6 +38,7 @@ pub struct ClientPacketHandler {
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     nat_test: NatTest,
     route: AllowExternalRoute,
+    external_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")]
     ip_proxy_map: Option<IpProxyMap>,
 }
@@ -50,6 +51,7 @@ impl ClientPacketHandler {
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         nat_test: NatTest,
         route: AllowExternalRoute,
+        external_route: ExternalRoute,
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     ) -> Self {
         Self {
@@ -59,6 +61,7 @@ impl ClientPacketHandler {
             peer_nat_info_map,
             nat_test,
             route,
+            external_route,
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         }
@@ -73,6 +76,16 @@ impl PacketHandler for ClientPacketHandler {
         context: &Context,
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()> {
+        let ip = match route_key.addr.ip() {
+            IpAddr::V4(ip) => Some(ip),
+            IpAddr::V6(ip) => ip.to_ipv4_mapped(),
+        };
+        if let Some(ip) = ip {
+            if self.external_route.route(&ip).is_some() {
+                log::warn!("跳过in路由中的目标 {:?}，防止环路 ", route_key);
+                return Ok(());
+            }
+        }
         self.client_cipher.decrypt_ipv4(&mut net_packet)?;
         context
             .route_table
@@ -213,7 +226,7 @@ impl ClientPacketHandler {
             ControlPacket::AddrRequest => match route_key.addr.ip() {
                 std::net::IpAddr::V4(ipv4) => {
                     let mut packet = NetPacket::new_encrypt([0; 12 + 6 + ENCRYPTION_RESERVED])?;
-                    packet.set_version(Version::V1);
+                    packet.set_default_version();
                     packet.set_protocol(Protocol::Control);
                     packet.set_transport_protocol(control_packet::Protocol::AddrResponse.into());
                     packet.first_set_ttl(MAX_TTL);
@@ -312,7 +325,7 @@ impl ClientPacketHandler {
                     })?;
                     let mut punch_packet =
                         NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;
-                    punch_packet.set_version(Version::V1);
+                    punch_packet.set_default_version();
                     punch_packet.set_protocol(Protocol::OtherTurn);
                     punch_packet.set_transport_protocol(other_turn_packet::Protocol::Punch.into());
                     punch_packet.first_set_ttl(MAX_TTL);
