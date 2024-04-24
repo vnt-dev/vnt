@@ -12,7 +12,7 @@ use crate::cipher::Cipher;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::PingPacket;
-use crate::protocol::{control_packet, NetPacket, Protocol, Version};
+use crate::protocol::{control_packet, NetPacket, Protocol};
 use crate::util::Scheduler;
 
 /// 定时发送心跳包
@@ -213,7 +213,7 @@ fn heartbeat_packet(
     dest: Ipv4Addr,
 ) -> io::Result<NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]>> {
     let mut net_packet = NetPacket::new_encrypt([0u8; 12 + 4 + ENCRYPTION_RESERVED])?;
-    net_packet.set_version(Version::V1);
+    net_packet.set_default_version();
     net_packet.set_protocol(Protocol::Control);
     net_packet.set_transport_protocol(control_packet::Protocol::Ping.into());
     net_packet.first_set_ttl(5);

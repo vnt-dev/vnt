@@ -17,7 +17,7 @@ use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
 use crate::proto::message::{PunchInfo, PunchNatType};
 use crate::protocol::body::ENCRYPTION_RESERVED;
-use crate::protocol::{control_packet, other_turn_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::{control_packet, other_turn_packet, NetPacket, Protocol, MAX_TTL};
 use crate::util::Scheduler;
 
 #[derive(Clone)]
@@ -135,7 +135,7 @@ fn punch_start(
 ) {
     while let Ok((peer_ip, nat_info)) = receiver.recv() {
         let mut packet = NetPacket::new_encrypt([0u8; 12 + ENCRYPTION_RESERVED]).unwrap();
-        packet.set_version(Version::V1);
+        packet.set_default_version();
         packet.first_set_ttl(1);
         packet.set_protocol(Protocol::Control);
         packet.set_transport_protocol(control_packet::Protocol::PunchRequest.into());
@@ -322,7 +322,7 @@ fn punch_packet(
         .write_to_bytes()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("punch_packet {:?}", e)))?;
     let mut net_packet = NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;
-    net_packet.set_version(Version::V1);
+    net_packet.set_default_version();
     net_packet.set_protocol(Protocol::OtherTurn);
     net_packet.set_transport_protocol(other_turn_packet::Protocol::Punch.into());
     net_packet.first_set_ttl(MAX_TTL);

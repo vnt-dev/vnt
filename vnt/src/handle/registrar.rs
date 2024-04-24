@@ -7,7 +7,7 @@ use crate::cipher::Cipher;
 use crate::handle::{GATEWAY_IP, SELF_IP};
 use crate::proto::message::RegistrationRequest;
 use crate::protocol::body::ENCRYPTION_RESERVED;
-use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::{service_packet, NetPacket, Protocol, MAX_TTL};
 
 /// 注册数据
 pub fn registration_request_packet(
@@ -43,7 +43,7 @@ pub fn registration_request_packet(
     let mut net_packet = NetPacket::new_encrypt(buf)?;
     net_packet.set_destination(GATEWAY_IP);
     net_packet.set_source(SELF_IP);
-    net_packet.set_version(Version::V1);
+    net_packet.set_default_version();
     net_packet.set_gateway_flag(true);
     net_packet.set_protocol(Protocol::Service);
     net_packet.set_transport_protocol(service_packet::Protocol::RegistrationRequest.into());

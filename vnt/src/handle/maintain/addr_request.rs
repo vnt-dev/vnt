@@ -7,7 +7,7 @@ use crate::channel::context::Context;
 use crate::cipher::Cipher;
 use crate::handle::{BaseConfigInfo, CurrentDeviceInfo};
 use crate::protocol::body::ENCRYPTION_RESERVED;
-use crate::protocol::{control_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::{control_packet, NetPacket, Protocol, MAX_TTL};
 use crate::util::Scheduler;
 
 pub fn addr_request(
@@ -51,7 +51,7 @@ pub fn addr_request0(
         let gateway_ip = current_dev.virtual_gateway;
         let src_ip = current_dev.virtual_ip;
         let mut packet = NetPacket::new_encrypt([0; 12 + ENCRYPTION_RESERVED]).unwrap();
-        packet.set_version(Version::V1);
+        packet.set_default_version();
         packet.set_gateway_flag(true);
         packet.set_protocol(Protocol::Control);
         packet.set_transport_protocol(control_packet::Protocol::AddrRequest.into());

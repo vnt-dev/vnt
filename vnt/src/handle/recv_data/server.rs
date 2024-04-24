@@ -31,7 +31,7 @@ use crate::proto::message::{DeviceList, HandshakeResponse, RegistrationResponse}
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::error_packet::InErrorPacket;
-use crate::protocol::{ip_turn_packet, service_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::{ip_turn_packet, service_packet, NetPacket, Protocol, MAX_TTL};
 use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
 use crate::{proto, PeerClientInfo};
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -539,7 +539,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                     let mut poll_device = NetPacket::new_encrypt([0; 12 + ENCRYPTION_RESERVED])?;
                     poll_device.set_source(current_device.virtual_ip);
                     poll_device.set_destination(GATEWAY_IP);
-                    poll_device.set_version(Version::V1);
+                    poll_device.set_default_version();
                     poll_device.set_gateway_flag(true);
                     poll_device.first_set_ttl(MAX_TTL);
                     poll_device.set_protocol(Protocol::Service);

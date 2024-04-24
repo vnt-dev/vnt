@@ -2,7 +2,7 @@ use crate::channel::context::Context;
 use crate::handle::CurrentDeviceInfo;
 use crate::proto::message::{ClientStatusInfo, PunchNatType, RouteItem};
 use crate::protocol::body::ENCRYPTION_RESERVED;
-use crate::protocol::{service_packet, NetPacket, Protocol, Version, HEAD_LEN, MAX_TTL};
+use crate::protocol::{service_packet, NetPacket, Protocol, HEAD_LEN, MAX_TTL};
 use crate::util::{Scheduler, WatchSingleU64Adder, WatchU64Adder};
 use crossbeam_utils::atomic::AtomicCell;
 use protobuf::Message;
@@ -91,7 +91,7 @@ fn send_up_status_packet(
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("up_status_packet {:?}", e)))?;
     let mut net_packet =
         NetPacket::new_encrypt(vec![0; HEAD_LEN + buf.len() + ENCRYPTION_RESERVED])?;
-    net_packet.set_version(Version::V1);
+    net_packet.set_default_version();
     net_packet.set_gateway_flag(true);
     net_packet.set_protocol(Protocol::Service);
     net_packet.set_transport_protocol_into(service_packet::Protocol::ClientStatusInfo);

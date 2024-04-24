@@ -78,7 +78,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             config_info,
             nat_test.clone(),
             callback,
-            external_route,
+            external_route.clone(),
             handshake,
         );
         let client = ClientPacketHandler::new(
@@ -88,6 +88,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             peer_nat_info_map,
             nat_test,
             route,
+            external_route.clone(),
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         );

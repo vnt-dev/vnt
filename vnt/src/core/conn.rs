@@ -211,6 +211,7 @@ impl Vnt {
             config.punch_model,
             config.tcp,
             tcp_socket_sender.clone(),
+            external_route.clone(),
         );
 
         #[cfg(not(target_os = "android"))]

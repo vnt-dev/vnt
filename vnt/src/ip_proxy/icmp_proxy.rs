@@ -17,7 +17,7 @@ use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::ProxyHandler;
 use crate::protocol;
-use crate::protocol::{NetPacket, Version, MAX_TTL};
+use crate::protocol::{NetPacket, MAX_TTL};
 use crate::util::StopManager;
 #[derive(Clone)]
 pub struct IcmpProxy {
@@ -172,7 +172,7 @@ fn recv_handle(
                         let virtual_ip = current_device.virtual_ip();
 
                         let mut net_packet = NetPacket::new0(data_len, buf).unwrap();
-                        net_packet.set_version(Version::V1);
+                        net_packet.set_default_version();
                         net_packet.set_protocol(protocol::Protocol::IpTurn);
                         net_packet.set_transport_protocol(
                             protocol::ip_turn_packet::Protocol::Ipv4.into(),

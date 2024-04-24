@@ -15,7 +15,7 @@ use crate::ip_proxy::{IpProxyMap, ProxyHandler};
 use crate::protocol;
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
-use crate::protocol::{ip_turn_packet, NetPacket, Version, MAX_TTL};
+use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
 
 mod channel_group;
 pub mod tun_handler;
@@ -87,7 +87,7 @@ fn broadcast(
     let buf = vec![0u8; 12 + 1 + p2p_ips.len() * 4 + net_packet.data_len() + ENCRYPTION_RESERVED];
     //剩余的发送到服务端，需要告知哪些已发送过
     let mut server_packet = NetPacket::new_encrypt(buf)?;
-    server_packet.set_version(Version::V1);
+    server_packet.set_default_version();
     server_packet.set_gateway_flag(true);
     server_packet.first_set_ttl(MAX_TTL);
     server_packet.set_source(net_packet.source());
@@ -123,7 +123,7 @@ pub fn base_handle(
     let src_ip = ipv4_packet.source_ip();
     let mut dest_ip = ipv4_packet.destination_ip();
     let mut net_packet = NetPacket::new0(data_len, buf)?;
-    net_packet.set_version(Version::V1);
+    net_packet.set_default_version();
     net_packet.set_protocol(protocol::Protocol::IpTurn);
     net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
     net_packet.first_set_ttl(6);

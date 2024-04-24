@@ -27,14 +27,15 @@ pub mod service_packet;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Version {
-    V1,
+    V2,
     Unknown(u8),
 }
 
 impl From<u8> for Version {
     fn from(value: u8) -> Self {
         match value {
-            1 => Version::V1,
+            // 版本从2开始，用于和stun协议的binging响应区分开
+            2 => Version::V2,
             val => Version::Unknown(val),
         }
     }
@@ -43,7 +44,7 @@ impl From<u8> for Version {
 impl Into<u8> for Version {
     fn into(self) -> u8 {
         match self {
-            Version::V1 => 1,
+            Version::V2 => 2,
             Version::Unknown(val) => val,
         }
     }
@@ -207,8 +208,8 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
             self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0xBF
         };
     }
-    pub fn set_version(&mut self, version: Version) {
-        let v: u8 = version.into();
+    pub fn set_default_version(&mut self) {
+        let v: u8 = Version::V2.into();
         self.buffer.as_mut()[0] = (self.buffer.as_ref()[0] & 0xF0) | (0x0F & v);
     }
     pub fn set_protocol(&mut self, protocol: Protocol) {

@@ -16,7 +16,7 @@ use crate::proto::message::HandshakeRequest;
 use crate::proto::message::SecretHandshakeRequest;
 #[cfg(feature = "server_encrypt")]
 use crate::protocol::body::RSA_ENCRYPTION_RESERVED;
-use crate::protocol::{service_packet, NetPacket, Protocol, Version, MAX_TTL};
+use crate::protocol::{service_packet, NetPacket, Protocol, MAX_TTL};
 
 pub enum HandshakeEnum {
     NotSecret,
@@ -65,7 +65,7 @@ impl Handshake {
         })?;
         let buf = vec![0u8; 12 + bytes.len()];
         let mut net_packet = NetPacket::new(buf)?;
-        net_packet.set_version(Version::V1);
+        net_packet.set_default_version();
         net_packet.set_gateway_flag(true);
         net_packet.set_destination(GATEWAY_IP);
         net_packet.set_source(SELF_IP);
@@ -97,7 +97,7 @@ pub fn secret_handshake_request_packet(
         12 + bytes.len(),
         vec![0u8; 12 + bytes.len() + RSA_ENCRYPTION_RESERVED],
     )?;
-    net_packet.set_version(Version::V1);
+    net_packet.set_default_version();
     net_packet.set_gateway_flag(true);
     net_packet.set_destination(GATEWAY_IP);
     net_packet.set_source(SELF_IP);
