@@ -126,6 +126,12 @@ fn udp_proxy(
             //所有事件 50分钟超时
             if let Err(e) = poll.poll(&mut events, Some(Duration::from_secs(50 * 60))) {
                 if e.kind() == io::ErrorKind::TimedOut || e.kind() == io::ErrorKind::WouldBlock {
+                    log::warn!(
+                        "超时清理所有udp映射 {},token_map={},udp_map={}",
+                        e,
+                        token_map.len(),
+                        udp_map.len()
+                    );
                     token_map.clear();
                     udp_map.clear();
                     continue;
@@ -198,6 +204,12 @@ fn check_handle(
     for token in remove_list {
         if let Some((_, src_addr, _)) = token_map.remove(&token) {
             udp_map.remove(&src_addr);
+            log::warn!(
+                "超时清理udp映射 {},token_map={},udp_map={}",
+                src_addr,
+                token_map.len(),
+                udp_map.len()
+            );
         }
     }
 }
@@ -246,11 +258,10 @@ fn server_handle(
                         log::error!("register失败:{:?},addr={:?}", e, dest_addr);
                         continue;
                     }
-                    if dest_udp.send(&buf[..len]).is_ok() {
-                        let dest_udp = Rc::new(dest_udp);
-                        token_map.insert(token, (dest_udp.clone(), src_addr, Instant::now()));
-                        udp_map.insert(src_addr, (dest_udp, Instant::now()));
-                    }
+                    let _ = dest_udp.send(&buf[..len]);
+                    let dest_udp = Rc::new(dest_udp);
+                    token_map.insert(token, (dest_udp.clone(), src_addr, Instant::now()));
+                    udp_map.insert(src_addr, (dest_udp, Instant::now()));
                 }
                 Err(e) => {
                     log::error!("绑定目标地址失败:{:?}", e);
@@ -304,6 +315,7 @@ fn readable_handle(
             if len == 0 {
                 return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
             }
+
             let _ = udp.send_to(&buf[..len], (*src_addr).into());
         }
         *time = Instant::now();
