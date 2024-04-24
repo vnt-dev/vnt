@@ -1,4 +1,6 @@
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
@@ -6,9 +8,32 @@ use std::{io, thread};
 use anyhow::Context;
 use dns_parser::{Builder, Packet, QueryClass, QueryType, RData, ResponseCode};
 
+thread_local! {
+    static HISTORY: RefCell<HashSet<SocketAddr>> =  RefCell::new(HashSet::new());
+}
+
+/// 保留一个地址使用记录，使用过的地址后续不再选中，直到地址全使用过
+pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
+    HISTORY.with(|history| {
+        let mut available = Vec::new();
+        for x in &addrs {
+            if !history.borrow().contains(x) {
+                available.push(*x);
+            }
+        }
+        if available.is_empty() {
+            available = addrs;
+            history.borrow_mut().clear();
+        }
+        let addr = address_choose0(available)?;
+        history.borrow_mut().insert(addr);
+        Ok(addr)
+    })
+}
+
 /// 后续实现选择延迟最低的可用地址，需要服务端配合
 /// 现在是选择第一个地址，优先ipv6
-pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
+fn address_choose0(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
     let v4: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv4()).map(|v| *v).collect();
     let v6: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv6()).map(|v| *v).collect();
     let check_addr = |addrs: &Vec<SocketAddr>| -> anyhow::Result<SocketAddr> {
@@ -41,18 +66,35 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
     }
 }
 
-pub fn dns_query_all(domain: &str, name_servers: Vec<String>) -> anyhow::Result<Vec<SocketAddr>> {
+pub fn dns_query_all(
+    domain: &str,
+    mut name_servers: Vec<String>,
+) -> anyhow::Result<Vec<SocketAddr>> {
     match SocketAddr::from_str(domain) {
         Ok(addr) => {
             return Ok(vec![addr]);
         }
         Err(_) => {
+            let txt_domain = domain
+                .to_lowercase()
+                .strip_prefix("txt:")
+                .map(|v| v.to_string());
             if name_servers.is_empty() {
-                Err(anyhow::anyhow!("name server is none"))?
+                if txt_domain.is_some() {
+                    name_servers.push("223.5.5.5:53".into());
+                    name_servers.push("114.114.114.114:53".into());
+                } else {
+                    return Ok(domain
+                        .to_socket_addrs()
+                        .with_context(|| format!("DNS query failed {:?}", domain))?
+                        .into_iter()
+                        .collect());
+                }
             }
+
             let mut err: Option<anyhow::Error> = None;
             for name_server in name_servers {
-                if let Some(domain) = domain.to_lowercase().strip_prefix("txt:") {
+                if let Some(domain) = txt_domain.as_ref() {
                     return txt_dns(domain, name_server);
                 }
                 let end_index = domain
@@ -107,7 +149,7 @@ pub fn dns_query_all(domain: &str, name_servers: Vec<String>) -> anyhow::Result<
             if let Some(e) = err {
                 Err(e)
             } else {
-                Err(anyhow::anyhow!("DNS query failed"))
+                Err(anyhow::anyhow!("DNS query failed {:?}", domain))
             }
         }
     }
