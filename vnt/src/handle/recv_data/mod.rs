@@ -88,7 +88,6 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             peer_nat_info_map,
             nat_test,
             route,
-            external_route.clone(),
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         );

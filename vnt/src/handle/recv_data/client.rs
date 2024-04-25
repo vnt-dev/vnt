@@ -2,7 +2,7 @@ use parking_lot::RwLock;
 use protobuf::Message;
 use std::collections::HashMap;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 use packet::icmp::{icmp, Kind};
@@ -13,7 +13,7 @@ use crate::channel::context::Context;
 use crate::channel::punch::NatInfo;
 use crate::channel::{Route, RouteKey};
 use crate::cipher::Cipher;
-use crate::external_route::{AllowExternalRoute, ExternalRoute};
+use crate::external_route::AllowExternalRoute;
 use crate::handle::maintain::PunchSender;
 use crate::handle::recv_data::PacketHandler;
 use crate::handle::CurrentDeviceInfo;
@@ -38,7 +38,6 @@ pub struct ClientPacketHandler {
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     nat_test: NatTest,
     route: AllowExternalRoute,
-    external_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")]
     ip_proxy_map: Option<IpProxyMap>,
 }
@@ -51,7 +50,6 @@ impl ClientPacketHandler {
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         nat_test: NatTest,
         route: AllowExternalRoute,
-        external_route: ExternalRoute,
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     ) -> Self {
         Self {
@@ -61,7 +59,6 @@ impl ClientPacketHandler {
             peer_nat_info_map,
             nat_test,
             route,
-            external_route,
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         }
@@ -76,16 +73,6 @@ impl PacketHandler for ClientPacketHandler {
         context: &Context,
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()> {
-        let ip = match route_key.addr.ip() {
-            IpAddr::V4(ip) => Some(ip),
-            IpAddr::V6(ip) => ip.to_ipv4_mapped(),
-        };
-        if let Some(ip) = ip {
-            if self.external_route.route(&ip).is_some() {
-                log::warn!("跳过in路由中的目标 {:?}，防止环路 ", route_key);
-                return Ok(());
-            }
-        }
         self.client_cipher.decrypt_ipv4(&mut net_packet)?;
         context
             .route_table
