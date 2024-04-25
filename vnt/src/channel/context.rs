@@ -347,6 +347,15 @@ impl RouteTable {
             _ => {}
         }
         let key = route.route_key();
+        if only_if_absent {
+            if let Some((_, list)) = self.route_table.read().get(&id) {
+                for (x, _) in list {
+                    if x.route_key() == key {
+                        return;
+                    }
+                }
+            }
+        }
         let mut route_table = self.route_table.write();
         let (_, list) = route_table
             .entry(id)
