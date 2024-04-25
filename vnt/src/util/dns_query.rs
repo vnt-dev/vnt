@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use anyhow::Context;
 use dns_parser::{Builder, Packet, QueryClass, QueryType, RData, ResponseCode};
 
 thread_local! {
-    static HISTORY: RefCell<HashSet<SocketAddr>> =  RefCell::new(HashSet::new());
+    static HISTORY: RefCell<HashMap<SocketAddr,usize>> = RefCell::new(HashMap::new());
 }
 
 /// 保留一个地址使用记录，使用过的地址后续不再选中，直到地址全使用过
@@ -17,7 +17,8 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
     HISTORY.with(|history| {
         let mut available = Vec::new();
         for x in &addrs {
-            if !history.borrow().contains(x) {
+            let num = history.borrow().get(x).map_or(0, |v| *v);
+            if num < 3 {
                 available.push(*x);
             }
         }
@@ -26,7 +27,13 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
             history.borrow_mut().clear();
         }
         let addr = address_choose0(available)?;
-        history.borrow_mut().insert(addr);
+        history
+            .borrow_mut()
+            .entry(addr)
+            .and_modify(|v| {
+                *v += 1;
+            })
+            .or_insert(1);
         Ok(addr)
     })
 }
