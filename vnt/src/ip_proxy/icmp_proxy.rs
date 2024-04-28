@@ -33,9 +33,16 @@ impl IcmpProxy {
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         client_cipher: Cipher,
     ) -> io::Result<Self> {
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         let icmp_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::RAW,
+            Some(socket2::Protocol::ICMPV4),
+        )?;
+        #[cfg(target_os = "android")]
+        let icmp_socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::DGRAM,
             Some(socket2::Protocol::ICMPV4),
         )?;
         let addr: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
@@ -127,8 +134,12 @@ fn readable_handle(
     current_device: &AtomicCell<CurrentDeviceInfo>,
     client_cipher: &Cipher,
 ) {
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    let start = 12;
+    #[cfg(target_os = "android")]
+    let start = 12 + 20;
     loop {
-        let (len, addr) = match icmp_socket.recv_from(&mut buf[12..]) {
+        let (len, addr) = match icmp_socket.recv_from(&mut buf[start..]) {
             Ok(rs) => rs,
             Err(e) => {
                 if e.kind() == io::ErrorKind::WouldBlock {
@@ -139,9 +150,23 @@ fn readable_handle(
             }
         };
         if let IpAddr::V4(peer_ip) = addr.ip() {
+            #[cfg(target_os = "android")]
+            {
+                let buf = &mut buf[12..];
+                // ipv4 头部20字节
+                buf[0] = 0b0100_0110;
+                //写入总长度
+                buf[2..4].copy_from_slice(&((20 + len) as u16).to_be_bytes());
+
+                let mut ipv4 = IpV4Packet::unchecked(buf);
+                ipv4.set_flags(2);
+                ipv4.set_ttl(1);
+                ipv4.set_protocol(packet::ip::ipv4::protocol::Protocol::Icmp);
+                ipv4.set_source_ip(peer_ip);
+            }
             recv_handle(
                 buf,
-                12 + len,
+                start + len,
                 peer_ip,
                 &nat_map,
                 &context,
