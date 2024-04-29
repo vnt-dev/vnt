@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
@@ -11,6 +11,7 @@ use rand::Rng;
 use crate::channel::context::Context;
 use crate::channel::sender::AcceptSocketSender;
 use crate::external_route::ExternalRoute;
+use crate::nat::NatTest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PunchModel {
@@ -187,6 +188,7 @@ pub struct Punch {
     is_tcp: bool,
     tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     external_route: ExternalRoute,
+    nat_test: NatTest,
 }
 
 impl Punch {
@@ -196,6 +198,7 @@ impl Punch {
         is_tcp: bool,
         tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
         external_route: ExternalRoute,
+        nat_test: NatTest,
     ) -> Self {
         let mut port_vec: Vec<u16> = (1..65535).collect();
         port_vec.push(65535);
@@ -209,19 +212,16 @@ impl Punch {
             is_tcp,
             tcp_socket_sender,
             external_route,
+            nat_test,
         }
     }
 }
 
 impl Punch {
     fn connect_tcp(&self, buf: &[u8], addr: SocketAddr) -> bool {
-        if let IpAddr::V4(ip) = addr.ip() {
-            if self.external_route.route(&ip).is_some() {
-                log::warn!("跳过打洞目标{}，防止环路 ", addr);
-                return false;
-            }
+        if self.nat_test.is_local_address(true, addr) {
+            return false;
         }
-
         // mio是非阻塞的，不能立马判断是否能连接成功，所以用标准库的tcp
         match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
             Ok(tcp_stream) => {
@@ -243,13 +243,26 @@ impl Punch {
         &mut self,
         buf: &[u8],
         id: Ipv4Addr,
-        nat_info: NatInfo,
+        mut nat_info: NatInfo,
         punch_tcp: bool,
     ) -> io::Result<()> {
         if self.context.route_table.no_need_punch(&id) {
             log::info!("已打洞成功,无需打洞:{:?}", id);
             return Ok(());
         }
+        nat_info
+            .public_ips
+            .retain(|ip| self.external_route.route(&ip).is_none());
+        nat_info
+            .local_ipv4
+            .filter(|ip| self.external_route.route(&ip).is_none());
+        nat_info.ipv6.filter(|ip| {
+            if let Some(ip) = ip.to_ipv4_mapped() {
+                self.external_route.route(&ip).is_none()
+            } else {
+                true
+            }
+        });
         if punch_tcp && self.is_tcp && nat_info.tcp_port != 0 {
             //向tcp发起连接
             if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
@@ -274,23 +287,21 @@ impl Punch {
         let channel_num = self.context.channel_num();
         for index in 0..channel_num {
             if let Some(ipv4_addr) = nat_info.local_udp_ipv4addr(index) {
-                if let IpAddr::V4(ip) = ipv4_addr.ip() {
-                    if self.external_route.route(&ip).is_some() {
-                        log::warn!("跳过打洞目标{}，防止环路", ipv4_addr);
-                        continue;
-                    }
+                if !self.nat_test.is_local_address(false, ipv4_addr) {
+                    let _ = self.context.send_main_udp(index, buf, ipv4_addr);
                 }
-                let _ = self.context.send_main_udp(index, buf, ipv4_addr);
             }
         }
 
         if self.punch_model != PunchModel::IPv4 {
             for index in 0..channel_num {
                 if let Some(ipv6_addr) = nat_info.local_udp_ipv6addr(index) {
-                    let rs = self.context.send_main_udp(index, buf, ipv6_addr);
-                    log::info!("发送到ipv6地址:{:?},rs={:?}", ipv6_addr, rs);
-                    if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
-                        return Ok(());
+                    if !self.nat_test.is_local_address(false, ipv6_addr) {
+                        let rs = self.context.send_main_udp(index, buf, ipv6_addr);
+                        log::info!("发送到ipv6地址:{:?},rs={:?}", ipv6_addr, rs);
+                        if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
+                            return Ok(());
+                        }
                     }
                 }
             }

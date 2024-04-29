@@ -29,6 +29,7 @@ use crate::protocol::{
 use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use tun::device::IFace;
+
 /// 处理来源于客户端的包
 #[derive(Clone)]
 pub struct ClientPacketHandler {
@@ -142,6 +143,31 @@ impl ClientPacketHandler {
                         //拦截不符合的目标
                         return Ok(());
                     }
+                    match ipv4.protocol() {
+                        ipv4::protocol::Protocol::Tcp => {
+                            let payload = ipv4.payload();
+                            if payload.len() < 20 {
+                                return Ok(());
+                            }
+                            let destination_port =
+                                u16::from_be_bytes(payload[2..4].try_into().unwrap());
+                            if self.nat_test.is_local_tcp(real_dest, destination_port) {
+                                return Ok(());
+                            }
+                        }
+                        ipv4::protocol::Protocol::Udp => {
+                            let payload = ipv4.payload();
+                            if payload.len() < 8 {
+                                return Ok(());
+                            }
+                            let destination_port =
+                                u16::from_be_bytes(payload[2..4].try_into().unwrap());
+                            if self.nat_test.is_local_udp(real_dest, destination_port) {
+                                return Ok(());
+                            }
+                        }
+                        _ => {}
+                    }
                     #[cfg(feature = "ip_proxy")]
                     if let Some(ip_proxy_map) = &self.ip_proxy_map {
                         if ip_proxy_map.recv_handle(&mut ipv4, source, destination)? {
@@ -192,6 +218,15 @@ impl ClientPacketHandler {
                 if context.use_channel_type().is_only_relay() {
                     return Ok(());
                 }
+                //忽略掉来源于自己的包
+                if route_key.is_tcp() {}
+                if self
+                    .nat_test
+                    .is_local_address(route_key.is_tcp(), route_key.addr)
+                {
+                    return Ok(());
+                }
+
                 //回应
                 net_packet.set_transport_protocol(control_packet::Protocol::PunchResponse.into());
                 net_packet.set_source(current_device.virtual_ip);
@@ -205,6 +240,12 @@ impl ClientPacketHandler {
             ControlPacket::PunchResponse => {
                 log::info!("PunchResponse={:?},source={}", route_key, source);
                 if context.use_channel_type().is_only_relay() {
+                    return Ok(());
+                }
+                if self
+                    .nat_test
+                    .is_local_address(route_key.is_tcp(), route_key.addr)
+                {
                     return Ok(());
                 }
                 let route = Route::from_default_rt(route_key, 1);

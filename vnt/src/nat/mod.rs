@@ -1,6 +1,6 @@
 use std::io;
-use std::net::UdpSocket;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{SocketAddr, UdpSocket};
 use std::ops::Sub;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,6 +22,7 @@ pub fn local_ipv4_() -> io::Result<Ipv4Addr> {
         IpAddr::V6(_) => Ok(Ipv4Addr::UNSPECIFIED),
     }
 }
+
 pub fn local_ipv4() -> Option<Ipv4Addr> {
     match local_ipv4_() {
         Ok(ipv4) => Some(ipv4),
@@ -41,6 +42,7 @@ pub fn local_ipv6_() -> io::Result<Ipv6Addr> {
         IpAddr::V6(ip) => Ok(ip),
     }
 }
+
 pub fn local_ipv6() -> Option<Ipv6Addr> {
     match local_ipv6_() {
         Ok(ipv6) => Some(ipv6),
@@ -56,6 +58,8 @@ pub struct NatTest {
     stun_server: Vec<String>,
     info: Arc<Mutex<NatInfo>>,
     time: Arc<AtomicCell<Instant>>,
+    udp_ports: Vec<u16>,
+    tcp_port: u16,
 }
 
 impl From<NatType> for PunchNatType {
@@ -94,7 +98,7 @@ impl NatTest {
             0,
             local_ipv4,
             ipv6,
-            udp_ports,
+            udp_ports.clone(),
             tcp_port,
             NatType::Cone,
         );
@@ -105,6 +109,8 @@ impl NatTest {
             time: Arc::new(AtomicCell::new(
                 Instant::now().sub(Duration::from_secs(100)),
             )),
+            udp_ports,
+            tcp_port,
         }
     }
     pub fn can_update(&self) -> bool {
@@ -115,6 +121,66 @@ impl NatTest {
 
     pub fn nat_info(&self) -> NatInfo {
         self.info.lock().clone()
+    }
+    pub fn is_local_udp(&self, ipv4: Ipv4Addr, port: u16) -> bool {
+        for x in &self.udp_ports {
+            if x == &port {
+                let guard = self.info.lock();
+                if let Some(ip) = guard.local_ipv4 {
+                    if ipv4 == ip {
+                        return true;
+                    }
+                }
+                break;
+            }
+        }
+        false
+    }
+    pub fn is_local_tcp(&self, ipv4: Ipv4Addr, port: u16) -> bool {
+        if self.tcp_port == port {
+            let guard = self.info.lock();
+            if let Some(ip) = guard.local_ipv4 {
+                if ipv4 == ip {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    pub fn is_local_address(&self, is_tcp: bool, addr: SocketAddr) -> bool {
+        let port = addr.port();
+        let check_ip = || {
+            let guard = self.info.lock();
+            match addr.ip() {
+                IpAddr::V4(ipv4) => {
+                    if let Some(ip) = guard.local_ipv4 {
+                        if ipv4 == ip {
+                            return true;
+                        }
+                    }
+                }
+                IpAddr::V6(ipv6) => {
+                    if let Some(ip) = guard.ipv6 {
+                        if ipv6 == ip {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        };
+        if is_tcp {
+            if self.tcp_port == port {
+                return check_ip();
+            }
+        } else {
+            for x in &self.udp_ports {
+                if x == &port {
+                    return check_ip();
+                }
+            }
+        }
+        false
     }
     pub fn update_addr(&self, index: usize, ip: Ipv4Addr, port: u16) {
         let mut guard = self.info.lock();
