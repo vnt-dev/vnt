@@ -7,7 +7,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use protobuf::Message;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
 use crate::handle::{GATEWAY_IP, SELF_IP};
@@ -37,7 +37,7 @@ impl Handshake {
             rsa_cipher,
         }
     }
-    pub fn send(&self, context: &Context, secret: bool, addr: SocketAddr) -> io::Result<()> {
+    pub fn send(&self, context: &ChannelContext, secret: bool, addr: SocketAddr) -> io::Result<()> {
         let last = self.time.load();
         //短时间不重复发送
         if last.elapsed() < Duration::from_secs(3) {

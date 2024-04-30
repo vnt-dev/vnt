@@ -6,7 +6,7 @@ use mio::event::Source;
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token, Waker};
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::notify::AcceptNotify;
 use crate::channel::sender::AcceptSocketSender;
@@ -16,7 +16,7 @@ use crate::util::StopManager;
 pub fn udp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
-    context: Context,
+    context: ChannelContext,
 ) -> io::Result<AcceptSocketSender<Option<Vec<UdpSocket>>>>
 where
     H: RecvChannelHandler,
@@ -30,7 +30,7 @@ const NOTIFY: Token = Token(0);
 fn sub_udp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
-    context: Context,
+    context: ChannelContext,
 ) -> io::Result<AcceptSocketSender<Option<Vec<UdpSocket>>>>
 where
     H: RecvChannelHandler,
@@ -61,7 +61,7 @@ where
 fn sub_udp_listen0<H>(
     mut poll: Poll,
     mut recv_handler: H,
-    context: Context,
+    context: ChannelContext,
     accept_notify: AcceptNotify,
     accept_receiver: Receiver<Option<Vec<UdpSocket>>>,
 ) -> io::Result<()>
@@ -205,7 +205,7 @@ where
 fn main_udp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
-    context: Context,
+    context: ChannelContext,
 ) -> io::Result<()>
 where
     H: RecvChannelHandler,
@@ -231,7 +231,11 @@ where
     Ok(())
 }
 
-pub fn main_udp_listen0<H>(mut poll: Poll, mut recv_handler: H, context: Context) -> io::Result<()>
+pub fn main_udp_listen0<H>(
+    mut poll: Poll,
+    mut recv_handler: H,
+    context: ChannelContext,
+) -> io::Result<()>
 where
     H: RecvChannelHandler,
 {

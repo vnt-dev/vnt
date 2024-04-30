@@ -11,7 +11,7 @@ use packet::ip::ipv4::packet::IpV4Packet;
 use tun::device::IFace;
 use tun::Device;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::{channel_group, GroupSyncSender};
@@ -38,7 +38,7 @@ fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> io::R
 
 /// 接收tun数据，并且转发到udp上
 fn handle(
-    context: &Context,
+    context: &ChannelContext,
     data: &mut [u8],
     len: usize,
     device_writer: &Device,
@@ -75,7 +75,7 @@ fn handle(
 
 pub fn start(
     stop_manager: StopManager,
-    context: Context,
+    context: ChannelContext,
     device: Arc<Device>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: ExternalRoute,
@@ -179,7 +179,7 @@ pub fn start(
 
 fn start_simple(
     stop_manager: StopManager,
-    context: &Context,
+    context: &ChannelContext,
     device: Arc<Device>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: ExternalRoute,

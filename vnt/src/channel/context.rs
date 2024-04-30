@@ -16,11 +16,11 @@ use crate::channel::{Route, RouteKey, UseChannelType, DEFAULT_RT};
 
 /// 传输通道上下文，持有udp socket、tcp socket和路由信息
 #[derive(Clone)]
-pub struct Context {
+pub struct ChannelContext {
     inner: Arc<ContextInner>,
 }
 
-impl Context {
+impl ChannelContext {
     pub fn new(
         main_udp_socket: Vec<UdpSocket>,
         use_channel_type: UseChannelType,
@@ -63,7 +63,7 @@ impl Context {
     }
 }
 
-impl Deref for Context {
+impl Deref for ChannelContext {
     type Target = ContextInner;
 
     fn deref(&self) -> &Self::Target {

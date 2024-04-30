@@ -10,7 +10,7 @@ use parking_lot::Mutex;
 use protobuf::Message;
 use rand::prelude::SliceRandom;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::punch::{NatInfo, NatType, Punch};
 use crate::cipher::Cipher;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
@@ -86,7 +86,7 @@ pub fn punch_channel() -> (PunchSender, PunchReceiver) {
 
 pub fn punch(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -166,7 +166,7 @@ fn punch_start(
 /// 定时发起打洞请求
 fn punch_request(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -214,7 +214,7 @@ fn punch_request(
 
 /// 随机对需要打洞的客户端发起打洞请求
 fn punch0(
-    context: &Context,
+    context: &ChannelContext,
     nat_test: &NatTest,
     device_list: &Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: CurrentDeviceInfo,

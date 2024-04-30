@@ -5,22 +5,22 @@ use std::sync::Arc;
 
 use mio::Token;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::notify::{AcceptNotify, WritableNotify};
 
 #[derive(Clone)]
 pub struct ChannelSender {
-    context: Context,
+    context: ChannelContext,
 }
 
 impl ChannelSender {
-    pub fn new(context: Context) -> Self {
+    pub fn new(context: ChannelContext) -> Self {
         Self { context }
     }
 }
 
 impl Deref for ChannelSender {
-    type Target = Context;
+    type Target = ChannelContext;
 
     fn deref(&self) -> &Self::Target {
         &self.context

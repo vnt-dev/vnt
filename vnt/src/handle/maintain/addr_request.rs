@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crossbeam_utils::atomic::AtomicCell;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::handle::{BaseConfigInfo, CurrentDeviceInfo};
 use crate::protocol::body::ENCRYPTION_RESERVED;
@@ -12,7 +12,7 @@ use crate::util::Scheduler;
 
 pub fn addr_request(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     server_cipher: Cipher,
     _config: BaseConfigInfo,
@@ -26,7 +26,7 @@ pub fn addr_request(
 }
 pub fn pub_address_request(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     server_cipher: Cipher,
 ) {
@@ -41,7 +41,7 @@ pub fn pub_address_request(
 }
 
 pub fn addr_request0(
-    context: &Context,
+    context: &ChannelContext,
     current_device: &AtomicCell<CurrentDeviceInfo>,
     server_cipher: &Cipher,
 ) {

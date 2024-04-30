@@ -2,7 +2,7 @@ use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::str::FromStr;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::sender::AcceptSocketSender;
 use crate::channel::tcp_channel::tcp_listen;
@@ -151,7 +151,7 @@ pub fn init_context(
     is_tcp: bool,
     packet_loss_rate: Option<f64>,
     packet_delay: u32,
-) -> io::Result<(Context, mio::net::TcpListener)> {
+) -> io::Result<(ChannelContext, mio::net::TcpListener)> {
     assert!(!ports.is_empty(), "not channel");
     let mut udps = Vec::with_capacity(ports.len());
     //检查系统是否支持ipv6
@@ -191,7 +191,7 @@ pub fn init_context(
         let main_channel: UdpSocket = socket.into();
         udps.push(main_channel);
     }
-    let context = Context::new(
+    let context = ChannelContext::new(
         udps,
         use_channel_type,
         first_latency,
@@ -242,7 +242,7 @@ pub fn init_context(
 
 pub fn init_channel<H>(
     tcp_listener: mio::net::TcpListener,
-    context: Context,
+    context: ChannelContext,
     stop_manager: StopManager,
     recv_handler: H,
 ) -> io::Result<(

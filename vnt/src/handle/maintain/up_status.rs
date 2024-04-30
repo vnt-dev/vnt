@@ -1,4 +1,4 @@
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::handle::CurrentDeviceInfo;
 use crate::proto::message::{ClientStatusInfo, PunchNatType, RouteItem};
 use crate::protocol::body::ENCRYPTION_RESERVED;
@@ -13,7 +13,7 @@ use std::time::Duration;
 /// 上报状态给服务器
 pub fn up_status(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     down_count_watcher: WatchU64Adder,
     up_count_watcher: WatchSingleU64Adder,
@@ -31,7 +31,7 @@ pub fn up_status(
 
 fn up_status0(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     down_count_watcher: WatchU64Adder,
     up_count_watcher: WatchSingleU64Adder,
@@ -59,7 +59,7 @@ fn up_status0(
 }
 
 fn send_up_status_packet(
-    context: &Context,
+    context: &ChannelContext,
     current_device_info: &AtomicCell<CurrentDeviceInfo>,
     down_count_watcher: &WatchU64Adder,
     up_count_watcher: &WatchSingleU64Adder,

@@ -1,16 +1,16 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::Route;
 
 pub struct Idle {
     read_idle: Duration,
-    context: Context,
+    context: ChannelContext,
 }
 
 impl Idle {
-    pub fn new(read_idle: Duration, context: Context) -> Self {
+    pub fn new(read_idle: Duration, context: ChannelContext) -> Self {
         Self { read_idle, context }
     }
 }

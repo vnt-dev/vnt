@@ -15,7 +15,7 @@ use std::{io, thread};
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Registry, Token, Waker};
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::notify::{AcceptNotify, WritableNotify};
 use crate::channel::sender::{AcceptSocketSender, PacketSender};
@@ -30,7 +30,7 @@ pub fn tcp_listen<H>(
     tcp_server: TcpListener,
     stop_manager: StopManager,
     recv_handler: H,
-    context: Context,
+    context: ChannelContext,
 ) -> io::Result<AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>>
 where
     H: RecvChannelHandler,
@@ -74,7 +74,7 @@ fn tcp_listen0<H>(
     accept_notify: AcceptNotify,
     accept_tcp_receiver: Receiver<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     mut recv_handler: H,
-    context: Context,
+    context: ChannelContext,
 ) -> io::Result<()>
 where
     H: RecvChannelHandler,
@@ -158,7 +158,7 @@ where
 fn init_writable_handler(
     receiver: Receiver<(TcpStream, Token, SocketAddr, Option<Vec<u8>>)>,
     stop_manager: StopManager,
-    context: Context,
+    context: ChannelContext,
 ) -> io::Result<WritableNotify> {
     let poll = Poll::new()?;
     let writable_notify = WritableNotify::new(Waker::new(poll.registry(), NOTIFY)?);
@@ -190,7 +190,7 @@ fn tcp_writable_listen(
     receiver: Receiver<(TcpStream, Token, SocketAddr, Option<Vec<u8>>)>,
     mut poll: Poll,
     writable_notify: WritableNotify,
-    context: &Context,
+    context: &ChannelContext,
 ) -> io::Result<()> {
     let mut events = Events::with_capacity(1024);
     let mut write_map: HashMap<
@@ -338,7 +338,7 @@ fn readable_handle<H>(
     token: &Token,
     map: &mut HashMap<Token, (RouteKey, TcpStream, Box<[u8; BUFFER_SIZE]>, usize)>,
     recv_handler: &mut H,
-    context: &Context,
+    context: &ChannelContext,
 ) -> io::Result<()>
 where
     H: RecvChannelHandler,
@@ -447,7 +447,7 @@ fn closed_handle_w(
             Option<(Vec<u8>, usize)>,
         ),
     >,
-    context: &Context,
+    context: &ChannelContext,
 ) {
     if let Some((tcp, addr, _, _)) = map.remove(token) {
         context.tcp_map.write().remove(&addr);

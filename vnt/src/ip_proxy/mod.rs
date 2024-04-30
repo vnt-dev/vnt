@@ -7,7 +7,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::icmp_proxy::IcmpProxy;
@@ -37,7 +37,7 @@ pub struct IpProxyMap {
 }
 
 pub fn init_proxy(
-    context: Context,
+    context: ChannelContext,
     scheduler: Scheduler,
     stop_manager: StopManager,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,

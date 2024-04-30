@@ -8,7 +8,7 @@ use mio::net::TcpStream;
 use rand::prelude::SliceRandom;
 use rand::Rng;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::sender::AcceptSocketSender;
 use crate::external_route::ExternalRoute;
 use crate::nat::NatTest;
@@ -181,7 +181,7 @@ impl NatInfo {
 
 #[derive(Clone)]
 pub struct Punch {
-    context: Context,
+    context: ChannelContext,
     port_vec: Vec<u16>,
     port_index: HashMap<Ipv4Addr, usize>,
     punch_model: PunchModel,
@@ -193,7 +193,7 @@ pub struct Punch {
 
 impl Punch {
     pub fn new(
-        context: Context,
+        context: ChannelContext,
         punch_model: PunchModel,
         is_tcp: bool,
         tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,

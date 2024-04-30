@@ -6,7 +6,7 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use mio::net::TcpStream;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::idle::{Idle, IdleType};
 use crate::channel::sender::AcceptSocketSender;
 use crate::handle::callback::{ConnectInfo, ErrorType};
@@ -18,7 +18,7 @@ use crate::{ErrorInfo, VntCallback};
 pub fn idle_route<Call: VntCallback>(
     scheduler: &Scheduler,
     idle: Idle,
-    context: Context,
+    context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     call: Call,
 ) {
@@ -33,7 +33,7 @@ pub fn idle_route<Call: VntCallback>(
 
 pub fn idle_gateway<Call: VntCallback>(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     config: BaseConfigInfo,
     tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
@@ -68,7 +68,7 @@ pub fn idle_gateway<Call: VntCallback>(
 }
 
 fn idle_gateway0<Call: VntCallback>(
-    context: &Context,
+    context: &ChannelContext,
     current_device: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
     tcp_socket_sender: &AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
@@ -95,7 +95,7 @@ fn idle_gateway0<Call: VntCallback>(
 
 fn idle_route0<Call: VntCallback>(
     idle: &Idle,
-    context: &Context,
+    context: &ChannelContext,
     current_device: &AtomicCell<CurrentDeviceInfo>,
     call: &Call,
 ) -> Duration {
@@ -117,7 +117,7 @@ fn idle_route0<Call: VntCallback>(
 }
 
 fn check_gateway_channel<Call: VntCallback>(
-    context: &Context,
+    context: &ChannelContext,
     current_device_info: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
     tcp_socket_sender: &AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,

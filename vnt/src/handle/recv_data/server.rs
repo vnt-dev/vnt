@@ -12,7 +12,7 @@ use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::{Route, RouteKey};
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
@@ -95,7 +95,7 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()> {
         context
@@ -248,7 +248,7 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
 impl<Call: VntCallback> ServerPacketHandler<Call> {
     fn service(
         &self,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
@@ -435,7 +435,11 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                 .collect(),
         );
     }
-    fn register(&self, current_device: &CurrentDeviceInfo, context: &Context) -> io::Result<()> {
+    fn register(
+        &self,
+        current_device: &CurrentDeviceInfo,
+        context: &ChannelContext,
+    ) -> io::Result<()> {
         if current_device.status.online() {
             log::info!("已连接的不需要注册，{:?}", self.config_info);
             return Ok(());
@@ -468,7 +472,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
     }
     fn error(
         &self,
-        context: &Context,
+        context: &ChannelContext,
         _current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
@@ -518,7 +522,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
     }
     fn control(
         &self,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,

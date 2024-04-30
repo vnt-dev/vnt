@@ -9,7 +9,7 @@ use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::punch::NatInfo;
 use crate::channel::{Route, RouteKey};
 use crate::cipher::Cipher;
@@ -71,7 +71,7 @@ impl PacketHandler for ClientPacketHandler {
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()> {
         self.client_cipher.decrypt_ipv4(&mut net_packet)?;
@@ -100,7 +100,7 @@ impl ClientPacketHandler {
     fn ip_turn(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
         route_key: RouteKey,
     ) -> io::Result<()> {
@@ -186,7 +186,7 @@ impl ClientPacketHandler {
     }
     fn control(
         &self,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
         mut net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
@@ -274,7 +274,7 @@ impl ClientPacketHandler {
     }
     fn other_turn(
         &self,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,

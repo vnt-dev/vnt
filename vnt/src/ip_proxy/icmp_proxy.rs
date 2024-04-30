@@ -12,7 +12,7 @@ use packet::icmp::icmp;
 use packet::icmp::icmp::HeaderOther;
 use packet::ip::ipv4::packet::IpV4Packet;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::ProxyHandler;
@@ -28,7 +28,7 @@ pub struct IcmpProxy {
 
 impl IcmpProxy {
     pub fn new(
-        context: Context,
+        context: ChannelContext,
         stop_manager: StopManager,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         client_cipher: Cipher,
@@ -86,7 +86,7 @@ fn icmp_proxy(
     mut icmp_socket: UdpSocket,
     // 对端-> 真实来源
     nat_map: Arc<Mutex<HashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>>,
-    context: Context,
+    context: ChannelContext,
     stop_manager: StopManager,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
@@ -130,7 +130,7 @@ fn readable_handle(
     icmp_socket: &UdpSocket,
     buf: &mut [u8],
     nat_map: &Mutex<HashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
-    context: &Context,
+    context: &ChannelContext,
     current_device: &AtomicCell<CurrentDeviceInfo>,
     client_cipher: &Cipher,
 ) {
@@ -181,7 +181,7 @@ fn recv_handle(
     data_len: usize,
     peer_ip: Ipv4Addr,
     nat_map: &Mutex<HashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
-    context: &Context,
+    context: &ChannelContext,
     current_device: &AtomicCell<CurrentDeviceInfo>,
     client_cipher: &Cipher,
 ) {

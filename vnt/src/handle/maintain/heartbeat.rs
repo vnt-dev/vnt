@@ -7,7 +7,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol::body::ENCRYPTION_RESERVED;
@@ -18,7 +18,7 @@ use crate::util::Scheduler;
 /// 定时发送心跳包
 pub fn heartbeat(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     client_cipher: Cipher,
@@ -48,7 +48,7 @@ pub fn heartbeat(
 }
 
 fn heartbeat0(
-    context: &Context,
+    context: &ChannelContext,
     current_device: &CurrentDeviceInfo,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
     client_cipher: &Cipher,
@@ -125,7 +125,7 @@ fn heartbeat0(
 /// 客户端中继路径探测,延迟启动
 pub fn client_relay(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     client_cipher: Cipher,
@@ -141,7 +141,7 @@ pub fn client_relay(
 /// 客户端中继路径探测,每30秒探测一次
 fn client_relay_(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     client_cipher: Cipher,
@@ -163,7 +163,7 @@ fn client_relay_(
 }
 
 fn client_relay0(
-    context: &Context,
+    context: &ChannelContext,
     current_device: &CurrentDeviceInfo,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
     client_cipher: &Cipher,

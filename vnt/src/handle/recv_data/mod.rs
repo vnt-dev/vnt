@@ -6,7 +6,7 @@ use std::{io, thread};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::punch::NatInfo;
 use crate::channel::RouteKey;
@@ -42,7 +42,7 @@ pub struct RecvDataHandler<Call> {
 }
 
 impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
-    fn handle(&mut self, buf: &mut [u8], route_key: RouteKey, context: &Context) {
+    fn handle(&mut self, buf: &mut [u8], route_key: RouteKey, context: &ChannelContext) {
         if let Err(e) = self.handle0(buf, route_key, context) {
             log::error!("[{}]-{:?}", thread::current().name().unwrap_or(""), e);
         }
@@ -104,7 +104,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         &mut self,
         buf: &mut [u8],
         route_key: RouteKey,
-        context: &Context,
+        context: &ChannelContext,
     ) -> io::Result<()> {
         // 统计流量
         self.counter.add(buf.len() as _);
@@ -145,7 +145,7 @@ pub trait PacketHandler {
         &self,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-        context: &Context,
+        context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
     ) -> io::Result<()>;
 }

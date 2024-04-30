@@ -11,7 +11,7 @@ use rsa::signature::digest::Digest;
 #[cfg(not(target_os = "android"))]
 use tun::device::IFace;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
 use crate::channel::{init_channel, init_context, Route, RouteKey};
@@ -40,7 +40,7 @@ pub struct Vnt {
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-    context: Context,
+    context: ChannelContext,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     down_count_watcher: WatchU64Adder,
     up_count_watcher: WatchSingleU64Adder,
@@ -282,7 +282,7 @@ impl Vnt {
 
 pub fn start<Call: VntCallback>(
     scheduler: &Scheduler,
-    context: Context,
+    context: ChannelContext,
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,

@@ -1,4 +1,4 @@
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::channel::RouteKey;
 use crate::handle::recv_data::PacketHandler;
 use crate::handle::CurrentDeviceInfo;
@@ -19,7 +19,7 @@ impl PacketHandler for TurnPacketHandler {
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-        context: &Context,
+        context: &ChannelContext,
         _current_device: &CurrentDeviceInfo,
     ) -> std::io::Result<()> {
         // ttl减一

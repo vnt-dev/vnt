@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use packet::ip::ipv4::packet::IpV4Packet;
 use packet::ip::ipv4::protocol::Protocol;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::external_route::ExternalRoute;
 use crate::handle::{check_dest, CurrentDeviceInfo, PeerDeviceInfo};
@@ -22,7 +22,7 @@ pub mod tun_handler;
 
 fn broadcast(
     server_cipher: &Cipher,
-    sender: &Context,
+    sender: &ChannelContext,
     net_packet: &mut NetPacket<&mut [u8]>,
     current_device: &CurrentDeviceInfo,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
@@ -108,7 +108,7 @@ fn broadcast(
 ///
 #[inline]
 pub fn base_handle(
-    context: &Context,
+    context: &ChannelContext,
     buf: &mut [u8],
     data_len: usize, //数据总长度=12+ip包长度
     current_device: CurrentDeviceInfo,

@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 
 use tun::Device;
 
-use crate::channel::context::Context;
+use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::external_route::ExternalRoute;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
@@ -70,7 +70,7 @@ pub struct TunDeviceHelper {
 
 struct TunDeviceHelperInner {
     stop_manager: StopManager,
-    context: Context,
+    context: ChannelContext,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")]
@@ -85,7 +85,7 @@ struct TunDeviceHelperInner {
 impl TunDeviceHelper {
     pub fn new(
         stop_manager: StopManager,
-        context: Context,
+        context: ChannelContext,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         ip_route: ExternalRoute,
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
