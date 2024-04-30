@@ -219,7 +219,6 @@ impl ClientPacketHandler {
                     return Ok(());
                 }
                 //忽略掉来源于自己的包
-                if route_key.is_tcp() {}
                 if self
                     .nat_test
                     .is_local_address(route_key.is_tcp(), route_key.addr)
