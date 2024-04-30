@@ -250,12 +250,13 @@ impl ProxyHandler for IcmpProxy {
                     SocketAddr::from(SocketAddrV4::new(dest_ip, 0)),
                 )?;
             }
-            _ => {
+            header_other => {
                 log::warn!(
-                    "不支持的ip代理Icmp协议:{}->{}->{}",
+                    "不支持的ip代理Icmp协议:{}->{}->{},{:?}",
                     source,
                     destination,
-                    dest_ip
+                    dest_ip,
+                    header_other
                 );
             }
         }
