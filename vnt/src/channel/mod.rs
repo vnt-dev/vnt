@@ -53,12 +53,6 @@ impl Default for UseChannelType {
         UseChannelType::All
     }
 }
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Status {
-    Cone,
-    Symmetric,
-    Close,
-}
 
 #[derive(Copy, Clone, Debug)]
 pub struct Route {
