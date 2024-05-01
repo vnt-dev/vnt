@@ -233,8 +233,9 @@ impl ClientPacketHandler {
                 net_packet.first_set_ttl(1);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
                 context.send_by_key(net_packet.buffer(), route_key)?;
-                let route = Route::from_default_rt(route_key, 1);
-                context.route_table.add_route_if_absent(source, route);
+                // 收到PunchRequest就添加路由，会导致单向通信的问题，删掉试试
+                // let route = Route::from_default_rt(route_key, 1);
+                // context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::PunchResponse => {
                 log::info!("PunchResponse={:?},source={}", route_key, source);
