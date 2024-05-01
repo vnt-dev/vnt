@@ -324,7 +324,16 @@ impl RouteTable {
             } else {
                 let len = v.len();
                 if len != 0 {
-                    return Ok(v[index % len].0);
+                    let route = &v[index % len].0;
+                    // 跳过默认rt的路由(一般是刚加入的)，这有助于提升稳定性
+                    if route.rt != DEFAULT_RT {
+                        return Ok(*route);
+                    }
+                    for (route, _) in v {
+                        if route.rt != DEFAULT_RT {
+                            return Ok(*route);
+                        }
+                    }
                 }
             }
         }
