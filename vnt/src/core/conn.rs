@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +47,7 @@ pub struct Vnt {
 }
 
 impl Vnt {
-    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> io::Result<Self> {
+    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
         log::info!("config:{:?}", config);
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
