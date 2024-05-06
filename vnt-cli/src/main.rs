@@ -412,7 +412,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip,注意不能重复");
     println!("  -s <server>         注册和中继服务器地址,以'TXT:'开头表示解析TXT记录");
-    println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可多次指定,如-e addr1 -e addr2");
+    println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun.qq.com -e stun1.l.google.com");
     println!("  -a                  使用tap模式,默认使用tun模式");
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");
