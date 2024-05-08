@@ -40,6 +40,8 @@ pub struct FileConfig {
     pub device_name: Option<String>,
     pub packet_loss: Option<f64>,
     pub packet_delay: u32,
+    #[cfg(feature = "port_mapping")]
+    pub mapping: Vec<String>,
 }
 
 impl Default for FileConfig {
@@ -54,7 +56,7 @@ impl Default for FileConfig {
             stun_server: vec![
                 "stun1.l.google.com:19302".to_string(),
                 "stun2.l.google.com:19302".to_string(),
-                "stun.qq.com:3478".to_string(),
+                "stun.miwifi.com:3478".to_string(),
             ],
             dns: vec![],
             in_ips: vec![],
@@ -77,6 +79,8 @@ impl Default for FileConfig {
             device_name: None,
             packet_loss: None,
             packet_delay: 0,
+            #[cfg(feature = "port_mapping")]
+            mapping: vec![],
         }
     }
 }
@@ -157,6 +161,8 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
         use_channel_type,
         file_conf.packet_loss,
         file_conf.packet_delay,
+        #[cfg(feature = "port_mapping")]
+        file_conf.mapping,
     )
     .unwrap();
     Ok((config, file_conf.cmd))

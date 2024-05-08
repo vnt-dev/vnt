@@ -43,6 +43,9 @@ pub struct Config {
     //控制丢包率
     pub packet_loss_rate: Option<f64>,
     pub packet_delay: u32,
+    // 端口映射
+    #[cfg(feature = "port_mapping")]
+    pub port_mapping_list: Vec<(bool, SocketAddr, String)>,
 }
 
 impl Config {
@@ -72,6 +75,8 @@ impl Config {
         use_channel_type: UseChannelType,
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
+        // 例如 [udp:127.0.0.1:80->10.26.0.10:8080,tcp:127.0.0.1:80->10.26.0.10:8080]
+        #[cfg(feature = "port_mapping")] port_mapping_list: Vec<String>,
     ) -> anyhow::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -96,6 +101,8 @@ impl Config {
         }
         let server_address =
             address_choose(dns_query_all(&server_address_str, name_servers.clone())?)?;
+        #[cfg(feature = "port_mapping")]
+        let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;
         Ok(Self {
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             tap,
@@ -126,6 +133,8 @@ impl Config {
             use_channel_type,
             packet_loss_rate,
             packet_delay,
+            #[cfg(feature = "port_mapping")]
+            port_mapping_list,
         })
     }
 }

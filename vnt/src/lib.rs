@@ -8,6 +8,8 @@ pub mod handle;
 #[cfg(feature = "ip_proxy")]
 pub mod ip_proxy;
 pub mod nat;
+#[cfg(feature = "port_mapping")]
+pub mod port_mapping;
 pub mod proto;
 pub mod protocol;
 pub mod tun_tap_device;

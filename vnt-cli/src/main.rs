@@ -73,6 +73,7 @@ fn main() {
     opts.optopt("", "packet-loss", "丢包率", "<packet-loss>");
     opts.optopt("", "packet-delay", "延迟", "<packet-delay>");
     opts.optmulti("", "dns", "dns", "<dns>");
+    opts.optmulti("", "mapping", "mapping", "<mapping>");
     opts.optopt("f", "", "配置文件", "<conf>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
@@ -156,7 +157,7 @@ fn main() {
         if stun_server.is_empty() {
             stun_server.push("stun1.l.google.com:19302".to_string());
             stun_server.push("stun2.l.google.com:19302".to_string());
-            stun_server.push("stun.qq.com:3478".to_string());
+            stun_server.push("stun.miwifi.com:3478".to_string());
         }
         let dns = matches.opt_strs("dns");
         let in_ip = matches.opt_strs("i");
@@ -287,6 +288,8 @@ fn main() {
             .opt_get::<u32>("packet-delay")
             .expect("--packet-delay")
             .unwrap_or(0);
+        #[cfg(feature = "port_mapping")]
+        let port_mapping_list = matches.opt_strs("mapping");
         let config = match Config::new(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             tap,
@@ -315,6 +318,8 @@ fn main() {
             use_channel_type,
             packet_loss,
             packet_delay,
+            #[cfg(feature = "port_mapping")]
+            port_mapping_list,
         ) {
             Ok(config) => config,
             Err(e) => {
@@ -338,6 +343,14 @@ fn main() {
 mod callback;
 
 fn main0(config: Config, show_cmd: bool) {
+    #[cfg(feature = "port_mapping")]
+    for (is_tcp, addr, dest) in config.port_mapping_list.iter() {
+        if *is_tcp {
+            println!("TCP port mapping {}->{}", addr, dest)
+        } else {
+            println!("UDP port mapping {}->{}", addr, dest)
+        }
+    }
     let vnt_util = Vnt::new(config, callback::VntHandler {}).unwrap();
     let vnt_c = vnt_util.clone();
     thread::Builder::new()
@@ -412,7 +425,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip,注意不能重复");
     println!("  -s <server>         注册和中继服务器地址,以'TXT:'开头表示解析TXT记录");
-    println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun.qq.com -e stun1.l.google.com");
+    println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun1.l.google.com -e stun2.l.google.com");
     println!("  -a                  使用tap模式,默认使用tun模式");
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");
@@ -475,6 +488,8 @@ fn print_usage(program: &str, _opts: Options) {
         "  --packet-delay <0>  模拟延迟,整数,单位毫秒(ms),程序会按设定的值延迟发包,可用于模拟弱网"
     );
     println!("  --dns <host:port>   DNS服务器地址,可使用多个dns,不指定时使用系统解析");
+    #[cfg(feature = "port_mapping")]
+    println!("  --mapping <mapping> 端口映射,例如 --mapping udp:0.0.0.0:80->10.26.0.10:80 --mapping tcp:0.0.0.0:80->10.26.0.10:80");
 
     println!();
     println!(

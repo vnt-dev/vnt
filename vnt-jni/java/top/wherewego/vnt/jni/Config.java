@@ -55,6 +55,10 @@ public class Config {
      */
     private String[] dns;
     /**
+     * 端口映射
+     */
+    private String[] portMapping;
+    /**
      * stun服务地址
      */
     private String[] stunServer;
@@ -200,6 +204,13 @@ public class Config {
 
     public void setDns(String[] dns) {
         this.dns = dns;
+    }
+    public String[] getPortMapping() {
+        return portMapping;
+    }
+
+    public void setPortMapping(String[] portMapping) {
+        this.portMapping = portMapping;
     }
 
     public String[] getStunServer() {

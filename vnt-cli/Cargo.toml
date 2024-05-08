@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vnt = { path = "../vnt", package = "vnt",default-features = false }
+vnt = { path = "../vnt", package = "vnt", default-features = false }
 common = { path = "../common" }
 getopts = "0.2.21"
 console = "0.15.2"
@@ -28,16 +28,17 @@ sudo = "0.6.0"
 winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
 
 [features]
-default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc","ip_proxy"]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "ip_proxy", "port_mapping"]
 openssl = ["vnt/openssl"]
 openssl-vendored = ["vnt/openssl-vendored"]
 ring-cipher = ["vnt/ring-cipher"]
-aes_cbc=["vnt/aes_cbc"]
-aes_ecb=["vnt/aes_ecb"]
-sm4_cbc=["vnt/sm4_cbc"]
-aes_gcm=["vnt/aes_gcm"]
-server_encrypt=["vnt/server_encrypt"]
-ip_proxy=["vnt/ip_proxy"]
+aes_cbc = ["vnt/aes_cbc"]
+aes_ecb = ["vnt/aes_ecb"]
+sm4_cbc = ["vnt/sm4_cbc"]
+aes_gcm = ["vnt/aes_gcm"]
+server_encrypt = ["vnt/server_encrypt"]
+ip_proxy = ["vnt/ip_proxy"]
+port_mapping = ["vnt/port_mapping"]
 [build-dependencies]
 embed-manifest = "1.4.0"
 rand = "0.8.5"

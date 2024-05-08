@@ -93,6 +93,16 @@ impl Vnt {
             config.server_address_str.clone(),
             config.name_servers.clone(),
         );
+        // 服务停止管理器
+        let stop_manager = {
+            let callback = callback.clone();
+            StopManager::new(move || callback.stop())
+        };
+        #[cfg(feature = "port_mapping")]
+        crate::port_mapping::start_port_mapping(
+            stop_manager.clone(),
+            config.port_mapping_list.clone(),
+        )?;
         let ports = config.ports.as_ref().map_or(vec![0, 0], |v| {
             if v.is_empty() {
                 vec![0, 0]
@@ -131,11 +141,6 @@ impl Vnt {
             callback.create_tun(tun_info);
             device
         };
-        // 服务停止管理器
-        let stop_manager = {
-            let callback = callback.clone();
-            StopManager::new(move || callback.stop())
-        };
         // 定时器
         let scheduler = Scheduler::new(stop_manager.clone())?;
         let external_route = ExternalRoute::new(config.in_ips.clone());
@@ -145,7 +150,6 @@ impl Vnt {
         let proxy_map = if !config.out_ips.is_empty() && !config.no_proxy {
             Some(crate::ip_proxy::init_proxy(
                 context.clone(),
-                scheduler.clone(),
                 stop_manager.clone(),
                 current_device.clone(),
                 client_cipher.clone(),

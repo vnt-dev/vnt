@@ -21,6 +21,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     let server_address_str = to_string_not_null(env, &config, "server")?;
     let stun_server = to_string_array_not_null(env, &config, "stunServer")?;
     let dns = to_string_array(env, &config, "dns")?.unwrap_or_else(|| vec![]);
+    let port_mapping = to_string_array(env, &config, "portMapping")?.unwrap_or_else(|| vec![]);
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
     let punch_model = to_string(env, &config, "punchModel")?;
     let mtu = to_integer(env, &config, "mtu")?.map(|v| v as u32);
@@ -116,12 +117,13 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         UseChannelType::from_str(&use_channel.unwrap_or_default()).unwrap_or_default(),
         packet_loss_rate,
         packet_delay,
+        port_mapping,
     ) {
         Ok(config) => config,
         Err(e) => {
             env.throw_new(
                 "java/lang/RuntimeException",
-                format!("vnt start error {}", e),
+                format!("vnt start error {:?}", e),
             )
             .expect("throw");
             return Err(Error::JavaException);
