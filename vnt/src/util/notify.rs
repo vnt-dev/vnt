@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::Thread;
+use std::time::Duration;
 use std::{io, thread};
 
 use parking_lot::Mutex;
@@ -30,6 +31,9 @@ impl StopManager {
     }
     pub fn wait(&self) {
         self.inner.wait();
+    }
+    pub fn wait_timeout(&self, dur: Duration) -> bool {
+        self.inner.wait_timeout(dur)
     }
     pub fn is_stop(&self) -> bool {
         self.inner.state.load(Ordering::Acquire)
@@ -102,6 +106,18 @@ impl StopManagerInner {
             }
             thread::park()
         }
+    }
+    fn wait_timeout(&self, dur: Duration) -> bool {
+        {
+            let mut guard = self.park_threads.lock();
+            guard.push(thread::current());
+            drop(guard);
+        }
+        if self.worker_num.load(Ordering::Acquire) == 0 {
+            return true;
+        }
+        thread::park_timeout(dur);
+        self.worker_num.load(Ordering::Acquire) == 0
     }
     fn stop_call(&self) {
         if let Some(call) = self.stop_call.lock().take() {

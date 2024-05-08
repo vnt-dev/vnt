@@ -1,8 +1,9 @@
 use std::ptr;
+use std::time::Duration;
 
 use jni::errors::Error;
 use jni::objects::{JClass, JObject, JValue};
-use jni::sys::{jint, jlong, jobject, jobjectArray, jsize};
+use jni::sys::{jboolean, jint, jlong, jobject, jobjectArray, jsize};
 use jni::JNIEnv;
 
 use vnt::channel::Route;
@@ -73,6 +74,16 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_wait0(
 ) {
     let vnt = raw_vnt as *mut Vnt;
     let _ = (&*vnt).wait();
+}
+#[no_mangle]
+pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_waitTimeout0(
+    _env: JNIEnv,
+    _class: JClass,
+    raw_vnt: jlong,
+    time: jlong,
+) -> jboolean {
+    let vnt = raw_vnt as *mut Vnt;
+    (&*vnt).wait_timeout(Duration::from_millis(time as _)) as _
 }
 
 #[no_mangle]

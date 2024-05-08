@@ -86,15 +86,16 @@ pub fn start(
     mut up_counter: SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
 ) -> io::Result<()> {
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     let worker = {
-        #[cfg(any(target_os = "macos", target_os = "android"))]
+        #[cfg(target_os = "macos")]
         let current_device = current_device.clone();
         let device = device.clone();
         stop_manager.add_listener("tun_device".into(), move || {
             if let Err(e) = device.shutdown() {
                 log::warn!("{:?}", e);
             }
-            #[cfg(any(target_os = "macos", target_os = "android"))]
+            #[cfg(target_os = "macos")]
             {
                 let ip = current_device.load().virtual_ip;
                 if let Ok(udp) = std::net::UdpSocket::bind("0.0.0.0:0") {
@@ -150,6 +151,7 @@ pub fn start(
                 if let Err(e) = start_multi(stop_manager, device, sender, &mut up_counter) {
                     log::warn!("stop:{}", e);
                 }
+                #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
                 worker.stop_all();
             })?;
     } else {
@@ -171,6 +173,7 @@ pub fn start(
                 ) {
                     log::warn!("stop:{}", e);
                 }
+                #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
                 worker.stop_all();
             })?;
     }

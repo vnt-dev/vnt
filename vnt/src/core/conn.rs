@@ -412,4 +412,7 @@ impl Vnt {
     pub fn wait(&self) {
         self.stop_manager.wait()
     }
+    pub fn wait_timeout(&self, dur: Duration) -> bool {
+        self.stop_manager.wait_timeout(dur)
+    }
 }
