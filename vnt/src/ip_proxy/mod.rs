@@ -1,6 +1,6 @@
-use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
 
@@ -13,7 +13,7 @@ use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::icmp_proxy::IcmpProxy;
 use crate::ip_proxy::tcp_proxy::TcpProxy;
 use crate::ip_proxy::udp_proxy::UdpProxy;
-use crate::util::{Scheduler, StopManager};
+use crate::util::StopManager;
 
 pub mod icmp_proxy;
 pub mod tcp_proxy;
@@ -38,14 +38,40 @@ pub struct IpProxyMap {
 
 pub fn init_proxy(
     context: ChannelContext,
-    scheduler: Scheduler,
     stop_manager: StopManager,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
-) -> io::Result<IpProxyMap> {
-    let icmp_proxy = IcmpProxy::new(context, stop_manager.clone(), current_device, client_cipher)?;
-    let tcp_proxy = TcpProxy::new(stop_manager.clone())?;
-    let udp_proxy = UdpProxy::new(scheduler, stop_manager)?;
+) -> anyhow::Result<IpProxyMap> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("ipProxy")
+        .build()?;
+    let proxy_map = runtime.block_on(init_proxy0(context, current_device, client_cipher))?;
+    let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+    let worker = stop_manager.add_listener("ipProxy".into(), move || {
+        let _ = sender.send(());
+    })?;
+    thread::Builder::new()
+        .name("ipProxy".into())
+        .spawn(move || {
+            runtime.block_on(async {
+                let _ = receiver.await;
+            });
+            runtime.shutdown_background();
+            drop(worker);
+        })?;
+
+    return Ok(proxy_map);
+}
+
+async fn init_proxy0(
+    context: ChannelContext,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    client_cipher: Cipher,
+) -> anyhow::Result<IpProxyMap> {
+    let icmp_proxy = IcmpProxy::new(context, current_device, client_cipher).await?;
+    let tcp_proxy = TcpProxy::new().await?;
+    let udp_proxy = UdpProxy::new().await?;
 
     Ok(IpProxyMap {
         icmp_proxy,

@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tun= {path = "tun"}
+tun = { path = "tun" }
 packet = { path = "./packet" }
 bytes = "1.5.0"
 log = "0.4.17"
@@ -19,21 +19,24 @@ sha2 = { version = "0.10.6", features = ["oid"] }
 thiserror = "1.0.37"
 protobuf = "3.2.0"
 socket2 = { version = "0.5.2", features = ["all"] }
-aes-gcm = { version = "0.10.2",optional = true }
+aes-gcm = { version = "0.10.2", optional = true }
 ring = { version = "0.17.0", optional = true }
-cbc = {version = "0.1.2",optional = true}
-ecb = {version = "0.1.2",optional = true}
+cbc = { version = "0.1.2", optional = true }
+ecb = { version = "0.1.2", optional = true }
 aes = "0.8.3"
 stun-format = { version = "1.0.1", features = ["fmt", "rfc3489"] }
-rsa = { version = "0.9.2", features = [] ,optional = true}
-spki = { version = "0.7.2", features = ["fingerprint", "alloc","base64"] ,optional = true}
-openssl-sys = { git = "https://github.com/lbl8603/rust-openssl" ,optional = true}
-libsm = {git="https://github.com/lbl8603/libsm" ,optional = true}
+rsa = { version = "0.9.2", features = [], optional = true }
+spki = { version = "0.7.2", features = ["fingerprint", "alloc", "base64"], optional = true }
+openssl-sys = { git = "https://github.com/lbl8603/rust-openssl", optional = true }
+libsm = { git = "https://github.com/lbl8603/libsm", optional = true }
 
-mio = {version = "0.8.10",features = ["os-poll","net"]}
+mio = { version = "0.8.10", features = ["os-poll", "net"] }
 crossbeam-queue = "0.3.11"
 anyhow = "1.0.82"
 dns-parser = "0.8.0"
+
+tokio = { version = "1.37.0", features = ["full"], optional = true }
+
 
 [target.'cfg(target_os = "windows")'.dependencies]
 libloading = "0.8.0"
@@ -44,14 +47,15 @@ protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
 
 [features]
-default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc","ip_proxy"]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "ip_proxy", "port_mapping"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]
 ring-cipher = ["ring"]
-aes_cbc=["cbc"]
-aes_ecb=["ecb"]
-sm4_cbc=["libsm"]
-aes_gcm=["aes-gcm"]
-server_encrypt =["aes-gcm","rsa","spki"]
-ip_proxy=[]
+aes_cbc = ["cbc"]
+aes_ecb = ["ecb"]
+sm4_cbc = ["libsm"]
+aes_gcm = ["aes-gcm"]
+server_encrypt = ["aes-gcm", "rsa", "spki"]
+ip_proxy = ["tokio"]
+port_mapping = ["tokio"]
