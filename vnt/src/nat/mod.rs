@@ -89,8 +89,9 @@ impl NatTest {
         udp_ports: Vec<u16>,
         tcp_port: u16,
     ) -> NatTest {
-        let server = stun_server[0].clone();
-        stun_server.resize(3, server);
+        if stun_server.len() > 5 {
+            stun_server.truncate(5);
+        }
         let ports = vec![0; udp_ports.len()];
         let nat_info = NatInfo::new(
             Vec::new(),
