@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::ffi::{c_void, CStr};
 use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
@@ -225,7 +226,7 @@ impl Device {
     }
 }
 impl Device {
-    pub fn as_tun_fd(&self) ->&Fd{
+    pub fn as_tun_fd(&self) -> &Fd {
         &self.tun
     }
 }

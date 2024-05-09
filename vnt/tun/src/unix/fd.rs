@@ -1,6 +1,6 @@
+use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK};
 use std::io;
 use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
-use libc::{F_GETFL, F_SETFL, fcntl, O_NONBLOCK};
 
 pub struct Fd(pub RawFd);
 

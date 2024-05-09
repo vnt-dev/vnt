@@ -1,18 +1,17 @@
+#![allow(dead_code)]
 use std::ffi::{CStr, CString};
 use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
-use std::process::Command;
 use std::{io, mem, ptr};
 
 use libc::{
-    c_char, c_short, ifreq, AF_INET, IFF_MULTI_QUEUE, IFF_NO_PI, IFF_RUNNING, IFF_TAP, IFF_TUN,
+    c_char, c_short, ifreq, AF_INET, IFF_MULTI_QUEUE, IFF_NO_PI, IFF_RUNNING, IFF_TUN,
     IFF_UP, IFNAMSIZ, O_RDWR, SOCK_DGRAM,
 };
 
 use crate::device::IFace;
 use crate::linux::route;
 use crate::linux::sys::*;
-use crate::packet;
 use crate::unix::{exe_cmd, Fd, SockAddr};
 
 pub struct Device {
@@ -49,7 +48,7 @@ impl Device {
                 );
             }
 
-            let device_type: c_short = IFF_TUN as c_short;//if tap { IFF_TAP } else { IFF_TUN } as c_short;
+            let device_type: c_short = IFF_TUN as c_short; //if tap { IFF_TAP } else { IFF_TUN } as c_short;
 
             let queues_num = 1;
 
@@ -74,13 +73,9 @@ impl Device {
                 .to_string();
             let set_txqueuelen = format!("ifconfig {} txqueuelen 1000", name);
             if let Err(e) = exe_cmd(&set_txqueuelen) {
-                log::warn!("{:?}",e);
+                log::warn!("{:?}", e);
             }
-            Device {
-                name,
-                tun,
-                ctl,
-            }
+            Device { name, tun, ctl }
         };
         device.enabled(true)?;
         Ok(device)

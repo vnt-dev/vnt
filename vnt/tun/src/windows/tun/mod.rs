@@ -1,4 +1,5 @@
-use libloading::{Error, Library};
+#![allow(dead_code)]
+use libloading::Library;
 use std::io;
 use std::net::Ipv4Addr;
 
@@ -84,7 +85,7 @@ impl Device {
             //SAFETY: guid is a unique integer so transmuting either all zeroes or the user's preferred
             //guid to the winapi guid type is safe and will allow the windows kernel to see our GUID
 
-            let guid_struct: wintun_raw::GUID = unsafe { std::mem::transmute(guid) };
+            let guid_struct: wintun_raw::GUID = std::mem::transmute(guid);
             let guid_ptr = &guid_struct as *const wintun_raw::GUID;
 
             //SAFETY: the function is loaded from the wintun dll properly, we are providing valid
@@ -118,7 +119,7 @@ impl Device {
             let index = ffi::luid_to_index(&std::mem::transmute(luid)).map(|index| index as u32)?;
             // 设置网卡跃点
             if let Err(e) = netsh::set_interface_metric(index, 0) {
-                log::warn!("{:?}",e);
+                log::warn!("{:?}", e);
             }
             Ok(Self {
                 luid: std::mem::transmute(luid),

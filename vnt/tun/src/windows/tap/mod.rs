@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::io;
 use std::net::Ipv4Addr;
 use winapi::shared::ifdef::NET_LUID;
@@ -11,8 +12,6 @@ use winapi::um::winnt::{
 
 use crate::device::IFace;
 use crate::packet;
-use crate::packet::ethernet::protocol::Protocol;
-use crate::packet::{arp, ethernet};
 use crate::windows::{ctl_code, decode_utf16, encode_utf16, ffi, netsh, route};
 
 /* Present in 8.1 */
@@ -97,7 +96,7 @@ impl Device {
         let index = ffi::luid_to_index(&luid).map(|index| index as u32)?;
         // 设置网卡跃点
         if let Err(e) = netsh::set_interface_metric(index, 0) {
-            log::warn!("{:?}",e);
+            log::warn!("{:?}", e);
         }
         let device = Self {
             handle,
@@ -121,8 +120,6 @@ impl Device {
         )
     }
 }
-
-const MAC: [u8; 6] = [0xf, 0xf, 0xf, 0xf, 0xe, 0x9];
 
 impl IFace for Device {
     fn version(&self) -> io::Result<String> {

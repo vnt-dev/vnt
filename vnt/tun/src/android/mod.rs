@@ -14,7 +14,7 @@ impl Device {
     }
 }
 impl Device {
-    pub fn as_tun_fd(&self) ->&Fd{
+    pub fn as_tun_fd(&self) -> &Fd {
         &self.fd
     }
 }
@@ -31,7 +31,7 @@ impl IFace for Device {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 
-    fn set_ip(&self, address: Ipv4Addr, mask: Ipv4Addr) -> io::Result<()> {
+    fn set_ip(&self, _address: Ipv4Addr, _mask: Ipv4Addr) -> io::Result<()> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 
@@ -39,15 +39,15 @@ impl IFace for Device {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 
-    fn set_mtu(&self, value: u32) -> io::Result<()> {
+    fn set_mtu(&self, _value: u32) -> io::Result<()> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 
-    fn add_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr, metric: u16) -> io::Result<()> {
+    fn add_route(&self, _dest: Ipv4Addr, _netmask: Ipv4Addr, _metric: u16) -> io::Result<()> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 
-    fn delete_route(&self, dest: Ipv4Addr, netmask: Ipv4Addr) -> io::Result<()> {
+    fn delete_route(&self, _dest: Ipv4Addr, _netmask: Ipv4Addr) -> io::Result<()> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 

@@ -3,7 +3,6 @@
 /// https://github.com/Tazdevil971/tap-windows
 /// https://github.com/nulldotblack/wintun
 pub mod device;
-mod packet;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -29,3 +28,6 @@ mod windows;
 
 #[cfg(windows)]
 pub use windows::Device;
+
+#[cfg(windows)]
+mod packet;
