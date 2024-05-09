@@ -12,7 +12,7 @@ use vnt::core::Config;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(default)]
 pub struct FileConfig {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     pub tap: bool,
     pub token: String,
     pub device_id: String,
@@ -47,7 +47,7 @@ pub struct FileConfig {
 impl Default for FileConfig {
     fn default() -> Self {
         Self {
-            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            #[cfg(target_os = "windows")]
             tap: false,
             token: "".to_string(),
             device_id: get_device_id(),
@@ -134,7 +134,7 @@ pub fn read_config(file_path: &str) -> io::Result<(Config, bool)> {
     let use_channel_type = UseChannelType::from_str(&file_conf.use_channel)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     let config = Config::new(
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(target_os = "windows")]
         file_conf.tap,
         file_conf.token,
         file_conf.device_id,

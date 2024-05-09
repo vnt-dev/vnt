@@ -12,7 +12,7 @@ use vnt::core::Config;
 use crate::utils::*;
 
 pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     let tap = env.get_field(&config, "tap", "Z")?.z()?;
     let token = to_string_not_null(env, &config, "token")?;
     let name = to_string_not_null(env, &config, "name")?;
@@ -90,7 +90,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     #[cfg(not(target_os = "android"))]
     let device_name = to_string(env, &config, "deviceName")?;
     let config = match Config::new(
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(target_os = "windows")]
         tap,
         token,
         device_id,

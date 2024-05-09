@@ -131,7 +131,7 @@ fn main() {
             println!("parameter -k not found .");
             return;
         }
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(target_os = "windows")]
         let tap = matches.opt_present("a");
         let device_name = matches.opt_str("nic");
         let token: String = matches.opt_get("k").unwrap().unwrap();
@@ -291,7 +291,7 @@ fn main() {
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = matches.opt_strs("mapping");
         let config = match Config::new(
-            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            #[cfg(target_os = "windows")]
             tap,
             token,
             device_id,
@@ -426,6 +426,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip,注意不能重复");
     println!("  -s <server>         注册和中继服务器地址,以'TXT:'开头表示解析TXT记录");
     println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun1.l.google.com -e stun2.l.google.com");
+    #[cfg(target_os = "windows")]
     println!("  -a                  使用tap模式,默认使用tun模式");
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");

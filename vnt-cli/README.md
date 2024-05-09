@@ -15,6 +15,8 @@
 使用stun服务探测客户端NAT类型，不同类型有不同的打洞策略
 ### -a
 加了此参数表示使用tap网卡，默认使用tun网卡，tun网卡效率更高
+
+注意：仅在windows上支持使用tap，用于兼容低版本windows系统（低版本windows不支持wintun）
 ### --nic `<tun0>`
 指定虚拟网卡名称，默认tun模式使用vnt-tun，tap模式使用vnt-tap
 ### -i `<in-ip>`、-o  `<out-ip>`
@@ -98,7 +100,7 @@
 配置文件采用yaml格式，可参考：
 ```yaml
 # 全部参数
-tap: false #是否使用tap 
+tap: false #是否使用tap 仅在windows上支持使用tap
 token: xxx #组网token
 device_id: xxx #当前设备id
 name: windows 11 #当前设备名称
