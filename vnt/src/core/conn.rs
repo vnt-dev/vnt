@@ -103,13 +103,17 @@ impl Vnt {
             stop_manager.clone(),
             config.port_mapping_list.clone(),
         )?;
-        let ports = config.ports.as_ref().map_or(vec![0, 0], |v| {
+        let mut ports = config.ports.as_ref().map_or(vec![0, 0], |v| {
             if v.is_empty() {
                 vec![0, 0]
             } else {
                 v.clone()
             }
         });
+        if config.use_channel_type.is_only_relay() {
+            //中继模式下只监听一个端口就够了
+            ports.truncate(1);
+        }
         //通道上下文
         let (context, tcp_listener) = init_context(
             ports,
@@ -327,15 +331,16 @@ pub fn start<Call: VntCallback>(
             client_cipher.clone(),
         );
     }
-    // 定时地址探测
-    maintain::addr_request(
-        &scheduler,
-        context.clone(),
-        current_device.clone(),
-        server_cipher.clone(),
-        config_info.clone(),
-    );
+
     if !context.use_channel_type().is_only_relay() {
+        // 定时地址探测
+        maintain::addr_request(
+            &scheduler,
+            context.clone(),
+            current_device.clone(),
+            server_cipher.clone(),
+            config_info.clone(),
+        );
         // 定时打洞
         maintain::punch(
             &scheduler,
