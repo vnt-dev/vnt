@@ -63,6 +63,9 @@ pub fn start_port_mapping(
     stop_manager: StopManager,
     vec: Vec<(bool, SocketAddr, String)>,
 ) -> anyhow::Result<()> {
+    if vec.is_empty() {
+        return Ok(());
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("portMapping")
