@@ -13,7 +13,7 @@ mod conn;
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     pub tap: bool,
     pub token: String,
     pub device_id: String,
@@ -50,7 +50,7 @@ pub struct Config {
 
 impl Config {
     pub fn new(
-        #[cfg(any(target_os = "windows", target_os = "linux"))] tap: bool,
+        #[cfg(target_os = "windows")] tap: bool,
         token: String,
         device_id: String,
         name: String,
@@ -104,7 +104,7 @@ impl Config {
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;
         Ok(Self {
-            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            #[cfg(target_os = "windows")]
             tap,
             token,
             device_id,
