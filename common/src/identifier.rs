@@ -55,7 +55,10 @@ pub fn get_unique_identifier() -> Option<String> {
     // 对 linux 或 wsl 来说，读取 /etc/machine-id 即可获取当前操作系统的
     // 唯一标识，而且某些环境没有预装`dmidecode`命令
     if let Ok(identifier) = std::fs::read_to_string("/etc/machine-id") {
-        return Some(identifier);
+        let identifier = identifier.trim();
+        if !identifier.is_empty() {
+            return Some(identifier.to_string());
+        }
     }
 
     let output = match Command::new("dmidecode")
@@ -70,7 +73,7 @@ pub fn get_unique_identifier() -> Option<String> {
     };
 
     let result = String::from_utf8_lossy(&output.stdout);
-    let identifier = result.trim().to_string();
+    let identifier = result.trim();
     if identifier.is_empty() {
         None
     } else {
