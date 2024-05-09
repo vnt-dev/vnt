@@ -13,6 +13,11 @@ impl Device {
         Ok(Self { fd: Fd::new(fd)? })
     }
 }
+impl Device {
+    pub fn as_tun_fd(&self) ->&Fd{
+        &self.fd
+    }
+}
 impl IFace for Device {
     fn version(&self) -> io::Result<String> {
         Ok(String::new())

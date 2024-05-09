@@ -1,6 +1,7 @@
 mod fd;
 
 pub use fd::Fd;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Output;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod sockaddr;

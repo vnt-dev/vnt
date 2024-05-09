@@ -1,5 +1,6 @@
 use std::io;
 use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
+use libc::{F_GETFL, F_SETFL, fcntl, O_NONBLOCK};
 
 pub struct Fd(pub RawFd);
 
@@ -9,6 +10,12 @@ impl Fd {
             return Err(io::Error::from(io::ErrorKind::InvalidInput));
         }
         Ok(Fd(value))
+    }
+    pub fn set_nonblock(&self) -> io::Result<()> {
+        match unsafe { fcntl(self.0, F_SETFL, fcntl(self.0, F_GETFL) | O_NONBLOCK) } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
     }
 }
 
@@ -51,6 +58,7 @@ impl IntoRawFd for Fd {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 impl Drop for Fd {
     fn drop(&mut self) {
         unsafe {

@@ -224,6 +224,11 @@ impl Device {
         }
     }
 }
+impl Device {
+    pub fn as_tun_fd(&self) ->&Fd{
+        &self.tun
+    }
+}
 
 impl IFace for Device {
     fn version(&self) -> io::Result<String> {
