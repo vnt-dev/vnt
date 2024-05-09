@@ -320,8 +320,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
                                     "device_fd == 0".into(),
                                 ));
                             } else {
-                                let device = Arc::new(tun::Device::new(device_fd as _)?);
-                                if let Err(e) = self.device.start(device) {
+                                if let Err(e) = self.device.start(device_fd as _) {
                                     self.callback.error(ErrorInfo::new_msg(
                                         ErrorType::Unknown,
                                         format!("{:?}", e),

@@ -26,7 +26,7 @@ impl DeviceAdapter {
     #[cfg(target_os = "android")]
     pub fn new(tun_device_helper: TunDeviceHelper) -> Self {
         Self {
-            tun: Arc::new(Mutex::new(None)),
+            tun: Arc::new(AtomicCell::new(-1 as _)),
             tun_device_helper,
         }
     }
@@ -43,22 +43,19 @@ impl std::ops::Deref for DeviceAdapter {
 #[cfg(target_os = "android")]
 #[derive(Clone)]
 pub struct DeviceAdapter {
-    tun: Arc<Mutex<Option<Arc<Device>>>>,
+    tun: Arc<AtomicCell<std::os::fd::RawFd>>,
     tun_device_helper: TunDeviceHelper,
 }
 #[cfg(target_os = "android")]
 impl DeviceAdapter {
     pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
-        if let Some(device) = self.tun.lock().as_ref() {
-            use tun::device::IFace;
-            device.write(buf)
-        } else {
-            Err(io::Error::new(io::ErrorKind::Other, "not tun device"))
-        }
+        let fd = self.tun.load();
+        tun::Fd(fd).write(buf)
     }
-    pub fn start(&self, device: Arc<Device>) -> io::Result<()> {
-        self.tun_device_helper.start(device.clone())?;
-        self.tun.lock().replace(device);
+    pub fn start(&self, fd: std::os::fd::RawFd) -> io::Result<()> {
+        //安卓端fd是由外部释放的，所以这里这么搞免得加锁
+        self.tun_device_helper.start(Arc::new(Device::new(fd)?))?;
+        self.tun.store(fd);
         Ok(())
     }
 }
