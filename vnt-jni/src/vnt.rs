@@ -11,7 +11,6 @@ use vnt::core::Vnt;
 use vnt::handle::PeerDeviceInfo;
 
 use crate::callback::CallBack;
-
 #[no_mangle]
 pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_new0(
     mut env: JNIEnv<'static>,
@@ -19,6 +18,7 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_new0(
     config: JObject,
     call_back: JObject<'static>,
 ) -> jlong {
+    crate::vnt_logger::init_log();
     let jvm = if let Ok(jvm) = env.get_java_vm() {
         jvm
     } else {
