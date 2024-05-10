@@ -4,6 +4,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::Duration;
 
 use crate::channel::punch::NatType;
+use rand::RngCore;
 use std::net::UdpSocket;
 use stun_format::Attr;
 
@@ -79,8 +80,7 @@ pub fn stun_test_nat0(stun_servers: Vec<String>) -> io::Result<(NatType, Vec<Ipv
 
 fn test_nat(udp: &UdpSocket, stun_server: &String) -> io::Result<HashSet<SocketAddr>> {
     udp.connect(stun_server)?;
-    // 随便搞个当id
-    let tid = stun_server.as_ptr() as u128;
+    let tid = rand::thread_rng().next_u64() as u128;
     let mut addr = HashSet::new();
     let (mapped_addr1, changed_addr1) = test_nat_(&udp, true, true, tid)?;
     if mapped_addr1.is_ipv4() {
@@ -119,13 +119,12 @@ fn test_nat_(
     for _ in 0..2 {
         let mut buf = [0u8; 28];
         let mut msg = stun_format::MsgBuilder::from(buf.as_mut_slice());
-        msg.typ(stun_format::MsgType::BindingRequest).unwrap();
-        msg.tid(tid).unwrap();
+        msg.typ(stun_format::MsgType::BindingRequest);
+        msg.tid(tid);
         msg.add_attr(Attr::ChangeRequest {
             change_ip,
             change_port,
-        })
-        .unwrap();
+        });
         udp.send(msg.as_bytes())?;
         let mut buf = [0; 10240];
         let (len, _addr) = match udp.recv_from(&mut buf) {
@@ -177,4 +176,43 @@ fn stun_addr(addr: stun_format::SocketAddr) -> SocketAddr {
             SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::from(ip), port, 0, 0))
         }
     }
+}
+
+const TAG: u128 = 1827549368 << 64;
+
+pub fn send_stun_request() -> Vec<u8> {
+    let mut buf = [0u8; 28];
+    let mut msg = stun_format::MsgBuilder::from(buf.as_mut_slice());
+    msg.typ(stun_format::MsgType::BindingRequest);
+    let id = rand::thread_rng().next_u64() as u128;
+    msg.tid(id | TAG);
+    msg.add_attr(Attr::ChangeRequest {
+        change_ip: false,
+        change_port: false,
+    });
+    msg.as_bytes().to_vec()
+}
+
+pub fn recv_stun_response(buf: &[u8]) -> Option<SocketAddr> {
+    if buf[0] != 0x01 && buf[1] != 0x01 {
+        return None;
+    }
+    let msg = stun_format::Msg::from(buf);
+    if let Some(tid) = msg.tid() {
+        if tid & TAG != TAG {
+            return None;
+        }
+    }
+    for x in msg.attrs_iter() {
+        match x {
+            Attr::MappedAddress(addr) => {
+                return Some(stun_addr(addr));
+            }
+            Attr::XorMappedAddress(addr) => {
+                return Some(stun_addr(addr));
+            }
+            _ => {}
+        }
+    }
+    None
 }

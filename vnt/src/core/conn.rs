@@ -339,6 +339,7 @@ pub fn start<Call: VntCallback>(
             context.clone(),
             current_device.clone(),
             server_cipher.clone(),
+            nat_test.clone(),
             config_info.clone(),
         );
         // 定时打洞
@@ -419,5 +420,8 @@ impl Vnt {
     }
     pub fn wait_timeout(&self, dur: Duration) -> bool {
         self.stop_manager.wait_timeout(dur)
+    }
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 }

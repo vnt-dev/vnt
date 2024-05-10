@@ -39,10 +39,22 @@ pub struct RecvDataHandler<Call> {
     client: ClientPacketHandler,
     server: ServerPacketHandler<Call>,
     counter: U64Adder,
+    nat_test: NatTest,
 }
 
 impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
     fn handle(&mut self, buf: &mut [u8], route_key: RouteKey, context: &ChannelContext) {
+        //判断stun响应包
+        if !route_key.is_tcp() {
+            if let Ok(rs) = self
+                .nat_test
+                .recv_data(route_key.index(), route_key.addr, buf)
+            {
+                if rs {
+                    return;
+                }
+            }
+        }
         if let Err(e) = self.handle0(buf, route_key, context) {
             log::error!("[{}]-{:?}", thread::current().name().unwrap_or(""), e);
         }
@@ -86,7 +98,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             client_cipher,
             punch_sender,
             peer_nat_info_map,
-            nat_test,
+            nat_test.clone(),
             route,
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
@@ -98,6 +110,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             client,
             server,
             counter,
+            nat_test,
         }
     }
     fn handle0(
