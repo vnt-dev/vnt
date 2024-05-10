@@ -57,7 +57,7 @@ impl Config {
         server_address_str: String,
         mut name_servers: Vec<String>,
         mut stun_server: Vec<String>,
-        in_ips: Vec<(u32, u32, Ipv4Addr)>,
+        mut in_ips: Vec<(u32, u32, Ipv4Addr)>,
         out_ips: Vec<(u32, u32)>,
         password: Option<String>,
         mtu: Option<u32>,
@@ -103,6 +103,11 @@ impl Config {
             address_choose(dns_query_all(&server_address_str, name_servers.clone())?)?;
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;
+
+        for (dest, mask, _) in &mut in_ips {
+            *dest = *mask & *dest;
+        }
+        in_ips.sort_by(|(dest1, _, _), (dest2, _, _)| dest2.cmp(dest1));
         Ok(Self {
             #[cfg(target_os = "windows")]
             tap,

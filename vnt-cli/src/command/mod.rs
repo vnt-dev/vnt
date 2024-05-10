@@ -185,6 +185,9 @@ pub fn command_info(vnt: &Vnt) -> Info {
         .unwrap_or("None".to_string());
     let up = vnt.up_stream();
     let down = vnt.down_stream();
+    let port_mapping_list = vnt.config().port_mapping_list.clone();
+    let in_ips = vnt.config().in_ips.clone();
+    let out_ips = vnt.config().out_ips.clone();
     Info {
         name,
         virtual_ip,
@@ -198,5 +201,8 @@ pub fn command_info(vnt: &Vnt) -> Info {
         ipv6_addr,
         up,
         down,
+        port_mapping_list,
+        in_ips,
+        out_ips,
     }
 }
