@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +47,7 @@ pub struct Vnt {
 }
 
 impl Vnt {
-    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> io::Result<Self> {
+    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
         log::info!("config:{:?}", config);
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
@@ -94,13 +93,27 @@ impl Vnt {
             config.server_address_str.clone(),
             config.name_servers.clone(),
         );
-        let ports = config.ports.as_ref().map_or(vec![0, 0], |v| {
+        // 服务停止管理器
+        let stop_manager = {
+            let callback = callback.clone();
+            StopManager::new(move || callback.stop())
+        };
+        #[cfg(feature = "port_mapping")]
+        crate::port_mapping::start_port_mapping(
+            stop_manager.clone(),
+            config.port_mapping_list.clone(),
+        )?;
+        let mut ports = config.ports.as_ref().map_or(vec![0, 0], |v| {
             if v.is_empty() {
                 vec![0, 0]
             } else {
                 v.clone()
             }
         });
+        if config.use_channel_type.is_only_relay() {
+            //中继模式下只监听一个端口就够了
+            ports.truncate(1);
+        }
         //通道上下文
         let (context, tcp_listener) = init_context(
             ports,
@@ -132,11 +145,6 @@ impl Vnt {
             callback.create_tun(tun_info);
             device
         };
-        // 服务停止管理器
-        let stop_manager = {
-            let callback = callback.clone();
-            StopManager::new(move || callback.stop())
-        };
         // 定时器
         let scheduler = Scheduler::new(stop_manager.clone())?;
         let external_route = ExternalRoute::new(config.in_ips.clone());
@@ -146,7 +154,6 @@ impl Vnt {
         let proxy_map = if !config.out_ips.is_empty() && !config.no_proxy {
             Some(crate::ip_proxy::init_proxy(
                 context.clone(),
-                scheduler.clone(),
                 stop_manager.clone(),
                 current_device.clone(),
                 client_cipher.clone(),
@@ -324,15 +331,17 @@ pub fn start<Call: VntCallback>(
             client_cipher.clone(),
         );
     }
-    // 定时地址探测
-    maintain::addr_request(
-        &scheduler,
-        context.clone(),
-        current_device.clone(),
-        server_cipher.clone(),
-        config_info.clone(),
-    );
+
     if !context.use_channel_type().is_only_relay() {
+        // 定时地址探测
+        maintain::addr_request(
+            &scheduler,
+            context.clone(),
+            current_device.clone(),
+            server_cipher.clone(),
+            nat_test.clone(),
+            config_info.clone(),
+        );
         // 定时打洞
         maintain::punch(
             &scheduler,
@@ -408,5 +417,11 @@ impl Vnt {
     }
     pub fn wait(&self) {
         self.stop_manager.wait()
+    }
+    pub fn wait_timeout(&self, dur: Duration) -> bool {
+        self.stop_manager.wait_timeout(dur)
+    }
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 }

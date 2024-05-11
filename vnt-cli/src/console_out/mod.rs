@@ -1,4 +1,5 @@
 use console::{style, Style};
+use std::net::Ipv4Addr;
 
 use crate::command::entity::{DeviceItem, Info, RouteItem};
 
@@ -9,10 +10,15 @@ pub fn console_info(status: Info) {
     println!("Virtual ip: {}", style(status.virtual_ip).green());
     println!("Virtual gateway: {}", style(status.virtual_gateway).green());
     println!("Virtual netmask: {}", style(status.virtual_netmask).green());
-    println!(
-        "Connection status: {}",
-        style(status.connect_status).green()
-    );
+    if status.connect_status.eq_ignore_ascii_case("Connected") {
+        println!(
+            "Connection status: {}",
+            style(status.connect_status).green()
+        );
+    } else {
+        println!("Connection status: {}", style(status.connect_status).red());
+    }
+
     println!("NAT type: {}", style(status.nat_type).green());
     println!("Relay server: {}", style(status.relay_server).green());
     println!("Public ips: {}", style(status.public_ips).green());
@@ -20,6 +26,38 @@ pub fn console_info(status: Info) {
     println!("IPv6: {}", style(status.ipv6_addr).green());
     println!("Up: {}", style(convert(status.up)).green());
     println!("Down: {}", style(convert(status.down)).green());
+
+    if !status.port_mapping_list.is_empty() {
+        println!("------------------------------------------");
+        println!("Port mapping {}", status.port_mapping_list.len());
+        for (is_tcp, addr, dest) in status.port_mapping_list {
+            if is_tcp {
+                println!("  TCP: {} -> {}", addr, dest)
+            } else {
+                println!("  UDP: {} -> {}", addr, dest)
+            }
+        }
+    }
+    if !status.in_ips.is_empty() || !status.out_ips.is_empty() {
+        println!("------------------------------------------");
+    }
+    if !status.in_ips.is_empty() {
+        println!("IP forwarding {}", status.in_ips.len());
+        for (dest, mask, ip) in status.in_ips {
+            println!(
+                "  -- {} --> {}/{}",
+                ip,
+                Ipv4Addr::from(dest),
+                mask.count_ones()
+            )
+        }
+    }
+    if !status.out_ips.is_empty() {
+        println!("Allows network {}", status.out_ips.len());
+        for (dest, mask) in status.out_ips {
+            println!("  {}/{}", Ipv4Addr::from(dest), mask.count_ones())
+        }
+    }
 }
 
 fn convert(num: u64) -> String {

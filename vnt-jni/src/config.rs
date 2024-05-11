@@ -12,7 +12,7 @@ use vnt::core::Config;
 use crate::utils::*;
 
 pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     let tap = env.get_field(&config, "tap", "Z")?.z()?;
     let token = to_string_not_null(env, &config, "token")?;
     let name = to_string_not_null(env, &config, "name")?;
@@ -21,6 +21,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     let server_address_str = to_string_not_null(env, &config, "server")?;
     let stun_server = to_string_array_not_null(env, &config, "stunServer")?;
     let dns = to_string_array(env, &config, "dns")?.unwrap_or_else(|| vec![]);
+    let port_mapping = to_string_array(env, &config, "portMapping")?.unwrap_or_else(|| vec![]);
     let cipher_model = to_string_not_null(env, &config, "cipherModel")?;
     let punch_model = to_string(env, &config, "punchModel")?;
     let mtu = to_integer(env, &config, "mtu")?.map(|v| v as u32);
@@ -89,7 +90,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
     #[cfg(not(target_os = "android"))]
     let device_name = to_string(env, &config, "deviceName")?;
     let config = match Config::new(
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(target_os = "windows")]
         tap,
         token,
         device_id,
@@ -116,12 +117,13 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         UseChannelType::from_str(&use_channel.unwrap_or_default()).unwrap_or_default(),
         packet_loss_rate,
         packet_delay,
+        port_mapping,
     ) {
         Ok(config) => config,
         Err(e) => {
             env.throw_new(
                 "java/lang/RuntimeException",
-                format!("vnt start error {}", e),
+                format!("vnt start error {:?}", e),
             )
             .expect("throw");
             return Err(Error::JavaException);

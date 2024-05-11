@@ -81,6 +81,9 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> IpV4Packet<B> {
     pub fn set_flags(&mut self, flags: u8) {
         self.buffer.as_mut()[6] = (self.buffer.as_ref()[6] & 0b11100000) | (flags << 5)
     }
+    pub fn set_ttl(&mut self, ttl: u8) {
+        self.buffer.as_mut()[8] = ttl
+    }
     fn set_checksum(&mut self, value: u16) {
         self.header_mut()[10..12].copy_from_slice(&value.to_be_bytes())
     }

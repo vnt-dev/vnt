@@ -1,5 +1,6 @@
+use anyhow::Context;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::net::{SocketAddr, UdpSocket};
 use std::ops::Sub;
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
+use rand::Rng;
 
 use crate::channel::punch::{NatInfo, NatType};
 use crate::proto::message::PunchNatType;
@@ -89,8 +91,9 @@ impl NatTest {
         udp_ports: Vec<u16>,
         tcp_port: u16,
     ) -> NatTest {
-        let server = stun_server[0].clone();
-        stun_server.resize(3, server);
+        if stun_server.len() > 5 {
+            stun_server.truncate(5);
+        }
         let ports = vec![0; udp_ports.len()];
         let nat_info = NatInfo::new(
             Vec::new(),
@@ -200,5 +203,67 @@ impl NatTest {
         guard.ipv6 = ipv6;
 
         Ok(guard.clone())
+    }
+    pub fn send_data(&self) -> anyhow::Result<(Vec<u8>, SocketAddr)> {
+        let len = self.stun_server.len();
+        let stun_server = if len == 1 {
+            &self.stun_server[0]
+        } else {
+            let index = rand::thread_rng().gen_range(0..self.stun_server.len());
+            &self.stun_server[index]
+        };
+        let addr = stun_server
+            .to_socket_addrs()?
+            .next()
+            .with_context(|| format!("stun error {:?}", stun_server))?;
+        Ok((stun::send_stun_request(), addr))
+    }
+    pub fn recv_data(
+        &self,
+        index: usize,
+        source_addr: SocketAddr,
+        buf: &[u8],
+    ) -> anyhow::Result<bool> {
+        if let Some(addr) = stun::recv_stun_response(buf) {
+            if let SocketAddr::V4(addr) = addr {
+                let mut check_fail = true;
+                let source_ip = match source_addr.ip() {
+                    IpAddr::V4(ip) => ip,
+                    IpAddr::V6(ip) => {
+                        if let Some(ip) = ip.to_ipv4_mapped() {
+                            ip
+                        } else {
+                            return Ok(false);
+                        }
+                    }
+                };
+                'a: for stun_server in &self.stun_server {
+                    for x in stun_server.to_socket_addrs()? {
+                        if source_addr.port() == x.port() {
+                            if let IpAddr::V4(ip) = x.ip() {
+                                if ip == source_ip {
+                                    check_fail = false;
+                                    break 'a;
+                                }
+                            };
+                        }
+                    }
+                }
+                if check_fail {
+                    return Ok(false);
+                }
+                let ip = addr.ip();
+                if !ip.is_multicast()
+                    && !ip.is_broadcast()
+                    && !ip.is_unspecified()
+                    && !ip.is_loopback()
+                    && !ip.is_private()
+                {
+                    self.update_addr(index, *addr.ip(), addr.port());
+                    return Ok(true);
+                }
+            }
+        }
+        return Ok(false);
     }
 }

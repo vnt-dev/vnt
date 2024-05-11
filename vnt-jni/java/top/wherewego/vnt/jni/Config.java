@@ -1,13 +1,16 @@
 package top.wherewego.vnt.jni;
 
+import java.io.Serializable;
+import java.util.Arrays;
+
 /**
  * 启动配置
  *
  * @author https://github.com/lbl8603/vnt
  */
-public class Config {
+public class Config implements Serializable {
     /**
-     * 是否是tap模式，仅支持windows和linux
+     * 是否是tap模式，仅支持windows
      */
     private boolean tap;
     /**
@@ -39,10 +42,6 @@ public class Config {
      */
     private boolean serverEncrypt;
     /**
-     * 仅使用中继转发
-     */
-    private boolean relay;
-    /**
      * 设备id，请使用唯一值
      */
     private String deviceId;
@@ -54,6 +53,10 @@ public class Config {
      * dns地址
      */
     private String[] dns;
+    /**
+     * 端口映射
+     */
+    private String[] portMapping;
     /**
      * stun服务地址
      */
@@ -170,13 +173,6 @@ public class Config {
         this.serverEncrypt = serverEncrypt;
     }
 
-    public boolean isRelay() {
-        return relay;
-    }
-
-    public void setRelay(boolean relay) {
-        this.relay = relay;
-    }
 
     public String getDeviceId() {
         return deviceId;
@@ -200,6 +196,13 @@ public class Config {
 
     public void setDns(String[] dns) {
         this.dns = dns;
+    }
+    public String[] getPortMapping() {
+        return portMapping;
+    }
+
+    public void setPortMapping(String[] portMapping) {
+        this.portMapping = portMapping;
     }
 
     public String[] getStunServer() {
@@ -296,5 +299,35 @@ public class Config {
 
     public void setPacketDelay(Integer packetDelay) {
         this.packetDelay = packetDelay;
+    }
+
+    @Override
+    public String toString() {
+        return "Config{" +
+                "tap=" + tap +
+                ", token='" + token + '\'' +
+                ", name='" + name + '\'' +
+                ", password='" + password + '\'' +
+                ", cipherModel='" + cipherModel + '\'' +
+                ", punchModel='" + punchModel + '\'' +
+                ", mtu=" + mtu +
+                ", serverEncrypt=" + serverEncrypt +
+                ", deviceId='" + deviceId + '\'' +
+                ", server='" + server + '\'' +
+                ", dns=" + Arrays.toString(dns) +
+                ", portMapping=" + Arrays.toString(portMapping) +
+                ", stunServer=" + Arrays.toString(stunServer) +
+                ", tcp=" + tcp +
+                ", ip='" + ip + '\'' +
+                ", finger=" + finger +
+                ", firstLatency=" + firstLatency +
+                ", inIps=" + Arrays.toString(inIps) +
+                ", outIps=" + Arrays.toString(outIps) +
+                ", ports=" + Arrays.toString(ports) +
+                ", deviceName='" + deviceName + '\'' +
+                ", useChannel='" + useChannel + '\'' +
+                ", packetLossRate=" + packetLossRate +
+                ", packetDelay=" + packetDelay +
+                '}';
     }
 }

@@ -1,12 +1,12 @@
+use anyhow::Context;
 use std::collections::HashMap;
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
-use std::{io, thread};
 
 use crossbeam_utils::atomic::AtomicCell;
-use mio::net::UdpSocket;
-use mio::{Events, Interest, Poll, Token, Waker};
 use parking_lot::Mutex;
+use tokio::net::UdpSocket;
 
 use packet::icmp::icmp;
 use packet::icmp::icmp::HeaderOther;
@@ -18,7 +18,6 @@ use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::ProxyHandler;
 use crate::protocol;
 use crate::protocol::{NetPacket, MAX_TTL};
-use crate::util::StopManager;
 #[derive(Clone)]
 pub struct IcmpProxy {
     icmp_socket: Arc<std::net::UdpSocket>,
@@ -27,48 +26,50 @@ pub struct IcmpProxy {
 }
 
 impl IcmpProxy {
-    pub fn new(
+    pub async fn new(
         context: ChannelContext,
-        stop_manager: StopManager,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         client_cipher: Cipher,
-    ) -> io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         let icmp_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::RAW,
             Some(socket2::Protocol::ICMPV4),
-        )?;
+        )
+        .context("new Socket RAW ICMPV4 failed")?;
         #[cfg(target_os = "android")]
         let icmp_socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::DGRAM,
             Some(socket2::Protocol::ICMPV4),
-        )?;
+        )
+        .context("new Socket DGRAM ICMPV4 failed")?;
         let addr: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
-        icmp_socket.bind(&socket2::SockAddr::from(addr))?;
+        icmp_socket
+            .bind(&socket2::SockAddr::from(addr))
+            .context("bind Socket ICMPV4 failed")?;
         icmp_socket.set_nonblocking(true)?;
         let std_socket: std::net::UdpSocket = icmp_socket.into();
-        let mio_icmp_socket = UdpSocket::from_std(std_socket.try_clone()?);
+
+        let tokio_icmp_socket = UdpSocket::from_std(std_socket.try_clone()?)?;
         let nat_map: Arc<Mutex<HashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>> =
             Arc::new(Mutex::new(HashMap::with_capacity(16)));
         {
             let nat_map = nat_map.clone();
-            thread::Builder::new()
-                .name("icmpProxy".into())
-                .spawn(move || {
-                    if let Err(e) = icmp_proxy(
-                        mio_icmp_socket,
-                        nat_map,
-                        context,
-                        stop_manager,
-                        current_device,
-                        client_cipher,
-                    ) {
-                        log::warn!("icmp_proxy:{:?}", e);
-                    }
-                })
-                .expect("icmpProxy");
+            tokio::spawn(async {
+                if let Err(e) = icmp_proxy(
+                    tokio_icmp_socket,
+                    nat_map,
+                    context,
+                    current_device,
+                    client_cipher,
+                )
+                .await
+                {
+                    log::warn!("icmp_proxy:{:?}", e);
+                }
+            });
         }
         Ok(Self {
             icmp_socket: Arc::new(std_socket),
@@ -77,105 +78,51 @@ impl IcmpProxy {
     }
 }
 
-const SERVER_VAL: usize = 0;
-const SERVER: Token = Token(SERVER_VAL);
-const NOTIFY_VAL: usize = 1;
-const NOTIFY: Token = Token(NOTIFY_VAL);
-
-fn icmp_proxy(
-    mut icmp_socket: UdpSocket,
+async fn icmp_proxy(
+    icmp_socket: UdpSocket,
     // 对端-> 真实来源
     nat_map: Arc<Mutex<HashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>>,
     context: ChannelContext,
-    stop_manager: StopManager,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
 ) -> io::Result<()> {
-    let mut poll = Poll::new()?;
-    poll.registry()
-        .register(&mut icmp_socket, SERVER, Interest::READABLE)?;
-    let mut events = Events::with_capacity(32);
-    let stop = Arc::new(Waker::new(poll.registry(), NOTIFY)?);
-    let _stop = stop.clone();
-    let _worker = stop_manager.add_listener("icmp_proxy".into(), move || {
-        if let Err(e) = stop.wake() {
-            log::warn!("stop icmp_proxy:{:?}", e);
-        }
-    })?;
     let mut buf = [0u8; 65535 - 20 - 8];
     loop {
-        poll.poll(&mut events, None)?;
-        if stop_manager.is_stop() {
-            return Ok(());
-        }
-        for event in events.iter() {
-            match event.token() {
-                SERVER => readable_handle(
-                    &icmp_socket,
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        let start = 12;
+        #[cfg(target_os = "android")]
+        let start = 12 + 20;
+        loop {
+            let (len, addr) = icmp_socket.recv_from(&mut buf[start..]).await?;
+            if let IpAddr::V4(peer_ip) = addr.ip() {
+                #[cfg(target_os = "android")]
+                {
+                    let buf = &mut buf[12..];
+                    // ipv4 头部20字节
+                    buf[0] = 0b0100_0110;
+                    //写入总长度
+                    buf[2..4].copy_from_slice(&((20 + len) as u16).to_be_bytes());
+
+                    let mut ipv4 = IpV4Packet::unchecked(buf);
+                    ipv4.set_flags(2);
+                    ipv4.set_ttl(1);
+                    ipv4.set_protocol(packet::ip::ipv4::protocol::Protocol::Icmp);
+                    ipv4.set_source_ip(peer_ip);
+                }
+                recv_handle(
                     &mut buf,
+                    start + len,
+                    peer_ip,
                     &nat_map,
                     &context,
                     &current_device,
                     &client_cipher,
-                ),
-                NOTIFY => {
-                    return Ok(());
-                }
-                _ => {}
+                );
             }
         }
     }
 }
-fn readable_handle(
-    icmp_socket: &UdpSocket,
-    buf: &mut [u8],
-    nat_map: &Mutex<HashMap<(Ipv4Addr, u16, u16), Ipv4Addr>>,
-    context: &ChannelContext,
-    current_device: &AtomicCell<CurrentDeviceInfo>,
-    client_cipher: &Cipher,
-) {
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-    let start = 12;
-    #[cfg(target_os = "android")]
-    let start = 12 + 20;
-    loop {
-        let (len, addr) = match icmp_socket.recv_from(&mut buf[start..]) {
-            Ok(rs) => rs,
-            Err(e) => {
-                if e.kind() == io::ErrorKind::WouldBlock {
-                    break;
-                }
-                log::warn!("icmp_socket {:?}", e);
-                return;
-            }
-        };
-        if let IpAddr::V4(peer_ip) = addr.ip() {
-            #[cfg(target_os = "android")]
-            {
-                let buf = &mut buf[12..];
-                // ipv4 头部20字节
-                buf[0] = 0b0100_0110;
-                //写入总长度
-                buf[2..4].copy_from_slice(&((20 + len) as u16).to_be_bytes());
 
-                let mut ipv4 = IpV4Packet::unchecked(buf);
-                ipv4.set_flags(2);
-                ipv4.set_ttl(1);
-                ipv4.set_protocol(packet::ip::ipv4::protocol::Protocol::Icmp);
-                ipv4.set_source_ip(peer_ip);
-            }
-            recv_handle(
-                buf,
-                start + len,
-                peer_ip,
-                &nat_map,
-                &context,
-                &current_device,
-                &client_cipher,
-            );
-        }
-    }
-}
 fn recv_handle(
     buf: &mut [u8],
     data_len: usize,
@@ -219,11 +166,17 @@ fn recv_handle(
                         }
                     }
                 }
-                _ => {}
+                h => {
+                    log::warn!("不支持的icmp代理 {:?},{:?}", peer_ip, h)
+                }
             },
-            Err(_) => {}
+            Err(e) => {
+                log::warn!("icmp {:?}", e)
+            }
         },
-        Err(_) => {}
+        Err(e) => {
+            log::warn!("icmp {:?}", e)
+        }
     }
 }
 

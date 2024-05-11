@@ -102,7 +102,21 @@ pub fn dns_query_all(
             let mut err: Option<anyhow::Error> = None;
             for name_server in name_servers {
                 if let Some(domain) = txt_domain.as_ref() {
-                    return txt_dns(domain, name_server);
+                    match txt_dns(domain, name_server) {
+                        Ok(addr) => {
+                            if !addr.is_empty() {
+                                return Ok(addr);
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(err) = &mut err {
+                                *err = anyhow::anyhow!("{} {}", err, e);
+                            } else {
+                                err.replace(anyhow::anyhow!("{}", e));
+                            }
+                        }
+                    }
+                    continue;
                 }
                 let end_index = domain
                     .rfind(":")

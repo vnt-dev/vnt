@@ -1,8 +1,9 @@
 use std::ptr;
+use std::time::Duration;
 
 use jni::errors::Error;
 use jni::objects::{JClass, JObject, JValue};
-use jni::sys::{jint, jlong, jobject, jobjectArray, jsize};
+use jni::sys::{jboolean, jint, jlong, jobject, jobjectArray, jsize};
 use jni::JNIEnv;
 
 use vnt::channel::Route;
@@ -10,7 +11,6 @@ use vnt::core::Vnt;
 use vnt::handle::PeerDeviceInfo;
 
 use crate::callback::CallBack;
-
 #[no_mangle]
 pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_new0(
     mut env: JNIEnv<'static>,
@@ -18,6 +18,7 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_new0(
     config: JObject,
     call_back: JObject<'static>,
 ) -> jlong {
+    crate::vnt_logger::init_log();
     let jvm = if let Ok(jvm) = env.get_java_vm() {
         jvm
     } else {
@@ -73,6 +74,16 @@ pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_wait0(
 ) {
     let vnt = raw_vnt as *mut Vnt;
     let _ = (&*vnt).wait();
+}
+#[no_mangle]
+pub unsafe extern "C" fn Java_top_wherewego_vnt_jni_Vnt_waitTimeout0(
+    _env: JNIEnv,
+    _class: JClass,
+    raw_vnt: jlong,
+    time: jlong,
+) -> jboolean {
+    let vnt = raw_vnt as *mut Vnt;
+    (&*vnt).wait_timeout(Duration::from_millis(time as _)) as _
 }
 
 #[no_mangle]

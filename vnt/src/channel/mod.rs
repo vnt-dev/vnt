@@ -1,4 +1,4 @@
-use std::io;
+use anyhow::Context;
 use std::net::{SocketAddr, UdpSocket};
 use std::str::FromStr;
 
@@ -7,7 +7,7 @@ use crate::channel::handler::RecvChannelHandler;
 use crate::channel::sender::AcceptSocketSender;
 use crate::channel::tcp_channel::tcp_listen;
 use crate::channel::udp_channel::udp_listen;
-use crate::util::{io_convert, StopManager};
+use crate::util::StopManager;
 
 pub mod context;
 pub mod handler;
@@ -145,7 +145,7 @@ pub fn init_context(
     is_tcp: bool,
     packet_loss_rate: Option<f64>,
     packet_delay: u32,
-) -> io::Result<(ChannelContext, mio::net::TcpListener)> {
+) -> anyhow::Result<(ChannelContext, mio::net::TcpListener)> {
     assert!(!ports.is_empty(), "not channel");
     let mut udps = Vec::with_capacity(ports.len());
     //检查系统是否支持ipv6
@@ -161,9 +161,9 @@ pub fn init_context(
         let (socket, address) = if use_ipv6 {
             let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
             let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None)?;
-            io_convert(socket.set_only_v6(false), |_| {
-                format!("set_only_v6 failed: {}", &address)
-            })?;
+            socket
+                .set_only_v6(false)
+                .with_context(|| format!("set_only_v6 failed: {}", &address))?;
             (socket, address)
         } else {
             let address: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
@@ -172,16 +172,15 @@ pub fn init_context(
                 address,
             )
         };
-
-        io_convert(socket.set_send_buffer_size(2 * 1024 * 1024), |_| {
-            format!("set_send_buffer_size failed: {}", &address)
-        })?;
-        io_convert(socket.set_recv_buffer_size(2 * 1024 * 1024), |_| {
-            format!("set_recv_buffer_size failed: {}", &address)
-        })?;
-        io_convert(socket.bind(&address.into()), |_| {
-            format!("bind failed: {}", &address)
-        })?;
+        if let Err(e) = socket.set_send_buffer_size(2 * 1024 * 1024) {
+            log::warn!("set_send_buffer_size {:?}", e);
+        }
+        if let Err(e) = socket.set_recv_buffer_size(2 * 1024 * 1024) {
+            log::warn!("set_send_buffer_size {:?}", e);
+        }
+        socket
+            .bind(&address.into())
+            .with_context(|| format!("bind failed: {}", &address))?;
         let main_channel: UdpSocket = socket.into();
         udps.push(main_channel);
     }
@@ -200,9 +199,9 @@ pub fn init_context(
     let (socket, address) = if use_ipv6 {
         let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
         let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None)?;
-        io_convert(socket.set_only_v6(false), |_| {
-            format!("set_only_v6 failed: {}", &address)
-        })?;
+        socket
+            .set_only_v6(false)
+            .with_context(|| format!("set_only_v6 failed: {}", &address))?;
         (socket, address)
     } else {
         let address: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
@@ -219,12 +218,12 @@ pub fn init_context(
             } else {
                 format!("0.0.0.0:{}", port).parse().unwrap()
             };
-            io_convert(socket.bind(&address.into()), |_| {
-                format!("bind failed: {}", &address)
-            })?;
+            socket
+                .bind(&address.into())
+                .with_context(|| format!("bind failed: {}", &address))?;
         } else {
             //手动指定的ip,直接报错
-            io_convert(Err(e), |_| format!("bind failed: {}", &address))?;
+            Err(anyhow::anyhow!("{:?},bind failed: {}", e, address))?;
         }
     }
     socket.listen(128)?;
@@ -239,7 +238,7 @@ pub fn init_channel<H>(
     context: ChannelContext,
     stop_manager: StopManager,
     recv_handler: H,
-) -> io::Result<(
+) -> anyhow::Result<(
     AcceptSocketSender<Option<Vec<mio::net::UdpSocket>>>,
     AcceptSocketSender<(mio::net::TcpStream, SocketAddr, Option<Vec<u8>>)>,
 )>

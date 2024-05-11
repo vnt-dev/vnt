@@ -1,6 +1,7 @@
+#![allow(dead_code)]
 use crate::windows::exe_cmd;
+use std::io;
 use std::net::Ipv4Addr;
-use std::{io, process};
 
 /// 设置网卡名称
 pub fn set_interface_name(old_name: &str, new_name: &str) -> io::Result<()> {

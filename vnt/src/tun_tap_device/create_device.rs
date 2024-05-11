@@ -5,12 +5,12 @@ use tun::Device;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 const DEFAULT_TUN_NAME: &str = "vnt-tun";
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_os = "windows")]
 const DEFAULT_TAP_NAME: &str = "vnt-tap";
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub fn create_device(config: &crate::core::Config) -> io::Result<Arc<Device>> {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     let default_name: &str = if config.tap {
         DEFAULT_TAP_NAME
     } else {
@@ -21,11 +21,11 @@ pub fn create_device(config: &crate::core::Config) -> io::Result<Arc<Device>> {
         let device_name = config
             .device_name
             .clone()
-            .unwrap_or(default_name.to_string());
-        if &device_name == default_name {
-            delete_device(default_name);
+            .unwrap_or(DEFAULT_TUN_NAME.to_string());
+        if &device_name == DEFAULT_TUN_NAME {
+            delete_device(DEFAULT_TUN_NAME);
         }
-        Arc::new(Device::new(Some(device_name), config.tap)?)
+        Arc::new(Device::new(Some(device_name))?)
     };
     #[cfg(target_os = "macos")]
     let device = Arc::new(Device::new(config.device_name.clone())?);

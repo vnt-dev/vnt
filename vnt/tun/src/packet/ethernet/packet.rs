@@ -21,7 +21,10 @@ impl<B: AsRef<[u8]>> EthernetPacket<B> {
         let packet = EthernetPacket::unchecked(buffer);
         //头部固定14位
         if packet.buffer.as_ref().len() < 14 {
-            Err(io::Error::new(io::ErrorKind::InvalidData,format!("len={}", packet.buffer.as_ref().len())))?;
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("len={}", packet.buffer.as_ref().len()),
+            ))?;
         }
 
         Ok(packet)

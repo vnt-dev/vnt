@@ -105,6 +105,8 @@ jobs:
         run: |
           # dependencies are only needed on ubuntu as that's the only place where
           # we make cross-compilation
+          rustup set auto-self-update disable
+          
           if [[ $OS =~ ^ubuntu.*$ ]]; then
             sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools
             #  curl -s musl.cc | grep mipsel
@@ -136,6 +138,9 @@ jobs:
               # mips平台使用1.71.1版本
               rustup install 1.71.1
               rustup default 1.71.1  
+            else
+              rustup install 1.77
+              rustup default 1.77
             fi
           
             if [  -n "$MUSL_URI" ]; then
@@ -144,8 +149,11 @@ jobs:
               tar zxf ./musl_gcc/$MUSL_URI.tgz -C ./musl_gcc/
               sudo ln -s $(pwd)/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
             fi
+          else
+            rustup install 1.77
+            rustup default 1.77 
           fi
-          
+          rustup -V
           
           # some additional configuration for cross-compilation on linux
           cat >>~/.cargo/config <<EOF

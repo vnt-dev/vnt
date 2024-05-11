@@ -13,7 +13,7 @@ where
     let mut eth_buf = [0; 65536];
     loop {
         let len = read_fn(&mut eth_buf)?;
-        if len == 0{
+        if len == 0 {
             return Ok(len);
         }
         //处理arp包

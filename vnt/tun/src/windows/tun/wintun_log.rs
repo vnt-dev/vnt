@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use log::*;
 
 use crate::windows::tun::wintun_raw;

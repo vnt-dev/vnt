@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::net::{Ipv4Addr, SocketAddr};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Info {
     pub name: String,
@@ -13,6 +14,9 @@ pub struct Info {
     pub ipv6_addr: String,
     pub up: u64,
     pub down: u64,
+    pub port_mapping_list: Vec<(bool, SocketAddr, String)>,
+    pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
+    pub out_ips: Vec<(u32, u32)>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -103,7 +103,7 @@ impl NatInfo {
         if port != 0 {
             if let Some(public_port) = self.public_ports.get_mut(index) {
                 if *public_port != port {
-                    log::info!("端口变化={}:{}", ip, port)
+                    log::info!("端口变化={}:{} index={}", ip, port, index)
                 }
                 *public_port = port;
             }
