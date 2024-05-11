@@ -193,6 +193,7 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
                 }
                 return Ok(());
             }
+            #[cfg(feature = "server_encrypt")]
             if let Ok(rsa_cipher) = RsaCipher::new(&response.public_key) {
                 self.rsa_cipher.lock().replace(rsa_cipher);
             }

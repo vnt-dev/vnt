@@ -19,6 +19,7 @@ use crate::handle::tun_tap::channel_group::channel_group;
 use crate::handle::{check_dest, CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
+#[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::ProxyHandler;
 use crate::protocol;
 use crate::protocol::body::ENCRYPTION_RESERVED;

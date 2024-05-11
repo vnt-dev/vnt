@@ -3,6 +3,7 @@ use crate::cipher::Cipher;
 use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::GroupSyncSender;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
+#[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::util::{SingleU64Adder, StopManager};
 use crossbeam_utils::atomic::AtomicCell;

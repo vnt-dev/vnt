@@ -185,7 +185,10 @@ pub fn command_info(vnt: &Vnt) -> Info {
         .unwrap_or("None".to_string());
     let up = vnt.up_stream();
     let down = vnt.down_stream();
+    #[cfg(feature = "port_mapping")]
     let port_mapping_list = vnt.config().port_mapping_list.clone();
+    #[cfg(not(feature = "port_mapping"))]
+    let port_mapping_list = vec![];
     let in_ips = vnt.config().in_ips.clone();
     let out_ips = vnt.config().out_ips.clone();
     Info {
