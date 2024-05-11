@@ -10,6 +10,7 @@ use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::external_route::ExternalRoute;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
+#[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::util::{SingleU64Adder, StopManager};
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -98,6 +99,7 @@ impl TunDeviceHelper {
                 context,
                 current_device,
                 ip_route,
+                #[cfg(feature = "ip_proxy")]
                 ip_proxy_map,
                 client_cipher,
                 server_cipher,

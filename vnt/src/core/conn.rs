@@ -6,7 +6,7 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 use rand::Rng;
-use rsa::signature::digest::Digest;
+use sha2::Digest;
 #[cfg(not(target_os = "android"))]
 use tun::device::IFace;
 
@@ -167,7 +167,10 @@ impl Vnt {
         let down_counter =
             U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
         let down_count_watcher = down_counter.watch();
-        let handshake = Handshake::new(rsa_cipher.clone());
+        let handshake = Handshake::new(
+            #[cfg(feature = "server_encrypt")]
+            rsa_cipher.clone(),
+        );
         let up_counter = SingleU64Adder::new();
         let up_count_watcher = up_counter.watch();
         let tun_helper = TunDeviceHelper::new(

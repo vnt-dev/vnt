@@ -84,6 +84,7 @@ features说明
 | sm4_cbc          | 支持sm4_cbc加密          | 是    |
 | server_encrypt   | 支持服务端加密              | 是    |
 | ip_proxy         | 内置ip代理               | 是    |
+| port_mapping     | 端口映射                 | 是    |
 
 ### ip转发/代理
 如果编译时去除了内置的ip代理(或使用--no-proxy关闭了代理)，则可以使用网卡NAT转发来实现点对网，

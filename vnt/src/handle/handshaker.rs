@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_utils::atomic::AtomicCell;
+#[cfg(feature = "server_encrypt")]
 use parking_lot::Mutex;
 use protobuf::Message;
 
@@ -28,12 +29,16 @@ pub enum HandshakeEnum {
 #[derive(Clone)]
 pub struct Handshake {
     time: Arc<AtomicCell<Instant>>,
+    #[cfg(feature = "server_encrypt")]
     rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
 }
 impl Handshake {
-    pub fn new(rsa_cipher: Arc<Mutex<Option<RsaCipher>>>) -> Self {
+    pub fn new(
+        #[cfg(feature = "server_encrypt")] rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
+    ) -> Self {
         Handshake {
             time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
+            #[cfg(feature = "server_encrypt")]
             rsa_cipher,
         }
     }
@@ -54,6 +59,7 @@ impl Handshake {
         let mut request = HandshakeRequest::new();
         request.secret = secret;
         request.version = crate::VNT_VERSION.to_string();
+        #[cfg(feature = "server_encrypt")]
         if let Some(finger) = self.rsa_cipher.lock().as_ref().map(|v| v.finger().clone()) {
             request.key_finger = finger;
         }

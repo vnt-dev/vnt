@@ -52,9 +52,13 @@ pub enum CipherModel {
 impl Display for CipherModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = match self {
+            #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
             CipherModel::AesGcm => "aes_gcm".to_string(),
+            #[cfg(feature = "aes_cbc")]
             CipherModel::AesCbc => "aes_cbc".to_string(),
+            #[cfg(feature = "aes_ecb")]
             CipherModel::AesEcb => "aes_ecb".to_string(),
+            #[cfg(feature = "sm4_cbc")]
             CipherModel::Sm4Cbc => "sm4_cbc".to_string(),
             CipherModel::None => "none".to_string(),
         };
