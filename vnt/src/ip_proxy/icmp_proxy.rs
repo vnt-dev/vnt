@@ -167,7 +167,7 @@ fn recv_handle(
                     }
                 }
                 h => {
-                    log::warn!("不支持的icmp代理 {:?},{:?}", peer_ip, h)
+                    log::debug!("不支持的icmp代理 {:?},{:?}", peer_ip, h)
                 }
             },
             Err(e) => {
