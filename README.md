@@ -39,7 +39,7 @@ A virtual network tool (VPN)
     ```
 4. 最后可以用虚拟ip实现设备间相互访问
 
-      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/vnt/dev/documents/img/ssh.jpg">
+      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/vnt/main/documents/img/ssh.jpg">
 5. 帮助，使用-h命令查看
 
 ### 更多玩法
