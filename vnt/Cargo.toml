@@ -30,7 +30,7 @@ spki = { version = "0.7.2", features = ["fingerprint", "alloc", "base64"], optio
 openssl-sys = { git = "https://github.com/lbl8603/rust-openssl", optional = true }
 libsm = { git = "https://github.com/lbl8603/libsm", optional = true }
 
-mio = { version = "0.8.10", features = ["os-poll", "net"] }
+mio = { version = "0.8.10", features = ["os-poll", "net", "os-ext"] }
 crossbeam-queue = "0.3.11"
 anyhow = "1.0.82"
 dns-parser = "0.8.0"
