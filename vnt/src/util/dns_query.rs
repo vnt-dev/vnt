@@ -41,8 +41,8 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
 /// 后续实现选择延迟最低的可用地址，需要服务端配合
 /// 现在是选择第一个地址，优先ipv6
 fn address_choose0(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
-    let v4: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv4()).map(|v| *v).collect();
-    let v6: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv6()).map(|v| *v).collect();
+    let v4: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv4()).copied().collect();
+    let v6: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv6()).copied().collect();
     let check_addr = |addrs: &Vec<SocketAddr>| -> anyhow::Result<SocketAddr> {
         if !addrs.is_empty() {
             let udp = if addrs[0].is_ipv6() {
@@ -78,9 +78,7 @@ pub fn dns_query_all(
     mut name_servers: Vec<String>,
 ) -> anyhow::Result<Vec<SocketAddr>> {
     match SocketAddr::from_str(domain) {
-        Ok(addr) => {
-            return Ok(vec![addr]);
-        }
+        Ok(addr) => Ok(vec![addr]),
         Err(_) => {
             let txt_domain = domain
                 .to_lowercase()
@@ -94,7 +92,6 @@ pub fn dns_query_all(
                     return Ok(domain
                         .to_socket_addrs()
                         .with_context(|| format!("DNS query failed {:?}", domain))?
-                        .into_iter()
                         .collect());
                 }
             }
@@ -119,7 +116,7 @@ pub fn dns_query_all(
                     continue;
                 }
                 let end_index = domain
-                    .rfind(":")
+                    .rfind(':')
                     .with_context(|| format!("{:?} not port", domain))?;
                 let host = &domain[..end_index];
                 let port = u16::from_str(&domain[end_index + 1..])
@@ -219,7 +216,7 @@ fn query<'a>(
             domain
         ));
     }
-    if pkt.answers.len() == 0 {
+    if pkt.answers.is_empty() {
         return Err(anyhow::anyhow!(
             "No records received DNS {:?} domain {:?}",
             name_server,
@@ -240,8 +237,8 @@ pub fn txt_dns(domain: &str, name_server: String) -> anyhow::Result<Vec<SocketAd
         if let RData::TXT(txt) = record.data {
             for x in txt.iter() {
                 let txt = std::str::from_utf8(x).context("record type txt is not string")?;
-                let addr = SocketAddr::from_str(&txt.to_string())
-                    .context("record type txt is not SocketAddr")?;
+                let addr =
+                    SocketAddr::from_str(txt).context("record type txt is not SocketAddr")?;
                 rs.push(addr);
             }
         }

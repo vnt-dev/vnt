@@ -6,7 +6,6 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 use rand::Rng;
-use sha2::Digest;
 #[cfg(not(target_os = "android"))]
 use tun::device::IFace;
 
@@ -80,14 +79,7 @@ impl Vnt {
             config.name.clone(),
             config.token.clone(),
             config.ip,
-            config.password.as_ref().map(|v| {
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(config.cipher_model.to_string().as_bytes());
-                hasher.update(v.as_bytes());
-                hasher.update(config.token.as_bytes());
-                let key: [u8; 32] = hasher.finalize().into();
-                key[16..].try_into().unwrap()
-            }),
+            config.password_hash(),
             config.server_encrypt,
             config.device_id.clone(),
             config.server_address_str.clone(),

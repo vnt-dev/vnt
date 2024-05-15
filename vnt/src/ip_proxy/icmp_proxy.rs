@@ -87,38 +87,36 @@ async fn icmp_proxy(
     client_cipher: Cipher,
 ) -> io::Result<()> {
     let mut buf = [0u8; 65535 - 20 - 8];
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    let start = 12;
+    #[cfg(target_os = "android")]
+    let start = 12 + 20;
     loop {
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-        let start = 12;
-        #[cfg(target_os = "android")]
-        let start = 12 + 20;
-        loop {
-            let (len, addr) = icmp_socket.recv_from(&mut buf[start..]).await?;
-            if let IpAddr::V4(peer_ip) = addr.ip() {
-                #[cfg(target_os = "android")]
-                {
-                    let buf = &mut buf[12..];
-                    // ipv4 头部20字节
-                    buf[0] = 0b0100_0110;
-                    //写入总长度
-                    buf[2..4].copy_from_slice(&((20 + len) as u16).to_be_bytes());
+        let (len, addr) = icmp_socket.recv_from(&mut buf[start..]).await?;
+        if let IpAddr::V4(peer_ip) = addr.ip() {
+            #[cfg(target_os = "android")]
+            {
+                let buf = &mut buf[12..];
+                // ipv4 头部20字节
+                buf[0] = 0b0100_0110;
+                //写入总长度
+                buf[2..4].copy_from_slice(&((20 + len) as u16).to_be_bytes());
 
-                    let mut ipv4 = IpV4Packet::unchecked(buf);
-                    ipv4.set_flags(2);
-                    ipv4.set_ttl(1);
-                    ipv4.set_protocol(packet::ip::ipv4::protocol::Protocol::Icmp);
-                    ipv4.set_source_ip(peer_ip);
-                }
-                recv_handle(
-                    &mut buf,
-                    start + len,
-                    peer_ip,
-                    &nat_map,
-                    &context,
-                    &current_device,
-                    &client_cipher,
-                );
+                let mut ipv4 = IpV4Packet::unchecked(buf);
+                ipv4.set_flags(2);
+                ipv4.set_ttl(1);
+                ipv4.set_protocol(packet::ip::ipv4::protocol::Protocol::Icmp);
+                ipv4.set_source_ip(peer_ip);
             }
+            recv_handle(
+                &mut buf,
+                start + len,
+                peer_ip,
+                &nat_map,
+                &context,
+                &current_device,
+                &client_cipher,
+            );
         }
     }
 }

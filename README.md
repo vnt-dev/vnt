@@ -85,24 +85,33 @@ features说明
 | server_encrypt   | 支持服务端加密              | 是    |
 | ip_proxy         | 内置ip代理               | 是    |
 | port_mapping     | 端口映射                 | 是    |
+| log              | 日志                   | 是    |
+| command          | list、route等命令        | 是    |
+| file_config      | yaml配置文件             | 是    |
 
 ### ip转发/代理
+
 如果编译时去除了内置的ip代理(或使用--no-proxy关闭了代理)，则可以使用网卡NAT转发来实现点对网，
 一般来说使用网卡NAT转发会比内置的ip代理性能更好
 <details> <summary>NAT配置可参考如下示例,点击展开</summary>
 
 ### 在出口一端做如下配置
+
 注意原有的-i(入口)和-o(出口)的参数不能少
 
 ### windows
+
 参考 https://learn.microsoft.com/zh-cn/virtualization/hyper-v-on-windows/user-guide/setup-nat-network
+
 ```shell
 #设置nat,名字可以自己取，网段是vnt的网段
 New-NetNat -Name vntnat -InternalIPInterfaceAddressPrefix 10.26.0.0/24
 #查看设置
 Get-NetNat
 ```
+
 ### linux
+
 ```shell
 # 开启ip转发
 sudo sysctl -w net.ipv4.ip_forward=1
@@ -145,6 +154,7 @@ sudo iptables-restore iptables.rules
 ```
 
 ### macos
+
 ```shell
 # 开启ip转发
 sudo sysctl -w net.ipv4.ip_forward=1
@@ -154,6 +164,7 @@ nat on en0 from 10.26.0.0/24 to any -> (en0)
 # 加载规则
 sudo pfctl -f /etc/pf.conf -e
 ```
+
 </details>
 
 ### 支持平台
@@ -256,10 +267,15 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 2. 如果p2p后效果很差，可以选择禁用p2p（vnt-cli增加--use-channel relay 参数）
 
 #### 问题4：重启后虚拟IP发生变化，或指定了IP不能启动
+
 ##### 可能原因：
+
 设备重启后程序自动获取的id值改变，导致注册时重新分配了新的IP，或是IP冲突
+
 ##### 解决方法：
+
 1. 命令行启动增加-d参数（使用配置文件启动则在配置文件中增加device_id参数），要保证每个设备的值都不一样，取值可以任意64位以内字符串
+
 </details>
 
 ### 交流群

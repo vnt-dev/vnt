@@ -14,7 +14,8 @@ os_info = "3.7.0"
 serde = "1.0"
 serde_yaml = "0.9.32"
 log = "0.4.17"
-log4rs = "1.2.0"
+log4rs = { version = "1.2.0", optional = true }
+anyhow = "1.0.82"
 [dependencies.uuid]
 version = "1.4.1"
 features = [
@@ -28,7 +29,7 @@ sudo = "0.6.0"
 winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
 
 [features]
-default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "ip_proxy", "port_mapping"]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "ip_proxy", "port_mapping", "log", "command", "file_config"]
 openssl = ["vnt/openssl"]
 openssl-vendored = ["vnt/openssl-vendored"]
 ring-cipher = ["vnt/ring-cipher"]
@@ -39,6 +40,9 @@ aes_gcm = ["vnt/aes_gcm"]
 server_encrypt = ["vnt/server_encrypt"]
 ip_proxy = ["vnt/ip_proxy"]
 port_mapping = ["vnt/port_mapping"]
+log = ["log4rs"]
+command = []
+file_config = []
 [build-dependencies]
 embed-manifest = "1.4.0"
 rand = "0.8.5"
