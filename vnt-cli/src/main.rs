@@ -1,7 +1,7 @@
+use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::{io, thread};
 
 use console::style;
 use getopts::Options;
@@ -12,8 +12,10 @@ use vnt::channel::UseChannelType;
 use vnt::cipher::CipherModel;
 use vnt::core::{Config, Vnt};
 
+#[cfg(feature = "command")]
 mod command;
 mod config;
+#[cfg(feature = "command")]
 mod console_out;
 mod generated_serial_number;
 mod root_check;
@@ -41,6 +43,7 @@ pub fn app_home() -> io::Result<PathBuf> {
 }
 
 fn main() {
+    #[cfg(feature = "log")]
     let _ = log4rs::init_file("log4rs.yaml", Default::default());
     let args: Vec<String> = std::env::args().collect();
     let program = args[0].clone();
@@ -100,6 +103,7 @@ fn main() {
         sudo::escalate_if_needed().unwrap();
         return;
     }
+    #[cfg(feature = "command")]
     if matches.opt_present("list") {
         command::command(command::CommandEnum::List);
         return;
@@ -342,7 +346,7 @@ fn main() {
 
 mod callback;
 
-fn main0(config: Config, show_cmd: bool) {
+fn main0(config: Config, _show_cmd: bool) {
     #[cfg(feature = "port_mapping")]
     for (is_tcp, addr, dest) in config.port_mapping_list.iter() {
         if *is_tcp {
@@ -352,36 +356,40 @@ fn main0(config: Config, show_cmd: bool) {
         }
     }
     let vnt_util = Vnt::new(config, callback::VntHandler {}).unwrap();
-    let vnt_c = vnt_util.clone();
-    thread::Builder::new()
-        .name("CommandServer".into())
-        .spawn(move || {
-            if let Err(e) = command::server::CommandServer::new().start(vnt_c) {
-                log::warn!("cmd:{:?}", e);
-            }
-        })
-        .expect("CommandServer");
-    if show_cmd {
-        let mut cmd = String::new();
-        loop {
-            cmd.clear();
-            println!("======== input:list,info,route,all,stop ========");
-            match io::stdin().read_line(&mut cmd) {
-                Ok(len) => {
-                    if !command(&cmd[..len], &vnt_util) {
+    #[cfg(feature = "command")]
+    {
+        let vnt_c = vnt_util.clone();
+        std::thread::Builder::new()
+            .name("CommandServer".into())
+            .spawn(move || {
+                if let Err(e) = command::server::CommandServer::new().start(vnt_c) {
+                    log::warn!("cmd:{:?}", e);
+                }
+            })
+            .expect("CommandServer");
+        if _show_cmd {
+            let mut cmd = String::new();
+            loop {
+                cmd.clear();
+                println!("======== input:list,info,route,all,stop ========");
+                match io::stdin().read_line(&mut cmd) {
+                    Ok(len) => {
+                        if !command(&cmd[..len], &vnt_util) {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        println!("input err:{}", e);
                         break;
                     }
-                }
-                Err(e) => {
-                    println!("input err:{}", e);
-                    break;
                 }
             }
         }
     }
+
     vnt_util.wait()
 }
-
+#[cfg(feature = "command")]
 fn command(cmd: &str, vnt: &Vnt) -> bool {
     if cmd.is_empty() {
         return false;
@@ -427,10 +435,11 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -s <server>         注册和中继服务器地址,以'TXT:'开头表示解析TXT记录");
     println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun1.l.google.com -e stun2.l.google.com");
     #[cfg(target_os = "windows")]
-    println!("  -a                  使用tap模式,默认使用tun模式");
+    println!(
+        "  -a                  使用tap模式,默认使用tun模式,使用tap时需要配合'--nic'参数指定tap网卡"
+    );
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");
-    #[cfg(feature = "ip_proxy")]
     println!("  -o <out-ip>         配置点对网时使用,-o 192.168.0.0/24表示允许将数据转发到192.168.0.0/24,可指定多个网段");
     #[cfg(not(any(
         feature = "aes_gcm",
@@ -462,6 +471,7 @@ fn print_usage(program: &str, _opts: Options) {
     #[cfg(feature = "server_encrypt")]
     println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
     println!("  -u <mtu>            自定义mtu(不加密默认为1450，加密默认为1410)");
+    #[cfg(feature = "file_config")]
     println!("  -f <conf_file>      读取配置文件中的配置");
 
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
@@ -478,6 +488,7 @@ fn print_usage(program: &str, _opts: Options) {
     }
     println!("  --punch <punch>     取值ipv4/ipv6/all,ipv4表示仅使用ipv4打洞");
     println!("  --ports <port,port> 取值0~65535,指定本地监听的一组端口,默认监听两个随机端口,使用过多端口会增加网络负担");
+    #[cfg(feature = "command")]
     println!("  --cmd               开启交互式命令,使用此参数开启控制台输入");
     #[cfg(feature = "ip_proxy")]
     println!("  --no-proxy          关闭内置代理,如需点对网则需要配置网卡NAT转发");
@@ -493,26 +504,29 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --mapping <mapping> 端口映射,例如 --mapping udp:0.0.0.0:80->10.26.0.10:80 --mapping tcp:0.0.0.0:80->10.26.0.10:80");
 
     println!();
-    println!(
-        "  --list              {}",
-        yellow("后台运行时,查看其他设备列表".to_string())
-    );
-    println!(
-        "  --all               {}",
-        yellow("后台运行时,查看其他设备完整信息".to_string())
-    );
-    println!(
-        "  --info              {}",
-        yellow("后台运行时,查看当前设备信息".to_string())
-    );
-    println!(
-        "  --route             {}",
-        yellow("后台运行时,查看数据转发路径".to_string())
-    );
-    println!(
-        "  --stop              {}",
-        yellow("停止后台运行".to_string())
-    );
+    #[cfg(feature = "command")]
+    {
+        println!(
+            "  --list              {}",
+            yellow("后台运行时,查看其他设备列表".to_string())
+        );
+        println!(
+            "  --all               {}",
+            yellow("后台运行时,查看其他设备完整信息".to_string())
+        );
+        println!(
+            "  --info              {}",
+            yellow("后台运行时,查看当前设备信息".to_string())
+        );
+        println!(
+            "  --route             {}",
+            yellow("后台运行时,查看数据转发路径".to_string())
+        );
+        println!(
+            "  --stop              {}",
+            yellow("停止后台运行".to_string())
+        );
+    }
     println!("  -h, --help          帮助");
 }
 
@@ -520,6 +534,7 @@ fn green(str: String) -> impl std::fmt::Display {
     style(str).green()
 }
 
+#[cfg(feature = "command")]
 fn yellow(str: String) -> impl std::fmt::Display {
     style(str).yellow()
 }

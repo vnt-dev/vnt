@@ -143,3 +143,33 @@ impl Config {
         })
     }
 }
+impl Config {
+    #[cfg(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    ))]
+    pub fn password_hash(&self) -> Option<[u8; 16]> {
+        self.password.as_ref().map(|v| {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(self.cipher_model.to_string().as_bytes());
+            hasher.update(v.as_bytes());
+            hasher.update(self.token.as_bytes());
+            let key: [u8; 32] = hasher.finalize().into();
+            key[16..].try_into().unwrap()
+        })
+    }
+    #[cfg(not(any(
+        feature = "aes_gcm",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    )))]
+    pub fn password_hash(&self) -> Option<[u8; 16]> {
+        None
+    }
+}
