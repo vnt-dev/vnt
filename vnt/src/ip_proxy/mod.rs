@@ -10,11 +10,13 @@ use packet::ip::ipv4::packet::IpV4Packet;
 use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use crate::ip_proxy::icmp_proxy::IcmpProxy;
 use crate::ip_proxy::tcp_proxy::TcpProxy;
 use crate::ip_proxy::udp_proxy::UdpProxy;
 use crate::util::StopManager;
 
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod icmp_proxy;
 pub mod tcp_proxy;
 pub mod udp_proxy;
@@ -31,6 +33,7 @@ pub trait ProxyHandler {
 
 #[derive(Clone)]
 pub struct IpProxyMap {
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     icmp_proxy: IcmpProxy,
     tcp_proxy: TcpProxy,
     udp_proxy: UdpProxy,
@@ -65,15 +68,17 @@ pub fn init_proxy(
 }
 
 async fn init_proxy0(
-    context: ChannelContext,
-    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-    client_cipher: Cipher,
+    _context: ChannelContext,
+    _current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    _client_cipher: Cipher,
 ) -> anyhow::Result<IpProxyMap> {
-    let icmp_proxy = IcmpProxy::new(context, current_device, client_cipher).await?;
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    let icmp_proxy = IcmpProxy::new(_context, _current_device, _client_cipher).await?;
     let tcp_proxy = TcpProxy::new().await?;
     let udp_proxy = UdpProxy::new().await?;
 
     Ok(IpProxyMap {
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         icmp_proxy,
         tcp_proxy,
         udp_proxy,
@@ -90,6 +95,7 @@ impl ProxyHandler for IpProxyMap {
         match ipv4.protocol() {
             ipv4::protocol::Protocol::Tcp => self.tcp_proxy.recv_handle(ipv4, source, destination),
             ipv4::protocol::Protocol::Udp => self.udp_proxy.recv_handle(ipv4, source, destination),
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             ipv4::protocol::Protocol::Icmp => {
                 self.icmp_proxy.recv_handle(ipv4, source, destination)
             }
@@ -110,6 +116,7 @@ impl ProxyHandler for IpProxyMap {
         match ipv4.protocol() {
             ipv4::protocol::Protocol::Tcp => self.tcp_proxy.send_handle(ipv4),
             ipv4::protocol::Protocol::Udp => self.udp_proxy.send_handle(ipv4),
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             ipv4::protocol::Protocol::Icmp => self.icmp_proxy.send_handle(ipv4),
             _ => Ok(()),
         }
