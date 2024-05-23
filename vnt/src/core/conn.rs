@@ -38,7 +38,7 @@ pub struct Vnt {
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     nat_test: NatTest,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-    context: ChannelContext,
+    context: Arc<Mutex<Option<ChannelContext>>>,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     down_count_watcher: WatchU64Adder,
     up_count_watcher: WatchSingleU64Adder,
@@ -132,8 +132,11 @@ impl Vnt {
         // pc上先创建虚拟网卡
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         let device = {
+            log::info!("开始创建tun");
             let device = tun_tap_device::create_device(&config)?;
+            log::info!("创建tun成功");
             let tun_info = DeviceInfo::new(device.name()?, device.version()?);
+            log::info!("tun信息{:?}",tun_info);
             callback.create_tun(tun_info);
             device
         };
@@ -273,7 +276,7 @@ impl Vnt {
             current_device,
             nat_test,
             device_list,
-            context,
+            context: Arc::new(Mutex::new(Some(context))),
             peer_nat_info_map,
             down_count_watcher,
             up_count_watcher,
@@ -390,16 +393,24 @@ impl Vnt {
         device_list
     }
     pub fn route(&self, ip: &Ipv4Addr) -> Option<Route> {
-        self.context.route_table.route_one(ip)
+        self.context.lock().as_ref()?.route_table.route_one(ip)
     }
     pub fn is_gateway(&self, ip: &Ipv4Addr) -> bool {
         self.current_device.load().is_gateway(ip)
     }
     pub fn route_key(&self, route_key: &RouteKey) -> Option<Ipv4Addr> {
-        self.context.route_table.route_to_id(route_key)
+        self.context
+            .lock()
+            .as_ref()?
+            .route_table
+            .route_to_id(route_key)
     }
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Vec<Route>)> {
-        self.context.route_table.route_table()
+        if let Some(context) = self.context.lock().as_ref() {
+            context.route_table.route_table()
+        } else {
+            vec![]
+        }
     }
     pub fn up_stream(&self) -> u64 {
         self.up_count_watcher.get()
@@ -408,6 +419,8 @@ impl Vnt {
         self.down_count_watcher.get()
     }
     pub fn stop(&self) {
+        //退出协助回收资源
+        let _ = self.context.lock().take();
         self.stop_manager.stop()
     }
     pub fn wait(&self) {
