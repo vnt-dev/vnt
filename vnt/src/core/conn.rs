@@ -47,7 +47,7 @@ pub struct Vnt {
 
 impl Vnt {
     pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
-        log::info!("config:{:?}", config);
+        log::info!("config.toml:{:?}", config);
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
         let rsa_cipher: Arc<Mutex<Option<RsaCipher>>> = Arc::new(Mutex::new(None));
@@ -136,7 +136,7 @@ impl Vnt {
             let device = tun_tap_device::create_device(&config)?;
             log::info!("创建tun成功");
             let tun_info = DeviceInfo::new(device.name()?, device.version()?);
-            log::info!("tun信息{:?}",tun_info);
+            log::info!("tun信息{:?}", tun_info);
             callback.create_tun(tun_info);
             device
         };
@@ -180,6 +180,7 @@ impl Vnt {
             config.parallel,
             up_counter,
             device_list.clone(),
+            config.compressor,
         );
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         let device_adapter = DeviceAdapter::new(device.clone());

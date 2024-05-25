@@ -5,6 +5,7 @@ use std::{io, thread};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 
+use crate::channel::BUFFER_SIZE;
 use packet::icmp::icmp::IcmpPacket;
 use packet::icmp::Kind;
 use packet::ip::ipv4::packet::IpV4Packet;
@@ -14,6 +15,7 @@ use tun::Device;
 
 use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
+use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::channel_group;
 use crate::handle::{check_dest, CurrentDeviceInfo, PeerDeviceInfo};
@@ -27,7 +29,7 @@ use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
 use crate::util::{SingleU64Adder, StopManager};
 
-fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> io::Result<()> {
+fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
     if ipv4_packet.protocol() == Protocol::Icmp {
         let mut icmp = IcmpPacket::new(ipv4_packet.payload_mut())?;
         if icmp.kind() == Kind::EchoRequest {
@@ -48,6 +50,7 @@ pub(crate) fn handle(
     context: &ChannelContext,
     data: &mut [u8],
     len: usize,
+    extend: &mut [u8],
     device_writer: &Device,
     current_device: CurrentDeviceInfo,
     ip_route: &ExternalRoute,
@@ -55,7 +58,8 @@ pub(crate) fn handle(
     client_cipher: &Cipher,
     server_cipher: &Cipher,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
-) -> io::Result<()> {
+    compressor: &Compressor,
+) -> anyhow::Result<()> {
     //忽略掉结构不对的情况（ipv6数据、win tap会读到空数据），不然日志打印太多了
     let ipv4_packet = match IpV4Packet::new(&mut data[12..len]) {
         Ok(packet) => packet,
@@ -70,6 +74,7 @@ pub(crate) fn handle(
         context,
         data,
         len,
+        extend,
         current_device,
         ip_route,
         #[cfg(feature = "ip_proxy")]
@@ -77,6 +82,7 @@ pub(crate) fn handle(
         client_cipher,
         server_cipher,
         device_list,
+        compressor,
     );
 }
 
@@ -92,6 +98,7 @@ pub fn start(
     parallel: usize,
     mut up_counter: SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    compressor: Compressor,
 ) -> io::Result<()> {
     if parallel > 1 {
         let (sender, receivers) = channel_group::<(Vec<u8>, usize)>(parallel, 16);
@@ -108,6 +115,7 @@ pub fn start(
             thread::Builder::new()
                 .name(format!("tunHandler-{}", index))
                 .spawn(move || {
+                    let mut extend = [0; BUFFER_SIZE];
                     while let Ok((mut buf, len)) = receiver.recv() {
                         #[cfg(not(target_os = "macos"))]
                         let start = 0;
@@ -117,6 +125,7 @@ pub fn start(
                             &context,
                             &mut buf[start..],
                             len,
+                            &mut extend,
                             &device,
                             current_device.load(),
                             &ip_route,
@@ -125,6 +134,7 @@ pub fn start(
                             &client_cipher,
                             &server_cipher,
                             &device_list,
+                            &compressor,
                         ) {
                             Ok(_) => {}
                             Err(e) => {
@@ -162,6 +172,7 @@ pub fn start(
                     server_cipher,
                     &mut up_counter,
                     device_list,
+                    compressor,
                 ) {
                     log::warn!("stop:{}", e);
                 }
@@ -261,18 +272,21 @@ fn base_handle(
     context: &ChannelContext,
     buf: &mut [u8],
     data_len: usize, //数据总长度=12+ip包长度
+    extend: &mut [u8],
     current_device: CurrentDeviceInfo,
     ip_route: &ExternalRoute,
     #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
-) -> io::Result<()> {
+    compressor: &Compressor,
+) -> anyhow::Result<()> {
     let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
     let protocol = ipv4_packet.protocol();
     let src_ip = ipv4_packet.source_ip();
     let mut dest_ip = ipv4_packet.destination_ip();
     let mut net_packet = NetPacket::new0(data_len, buf)?;
+    let mut out = NetPacket::unchecked(extend);
     net_packet.set_default_version();
     net_packet.set_protocol(protocol::Protocol::IpTurn);
     net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
@@ -288,6 +302,17 @@ fn base_handle(
         }
         return Ok(());
     }
+    let mut net_packet = if compressor.compress(&net_packet, &mut out)? {
+        out.set_default_version();
+        out.set_protocol(protocol::Protocol::IpTurn);
+        out.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
+        out.first_set_ttl(6);
+        out.set_source(src_ip);
+        out.set_destination(dest_ip);
+        out
+    } else {
+        net_packet
+    };
     if dest_ip.is_multicast() {
         //当作广播处理
         dest_ip = Ipv4Addr::BROADCAST;
@@ -333,5 +358,6 @@ fn base_handle(
         &dest_ip,
         current_device.connect_server,
         current_device.status.online(),
-    )
+    )?;
+    Ok(())
 }

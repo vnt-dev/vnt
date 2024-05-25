@@ -1,6 +1,6 @@
 [package]
 name = "vnt"
-version = "1.2.9"
+version = "1.2.10"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -37,7 +37,8 @@ dns-parser = "0.8.0"
 
 tokio = { version = "1.37.0", features = ["full"], optional = true }
 
-
+lz4_flex = { version = "0.11", default-features = false, optional = true }
+zstd = { version = "0.13.1", optional = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 libloading = "0.8.0"
 
@@ -47,7 +48,7 @@ protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
 
 [features]
-default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "ip_proxy", "port_mapping"]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "ip_proxy", "port_mapping", "lz4_compress","zstd_compress"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]
@@ -59,3 +60,5 @@ aes_gcm = ["aes-gcm"]
 server_encrypt = ["aes-gcm", "rsa", "spki"]
 ip_proxy = ["tokio"]
 port_mapping = ["tokio"]
+lz4_compress = ["lz4_flex"]
+zstd_compress = ["zstd"]

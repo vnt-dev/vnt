@@ -94,10 +94,11 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
     fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
+        _extend: NetPacket<&mut [u8]>,
         route_key: RouteKey,
         context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         context
             .route_table
             .update_read_time(&net_packet.source(), &route_key);

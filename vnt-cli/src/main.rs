@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use common::args_parse::{ips_parse, out_ips_parse};
 use vnt::channel::punch::PunchModel;
 use vnt::channel::UseChannelType;
 use vnt::cipher::CipherModel;
+use vnt::compression::Compressor;
 use vnt::core::{Config, Vnt};
 
 #[cfg(feature = "command")]
@@ -78,6 +80,7 @@ fn main() {
     opts.optmulti("", "dns", "dns", "<dns>");
     opts.optmulti("", "mapping", "mapping", "<mapping>");
     opts.optopt("f", "", "配置文件", "<conf>");
+    opts.optopt("", "compressor", "压缩算法", "<lz4>");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
@@ -294,6 +297,13 @@ fn main() {
             .unwrap_or(0);
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = matches.opt_strs("mapping");
+        let compressor = if let Some(compressor) = matches.opt_str("compressor").as_ref() {
+            Compressor::from_str(compressor)
+                .map_err(|e| anyhow!("{}", e))
+                .unwrap()
+        } else {
+            Compressor::None
+        };
         let config = match Config::new(
             #[cfg(target_os = "windows")]
             tap,
@@ -324,10 +334,11 @@ fn main() {
             packet_delay,
             #[cfg(feature = "port_mapping")]
             port_mapping_list,
+            compressor,
         ) {
             Ok(config) => config,
             Err(e) => {
-                println!("config error: {}", e);
+                println!("config.toml error: {}", e);
                 return;
             }
         };
@@ -502,7 +513,14 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --dns <host:port>   DNS服务器地址,可使用多个dns,不指定时使用系统解析");
     #[cfg(feature = "port_mapping")]
     println!("  --mapping <mapping> 端口映射,例如 --mapping udp:0.0.0.0:80->10.26.0.10:80 --mapping tcp:0.0.0.0:80->10.26.0.10:80");
-
+    #[cfg(all(feature = "lz4", feature = "zstd"))]
+    println!("  --compressor <lz4>  启用压缩,可选值lz4/zstd<,level>,level为压缩级别,例如 --compressor lz4 或--compressor zstd,10");
+    #[cfg(feature = "lz4")]
+    #[cfg(not(feature = "zstd"))]
+    println!("  --compressor <lz4>  启用压缩,可选值lz4,例如 --compressor lz4");
+    #[cfg(feature = "zstd")]
+    #[cfg(not(feature = "lz4"))]
+    println!("  --compressor <zstd>  启用压缩,可选值zstd<,level>,level为压缩级别,例如 --compressor zstd,10");
     println!();
     #[cfg(feature = "command")]
     {

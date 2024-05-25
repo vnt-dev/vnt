@@ -70,6 +70,7 @@ where
 {
     let mut events = Events::with_capacity(1024);
     let mut buf = [0; BUFFER_SIZE];
+    let mut extend = [0; BUFFER_SIZE];
     let mut read_map: HashMap<Token, UdpSocket> = HashMap::with_capacity(32);
     loop {
         poll.poll(&mut events, None)?;
@@ -115,6 +116,7 @@ where
                                 Ok((len, addr)) => {
                                     recv_handler.handle(
                                         &mut buf[..len],
+                                        &mut extend,
                                         RouteKey::new(false, token.0, addr),
                                         &context,
                                     );
@@ -252,6 +254,7 @@ where
     }
 
     let mut events = Events::with_capacity(udps.len());
+    let mut extend = [0; BUFFER_SIZE];
     loop {
         poll.poll(&mut events, None)?;
         for x in events.iter() {
@@ -270,6 +273,7 @@ where
                     Ok((len, addr)) => {
                         recv_handler.handle(
                             &mut buf[..len],
+                            &mut extend,
                             RouteKey::new(false, index, addr),
                             &context,
                         );

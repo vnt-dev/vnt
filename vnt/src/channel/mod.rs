@@ -18,7 +18,7 @@ pub mod sender;
 pub mod tcp_channel;
 pub mod udp_channel;
 
-const BUFFER_SIZE: usize = 1024 * 16;
+pub const BUFFER_SIZE: usize = 1024 * 16;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UseChannelType {
     Relay,

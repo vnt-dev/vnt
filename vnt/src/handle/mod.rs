@@ -2,6 +2,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use std::net::{Ipv4Addr, SocketAddr};
 
 pub mod callback;
+mod extension;
 pub mod handshaker;
 pub mod maintain;
 pub mod recv_data;

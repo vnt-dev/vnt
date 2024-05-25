@@ -88,6 +88,8 @@ features说明
 | log              | 日志                   | 是    |
 | command          | list、route等命令        | 是    |
 | file_config      | yaml配置文件             | 是    |
+| lz4              | lz4压缩                | 是    |
+| zstd             | zstd压缩               | 否    |
 
 ### ip转发/代理
 

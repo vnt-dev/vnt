@@ -16,3 +16,4 @@ pub mod tun_tap_device;
 pub mod util;
 
 pub use handle::callback::*;
+pub mod compression;

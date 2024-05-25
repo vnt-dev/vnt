@@ -14,6 +14,7 @@ use crate::channel::punch::NatInfo;
 use crate::channel::{Route, RouteKey};
 use crate::cipher::Cipher;
 use crate::external_route::AllowExternalRoute;
+use crate::handle::extension::handle_extension_tail;
 use crate::handle::maintain::PunchSender;
 use crate::handle::recv_data::PacketHandler;
 use crate::handle::CurrentDeviceInfo;
@@ -70,14 +71,26 @@ impl PacketHandler for ClientPacketHandler {
     fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
+        mut extend: NetPacket<&mut [u8]>,
         route_key: RouteKey,
         context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         self.client_cipher.decrypt_ipv4(&mut net_packet)?;
         context
             .route_table
             .update_read_time(&net_packet.source(), &route_key);
+        //处理扩展
+        let net_packet = if net_packet.is_extension() {
+            //这样重用数组，减少一次数据拷贝
+            if handle_extension_tail(&mut net_packet, &mut extend)? {
+                extend
+            } else {
+                net_packet
+            }
+        } else {
+            net_packet
+        };
         match net_packet.protocol() {
             Protocol::Service => {}
             Protocol::Error => {}

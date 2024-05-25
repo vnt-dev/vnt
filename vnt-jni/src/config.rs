@@ -7,6 +7,7 @@ use jni::JNIEnv;
 use vnt::channel::punch::PunchModel;
 use vnt::channel::UseChannelType;
 use vnt::cipher::CipherModel;
+use vnt::compression::Compressor;
 use vnt::core::Config;
 
 use crate::utils::*;
@@ -118,6 +119,7 @@ pub fn new_config(env: &mut JNIEnv, config: JObject) -> Result<Config, Error> {
         packet_loss_rate,
         packet_delay,
         port_mapping,
+        Compressor::None,
     ) {
         Ok(config) => config,
         Err(e) => {

@@ -7,6 +7,7 @@ pub use conn::Vnt;
 use crate::channel::punch::PunchModel;
 use crate::channel::UseChannelType;
 use crate::cipher::CipherModel;
+use crate::compression::Compressor;
 use crate::util::{address_choose, dns_query_all};
 
 mod conn;
@@ -46,6 +47,7 @@ pub struct Config {
     // 端口映射
     #[cfg(feature = "port_mapping")]
     pub port_mapping_list: Vec<(bool, SocketAddr, String)>,
+    pub compressor: Compressor,
 }
 
 impl Config {
@@ -77,6 +79,7 @@ impl Config {
         packet_delay: u32,
         // 例如 [udp:127.0.0.1:80->10.26.0.10:8080,tcp:127.0.0.1:80->10.26.0.10:8080]
         #[cfg(feature = "port_mapping")] port_mapping_list: Vec<String>,
+        compressor: Compressor,
     ) -> anyhow::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -140,6 +143,7 @@ impl Config {
             packet_delay,
             #[cfg(feature = "port_mapping")]
             port_mapping_list,
+            compressor,
         })
     }
 }

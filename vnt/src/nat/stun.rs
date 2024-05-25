@@ -71,11 +71,15 @@ pub fn stun_test_nat0(stun_servers: Vec<String>) -> io::Result<(NatType, Vec<Ipv
             }
         }
     }
-    Ok((
-        nat_type,
-        hash_set.into_iter().collect(),
-        max_port - min_port,
-    ))
+    if hash_set.is_empty() {
+        Ok((nat_type, vec![], 0))
+    } else {
+        Ok((
+            nat_type,
+            hash_set.into_iter().collect(),
+            max_port - min_port,
+        ))
+    }
 }
 
 fn test_nat(udp: &UdpSocket, stun_server: &String) -> io::Result<HashSet<SocketAddr>> {

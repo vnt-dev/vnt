@@ -1,5 +1,7 @@
 use crate::channel::context::ChannelContext;
+use crate::channel::BUFFER_SIZE;
 use crate::cipher::Cipher;
+use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::GroupSyncSender;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
@@ -30,6 +32,7 @@ pub(crate) fn start_simple(
     server_cipher: Cipher,
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    compressor: Compressor,
 ) -> io::Result<()> {
     let poll = Poll::new()?;
     let waker = Arc::new(Waker::new(poll.registry(), STOP)?);
@@ -49,6 +52,7 @@ pub(crate) fn start_simple(
         server_cipher,
         up_counter,
         device_list,
+        compressor,
     ) {
         log::error!("{:?}", e);
     };
@@ -68,8 +72,10 @@ fn start_simple0(
     server_cipher: Cipher,
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    compressor: Compressor,
 ) -> io::Result<()> {
-    let mut buf = [0; 1024 * 16];
+    let mut buf = [0; BUFFER_SIZE];
+    let mut extend = [0; BUFFER_SIZE];
     let fd = device.as_tun_fd();
     fd.set_nonblock()?;
     SourceFd(&fd.as_raw_fd()).register(poll.registry(), FD, Interest::READABLE)?;
@@ -102,6 +108,7 @@ fn start_simple0(
                     context,
                     &mut buf,
                     len,
+                    &mut extend,
                     &device,
                     current_device.load(),
                     &ip_route,
@@ -110,6 +117,7 @@ fn start_simple0(
                     &client_cipher,
                     &server_cipher,
                     &device_list,
+                    &compressor,
                 ) {
                     Ok(_) => {}
                     Err(e) => {

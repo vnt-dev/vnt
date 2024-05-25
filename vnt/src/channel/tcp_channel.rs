@@ -87,6 +87,7 @@ where
 
     let mut read_map: HashMap<Token, (RouteKey, TcpStream, Box<[u8; BUFFER_SIZE]>, usize)> =
         HashMap::with_capacity(32);
+    let mut extend = [0; BUFFER_SIZE];
     loop {
         poll.poll(&mut events, None)?;
         for event in events.iter() {
@@ -132,9 +133,13 @@ where
                 }
                 token => {
                     if event.is_readable() {
-                        if let Err(e) =
-                            readable_handle(&token, &mut read_map, &mut recv_handler, &context)
-                        {
+                        if let Err(e) = readable_handle(
+                            &token,
+                            &mut read_map,
+                            &mut recv_handler,
+                            &context,
+                            &mut extend,
+                        ) {
                             closed_handle_r(&token, &mut read_map);
                             log::warn!("{:?}", e);
                             if let Err(e) = write_waker.notify(token, false) {
@@ -339,6 +344,7 @@ fn readable_handle<H>(
     map: &mut HashMap<Token, (RouteKey, TcpStream, Box<[u8; BUFFER_SIZE]>, usize)>,
     recv_handler: &mut H,
     context: &ChannelContext,
+    extend: &mut [u8],
 ) -> io::Result<()>
 where
     H: RecvChannelHandler,
@@ -360,7 +366,7 @@ where
                     }
                     *begin += len;
                     if end > 4 && *begin == end {
-                        recv_handler.handle(&mut buf[4..end], *route_key, context);
+                        recv_handler.handle(&mut buf[4..end], extend, *route_key, context);
                         *begin = 0;
                     }
                 }
