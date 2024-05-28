@@ -29,3 +29,4 @@ mod aes_cbc;
 mod sm4_cbc;
 
 mod xor;
+pub use xor::simple_hash;
