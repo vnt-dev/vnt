@@ -253,6 +253,85 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> AesCbcSecretBody<B> {
         &mut self.buffer.as_mut()[..end]
     }
 }
+/* ChaCah20加密数据体
+  0                                            15                                              31
+  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |                                          数据体                                              |
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ |                                         finger(32)                                          |
+ |                                         finger(32)                                          |
+ |                                         finger(32)                                          |
+ +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+ 注：finger用于快速校验数据是否被修改，上层可使用token、协议头参与计算finger，
+    确保服务端和客户端都能感知修改(服务端不能解密也能校验指纹)
+*/
+pub struct ChaCah20SecretBody<B> {
+    buffer: B,
+    exist_finger: bool,
+}
+
+impl<B: AsRef<[u8]>> ChaCah20SecretBody<B> {
+    pub fn new(buffer: B, exist_finger: bool) -> io::Result<ChaCah20SecretBody<B>> {
+        let len = buffer.as_ref().len();
+        let min_len = if exist_finger { 12 } else { 0 };
+        // 不能大于udp最大载荷长度
+        if len < min_len || len > 65535 - 20 - 8 - 12 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "ChaCah20SecretBody length overflow",
+            ));
+        }
+        Ok(ChaCah20SecretBody {
+            buffer,
+            exist_finger,
+        })
+    }
+    pub fn en_body(&self) -> &[u8] {
+        let mut end = self.buffer.as_ref().len();
+        if self.exist_finger {
+            end -= 12;
+        }
+        &self.buffer.as_ref()[..end]
+    }
+    pub fn finger(&self) -> &[u8] {
+        if self.exist_finger {
+            let end = self.buffer.as_ref().len();
+            &self.buffer.as_ref()[end - 12..end]
+        } else {
+            &[]
+        }
+    }
+}
+
+impl<B: AsRef<[u8]> + AsMut<[u8]>> ChaCah20SecretBody<B> {
+    pub fn set_finger(&mut self, finger: &[u8]) -> io::Result<()> {
+        if self.exist_finger {
+            if finger.len() != 12 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "finger.len != 12",
+                ));
+            }
+            let end = self.buffer.as_ref().len();
+            self.buffer.as_mut()[end - 12..end].copy_from_slice(finger);
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cbc not exist finger",
+            ))
+        }
+    }
+    pub fn en_body_mut(&mut self) -> &mut [u8] {
+        let mut end = self.buffer.as_ref().len();
+        if self.exist_finger {
+            end -= 12;
+        }
+        &mut self.buffer.as_mut()[..end]
+    }
+}
 
 /* rsa加密数据体
   0                                            15                                              31
