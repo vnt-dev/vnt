@@ -123,16 +123,6 @@ pub fn read_config(file_path: &str) -> anyhow::Result<(Config, bool)> {
         if file_conf.password.is_some() && file_conf.cipher_model.is_none() {
             Err(anyhow!("cipher_model undefined"))?
         }
-        #[cfg(not(any(
-            feature = "aes_gcm",
-            feature = "server_encrypt",
-            feature = "aes_cbc",
-            feature = "aes_ecb",
-            feature = "sm4_cbc"
-        )))]
-        {
-            CipherModel::None
-        }
         #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
         CipherModel::AesGcm
     };

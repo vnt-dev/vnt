@@ -73,23 +73,24 @@ cargo build -p vnt-cli --no-default-features
 
 features说明
 
-| feature          | 说明                   | 是否默认 |
-|------------------|----------------------|------|
-| openssl          | 使用openssl中的aes_ecb算法 | 否    |
-| openssl-vendored | 从源码编译openssl         | 否    |
-| ring-cipher      | 使用ring中的aes_gcm算法    | 否    |
-| aes_cbc          | 支持aes_cbc加密          | 是    |
-| aes_ecb          | 支持aes_ecb加密          | 是    |
-| aes_gcm          | 支持aes_gcm加密          | 是    |
-| sm4_cbc          | 支持sm4_cbc加密          | 是    |
-| server_encrypt   | 支持服务端加密              | 是    |
-| ip_proxy         | 内置ip代理               | 是    |
-| port_mapping     | 端口映射                 | 是    |
-| log              | 日志                   | 是    |
-| command          | list、route等命令        | 是    |
-| file_config      | yaml配置文件             | 是    |
-| lz4              | lz4压缩                | 是    |
-| zstd             | zstd压缩               | 否    |
+| feature           | 说明                             | 是否默认 |
+|-------------------|--------------------------------|------|
+| openssl           | 使用openssl中的加密算法                | 否    |
+| openssl-vendored  | 从源码编译openssl                   | 否    |
+| ring-cipher       | 使用ring中的加密算法                   | 否    |
+| aes_cbc           | 支持aes_cbc加密                    | 是    |
+| aes_ecb           | 支持aes_ecb加密                    | 是    |
+| aes_gcm           | 支持aes_gcm加密                    | 是    |
+| sm4_cbc           | 支持sm4_cbc加密                    | 是    |
+| chacha20_poly1305 | 支持chacha20和chacha20_poly1305加密 | 是    |
+| server_encrypt    | 支持服务端加密                        | 是    |
+| ip_proxy          | 内置ip代理                         | 是    |
+| port_mapping      | 端口映射                           | 是    |
+| log               | 日志                             | 是    |
+| command           | list、route等命令                  | 是    |
+| file_config       | yaml配置文件                       | 是    |
+| lz4               | lz4压缩                          | 是    |
+| zstd              | zstd压缩                         | 否    |
 
 ### ip转发/代理
 
