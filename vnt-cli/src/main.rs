@@ -233,19 +233,6 @@ fn main() {
 
         let cipher_model = match matches.opt_get::<CipherModel>("model") {
             Ok(model) => {
-                #[cfg(not(any(
-                    feature = "aes_gcm",
-                    feature = "server_encrypt",
-                    feature = "aes_cbc",
-                    feature = "aes_ecb",
-                    feature = "sm4_cbc"
-                )))]
-                {
-                    if password.is_some() && model.is_none() {
-                        println!("Encryption not supported");
-                        return;
-                    }
-                }
                 #[cfg(not(any(feature = "aes_gcm", feature = "server_encrypt")))]
                 {
                     if password.is_some() && model.is_none() {
@@ -367,6 +354,29 @@ fn main0(config: Config, _show_cmd: bool) {
         }
     }
     let vnt_util = Vnt::new(config, callback::VntHandler {}).unwrap();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let vnt_c = vnt_util.clone();
+        let mut signals = signal_hook::iterator::Signals::new(&[
+            signal_hook::consts::SIGINT,
+            signal_hook::consts::SIGTERM,
+        ])
+        .unwrap();
+        let handle = signals.handle();
+        std::thread::spawn(move || {
+            for sig in signals.forever() {
+                match sig {
+                    signal_hook::consts::SIGINT | signal_hook::consts::SIGTERM => {
+                        println!("Received SIGINT, {}", sig);
+                        vnt_c.stop();
+                        handle.close();
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
     #[cfg(feature = "command")]
     {
         let vnt_c = vnt_util.clone();
@@ -400,6 +410,7 @@ fn main0(config: Config, _show_cmd: bool) {
 
     vnt_util.wait()
 }
+
 #[cfg(feature = "command")]
 fn command(cmd: &str, vnt: &Vnt) -> bool {
     if cmd.is_empty() {
@@ -452,33 +463,8 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -i <in-ip>          配置点对网(IP代理)时使用,-i 192.168.0.0/24,10.26.0.3表示允许接收网段192.168.0.0/24的数据");
     println!("                      并转发到10.26.0.3,可指定多个网段");
     println!("  -o <out-ip>         配置点对网时使用,-o 192.168.0.0/24表示允许将数据转发到192.168.0.0/24,可指定多个网段");
-    #[cfg(not(any(
-        feature = "aes_gcm",
-        feature = "server_encrypt",
-        feature = "aes_cbc",
-        feature = "aes_ecb",
-        feature = "sm4_cbc"
-    )))]
-    let enums = String::new();
-    #[cfg(any(
-        feature = "aes_gcm",
-        feature = "server_encrypt",
-        feature = "aes_cbc",
-        feature = "aes_ecb",
-        feature = "sm4_cbc"
-    ))]
-    let mut enums = String::new();
-    #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
-    enums.push_str("/aes_gcm");
-    #[cfg(feature = "aes_cbc")]
-    enums.push_str("/aes_cbc");
-    #[cfg(feature = "aes_ecb")]
-    enums.push_str("/aes_ecb");
-    #[cfg(feature = "sm4_cbc")]
-    enums.push_str("/sm4_cbc");
-    if !enums.is_empty() {
-        println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
-    }
+
+    println!("  -w <password>       使用该密码生成的密钥对客户端数据进行加密,并且服务端无法解密,使用相同密码的客户端才能通信");
     #[cfg(feature = "server_encrypt")]
     println!("  -W                  加密当前客户端和服务端通信的数据,请留意服务端指纹是否正确");
     println!("  -u <mtu>            自定义mtu(不加密默认为1450，加密默认为1410)");
@@ -488,15 +474,31 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
-    if !enums.is_empty() {
-        println!(
-            "  --model <model>     加密模式(默认aes_gcm),可选值{}",
-            &enums[1..]
-        );
-    }
-    if !enums.is_empty() {
-        println!("  --finger            增加数据指纹校验,可增加安全性,如果服务端开启指纹校验,则客户端也必须开启");
-    }
+    let mut enums = String::new();
+    #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
+    enums.push_str("/aes_gcm");
+    #[cfg(feature = "chacha20_poly1305")]
+    enums.push_str("/chacha20_poly1305/chacha20");
+    #[cfg(feature = "aes_cbc")]
+    enums.push_str("/aes_cbc");
+    #[cfg(feature = "aes_ecb")]
+    enums.push_str("/aes_ecb");
+    #[cfg(feature = "sm4_cbc")]
+    enums.push_str("/sm4_cbc");
+    enums.push_str("/xor");
+    println!(
+        "  --model <model>     加密模式(默认aes_gcm),可选值{}",
+        &enums[1..]
+    );
+    #[cfg(any(
+        feature = "aes_gcm",
+        feature = "chacha20_poly1305",
+        feature = "server_encrypt",
+        feature = "aes_cbc",
+        feature = "aes_ecb",
+        feature = "sm4_cbc"
+    ))]
+    println!("  --finger            增加数据指纹校验,可增加安全性,如果服务端开启指纹校验,则客户端也必须开启");
     println!("  --punch <punch>     取值ipv4/ipv6/all,ipv4表示仅使用ipv4打洞");
     println!("  --ports <port,port> 取值0~65535,指定本地监听的一组端口,默认监听两个随机端口,使用过多端口会增加网络负担");
     #[cfg(feature = "command")]
