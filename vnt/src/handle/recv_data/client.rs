@@ -1,13 +1,16 @@
-use parking_lot::RwLock;
-use protobuf::Message;
+use anyhow::anyhow;
 use std::collections::HashMap;
-use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
+
+use parking_lot::RwLock;
+use protobuf::Message;
 
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+use tun::device::IFace;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::punch::NatInfo;
@@ -28,8 +31,6 @@ use crate::protocol::{
     control_packet, ip_turn_packet, other_turn_packet, NetPacket, Protocol, MAX_TTL,
 };
 use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use tun::device::IFace;
 
 /// 处理来源于客户端的包
 #[derive(Clone)]
@@ -116,7 +117,7 @@ impl ClientPacketHandler {
         context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
         route_key: RouteKey,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         let destination = net_packet.destination();
         let source = net_packet.source();
         match ip_turn_packet::Protocol::from(net_packet.transport_protocol()) {
@@ -203,7 +204,7 @@ impl ClientPacketHandler {
         current_device: &CurrentDeviceInfo,
         mut net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         let metric = net_packet.source_ttl() - net_packet.ttl() + 1;
         let source = net_packet.source();
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
@@ -291,17 +292,15 @@ impl ClientPacketHandler {
         current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         if context.use_channel_type().is_only_relay() {
             return Ok(());
         }
         let source = net_packet.source();
         match other_turn_packet::Protocol::from(net_packet.transport_protocol()) {
             other_turn_packet::Protocol::Punch => {
-                let mut punch_info =
-                    PunchInfo::parse_from_bytes(net_packet.payload()).map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("PunchInfo {:?}", e))
-                    })?;
+                let mut punch_info = PunchInfo::parse_from_bytes(net_packet.payload())
+                    .map_err(|e| anyhow!("PunchInfo {:?}", e))?;
                 let public_ips = punch_info
                     .public_ip_list
                     .iter()
@@ -361,9 +360,9 @@ impl ClientPacketHandler {
                         punch_reply.ipv6 = ipv6.octets().to_vec();
                         punch_reply.ipv6_port = nat_info.udp_ports[0] as u32;
                     }
-                    let bytes = punch_reply.write_to_bytes().map_err(|e| {
-                        io::Error::new(io::ErrorKind::Other, format!("punch_reply {:?}", e))
-                    })?;
+                    let bytes = punch_reply
+                        .write_to_bytes()
+                        .map_err(|e| anyhow!("punch_reply {:?}", e))?;
                     let mut punch_packet =
                         NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;
                     punch_packet.set_default_version();

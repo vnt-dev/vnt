@@ -10,7 +10,6 @@ use crate::ip_proxy::IpProxyMap;
 use crate::util::{SingleU64Adder, StopManager};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
-use std::io;
 use std::sync::Arc;
 use tun::device::IFace;
 use tun::Device;
@@ -27,7 +26,7 @@ pub(crate) fn start_simple(
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let worker = {
         let device = device.clone();
         stop_manager.add_listener("tun_device".into(), move || {
@@ -65,7 +64,7 @@ fn start_simple0(
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let mut buf = [0; BUFFER_SIZE];
     let mut extend = [0; BUFFER_SIZE];
     loop {
@@ -101,7 +100,7 @@ pub(crate) fn start_multi(
     device: Arc<Device>,
     group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
     up_counter: &mut SingleU64Adder,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let worker = {
         let device = device.clone();
         stop_manager.add_listener("tun_device_multi".into(), move || {
@@ -120,7 +119,7 @@ fn start_multi0(
     device: Arc<Device>,
     mut group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
     up_counter: &mut SingleU64Adder,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     loop {
         let mut buf = vec![0; 1024 * 16];
         let len = device.read(&mut buf[12..])? + 12;

@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
-use std::{io, thread};
 
+use anyhow::anyhow;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use protobuf::Message;
@@ -222,7 +223,7 @@ fn punch0(
     punch_record: &Mutex<HashMap<Ipv4Addr, usize>>,
     last_punch_record: &mut HashMap<Ipv4Addr, usize>,
     total_count: usize,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let nat_info = nat_test.nat_info();
     if total_count < 10
         && (nat_info.public_ips.is_empty()
@@ -297,7 +298,7 @@ fn punch_packet(
     virtual_ip: Ipv4Addr,
     nat_info: &NatInfo,
     dest: Ipv4Addr,
-) -> io::Result<NetPacket<Vec<u8>>> {
+) -> anyhow::Result<NetPacket<Vec<u8>>> {
     let mut punch_reply = PunchInfo::new();
     punch_reply.reply = false;
     punch_reply.public_ip_list = nat_info
@@ -320,7 +321,7 @@ fn punch_packet(
     log::info!("请求打洞={:?}", punch_reply);
     let bytes = punch_reply
         .write_to_bytes()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("punch_packet {:?}", e)))?;
+        .map_err(|e| anyhow!("punch_packet {:?}", e))?;
     let mut net_packet = NetPacket::new_encrypt(vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED])?;
     net_packet.set_default_version();
     net_packet.set_protocol(Protocol::OtherTurn);

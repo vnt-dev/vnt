@@ -33,7 +33,7 @@ pub(crate) fn start_simple(
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let poll = Poll::new()?;
     let waker = Arc::new(Waker::new(poll.registry(), STOP)?);
     let _waker = waker.clone();
@@ -73,7 +73,7 @@ fn start_simple0(
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let mut buf = [0; BUFFER_SIZE];
     let mut extend = [0; BUFFER_SIZE];
     let fd = device.as_tun_fd();
@@ -134,7 +134,7 @@ pub(crate) fn start_multi(
     device: Arc<Device>,
     group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
     up_counter: &mut SingleU64Adder,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let poll = Poll::new()?;
     let waker = Arc::new(Waker::new(poll.registry(), STOP)?);
     let _waker = waker.clone();
@@ -154,7 +154,7 @@ fn start_multi0(
     device: Arc<Device>,
     mut group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
     up_counter: &mut SingleU64Adder,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let fd = device.as_tun_fd();
     fd.set_nonblock()?;
     SourceFd(&fd.as_raw_fd()).register(poll.registry(), FD, Interest::READABLE)?;

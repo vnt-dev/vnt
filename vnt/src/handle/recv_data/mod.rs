@@ -62,7 +62,12 @@ impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
             }
         }
         if let Err(e) = self.handle0(buf, extend, route_key, context) {
-            log::error!("[{}]-{:?}", thread::current().name().unwrap_or(""), e);
+            log::error!(
+                "[{}]-{:?}-{:?}",
+                thread::current().name().unwrap_or(""),
+                route_key.addr,
+                e
+            );
         }
     }
 }

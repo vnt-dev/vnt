@@ -17,7 +17,7 @@ pub fn udp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
     context: ChannelContext,
-) -> io::Result<AcceptSocketSender<Option<Vec<UdpSocket>>>>
+) -> anyhow::Result<AcceptSocketSender<Option<Vec<UdpSocket>>>>
 where
     H: RecvChannelHandler,
 {
@@ -31,7 +31,7 @@ fn sub_udp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
     context: ChannelContext,
-) -> io::Result<AcceptSocketSender<Option<Vec<UdpSocket>>>>
+) -> anyhow::Result<AcceptSocketSender<Option<Vec<UdpSocket>>>>
 where
     H: RecvChannelHandler,
 {
@@ -208,7 +208,7 @@ fn main_udp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
     context: ChannelContext,
-) -> io::Result<()>
+) -> anyhow::Result<()>
 where
     H: RecvChannelHandler,
 {

@@ -2,7 +2,6 @@ use crate::util::StopManager;
 use std::collections::BinaryHeap;
 use std::{
     cmp::Ordering,
-    io,
     sync::mpsc::{sync_channel, Receiver, SyncSender},
     time::{Duration, Instant},
 };
@@ -36,7 +35,7 @@ pub struct Scheduler {
     sender: SyncSender<Op>,
 }
 impl Scheduler {
-    pub fn new(stop_manager: StopManager) -> io::Result<Self> {
+    pub fn new(stop_manager: StopManager) -> anyhow::Result<Self> {
         let (sender, receiver) = sync_channel::<Op>(32);
         let s = Self { sender };
         let s_inner = s.clone();

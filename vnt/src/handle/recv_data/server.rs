@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -11,6 +12,8 @@ use protobuf::Message;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+use tun::device::IFace;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::{Route, RouteKey};
@@ -34,8 +37,6 @@ use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::{ip_turn_packet, service_packet, NetPacket, Protocol, MAX_TTL};
 use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
 use crate::{proto, PeerClientInfo};
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use tun::device::IFace;
 
 /// 处理来源于服务端的包
 #[derive(Clone)]
@@ -136,10 +137,8 @@ impl<Call: VntCallback> PacketHandler for ServerPacketHandler<Call> {
         } else if net_packet.protocol() == Protocol::Service
             && net_packet.transport_protocol() == service_packet::Protocol::HandshakeResponse.into()
         {
-            let response =
-                HandshakeResponse::parse_from_bytes(net_packet.payload()).map_err(|e| {
-                    io::Error::new(io::ErrorKind::Other, format!("HandshakeResponse {:?}", e))
-                })?;
+            let response = HandshakeResponse::parse_from_bytes(net_packet.payload())
+                .map_err(|e| anyhow!("HandshakeResponse {:?}", e))?;
             log::info!("握手响应:{:?},{}", route_key, response);
             //如果开启了加密，则发送加密握手请求
             #[cfg(feature = "server_encrypt")]
@@ -254,7 +253,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
         current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         match service_packet::Protocol::from(net_packet.transport_protocol()) {
             service_packet::Protocol::RegistrationResponse => {
                 let response = RegistrationResponse::parse_from_bytes(net_packet.payload())
@@ -440,7 +439,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
         &self,
         current_device: &CurrentDeviceInfo,
         context: &ChannelContext,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         if current_device.status.online() {
             log::info!("已连接的不需要注册，{:?}", self.config_info);
             return Ok(());
@@ -469,7 +468,8 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
         )?;
         log::info!("发送注册请求，{:?}", self.config_info);
         //注册请求只发送到默认通道
-        context.send_default(response.buffer(), current_device.connect_server)
+        context.send_default(response.buffer(), current_device.connect_server)?;
+        Ok(())
     }
     fn error(
         &self,
@@ -527,7 +527,7 @@ impl<Call: VntCallback> ServerPacketHandler<Call> {
         current_device: &CurrentDeviceInfo,
         net_packet: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PongPacket(pong_packet) => {
                 let current_time = crate::handle::now_time() as u16;

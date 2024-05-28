@@ -1,4 +1,3 @@
-use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -167,7 +166,7 @@ fn client_relay0(
     current_device: &CurrentDeviceInfo,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
     client_cipher: &Cipher,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     // 离线了不再探测
     if current_device.status.offline() {
         return Ok(());
@@ -211,7 +210,7 @@ fn client_relay0(
 fn heartbeat_packet(
     src: Ipv4Addr,
     dest: Ipv4Addr,
-) -> io::Result<NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]>> {
+) -> anyhow::Result<NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]>> {
     let mut net_packet = NetPacket::new_encrypt([0u8; 12 + 4 + ENCRYPTION_RESERVED])?;
     net_packet.set_default_version();
     net_packet.set_protocol(Protocol::Control);
@@ -228,7 +227,7 @@ fn heartbeat_packet_client(
     client_cipher: &Cipher,
     src: Ipv4Addr,
     dest: Ipv4Addr,
-) -> io::Result<NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]>> {
+) -> anyhow::Result<NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]>> {
     let mut net_packet = heartbeat_packet(src, dest)?;
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     Ok(net_packet)
@@ -239,7 +238,7 @@ fn heartbeat_packet_server(
     server_cipher: &Cipher,
     src: Ipv4Addr,
     dest: Ipv4Addr,
-) -> io::Result<NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]>> {
+) -> anyhow::Result<NetPacket<[u8; 12 + 4 + ENCRYPTION_RESERVED]>> {
     let mut net_packet = heartbeat_packet(src, dest)?;
     let mut ping = PingPacket::new(net_packet.payload_mut())?;
     ping.set_epoch(device_list.lock().0);

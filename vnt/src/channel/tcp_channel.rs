@@ -31,7 +31,7 @@ pub fn tcp_listen<H>(
     stop_manager: StopManager,
     recv_handler: H,
     context: ChannelContext,
-) -> io::Result<AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>>
+) -> anyhow::Result<AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>>
 where
     H: RecvChannelHandler,
 {
@@ -75,7 +75,7 @@ fn tcp_listen0<H>(
     accept_tcp_receiver: Receiver<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     mut recv_handler: H,
     context: ChannelContext,
-) -> io::Result<()>
+) -> anyhow::Result<()>
 where
     H: RecvChannelHandler,
 {
@@ -109,7 +109,7 @@ where
                             if e.kind() == io::ErrorKind::WouldBlock {
                                 break;
                             }
-                            return Err(e);
+                            return Err(e)?;
                         }
                     }
                 },
@@ -164,7 +164,7 @@ fn init_writable_handler(
     receiver: Receiver<(TcpStream, Token, SocketAddr, Option<Vec<u8>>)>,
     stop_manager: StopManager,
     context: ChannelContext,
-) -> io::Result<WritableNotify> {
+) -> anyhow::Result<WritableNotify> {
     let poll = Poll::new()?;
     let writable_notify = WritableNotify::new(Waker::new(poll.registry(), NOTIFY)?);
     let worker = {

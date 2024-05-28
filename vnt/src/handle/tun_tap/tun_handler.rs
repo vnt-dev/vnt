@@ -5,7 +5,6 @@ use std::{io, thread};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 
-use crate::channel::BUFFER_SIZE;
 use packet::icmp::icmp::IcmpPacket;
 use packet::icmp::Kind;
 use packet::ip::ipv4::packet::IpV4Packet;
@@ -14,6 +13,7 @@ use tun::device::IFace;
 use tun::Device;
 
 use crate::channel::context::ChannelContext;
+use crate::channel::BUFFER_SIZE;
 use crate::cipher::Cipher;
 use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
@@ -187,7 +187,7 @@ fn broadcast(
     net_packet: &mut NetPacket<&mut [u8]>,
     current_device: &CurrentDeviceInfo,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let list: Vec<Ipv4Addr> = device_list
         .lock()
         .1
@@ -261,7 +261,8 @@ fn broadcast(
     broadcast.set_address(&p2p_ips)?;
     broadcast.set_data(net_packet.buffer())?;
     server_cipher.encrypt_ipv4(&mut server_packet)?;
-    sender.send_default(server_packet.buffer(), current_device.connect_server)
+    sender.send_default(server_packet.buffer(), current_device.connect_server)?;
+    Ok(())
 }
 
 /// 实现一个原地发送，必须保证是如下结构
@@ -302,6 +303,38 @@ fn base_handle(
         }
         return Ok(());
     }
+    if !dest_ip.is_multicast() && !dest_ip.is_broadcast() && current_device.broadcast_ip != dest_ip
+    {
+        if !check_dest(
+            dest_ip,
+            current_device.virtual_netmask,
+            current_device.virtual_network,
+        ) {
+            if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
+                //路由的目标不能是自己
+                if r_dest_ip == src_ip {
+                    return Ok(());
+                }
+                //需要修改目的地址
+                dest_ip = r_dest_ip;
+                net_packet.set_destination(r_dest_ip);
+            } else {
+                return Ok(());
+            }
+        }
+        #[cfg(feature = "ip_proxy")]
+        if let Some(proxy_map) = proxy_map {
+            let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
+            proxy_map.send_handle(&mut ipv4_packet)?;
+        }
+    }
+
+    if dest_ip.is_multicast() {
+        //当作广播处理
+        dest_ip = Ipv4Addr::BROADCAST;
+        net_packet.set_destination(Ipv4Addr::BROADCAST);
+    }
+
     let mut net_packet = if compressor.compress(&net_packet, &mut out)? {
         out.set_default_version();
         out.set_protocol(protocol::Protocol::IpTurn);
@@ -313,11 +346,6 @@ fn base_handle(
     } else {
         net_packet
     };
-    if dest_ip.is_multicast() {
-        //当作广播处理
-        dest_ip = Ipv4Addr::BROADCAST;
-        net_packet.set_destination(Ipv4Addr::BROADCAST);
-    }
     if dest_ip.is_broadcast() || current_device.broadcast_ip == dest_ip {
         // 广播 发送到直连目标
         client_cipher.encrypt_ipv4(&mut net_packet)?;
@@ -330,28 +358,7 @@ fn base_handle(
         )?;
         return Ok(());
     }
-    if !check_dest(
-        dest_ip,
-        current_device.virtual_netmask,
-        current_device.virtual_network,
-    ) {
-        if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
-            //路由的目标不能是自己
-            if r_dest_ip == src_ip {
-                return Ok(());
-            }
-            //需要修改目的地址
-            dest_ip = r_dest_ip;
-            net_packet.set_destination(r_dest_ip);
-        } else {
-            return Ok(());
-        }
-    }
-    #[cfg(feature = "ip_proxy")]
-    if let Some(proxy_map) = proxy_map {
-        let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
-        proxy_map.send_handle(&mut ipv4_packet)?;
-    }
+
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     context.send_ipv4_by_id(
         net_packet.buffer(),
