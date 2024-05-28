@@ -1,9 +1,9 @@
 use crate::cipher::Finger;
 use crate::protocol::{NetPacket, HEAD_LEN};
+use anyhow::anyhow;
 use libsm::sm4::cipher_mode::CipherMode;
 use libsm::sm4::Sm4CipherMode;
 use rand::RngCore;
-use std::io;
 
 pub struct Sm4CbcCipher {
     key: [u8; 16],
@@ -41,10 +41,10 @@ impl Sm4CbcCipher {
     pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         net_packet: &mut NetPacket<B>,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         if !net_packet.is_encrypt() {
             //未加密的数据直接丢弃
-            return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
+            return Err(anyhow!("not encrypt"));
         }
 
         if let Some(finger) = &self.finger {
@@ -57,12 +57,12 @@ impl Sm4CbcCipher {
             nonce_raw[11] = net_packet.source_ttl();
             let len = net_packet.payload().len();
             if len < 12 {
-                return Err(io::Error::new(io::ErrorKind::Other, "payload len <12"));
+                return Err(anyhow!("payload len <12"));
             }
             let secret_body = &net_packet.payload()[..len - 12];
             let finger = finger.calculate_finger(&nonce_raw, secret_body);
             if &finger != &net_packet.payload()[len - 12..] {
-                return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
+                return Err(anyhow!("finger err"));
             }
             net_packet.set_data_len(net_packet.data_len() - finger.len())?;
         }
@@ -70,7 +70,7 @@ impl Sm4CbcCipher {
         let len = payload.len();
         if len < 16 || len > 1024 * 4 {
             log::error!("数据异常,长度{}小于16或大于4096", len);
-            return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+            return Err(anyhow!("data err"));
         }
         let mut out = [0u8; 1024 * 4];
         let data = &payload[..len - 16];
@@ -79,32 +79,29 @@ impl Sm4CbcCipher {
             Ok(len) => {
                 let src_net_packet = NetPacket::new(&out[..len])?;
                 if src_net_packet.source() != net_packet.source() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.destination() != net_packet.destination() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.protocol() != net_packet.protocol() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.transport_protocol() != net_packet.transport_protocol() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.is_gateway() != net_packet.is_gateway() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.source_ttl() != net_packet.source_ttl() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 net_packet.set_data_len(len)?;
                 net_packet.set_payload(src_net_packet.payload())?;
                 net_packet.set_encrypt_flag(false);
                 Ok(())
             }
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("sm4_cbc解密失败:{}", e),
-            )),
+            Err(e) => Err(anyhow!("sm4_cbc解密失败:{}", e)),
         }
     }
     /// net_packet 必须预留足够长度
@@ -112,7 +109,7 @@ impl Sm4CbcCipher {
     pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         net_packet: &mut NetPacket<B>,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         let mut out = [0u8; 1024 * 4];
         let mut iv = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut iv);
@@ -121,7 +118,7 @@ impl Sm4CbcCipher {
                 "数据异常,长度{}大于1024 * 4 - 32",
                 net_packet.buffer().len()
             );
-            return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+            return Err(anyhow!("data err"));
         }
         match self.cipher.encrypt(net_packet.buffer(), &iv, &mut out) {
             Ok(len) => {
@@ -146,10 +143,7 @@ impl Sm4CbcCipher {
                 net_packet.set_encrypt_flag(true);
                 Ok(())
             }
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("sm4_cbc加密失败:{}", e),
-            )),
+            Err(e) => Err(anyhow!("sm4_cbc加密失败:{}", e)),
         }
     }
 }

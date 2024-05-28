@@ -1,7 +1,8 @@
+use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyInit};
+use anyhow::anyhow;
+
 use crate::cipher::Finger;
 use crate::protocol::{NetPacket, HEAD_LEN};
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyInit};
-use std::io;
 
 type Aes128EcbEnc = ecb::Encryptor<aes::Aes128>;
 type Aes128EcbDec = ecb::Decryptor<aes::Aes128>;
@@ -46,10 +47,10 @@ impl AesEcbCipher {
     pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         net_packet: &mut NetPacket<B>,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         if !net_packet.is_encrypt() {
             //未加密的数据直接丢弃
-            return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
+            return Err(anyhow!("not encrypt"));
         }
 
         if let Some(finger) = &self.finger {
@@ -62,18 +63,18 @@ impl AesEcbCipher {
             nonce_raw[11] = net_packet.source_ttl();
             let len = net_packet.payload().len();
             if len < 12 {
-                return Err(io::Error::new(io::ErrorKind::Other, "payload len <12"));
+                return Err(anyhow!("payload len <12"));
             }
             let secret_body = &net_packet.payload()[..len - 12];
             let finger = finger.calculate_finger(&nonce_raw, secret_body);
             if &finger != &net_packet.payload()[len - 12..] {
-                return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
+                return Err(anyhow!("finger err"));
             }
             net_packet.set_data_len(net_packet.data_len() - finger.len())?;
         }
         if net_packet.payload().len() < 16 {
             log::error!("数据异常,长度{}小于{}", net_packet.payload().len(), 16);
-            return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+            return Err(anyhow!("data err"));
         }
         let mut out = [0u8; 1024 * 5];
         let rs = match self.key {
@@ -87,32 +88,29 @@ impl AesEcbCipher {
                 //校验头部
                 let src_net_packet = NetPacket::new(buf)?;
                 if src_net_packet.source() != net_packet.source() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.destination() != net_packet.destination() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.protocol() != net_packet.protocol() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.transport_protocol() != net_packet.transport_protocol() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.is_gateway() != net_packet.is_gateway() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 if src_net_packet.source_ttl() != net_packet.source_ttl() {
-                    return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+                    return Err(anyhow!("data err"));
                 }
                 net_packet.set_data_len(buf.len())?;
                 net_packet.set_payload(src_net_packet.payload())?;
                 net_packet.set_encrypt_flag(false);
                 Ok(())
             }
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("aes_ecb解密失败:{}", e),
-            )),
+            Err(e) => Err(anyhow!("aes_ecb解密失败:{}", e)),
         }
     }
     /// net_packet 必须预留足够长度
@@ -120,7 +118,7 @@ impl AesEcbCipher {
     pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         net_packet: &mut NetPacket<B>,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         let mut out = [0u8; 1024 * 5];
         let rs = match self.key {
             AesEcbEnum::AES128ECB(key) => Aes128EcbEnc::new(&key.into())
@@ -152,10 +150,7 @@ impl AesEcbCipher {
                 }
                 Ok(())
             }
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("aes_ecb加密失败:{}", e),
-            )),
+            Err(e) => Err(anyhow!("aes_ecb加密失败:{}", e)),
         };
     }
 }

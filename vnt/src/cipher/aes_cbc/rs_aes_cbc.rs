@@ -1,6 +1,5 @@
-use std::io;
-
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use anyhow::anyhow;
 use rand::RngCore;
 
 use crate::cipher::Finger;
@@ -50,14 +49,14 @@ impl AesCbcCipher {
     pub fn decrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         net_packet: &mut NetPacket<B>,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         if !net_packet.is_encrypt() {
             //未加密的数据直接丢弃
-            return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
+            return Err(anyhow!("not encrypt"));
         }
         if net_packet.payload().len() < 16 {
             log::error!("数据异常,长度{}小于{}", net_packet.payload().len(), 16);
-            return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+            return Err(anyhow!("aes_cbc data err"));
         }
         let mut iv = [0; 16];
         iv[0..4].copy_from_slice(&net_packet.source().octets());
@@ -75,7 +74,7 @@ impl AesCbcCipher {
         if let Some(finger) = &self.finger {
             let finger = finger.calculate_finger(&iv[..12], secret_body.en_body());
             if &finger != secret_body.finger() {
-                return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
+                return Err(anyhow!("aes_cbc finger err"));
             }
         }
         let rs = match &self.cipher {
@@ -92,10 +91,7 @@ impl AesCbcCipher {
                 net_packet.set_data_len(HEAD_LEN + len - 4)?;
                 Ok(())
             }
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("解密失败:{}", e),
-            )),
+            Err(e) => Err(anyhow!("aes_cbc 解密失败:{}", e)),
         }
     }
     /// net_packet 必须预留足够长度
@@ -103,7 +99,7 @@ impl AesCbcCipher {
     pub fn encrypt_ipv4<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         net_packet: &mut NetPacket<B>,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         let data_len = net_packet.data_len();
         let mut iv = [0; 16];
         iv[0..4].copy_from_slice(&net_packet.source().octets());
@@ -146,10 +142,7 @@ impl AesCbcCipher {
                 net_packet.set_encrypt_flag(true);
                 Ok(())
             }
-            Err(e) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("加密失败:{}", e),
-            )),
+            Err(e) => Err(anyhow!("aes_cbc 加密失败:{}", e)),
         };
     }
 }
