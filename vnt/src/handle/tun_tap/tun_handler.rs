@@ -45,47 +45,6 @@ fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyho
     Ok(())
 }
 
-/// 接收tun数据，并且转发到udp上
-pub(crate) fn handle(
-    context: &ChannelContext,
-    data: &mut [u8],
-    len: usize,
-    extend: &mut [u8],
-    device_writer: &Device,
-    current_device: CurrentDeviceInfo,
-    ip_route: &ExternalRoute,
-    #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
-    client_cipher: &Cipher,
-    server_cipher: &Cipher,
-    device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
-    compressor: &Compressor,
-) -> anyhow::Result<()> {
-    //忽略掉结构不对的情况（ipv6数据、win tap会读到空数据），不然日志打印太多了
-    let ipv4_packet = match IpV4Packet::new(&mut data[12..len]) {
-        Ok(packet) => packet,
-        Err(_) => return Ok(()),
-    };
-    let src_ip = ipv4_packet.source_ip();
-    let dest_ip = ipv4_packet.destination_ip();
-    if src_ip == dest_ip {
-        return icmp(&device_writer, ipv4_packet);
-    }
-    return base_handle(
-        context,
-        data,
-        len,
-        extend,
-        current_device,
-        ip_route,
-        #[cfg(feature = "ip_proxy")]
-        proxy_map,
-        client_cipher,
-        server_cipher,
-        device_list,
-        compressor,
-    );
-}
-
 pub fn start(
     stop_manager: StopManager,
     context: ChannelContext,
@@ -265,15 +224,16 @@ fn broadcast(
     Ok(())
 }
 
+/// 接收tun数据，并且转发到udp上
 /// 实现一个原地发送，必须保证是如下结构
 /// |12字节开头|ip报文|至少1024字节结尾|
 ///
-#[inline]
-fn base_handle(
+pub(crate) fn handle(
     context: &ChannelContext,
     buf: &mut [u8],
     data_len: usize, //数据总长度=12+ip包长度
     extend: &mut [u8],
+    device_writer: &Device,
     current_device: CurrentDeviceInfo,
     ip_route: &ExternalRoute,
     #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
@@ -282,7 +242,16 @@ fn base_handle(
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
     compressor: &Compressor,
 ) -> anyhow::Result<()> {
-    let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
+    //忽略掉结构不对的情况（ipv6数据、win tap会读到空数据），不然日志打印太多了
+    let ipv4_packet = match IpV4Packet::new(&mut buf[12..data_len]) {
+        Ok(packet) => packet,
+        Err(_) => return Ok(()),
+    };
+    let src_ip = ipv4_packet.source_ip();
+    let dest_ip = ipv4_packet.destination_ip();
+    if src_ip == dest_ip {
+        return icmp(&device_writer, ipv4_packet);
+    }
     let protocol = ipv4_packet.protocol();
     let src_ip = ipv4_packet.source_ip();
     let mut dest_ip = ipv4_packet.destination_ip();

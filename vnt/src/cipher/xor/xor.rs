@@ -54,11 +54,9 @@ impl XORCipher {
             return Err(anyhow!("not encrypt"));
         }
         let key = &self.key;
-        net_packet
-            .payload_mut()
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, byte)| *byte = *byte ^ key[i & 31]);
+        for (i, byte) in net_packet.payload_mut().iter_mut().enumerate() {
+            *byte ^= key[i & 31];
+        }
         net_packet.set_encrypt_flag(false);
         Ok(())
     }
@@ -68,11 +66,9 @@ impl XORCipher {
     ) -> anyhow::Result<()> {
         net_packet.set_encrypt_flag(true);
         let key = &self.key;
-        net_packet
-            .payload_mut()
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, byte)| *byte = *byte ^ key[i & 31]);
+        for (i, byte) in net_packet.payload_mut().iter_mut().enumerate() {
+            *byte ^= key[i & 31];
+        }
         Ok(())
     }
 }
