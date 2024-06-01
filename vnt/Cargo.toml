@@ -1,6 +1,6 @@
 [package]
 name = "vnt"
-version = "1.2.9"
+version = "1.2.10"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,6 +23,8 @@ aes-gcm = { version = "0.10.2", optional = true }
 ring = { version = "0.17.0", optional = true }
 cbc = { version = "0.1.2", optional = true }
 ecb = { version = "0.1.2", optional = true }
+chacha20poly1305 = { version = "0.10.1", optional = true }
+chacha20 = { version = "0.9.1", optional = true }
 aes = "0.8.3"
 stun-format = { version = "1.0.1", features = ["fmt", "rfc3489"] }
 rsa = { version = "0.9.2", features = [], optional = true }
@@ -37,6 +39,8 @@ dns-parser = "0.8.0"
 
 tokio = { version = "1.37.0", features = ["full"], optional = true }
 
+lz4_flex = { version = "0.11", default-features = false, optional = true }
+zstd = { version = "0.13.1", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 libloading = "0.8.0"
@@ -45,9 +49,10 @@ libloading = "0.8.0"
 [build-dependencies]
 protobuf-codegen = "3.2.0"
 protoc-bin-vendored = "3.0.0"
+cfg_aliases = "0.2.1"
 
 [features]
-default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "ip_proxy", "port_mapping"]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "lz4_compress", "zstd_compress"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]
@@ -56,6 +61,9 @@ aes_cbc = ["cbc"]
 aes_ecb = ["ecb"]
 sm4_cbc = ["libsm"]
 aes_gcm = ["aes-gcm"]
+chacha20_poly1305 = ["chacha20poly1305", "chacha20"]
 server_encrypt = ["aes-gcm", "rsa", "spki"]
 ip_proxy = ["tokio"]
 port_mapping = ["tokio"]
+lz4_compress = ["lz4_flex"]
+zstd_compress = ["zstd"]

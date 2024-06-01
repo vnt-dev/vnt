@@ -1,4 +1,4 @@
-use std::io;
+use anyhow::anyhow;
 
 use sha2::Digest;
 
@@ -16,15 +16,15 @@ impl Finger {
         let hash: [u8; 32] = hasher.finalize().into();
         Finger { hash }
     }
-    pub fn check_finger<B: AsRef<[u8]>>(&self, net_packet: &NetPacket<B>) -> io::Result<()> {
+    pub fn check_finger<B: AsRef<[u8]>>(&self, net_packet: &NetPacket<B>) -> anyhow::Result<()> {
         if !net_packet.is_encrypt() {
             //未加密的数据直接丢弃
-            return Err(io::Error::new(io::ErrorKind::Other, "not encrypt"));
+            return Err(anyhow!("not encrypt"));
         }
         let payload_len = net_packet.payload().len();
         if payload_len < 12 {
             log::error!("数据异常,长度小于{}", 12);
-            return Err(io::Error::new(io::ErrorKind::Other, "data err"));
+            return Err(anyhow!("data err"));
         }
         let mut nonce_raw = [0; 12];
         nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
@@ -36,7 +36,7 @@ impl Finger {
         let payload = net_packet.payload();
         let finger = self.calculate_finger(&nonce_raw, &payload[..payload_len - 12]);
         if &finger[..] != &payload[payload_len - 12..] {
-            return Err(io::Error::new(io::ErrorKind::Other, "finger err"));
+            return Err(anyhow!("finger err"));
         }
         Ok(())
     }

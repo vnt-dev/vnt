@@ -8,6 +8,7 @@ use tun::Device;
 
 use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
+use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
@@ -78,6 +79,7 @@ struct TunDeviceHelperInner {
     parallel: usize,
     up_counter: SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    compressor: Compressor,
 }
 
 impl TunDeviceHelper {
@@ -92,6 +94,7 @@ impl TunDeviceHelper {
         parallel: usize,
         up_counter: SingleU64Adder,
         device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+        compressor: Compressor,
     ) -> Self {
         Self {
             inner: Arc::new(AtomicCell::new(Some(TunDeviceHelperInner {
@@ -106,6 +109,7 @@ impl TunDeviceHelper {
                 parallel,
                 up_counter,
                 device_list,
+                compressor,
             }))),
         }
     }
@@ -124,6 +128,7 @@ impl TunDeviceHelper {
                 inner.parallel,
                 inner.up_counter,
                 inner.device_list,
+                inner.compressor,
             )?;
             Ok(())
         } else {

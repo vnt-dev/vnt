@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::thread::Thread;
 use std::time::Duration;
-use std::{io, thread};
 
+use anyhow::anyhow;
 use parking_lot::Mutex;
 
 #[derive(Clone)]
@@ -20,7 +21,7 @@ impl StopManager {
             inner: Arc::new(StopManagerInner::new(f)),
         }
     }
-    pub fn add_listener<F>(&self, name: String, f: F) -> io::Result<Worker>
+    pub fn add_listener<F>(&self, name: String, f: F) -> anyhow::Result<Worker>
     where
         F: FnOnce() + Send + 'static,
     {
@@ -61,23 +62,20 @@ impl StopManagerInner {
             stop_call: Mutex::new(Some(Box::new(f))),
         }
     }
-    fn add_listener<F>(self: &Arc<Self>, name: String, f: F) -> io::Result<Worker>
+    fn add_listener<F>(self: &Arc<Self>, name: String, f: F) -> anyhow::Result<Worker>
     where
         F: FnOnce() + Send + 'static,
     {
         if name.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::Other, "name cannot be empty"));
+            return Err(anyhow!("name cannot be empty"));
         }
         let mut guard = self.listeners.lock();
         if guard.0 {
-            return Err(io::Error::new(io::ErrorKind::Other, "stopped"));
+            return Err(anyhow!("stopped"));
         }
         for (n, _) in &guard.1 {
             if &name == n {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("stop add_listener {:?} name already exists", name),
-                ));
+                return Err(anyhow!("stop add_listener {:?} name already exists", name));
             }
         }
         guard.1.push((name.clone(), Box::new(f)));

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::{io, thread};
+use std::thread;
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
@@ -43,7 +43,13 @@ pub struct RecvDataHandler<Call> {
 }
 
 impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
-    fn handle(&mut self, buf: &mut [u8], route_key: RouteKey, context: &ChannelContext) {
+    fn handle(
+        &mut self,
+        buf: &mut [u8],
+        extend: &mut [u8],
+        route_key: RouteKey,
+        context: &ChannelContext,
+    ) {
         //判断stun响应包
         if !route_key.is_tcp() {
             if let Ok(rs) = self
@@ -55,8 +61,13 @@ impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
                 }
             }
         }
-        if let Err(e) = self.handle0(buf, route_key, context) {
-            log::error!("[{}]-{:?}", thread::current().name().unwrap_or(""), e);
+        if let Err(e) = self.handle0(buf, extend, route_key, context) {
+            log::error!(
+                "[{}]-{:?}-{:?}",
+                thread::current().name().unwrap_or(""),
+                route_key.addr,
+                e
+            );
         }
     }
 }
@@ -116,12 +127,14 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
     fn handle0(
         &mut self,
         buf: &mut [u8],
+        extend: &mut [u8],
         route_key: RouteKey,
         context: &ChannelContext,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         // 统计流量
         self.counter.add(buf.len() as _);
         let net_packet = NetPacket::new(buf)?;
+        let extend = NetPacket::unchecked(extend);
         if net_packet.ttl() == 0 || net_packet.source_ttl() < net_packet.ttl() {
             log::warn!("丢弃过时包:{:?}", net_packet.head());
             return Ok(());
@@ -139,16 +152,16 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             if net_packet.is_gateway() {
                 //服务端-客户端包
                 self.server
-                    .handle(net_packet, route_key, context, &current_device)
+                    .handle(net_packet, extend, route_key, context, &current_device)
             } else {
                 //客户端-客户端包
                 self.client
-                    .handle(net_packet, route_key, context, &current_device)
+                    .handle(net_packet, extend, route_key, context, &current_device)
             }
         } else {
             //转发包
             self.turn
-                .handle(net_packet, route_key, context, &current_device)
+                .handle(net_packet, extend, route_key, context, &current_device)
         }
     }
 }
@@ -157,8 +170,9 @@ pub trait PacketHandler {
     fn handle(
         &self,
         net_packet: NetPacket<&mut [u8]>,
+        extend: NetPacket<&mut [u8]>,
         route_key: RouteKey,
         context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
-    ) -> io::Result<()>;
+    ) -> anyhow::Result<()>;
 }

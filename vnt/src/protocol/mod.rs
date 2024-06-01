@@ -21,6 +21,7 @@ pub const HEAD_LEN: usize = 12;
 pub mod body;
 pub mod control_packet;
 pub mod error_packet;
+pub mod extension;
 pub mod ip_turn_packet;
 pub mod other_turn_packet;
 pub mod service_packet;
@@ -101,6 +102,10 @@ pub struct NetPacket<B> {
 }
 
 impl<B: AsRef<[u8]>> NetPacket<B> {
+    pub fn unchecked(buffer: B) -> Self {
+        let data_len = buffer.as_ref().len();
+        Self { data_len, buffer }
+    }
     pub fn new(buffer: B) -> io::Result<NetPacket<B>> {
         let data_len = buffer.as_ref().len();
         Self::new0(data_len, buffer)
@@ -158,6 +163,10 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
     pub fn is_gateway(&self) -> bool {
         self.buffer.as_ref()[0] & 0x40 == 0x40
     }
+    /// 扩展协议
+    pub fn is_extension(&self) -> bool {
+        self.buffer.as_ref()[0] & 0x20 == 0x20
+    }
     pub fn version(&self) -> Version {
         Version::from(self.buffer.as_ref()[0] & 0x0F)
     }
@@ -190,6 +199,9 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
 }
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
+    pub fn head_mut(&mut self) -> &mut [u8] {
+        &mut self.buffer.as_mut()[..12]
+    }
     pub fn buffer_mut(&mut self) -> &mut [u8] {
         &mut self.buffer.as_mut()[..self.data_len]
     }
@@ -206,6 +218,13 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
             self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x50
         } else {
             self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0xBF
+        };
+    }
+    pub fn set_extension_flag(&mut self, is_extension: bool) {
+        if is_extension {
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x20
+        } else {
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0xDF
         };
     }
     pub fn set_default_version(&mut self) {
@@ -263,6 +282,10 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
         }
         self.data_len = data_len;
         Ok(())
+    }
+    pub fn set_payload_len(&mut self, payload_len: usize) -> io::Result<()> {
+        let data_len = HEAD_LEN + payload_len;
+        self.set_data_len(data_len)
     }
     pub fn set_data_len_max(&mut self) {
         self.data_len = self.buffer.as_ref().len();

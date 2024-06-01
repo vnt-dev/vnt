@@ -73,21 +73,24 @@ cargo build -p vnt-cli --no-default-features
 
 features说明
 
-| feature          | 说明                   | 是否默认 |
-|------------------|----------------------|------|
-| openssl          | 使用openssl中的aes_ecb算法 | 否    |
-| openssl-vendored | 从源码编译openssl         | 否    |
-| ring-cipher      | 使用ring中的aes_gcm算法    | 否    |
-| aes_cbc          | 支持aes_cbc加密          | 是    |
-| aes_ecb          | 支持aes_ecb加密          | 是    |
-| aes_gcm          | 支持aes_gcm加密          | 是    |
-| sm4_cbc          | 支持sm4_cbc加密          | 是    |
-| server_encrypt   | 支持服务端加密              | 是    |
-| ip_proxy         | 内置ip代理               | 是    |
-| port_mapping     | 端口映射                 | 是    |
-| log              | 日志                   | 是    |
-| command          | list、route等命令        | 是    |
-| file_config      | yaml配置文件             | 是    |
+| feature           | 说明                             | 是否默认 |
+|-------------------|--------------------------------|------|
+| openssl           | 使用openssl中的加密算法                | 否    |
+| openssl-vendored  | 从源码编译openssl                   | 否    |
+| ring-cipher       | 使用ring中的加密算法                   | 否    |
+| aes_cbc           | 支持aes_cbc加密                    | 是    |
+| aes_ecb           | 支持aes_ecb加密                    | 是    |
+| aes_gcm           | 支持aes_gcm加密                    | 是    |
+| sm4_cbc           | 支持sm4_cbc加密                    | 是    |
+| chacha20_poly1305 | 支持chacha20和chacha20_poly1305加密 | 是    |
+| server_encrypt    | 支持服务端加密                        | 是    |
+| ip_proxy          | 内置ip代理                         | 是    |
+| port_mapping      | 端口映射                           | 是    |
+| log               | 日志                             | 是    |
+| command           | list、route等命令                  | 是    |
+| file_config       | yaml配置文件                       | 是    |
+| lz4               | lz4压缩                          | 是    |
+| zstd              | zstd压缩                         | 否    |
 
 ### ip转发/代理
 
@@ -171,12 +174,14 @@ sudo pfctl -f /etc/pf.conf -e
 
 - Mac
 - Linux
-    - Arch Linux `yay -Syu vnt`
 - Windows
     - 默认使用tun网卡 依赖wintun.dll([win-tun](https://www.wintun.net/))(将dll放到同目录下，建议使用版本0.14.1)
     - 使用tap网卡 依赖tap-windows([win-tap](https://build.openvpn.net/downloads/releases/))(建议使用版本9.24.7)
 - Android
-    - [VntApp](https://github.com/lbl8603/VntApp)
+
+### GUI
+
+支持安卓和Windows [下载](https://github.com/lbl8603/VntApp/releases/)
 
 ### 特性
 
@@ -280,13 +285,20 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 
 ### 交流群
 
+对VNT有任何问题均可以加群联系作者
+
 QQ: 1034868233
+### 赞助
+如果VNT对你有帮助，欢迎打赏作者
+
+ <img width="300" alt="" src="https://github.com/lbl8603/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
 
 ### 其他
 
 可使用社区小伙伴搭建的中继服务器
 
 1. -s vnt.8443.eu.org:29871
+2. -s vnt.wherewego.top:29872
 
 ### 参与贡献
 

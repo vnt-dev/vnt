@@ -1,5 +1,7 @@
 use crate::channel::context::ChannelContext;
+use crate::channel::BUFFER_SIZE;
 use crate::cipher::Cipher;
+use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::GroupSyncSender;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
@@ -8,7 +10,6 @@ use crate::ip_proxy::IpProxyMap;
 use crate::util::{SingleU64Adder, StopManager};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
-use std::io;
 use std::sync::Arc;
 use tun::device::IFace;
 use tun::Device;
@@ -24,7 +25,8 @@ pub(crate) fn start_simple(
     server_cipher: Cipher,
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-) -> io::Result<()> {
+    compressor: Compressor,
+) -> anyhow::Result<()> {
     let worker = {
         let device = device.clone();
         stop_manager.add_listener("tun_device".into(), move || {
@@ -44,6 +46,7 @@ pub(crate) fn start_simple(
         server_cipher,
         up_counter,
         device_list,
+        compressor,
     ) {
         log::error!("{:?}", e);
     }
@@ -60,8 +63,10 @@ fn start_simple0(
     server_cipher: Cipher,
     up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
-) -> io::Result<()> {
-    let mut buf = [0; 1024 * 16];
+    compressor: Compressor,
+) -> anyhow::Result<()> {
+    let mut buf = [0; BUFFER_SIZE];
+    let mut extend = [0; BUFFER_SIZE];
     loop {
         let len = device.read(&mut buf[12..])? + 12;
         //单线程的
@@ -72,6 +77,7 @@ fn start_simple0(
             context,
             &mut buf,
             len,
+            &mut extend,
             &device,
             current_device.load(),
             &ip_route,
@@ -80,6 +86,7 @@ fn start_simple0(
             &client_cipher,
             &server_cipher,
             &device_list,
+            &compressor,
         ) {
             Ok(_) => {}
             Err(e) => {
@@ -93,7 +100,7 @@ pub(crate) fn start_multi(
     device: Arc<Device>,
     group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
     up_counter: &mut SingleU64Adder,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let worker = {
         let device = device.clone();
         stop_manager.add_listener("tun_device_multi".into(), move || {
@@ -112,7 +119,7 @@ fn start_multi0(
     device: Arc<Device>,
     mut group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
     up_counter: &mut SingleU64Adder,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     loop {
         let mut buf = vec![0; 1024 * 16];
         let len = device.read(&mut buf[12..])? + 12;

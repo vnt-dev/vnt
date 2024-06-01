@@ -13,7 +13,9 @@ use tun::device::IFace;
 use tun::Device;
 
 use crate::channel::context::ChannelContext;
+use crate::channel::BUFFER_SIZE;
 use crate::cipher::Cipher;
+use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
 use crate::handle::tun_tap::channel_group::channel_group;
 use crate::handle::{check_dest, CurrentDeviceInfo, PeerDeviceInfo};
@@ -27,7 +29,7 @@ use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
 use crate::util::{SingleU64Adder, StopManager};
 
-fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> io::Result<()> {
+fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
     if ipv4_packet.protocol() == Protocol::Icmp {
         let mut icmp = IcmpPacket::new(ipv4_packet.payload_mut())?;
         if icmp.kind() == Kind::EchoRequest {
@@ -43,43 +45,6 @@ fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> io::R
     Ok(())
 }
 
-/// 接收tun数据，并且转发到udp上
-pub(crate) fn handle(
-    context: &ChannelContext,
-    data: &mut [u8],
-    len: usize,
-    device_writer: &Device,
-    current_device: CurrentDeviceInfo,
-    ip_route: &ExternalRoute,
-    #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
-    client_cipher: &Cipher,
-    server_cipher: &Cipher,
-    device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
-) -> io::Result<()> {
-    //忽略掉结构不对的情况（ipv6数据、win tap会读到空数据），不然日志打印太多了
-    let ipv4_packet = match IpV4Packet::new(&mut data[12..len]) {
-        Ok(packet) => packet,
-        Err(_) => return Ok(()),
-    };
-    let src_ip = ipv4_packet.source_ip();
-    let dest_ip = ipv4_packet.destination_ip();
-    if src_ip == dest_ip {
-        return icmp(&device_writer, ipv4_packet);
-    }
-    return base_handle(
-        context,
-        data,
-        len,
-        current_device,
-        ip_route,
-        #[cfg(feature = "ip_proxy")]
-        proxy_map,
-        client_cipher,
-        server_cipher,
-        device_list,
-    );
-}
-
 pub fn start(
     stop_manager: StopManager,
     context: ChannelContext,
@@ -92,6 +57,7 @@ pub fn start(
     parallel: usize,
     mut up_counter: SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    compressor: Compressor,
 ) -> io::Result<()> {
     if parallel > 1 {
         let (sender, receivers) = channel_group::<(Vec<u8>, usize)>(parallel, 16);
@@ -108,6 +74,7 @@ pub fn start(
             thread::Builder::new()
                 .name(format!("tunHandler-{}", index))
                 .spawn(move || {
+                    let mut extend = [0; BUFFER_SIZE];
                     while let Ok((mut buf, len)) = receiver.recv() {
                         #[cfg(not(target_os = "macos"))]
                         let start = 0;
@@ -117,6 +84,7 @@ pub fn start(
                             &context,
                             &mut buf[start..],
                             len,
+                            &mut extend,
                             &device,
                             current_device.load(),
                             &ip_route,
@@ -125,6 +93,7 @@ pub fn start(
                             &client_cipher,
                             &server_cipher,
                             &device_list,
+                            &compressor,
                         ) {
                             Ok(_) => {}
                             Err(e) => {
@@ -162,6 +131,7 @@ pub fn start(
                     server_cipher,
                     &mut up_counter,
                     device_list,
+                    compressor,
                 ) {
                     log::warn!("stop:{}", e);
                 }
@@ -176,7 +146,7 @@ fn broadcast(
     net_packet: &mut NetPacket<&mut [u8]>,
     current_device: &CurrentDeviceInfo,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let list: Vec<Ipv4Addr> = device_list
         .lock()
         .1
@@ -250,29 +220,43 @@ fn broadcast(
     broadcast.set_address(&p2p_ips)?;
     broadcast.set_data(net_packet.buffer())?;
     server_cipher.encrypt_ipv4(&mut server_packet)?;
-    sender.send_default(server_packet.buffer(), current_device.connect_server)
+    sender.send_default(server_packet.buffer(), current_device.connect_server)?;
+    Ok(())
 }
 
+/// 接收tun数据，并且转发到udp上
 /// 实现一个原地发送，必须保证是如下结构
 /// |12字节开头|ip报文|至少1024字节结尾|
 ///
-#[inline]
-fn base_handle(
+pub(crate) fn handle(
     context: &ChannelContext,
     buf: &mut [u8],
     data_len: usize, //数据总长度=12+ip包长度
+    extend: &mut [u8],
+    device_writer: &Device,
     current_device: CurrentDeviceInfo,
     ip_route: &ExternalRoute,
     #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,
     client_cipher: &Cipher,
     server_cipher: &Cipher,
     device_list: &Mutex<(u16, Vec<PeerDeviceInfo>)>,
-) -> io::Result<()> {
-    let ipv4_packet = IpV4Packet::new(&buf[12..data_len])?;
+    compressor: &Compressor,
+) -> anyhow::Result<()> {
+    //忽略掉结构不对的情况（ipv6数据、win tap会读到空数据），不然日志打印太多了
+    let ipv4_packet = match IpV4Packet::new(&mut buf[12..data_len]) {
+        Ok(packet) => packet,
+        Err(_) => return Ok(()),
+    };
+    let src_ip = ipv4_packet.source_ip();
+    let dest_ip = ipv4_packet.destination_ip();
+    if src_ip == dest_ip {
+        return icmp(&device_writer, ipv4_packet);
+    }
     let protocol = ipv4_packet.protocol();
     let src_ip = ipv4_packet.source_ip();
     let mut dest_ip = ipv4_packet.destination_ip();
     let mut net_packet = NetPacket::new0(data_len, buf)?;
+    let mut out = NetPacket::unchecked(extend);
     net_packet.set_default_version();
     net_packet.set_protocol(protocol::Protocol::IpTurn);
     net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
@@ -288,11 +272,49 @@ fn base_handle(
         }
         return Ok(());
     }
+    if !dest_ip.is_multicast() && !dest_ip.is_broadcast() && current_device.broadcast_ip != dest_ip
+    {
+        if !check_dest(
+            dest_ip,
+            current_device.virtual_netmask,
+            current_device.virtual_network,
+        ) {
+            if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
+                //路由的目标不能是自己
+                if r_dest_ip == src_ip {
+                    return Ok(());
+                }
+                //需要修改目的地址
+                dest_ip = r_dest_ip;
+                net_packet.set_destination(r_dest_ip);
+            } else {
+                return Ok(());
+            }
+        }
+        #[cfg(feature = "ip_proxy")]
+        if let Some(proxy_map) = proxy_map {
+            let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
+            proxy_map.send_handle(&mut ipv4_packet)?;
+        }
+    }
+
     if dest_ip.is_multicast() {
         //当作广播处理
         dest_ip = Ipv4Addr::BROADCAST;
         net_packet.set_destination(Ipv4Addr::BROADCAST);
     }
+
+    let mut net_packet = if compressor.compress(&net_packet, &mut out)? {
+        out.set_default_version();
+        out.set_protocol(protocol::Protocol::IpTurn);
+        out.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
+        out.first_set_ttl(6);
+        out.set_source(src_ip);
+        out.set_destination(dest_ip);
+        out
+    } else {
+        net_packet
+    };
     if dest_ip.is_broadcast() || current_device.broadcast_ip == dest_ip {
         // 广播 发送到直连目标
         client_cipher.encrypt_ipv4(&mut net_packet)?;
@@ -305,33 +327,13 @@ fn base_handle(
         )?;
         return Ok(());
     }
-    if !check_dest(
-        dest_ip,
-        current_device.virtual_netmask,
-        current_device.virtual_network,
-    ) {
-        if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
-            //路由的目标不能是自己
-            if r_dest_ip == src_ip {
-                return Ok(());
-            }
-            //需要修改目的地址
-            dest_ip = r_dest_ip;
-            net_packet.set_destination(r_dest_ip);
-        } else {
-            return Ok(());
-        }
-    }
-    #[cfg(feature = "ip_proxy")]
-    if let Some(proxy_map) = proxy_map {
-        let mut ipv4_packet = IpV4Packet::new(net_packet.payload_mut())?;
-        proxy_map.send_handle(&mut ipv4_packet)?;
-    }
+
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     context.send_ipv4_by_id(
         net_packet.buffer(),
         &dest_ip,
         current_device.connect_server,
         current_device.status.online(),
-    )
+    )?;
+    Ok(())
 }

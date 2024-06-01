@@ -44,6 +44,7 @@ fn address_choose0(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
     let v4: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv4()).copied().collect();
     let v6: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv6()).copied().collect();
     let check_addr = |addrs: &Vec<SocketAddr>| -> anyhow::Result<SocketAddr> {
+        let mut err = Vec::new();
         if !addrs.is_empty() {
             let udp = if addrs[0].is_ipv6() {
                 UdpSocket::bind("[::]:0")?
@@ -51,12 +52,14 @@ fn address_choose0(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
                 UdpSocket::bind("0.0.0.0:0")?
             };
             for addr in addrs {
-                if udp.connect(addr).is_ok() {
+                if let Err(e) = udp.connect(addr) {
+                    err.push((*addr, e));
+                } else {
                     return Ok(*addr);
                 }
             }
         }
-        Err(anyhow::anyhow!("Unable to connect to address {:?}", addrs))
+        Err(anyhow::anyhow!("Unable to connect to address {:?}", err))
     };
     if v6.is_empty() {
         return check_addr(&v4);

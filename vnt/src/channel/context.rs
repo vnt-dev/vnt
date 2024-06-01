@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, thread};
@@ -48,7 +48,6 @@ impl ChannelContext {
             tcp_map: RwLock::new(HashMap::with_capacity(64)),
             route_table: RouteTable::new(use_channel_type, first_latency, channel_num),
             is_tcp,
-            state: AtomicBool::new(true),
             packet_loss_rate,
             packet_delay,
             main_index: AtomicUsize::new(0),
@@ -86,8 +85,6 @@ pub struct ContextInner {
     pub route_table: RouteTable,
     // 是否使用tcp连接服务器
     is_tcp: bool,
-    //状态
-    state: AtomicBool,
     //控制丢包率，取值v=[0,100_0000] 丢包率r=v/100_0000
     packet_loss_rate: u32,
     //控制延迟
@@ -99,12 +96,6 @@ pub struct ContextInner {
 impl ContextInner {
     pub fn use_channel_type(&self) -> UseChannelType {
         self.route_table.use_channel_type
-    }
-    pub fn is_stop(&self) -> bool {
-        !self.state.load(Ordering::Acquire)
-    }
-    pub fn stop(&self) {
-        self.state.store(false, Ordering::Release);
     }
     /// 通过sub_udp_socket是否为空来判断是否为锥形网络
     pub fn is_cone(&self) -> bool {

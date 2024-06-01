@@ -7,6 +7,7 @@ pub use conn::Vnt;
 use crate::channel::punch::PunchModel;
 use crate::channel::UseChannelType;
 use crate::cipher::CipherModel;
+use crate::compression::Compressor;
 use crate::util::{address_choose, dns_query_all};
 
 mod conn;
@@ -46,6 +47,7 @@ pub struct Config {
     // 端口映射
     #[cfg(feature = "port_mapping")]
     pub port_mapping_list: Vec<(bool, SocketAddr, String)>,
+    pub compressor: Compressor,
 }
 
 impl Config {
@@ -77,6 +79,7 @@ impl Config {
         packet_delay: u32,
         // 例如 [udp:127.0.0.1:80->10.26.0.10:8080,tcp:127.0.0.1:80->10.26.0.10:8080]
         #[cfg(feature = "port_mapping")] port_mapping_list: Vec<String>,
+        compressor: Compressor,
     ) -> anyhow::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -140,36 +143,33 @@ impl Config {
             packet_delay,
             #[cfg(feature = "port_mapping")]
             port_mapping_list,
+            compressor,
         })
     }
 }
+
 impl Config {
-    #[cfg(any(
-        feature = "aes_gcm",
-        feature = "server_encrypt",
-        feature = "aes_cbc",
-        feature = "aes_ecb",
-        feature = "sm4_cbc"
-    ))]
     pub fn password_hash(&self) -> Option<[u8; 16]> {
-        self.password.as_ref().map(|v| {
-            use sha2::Digest;
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(self.cipher_model.to_string().as_bytes());
-            hasher.update(v.as_bytes());
-            hasher.update(self.token.as_bytes());
-            let key: [u8; 32] = hasher.finalize().into();
-            key[16..].try_into().unwrap()
-        })
-    }
-    #[cfg(not(any(
-        feature = "aes_gcm",
-        feature = "server_encrypt",
-        feature = "aes_cbc",
-        feature = "aes_ecb",
-        feature = "sm4_cbc"
-    )))]
-    pub fn password_hash(&self) -> Option<[u8; 16]> {
-        None
+        if let Some(p) = self.password.as_ref() {
+            match self.cipher_model {
+                CipherModel::Xor => {
+                    let key = crate::cipher::simple_hash(&format!("Xor{}{}", p, self.token));
+                    Some(key[16..].try_into().unwrap())
+                }
+                CipherModel::None => None,
+                #[cfg(cipher)]
+                _ => {
+                    use sha2::Digest;
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(self.cipher_model.to_string().as_bytes());
+                    hasher.update(p.as_bytes());
+                    hasher.update(self.token.as_bytes());
+                    let key: [u8; 32] = hasher.finalize().into();
+                    Some(key[16..].try_into().unwrap())
+                }
+            }
+        } else {
+            None
+        }
     }
 }

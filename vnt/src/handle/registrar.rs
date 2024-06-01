@@ -1,4 +1,4 @@
-use std::io;
+use anyhow::anyhow;
 use std::net::Ipv4Addr;
 
 use protobuf::Message;
@@ -19,7 +19,7 @@ pub fn registration_request_packet(
     is_fast: bool,
     allow_ip_change: bool,
     client_secret_hash: Option<&[u8]>,
-) -> io::Result<NetPacket<Vec<u8>>> {
+) -> anyhow::Result<NetPacket<Vec<u8>>> {
     let mut request = RegistrationRequest::new();
     request.token = token;
     request.device_id = device_id;
@@ -36,9 +36,9 @@ pub fn registration_request_packet(
             .client_secret_hash
             .extend_from_slice(client_secret_hash);
     }
-    let bytes = request.write_to_bytes().map_err(|e| {
-        io::Error::new(io::ErrorKind::Other, format!("RegistrationRequest {:?}", e))
-    })?;
+    let bytes = request
+        .write_to_bytes()
+        .map_err(|e| anyhow!("RegistrationRequest {:?}", e))?;
     let buf = vec![0u8; 12 + bytes.len() + ENCRYPTION_RESERVED];
     let mut net_packet = NetPacket::new_encrypt(buf)?;
     net_packet.set_destination(GATEWAY_IP);

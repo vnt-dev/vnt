@@ -3,6 +3,7 @@ use crate::channel::RouteKey;
 use crate::handle::recv_data::PacketHandler;
 use crate::handle::CurrentDeviceInfo;
 use crate::protocol::NetPacket;
+use anyhow::Context;
 
 /// 处理客户端中转包
 #[derive(Clone)]
@@ -18,10 +19,11 @@ impl PacketHandler for TurnPacketHandler {
     fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
+        _extend: NetPacket<&mut [u8]>,
         route_key: RouteKey,
         context: &ChannelContext,
         _current_device: &CurrentDeviceInfo,
-    ) -> std::io::Result<()> {
+    ) -> anyhow::Result<()> {
         // ttl减一
         let ttl = net_packet.incr_ttl();
         if ttl > 0 {
@@ -33,7 +35,9 @@ impl PacketHandler for TurnPacketHandler {
                     return Ok(());
                 }
                 if route.metric <= ttl {
-                    return context.send_by_key(net_packet.buffer(), route.route_key());
+                    return context
+                        .send_by_key(net_packet.buffer(), route.route_key())
+                        .context("转发失败");
                 }
             }
             //其他没有路由的不转发
