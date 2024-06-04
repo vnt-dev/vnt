@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use fnv::FnvHashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -44,8 +44,8 @@ impl ChannelContext {
             .unwrap_or(0);
         let inner = ContextInner {
             main_udp_socket,
-            sub_udp_socket: RwLock::new(Vec::with_capacity(64)),
-            tcp_map: RwLock::new(HashMap::with_capacity(64)),
+            sub_udp_socket: RwLock::new(Vec::new()),
+            tcp_map: RwLock::new(FnvHashMap::default()),
             route_table: RouteTable::new(use_channel_type, first_latency, channel_num),
             is_tcp,
             packet_loss_rate,
@@ -80,7 +80,7 @@ pub struct ContextInner {
     // 对称网络增加的udp socket
     sub_udp_socket: RwLock<Vec<UdpSocket>>,
     // tcp数据发送器
-    pub(crate) tcp_map: RwLock<HashMap<SocketAddr, PacketSender>>,
+    pub(crate) tcp_map: RwLock<FnvHashMap<SocketAddr, PacketSender>>,
     // 路由信息
     pub route_table: RouteTable,
     // 是否使用tcp连接服务器
@@ -288,7 +288,7 @@ impl ContextInner {
 
 pub struct RouteTable {
     pub(crate) route_table:
-        RwLock<HashMap<Ipv4Addr, (AtomicUsize, Vec<(Route, AtomicCell<Instant>)>)>>,
+        RwLock<FnvHashMap<Ipv4Addr, (AtomicUsize, Vec<(Route, AtomicCell<Instant>)>)>>,
     first_latency: bool,
     channel_num: usize,
     use_channel_type: UseChannelType,
@@ -297,7 +297,7 @@ pub struct RouteTable {
 impl RouteTable {
     fn new(use_channel_type: UseChannelType, first_latency: bool, channel_num: usize) -> Self {
         Self {
-            route_table: RwLock::new(HashMap::with_capacity(64)),
+            route_table: RwLock::new(FnvHashMap::with_capacity_and_hasher(64, Default::default())),
             use_channel_type,
             first_latency,
             channel_num,

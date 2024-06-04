@@ -1672,6 +1672,7 @@ dependencies = [
  "crossbeam-utils",
  "dns-parser",
  "ecb",
+ "fnv",
  "libc",
  "libloading",
  "libsm",
