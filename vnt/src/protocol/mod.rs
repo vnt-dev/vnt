@@ -137,6 +137,7 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
         }
         Ok(NetPacket { data_len, buffer })
     }
+    #[inline]
     pub fn buffer(&self) -> &[u8] {
         &self.buffer.as_ref()[..self.data_len]
     }
