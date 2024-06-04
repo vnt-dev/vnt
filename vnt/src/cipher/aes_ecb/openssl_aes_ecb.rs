@@ -110,13 +110,7 @@ impl AesEcbCipher {
         }
 
         if let Some(finger) = &self.finger {
-            let mut nonce_raw = [0; 12];
-            nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-            nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-            nonce_raw[8] = net_packet.protocol().into();
-            nonce_raw[9] = net_packet.transport_protocol();
-            nonce_raw[10] = net_packet.is_gateway() as u8;
-            nonce_raw[11] = net_packet.source_ttl();
+            let nonce_raw = net_packet.head_tag();
             let len = net_packet.payload().len();
             if len < 12 {
                 return Err(anyhow!("data len err"));
@@ -202,13 +196,7 @@ impl AesEcbCipher {
         net_packet.payload_mut().copy_from_slice(ciphertext);
         net_packet.set_encrypt_flag(true);
         if let Some(finger) = &self.finger {
-            let mut nonce_raw = [0; 12];
-            nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-            nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-            nonce_raw[8] = net_packet.protocol().into();
-            nonce_raw[9] = net_packet.transport_protocol();
-            nonce_raw[10] = net_packet.is_gateway() as u8;
-            nonce_raw[11] = net_packet.source_ttl();
+            let nonce_raw = net_packet.head_tag();
             let finger = finger.calculate_finger(&nonce_raw, ciphertext);
             let src_data_len = net_packet.data_len();
             //设置实际长度
@@ -224,6 +212,8 @@ impl AesEcbCipher {
 fn test_openssl_aes_ecb() {
     let d = AesEcbCipher::new_128([0; 16], Some(Finger::new("123")));
     let mut p = NetPacket::new_encrypt([0; 100]).unwrap();
+    let src = p.buffer().to_vec();
     d.encrypt_ipv4(&mut p).unwrap();
     d.decrypt_ipv4(&mut p).unwrap();
+    assert_eq!(p.buffer(), &src);
 }

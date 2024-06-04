@@ -62,13 +62,7 @@ impl AesGcmCipher {
             log::error!("数据异常,长度小于{}", AES_GCM_ENCRYPTION_RESERVED);
             return Err(anyhow!("data err"));
         }
-        let mut nonce_raw = [0; 12];
-        nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-        nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-        nonce_raw[8] = net_packet.protocol().into();
-        nonce_raw[9] = net_packet.transport_protocol();
-        nonce_raw[10] = net_packet.is_gateway() as u8;
-        nonce_raw[11] = net_packet.source_ttl();
+        let nonce_raw = net_packet.head_tag();
         let nonce = aead::Nonce::assume_unique_for_key(nonce_raw);
         let mut secret_body = SecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
         if let Some(finger) = &self.finger {
@@ -100,13 +94,7 @@ impl AesGcmCipher {
         &self,
         net_packet: &mut NetPacket<B>,
     ) -> anyhow::Result<()> {
-        let mut nonce_raw = [0; 12];
-        nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-        nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-        nonce_raw[8] = net_packet.protocol().into();
-        nonce_raw[9] = net_packet.transport_protocol();
-        nonce_raw[10] = net_packet.is_gateway() as u8;
-        nonce_raw[11] = net_packet.source_ttl();
+        let nonce_raw = net_packet.head_tag();
         let nonce = aead::Nonce::assume_unique_for_key(nonce_raw);
         let data_len = net_packet.data_len() + AES_GCM_ENCRYPTION_RESERVED;
         net_packet.set_data_len(data_len)?;
@@ -138,4 +126,23 @@ impl AesGcmCipher {
             Err(e) => Err(anyhow!("加密失败:{}", e)),
         };
     }
+}
+
+#[test]
+fn test_aes_gcm() {
+    let d = AesGcmCipher::new_256([0; 32], Some(Finger::new("123")));
+    let mut p =
+        NetPacket::new_encrypt([0; 13 + crate::protocol::body::ENCRYPTION_RESERVED]).unwrap();
+    let src = p.buffer().to_vec();
+    d.encrypt_ipv4(&mut p).unwrap();
+    d.decrypt_ipv4(&mut p).unwrap();
+    assert_eq!(p.buffer(), &src);
+
+    let d = AesGcmCipher::new_256([0; 32], None);
+    let mut p =
+        NetPacket::new_encrypt([0; 13 + crate::protocol::body::ENCRYPTION_RESERVED]).unwrap();
+    let src = p.buffer().to_vec();
+    d.encrypt_ipv4(&mut p).unwrap();
+    d.decrypt_ipv4(&mut p).unwrap();
+    assert_eq!(p.buffer(), &src);
 }
