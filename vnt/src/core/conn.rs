@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -133,9 +134,12 @@ impl Vnt {
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         let device = {
             log::info!("开始创建tun");
-            let device = tun_tap_device::create_device(&config)?;
+            let device = tun_tap_device::create_device(&config).context("create tun failed")?;
             log::info!("创建tun成功");
-            let tun_info = DeviceInfo::new(device.name()?, device.version()?);
+            let tun_info = DeviceInfo::new(
+                device.name().unwrap_or("unknown".into()),
+                device.version().unwrap_or("unknown".into()),
+            );
             log::info!("tun信息{:?}", tun_info);
             callback.create_tun(tun_info);
             device

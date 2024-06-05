@@ -326,7 +326,7 @@ fn main() {
             Ok(config) => config,
             Err(e) => {
                 println!("config.toml error: {}", e);
-                return;
+                std::process::exit(1);
             }
         };
         (config, cmd)
@@ -353,7 +353,13 @@ fn main0(config: Config, _show_cmd: bool) {
             println!("UDP port mapping {}->{}", addr, dest)
         }
     }
-    let vnt_util = Vnt::new(config, callback::VntHandler {}).unwrap();
+    let vnt_util = match Vnt::new(config, callback::VntHandler {}) {
+        Ok(vnt) => vnt,
+        Err(e) => {
+            println!("error: {:?}", e);
+            std::process::exit(1);
+        }
+    };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let vnt_c = vnt_util.clone();
