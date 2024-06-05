@@ -34,6 +34,8 @@
 
 注意：仅在windows上支持使用tap，用于兼容低版本windows系统（低版本windows不支持wintun）
 
+使用tap模式需要手动创建tap网卡，使用--nic参数指定已经创建好的tap网卡名称
+
 ### --nic `<tun0>`
 
 指定虚拟网卡名称，默认tun模式使用vnt-tun，tap模式使用vnt-tap
