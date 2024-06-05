@@ -24,7 +24,7 @@ use crate::handle::{BaseConfigInfo, CurrentDeviceInfo, PeerDeviceInfo, SELF_IP};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::nat::NatTest;
-use crate::protocol::NetPacket;
+use crate::protocol::{NetPacket, HEAD_LEN};
 use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
 use crate::util::U64Adder;
 
@@ -50,6 +50,9 @@ impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
         route_key: RouteKey,
         context: &ChannelContext,
     ) {
+        if buf.len() < HEAD_LEN {
+            return;
+        }
         //判断stun响应包
         if !route_key.is_tcp() {
             if let Ok(rs) = self
@@ -136,7 +139,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         let net_packet = NetPacket::new(buf)?;
         let extend = NetPacket::unchecked(extend);
         if net_packet.ttl() == 0 || net_packet.source_ttl() < net_packet.ttl() {
-            log::warn!("丢弃过时包:{:?}", net_packet.head());
+            log::warn!("丢弃过时包:{:?} {}", net_packet.head(), route_key.addr);
             return Ok(());
         }
         let current_device = self.current_device.load();

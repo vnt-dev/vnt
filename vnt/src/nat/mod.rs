@@ -224,34 +224,48 @@ impl NatTest {
         source_addr: SocketAddr,
         buf: &[u8],
     ) -> anyhow::Result<bool> {
-        if let Some(addr) = stun::recv_stun_response(buf) {
-            if let SocketAddr::V4(addr) = addr {
-                let mut check_fail = true;
-                let source_ip = match source_addr.ip() {
-                    IpAddr::V4(ip) => ip,
-                    IpAddr::V6(ip) => {
-                        if let Some(ip) = ip.to_ipv4_mapped() {
-                            ip
-                        } else {
-                            return Ok(false);
-                        }
-                    }
-                };
-                'a: for stun_server in &self.stun_server {
-                    for x in stun_server.to_socket_addrs()? {
-                        if source_addr.port() == x.port() {
-                            if let IpAddr::V4(ip) = x.ip() {
-                                if ip == source_ip {
-                                    check_fail = false;
-                                    break 'a;
-                                }
-                            };
-                        }
+        if buf[0] == 0x01 && buf[1] == 0x01 {
+            if let Some(addr) = stun::recv_stun_response(buf) {
+                if let Err(e) = self.recv_data_(index, source_addr, addr) {
+                    log::warn!("{:?}", e);
+                }
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn recv_data_(
+        &self,
+        index: usize,
+        source_addr: SocketAddr,
+        addr: SocketAddr,
+    ) -> anyhow::Result<()> {
+        if let SocketAddr::V4(addr) = addr {
+            let mut check_fail = true;
+            let source_ip = match source_addr.ip() {
+                IpAddr::V4(ip) => ip,
+                IpAddr::V6(ip) => {
+                    if let Some(ip) = ip.to_ipv4_mapped() {
+                        ip
+                    } else {
+                        return Ok(());
                     }
                 }
-                if check_fail {
-                    return Ok(false);
+            };
+            'a: for stun_server in &self.stun_server {
+                for x in stun_server.to_socket_addrs()? {
+                    if source_addr.port() == x.port() {
+                        if let IpAddr::V4(ip) = x.ip() {
+                            if ip == source_ip {
+                                check_fail = false;
+                                break 'a;
+                            }
+                        };
+                    }
                 }
+            }
+            if !check_fail {
                 let ip = addr.ip();
                 if !ip.is_multicast()
                     && !ip.is_broadcast()
@@ -260,10 +274,9 @@ impl NatTest {
                     && !ip.is_private()
                 {
                     self.update_addr(index, *addr.ip(), addr.port());
-                    return Ok(true);
                 }
             }
         }
-        return Ok(false);
+        Ok(())
     }
 }

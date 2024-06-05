@@ -198,9 +198,6 @@ pub fn send_stun_request() -> Vec<u8> {
 }
 
 pub fn recv_stun_response(buf: &[u8]) -> Option<SocketAddr> {
-    if buf[0] != 0x01 && buf[1] != 0x01 {
-        return None;
-    }
     let msg = stun_format::Msg::from(buf);
     if let Some(tid) = msg.tid() {
         if tid & TAG != TAG {
