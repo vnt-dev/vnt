@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::command::entity::{DeviceItem, Info, RouteItem};
 
 pub struct CommandClient {
-    buf: [u8; 10240],
+    buf: Vec<u8>,
     udp: UdpSocket,
 }
 
@@ -25,7 +25,7 @@ impl CommandClient {
         )))?;
         Ok(Self {
             udp,
-            buf: [0; 10240],
+            buf: vec![0; 65536 * 8],
         })
     }
 }
@@ -59,8 +59,16 @@ impl CommandClient {
         match serde_yaml::from_slice::<V>(&self.buf[..len]) {
             Ok(val) => Ok(val),
             Err(e) => {
-                log::error!("{:?},{:?}", &self.buf[..len], e);
-                Err(io::Error::new(io::ErrorKind::Other, "data error"))
+                log::error!(
+                    "send_cmd {:?} {:?},{:?}",
+                    std::str::from_utf8(cmd),
+                    std::str::from_utf8(&self.buf[..len]),
+                    e
+                );
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("data error {:?} buf_len={}", e, len),
+                ))
             }
         }
     }
