@@ -16,4 +16,14 @@ pub mod tun_tap_device;
 pub mod util;
 
 pub use handle::callback::*;
+
 pub mod compression;
+
+pub(crate) fn ignore_io_interrupted(e: std::io::Error) -> std::io::Result<()> {
+    if e.kind() == std::io::ErrorKind::Interrupted {
+        log::warn!("ignore_io_interrupted");
+        Ok(())
+    } else {
+        Err(e)
+    }
+}

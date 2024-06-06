@@ -89,7 +89,10 @@ where
         HashMap::with_capacity(32);
     let mut extend = [0; BUFFER_SIZE];
     loop {
-        poll.poll(&mut events, None)?;
+        if let Err(e) = poll.poll(&mut events, None) {
+            crate::ignore_io_interrupted(e)?;
+            continue;
+        }
         for event in events.iter() {
             match event.token() {
                 SERVER => loop {
@@ -208,7 +211,10 @@ fn tcp_writable_listen(
         ),
     > = HashMap::with_capacity(32);
     loop {
-        poll.poll(&mut events, None)?;
+        if let Err(e) = poll.poll(&mut events, None) {
+            crate::ignore_io_interrupted(e)?;
+            continue;
+        }
         for event in events.iter() {
             match event.token() {
                 NOTIFY => {

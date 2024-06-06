@@ -79,14 +79,17 @@ fn start_simple0(
     let fd = device.as_tun_fd();
     fd.set_nonblock()?;
     SourceFd(&fd.as_raw_fd()).register(poll.registry(), FD, Interest::READABLE)?;
-    let mut evnets = Events::with_capacity(4);
+    let mut events = Events::with_capacity(4);
     #[cfg(not(target_os = "macos"))]
     let start = 12;
     #[cfg(target_os = "macos")]
     let start = 12 - 4;
     loop {
-        poll.poll(&mut evnets, None)?;
-        for event in evnets.iter() {
+        if let Err(e) = poll.poll(&mut events, None) {
+            crate::ignore_io_interrupted(e)?;
+            continue;
+        }
+        for event in events.iter() {
             if event.token() == STOP {
                 return Ok(());
             }
