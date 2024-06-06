@@ -67,7 +67,7 @@ impl Vnt {
         };
         //客户端对称加密
         let client_cipher =
-            Cipher::new_password(config.cipher_model, config.password.clone(), finger);
+            Cipher::new_password(config.cipher_model, config.password.clone(), finger)?;
         //当前设备信息
         let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new0(
             config.server_address,

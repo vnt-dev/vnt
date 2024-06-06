@@ -122,7 +122,7 @@ impl Cipher {
         model: CipherModel,
         password: Option<String>,
         token: Option<String>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         if let Some(password) = password {
             #[cfg(cipher)]
             let key: [u8; 32] = {
@@ -136,33 +136,33 @@ impl Cipher {
                     let finger = token.map(|token| Finger::new(&token));
                     if password.len() < 8 {
                         let aes = AesGcmCipher::new_128(key[..16].try_into().unwrap(), finger);
-                        Cipher::AesGcm((aes, key[..16].to_vec()))
+                        Ok(Cipher::AesGcm((aes, key[..16].to_vec())))
                     } else {
                         let aes = AesGcmCipher::new_256(key, finger);
-                        Cipher::AesGcm((aes, key.to_vec()))
+                        Ok(Cipher::AesGcm((aes, key.to_vec())))
                     }
                 }
                 #[cfg(feature = "chacha20_poly1305")]
                 CipherModel::Chacha20Poly1305 => {
                     let finger = token.map(|token| Finger::new(&token));
                     let chacha = ChaCha20Poly1305Cipher::new_256(key, finger);
-                    Cipher::Chacha20Poly1305(chacha)
+                    Ok(Cipher::Chacha20Poly1305(chacha))
                 }
                 #[cfg(feature = "chacha20_poly1305")]
                 CipherModel::Chacha20 => {
                     let finger = token.map(|token| Finger::new(&token));
                     let chacha = ChaCha20Cipher::new_256(key, finger);
-                    Cipher::Chacha20(chacha)
+                    Ok(Cipher::Chacha20(chacha))
                 }
                 #[cfg(feature = "aes_cbc")]
                 CipherModel::AesCbc => {
                     let finger = token.map(|token| Finger::new(&token));
                     if password.len() < 8 {
                         let aes = AesCbcCipher::new_128(key[..16].try_into().unwrap(), finger);
-                        Cipher::AesCbc(aes)
+                        Ok(Cipher::AesCbc(aes))
                     } else {
                         let aes = AesCbcCipher::new_256(key, finger);
-                        Cipher::AesCbc(aes)
+                        Ok(Cipher::AesCbc(aes))
                     }
                 }
                 #[cfg(feature = "aes_ecb")]
@@ -170,28 +170,32 @@ impl Cipher {
                     let finger = token.map(|token| Finger::new(&token));
                     if password.len() < 8 {
                         let aes = AesEcbCipher::new_128(key[..16].try_into().unwrap(), finger);
-                        Cipher::AesEcb(aes)
+                        Ok(Cipher::AesEcb(aes))
                     } else {
                         let aes = AesEcbCipher::new_256(key, finger);
-                        Cipher::AesEcb(aes)
+                        Ok(Cipher::AesEcb(aes))
                     }
                 }
                 #[cfg(feature = "sm4_cbc")]
                 CipherModel::Sm4Cbc => {
                     let finger = token.map(|token| Finger::new(&token));
                     let aes = Sm4CbcCipher::new_128(key[..16].try_into().unwrap(), finger);
-                    Cipher::Sm4Cbc(aes)
+                    Ok(Cipher::Sm4Cbc(aes))
                 }
                 CipherModel::Xor => {
-                    let _token = token;
-                    Cipher::Xor(XORCipher::new_256(crate::cipher::xor::simple_hash(
-                        &password,
+                    if token.is_some() {
+                        Err(anyhow::anyhow!(
+                            "'finger' and 'xor' cannot be used simultaneously"
+                        ))?
+                    }
+                    Ok(Cipher::Xor(XORCipher::new_256(
+                        crate::cipher::xor::simple_hash(&password),
                     )))
                 }
-                CipherModel::None => Cipher::None,
+                CipherModel::None => Ok(Cipher::None),
             }
         } else {
-            Cipher::None
+            Ok(Cipher::None)
         }
     }
     #[cfg(not(any(feature = "aes_gcm", feature = "server_encrypt")))]
