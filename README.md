@@ -174,12 +174,14 @@ sudo pfctl -f /etc/pf.conf -e
 
 - Mac
 - Linux
-    - Arch Linux `yay -Syu vnt`
 - Windows
     - 默认使用tun网卡 依赖wintun.dll([win-tun](https://www.wintun.net/))(将dll放到同目录下，建议使用版本0.14.1)
     - 使用tap网卡 依赖tap-windows([win-tap](https://build.openvpn.net/downloads/releases/))(建议使用版本9.24.7)
 - Android
-    - [VntApp](https://github.com/lbl8603/VntApp)
+
+### GUI
+
+支持安卓和Windows [下载](https://github.com/lbl8603/VntApp/releases/)
 
 ### 特性
 
@@ -283,13 +285,20 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 
 ### 交流群
 
+对VNT有任何问题均可以加群联系作者
+
 QQ: 1034868233
+### 赞助
+如果VNT对你有帮助，欢迎打赏作者
+
+ <img width="300" alt="" src="https://github.com/lbl8603/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
 
 ### 其他
 
 可使用社区小伙伴搭建的中继服务器
 
 1. -s vnt.8443.eu.org:29871
+2. -s vnt.wherewego.top:29872
 
 ### 参与贡献
 
