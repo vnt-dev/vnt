@@ -19,13 +19,6 @@ use crate::proto::message::SecretHandshakeRequest;
 use crate::protocol::body::RSA_ENCRYPTION_RESERVED;
 use crate::protocol::{service_packet, NetPacket, Protocol, MAX_TTL};
 
-pub enum HandshakeEnum {
-    NotSecret,
-    KeyError,
-    Timeout,
-    ServerError(String),
-    Other(String),
-}
 #[derive(Clone)]
 pub struct Handshake {
     time: Arc<AtomicCell<Instant>>,

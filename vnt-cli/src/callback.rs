@@ -2,8 +2,9 @@ use std::process;
 
 use console::style;
 
-use vnt::handle::callback::{ConnectInfo, ErrorType};
-use vnt::{DeviceInfo, ErrorInfo, HandshakeInfo, RegisterInfo, VntCallback};
+use vnt::{
+    ConnectInfo, DeviceInfo, ErrorInfo, ErrorType, HandshakeInfo, RegisterInfo, VntCallback,
+};
 
 #[derive(Clone)]
 pub struct VntHandler {}

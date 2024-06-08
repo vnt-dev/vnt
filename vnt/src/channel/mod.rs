@@ -138,7 +138,7 @@ impl RouteKey {
     }
 }
 
-pub fn init_context(
+pub(crate) fn init_context(
     ports: Vec<u16>,
     use_channel_type: UseChannelType,
     first_latency: bool,
@@ -233,7 +233,7 @@ pub fn init_context(
     Ok((context, tcp_listener))
 }
 
-pub fn init_channel<H>(
+pub(crate) fn init_channel<H>(
     tcp_listener: mio::net::TcpListener,
     context: ChannelContext,
     stop_manager: StopManager,

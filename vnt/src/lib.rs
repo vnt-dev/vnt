@@ -3,16 +3,16 @@ pub const VNT_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 pub mod channel;
 pub mod cipher;
 pub mod core;
-pub mod external_route;
-pub mod handle;
+mod external_route;
+mod handle;
 #[cfg(feature = "ip_proxy")]
-pub mod ip_proxy;
+mod ip_proxy;
 pub mod nat;
 #[cfg(feature = "port_mapping")]
-pub mod port_mapping;
-pub mod proto;
+mod port_mapping;
+mod proto;
 pub mod protocol;
-pub mod tun_tap_device;
+mod tun_tap_device;
 pub mod util;
 
 pub use handle::callback::*;
