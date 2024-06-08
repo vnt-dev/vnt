@@ -1,4 +1,6 @@
+use crate::{DeviceConfig, ErrorInfo, ErrorType};
 use std::io;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tun::device::IFace;
 use tun::Device;
@@ -8,8 +10,47 @@ const DEFAULT_TUN_NAME: &str = "vnt-tun";
 #[cfg(target_os = "windows")]
 const DEFAULT_TAP_NAME: &str = "vnt-tap";
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-pub fn create_device(config: &crate::core::Config) -> io::Result<Arc<Device>> {
+pub fn create_device(config: DeviceConfig) -> Result<Arc<Device>, ErrorInfo> {
+    let device = match create_device0(&config) {
+        Ok(device) => device,
+        Err(e) => {
+            return Err(ErrorInfo::new_msg(
+                ErrorType::Unknown,
+                format!("create device {:?}", e),
+            ));
+        }
+    };
+    if let Err(e) = device.set_ip(config.virtual_ip, config.virtual_netmask) {
+        log::error!("LocalIpExists {:?}", e);
+        return Err(ErrorInfo::new_msg(
+            ErrorType::LocalIpExists,
+            format!("set_ip {:?}", e),
+        ));
+    }
+    if let Err(e) = device.add_route(config.virtual_network, config.virtual_netmask, 1) {
+        log::warn!("添加默认路由失败 ={:?}", e);
+    }
+    if let Err(e) = device.add_route(Ipv4Addr::BROADCAST, Ipv4Addr::BROADCAST, 1) {
+        log::warn!("添加广播路由失败 ={:?}", e);
+    }
+
+    if let Err(e) = device.add_route(
+        Ipv4Addr::from([224, 0, 0, 0]),
+        Ipv4Addr::from([240, 0, 0, 0]),
+        1,
+    ) {
+        log::warn!("添加组播路由失败 ={:?}", e);
+    }
+
+    for (dest, mask) in config.external_route {
+        if let Err(e) = device.add_route(dest, mask, 1) {
+            log::warn!("添加路由失败 ={:?}", e);
+        }
+    }
+    Ok(device)
+}
+
+fn create_device0(config: &DeviceConfig) -> io::Result<Arc<Device>> {
     #[cfg(target_os = "windows")]
     let default_name: &str = if config.tap {
         DEFAULT_TAP_NAME
@@ -37,14 +78,7 @@ pub fn create_device(config: &crate::core::Config) -> io::Result<Arc<Device>> {
             .unwrap_or(default_name.to_string()),
         config.tap,
     )?);
-    let mtu = config.mtu.unwrap_or_else(|| {
-        if config.password.is_none() {
-            1450
-        } else {
-            1410
-        }
-    });
-    device.set_mtu(mtu)?;
+    device.set_mtu(config.mtu)?;
     Ok(device)
 }
 

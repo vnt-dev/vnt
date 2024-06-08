@@ -32,13 +32,12 @@ pub struct Config {
     #[cfg(feature = "ip_proxy")]
     pub no_proxy: bool,
     pub server_encrypt: bool,
-    pub parallel: usize,
     pub cipher_model: CipherModel,
     pub finger: bool,
     pub punch_model: PunchModel,
     pub ports: Option<Vec<u16>>,
     pub first_latency: bool,
-    #[cfg(not(target_os = "android"))]
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     pub device_name: Option<String>,
     pub use_channel_type: UseChannelType,
     //控制丢包率
@@ -67,7 +66,6 @@ impl Config {
         ip: Option<Ipv4Addr>,
         #[cfg(feature = "ip_proxy")] no_proxy: bool,
         server_encrypt: bool,
-        parallel: usize,
         cipher_model: CipherModel,
         finger: bool,
         punch_model: PunchModel,
@@ -130,7 +128,6 @@ impl Config {
             #[cfg(feature = "ip_proxy")]
             no_proxy,
             server_encrypt,
-            parallel,
             cipher_model,
             finger,
             punch_model,

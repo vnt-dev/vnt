@@ -9,8 +9,6 @@ use protobuf::Message;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use tun::device::IFace;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::punch::NatInfo;
@@ -30,12 +28,12 @@ use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::{
     control_packet, ip_turn_packet, other_turn_packet, NetPacket, Protocol, MAX_TTL,
 };
-use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
+use crate::tun_tap_device::vnt_device::DeviceWrite;
 
 /// 处理来源于客户端的包
 #[derive(Clone)]
-pub struct ClientPacketHandler {
-    device: DeviceAdapter,
+pub struct ClientPacketHandler<Device> {
+    device: Device,
     client_cipher: Cipher,
     punch_sender: PunchSender,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
@@ -45,9 +43,9 @@ pub struct ClientPacketHandler {
     ip_proxy_map: Option<IpProxyMap>,
 }
 
-impl ClientPacketHandler {
+impl<Device: DeviceWrite> ClientPacketHandler<Device> {
     pub fn new(
-        device: DeviceAdapter,
+        device: Device,
         client_cipher: Cipher,
         punch_sender: PunchSender,
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
@@ -68,7 +66,7 @@ impl ClientPacketHandler {
     }
 }
 
-impl PacketHandler for ClientPacketHandler {
+impl<Device: DeviceWrite> PacketHandler for ClientPacketHandler<Device> {
     fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
@@ -110,7 +108,7 @@ impl PacketHandler for ClientPacketHandler {
     }
 }
 
-impl ClientPacketHandler {
+impl<Device: DeviceWrite> ClientPacketHandler<Device> {
     fn ip_turn(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,

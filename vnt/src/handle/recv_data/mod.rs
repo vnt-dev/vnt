@@ -25,7 +25,7 @@ use crate::handle::{BaseConfigInfo, CurrentDeviceInfo, PeerDeviceInfo, SELF_IP};
 use crate::ip_proxy::IpProxyMap;
 use crate::nat::NatTest;
 use crate::protocol::{NetPacket, HEAD_LEN};
-use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
+use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::util::U64Adder;
 
 mod client;
@@ -33,16 +33,16 @@ mod server;
 mod turn;
 
 #[derive(Clone)]
-pub struct RecvDataHandler<Call> {
+pub struct RecvDataHandler<Call, Device> {
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     turn: TurnPacketHandler,
-    client: ClientPacketHandler,
-    server: ServerPacketHandler<Call>,
+    client: ClientPacketHandler<Device>,
+    server: ServerPacketHandler<Call, Device>,
     counter: U64Adder,
     nat_test: NatTest,
 }
 
-impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
+impl<Call: VntCallback, Device: DeviceWrite> RecvChannelHandler for RecvDataHandler<Call, Device> {
     fn handle(
         &mut self,
         buf: &mut [u8],
@@ -75,13 +75,13 @@ impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
     }
 }
 
-impl<Call: VntCallback> RecvDataHandler<Call> {
+impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
     pub fn new(
         #[cfg(feature = "server_encrypt")] rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
         server_cipher: Cipher,
         client_cipher: Cipher,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-        device: DeviceAdapter,
+        device: Device,
         device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
         config_info: BaseConfigInfo,
         nat_test: NatTest,
@@ -93,6 +93,8 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
         counter: U64Adder,
         handshake: Handshake,
+        #[cfg(feature = "inner_tun")]
+        tun_device_helper: crate::tun_tap_device::tun_create_helper::TunDeviceHelper,
     ) -> Self {
         let server = ServerPacketHandler::new(
             #[cfg(feature = "server_encrypt")]
@@ -106,6 +108,8 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             callback,
             external_route.clone(),
             handshake,
+            #[cfg(feature = "inner_tun")]
+            tun_device_helper,
         );
         let client = ClientPacketHandler::new(
             device.clone(),

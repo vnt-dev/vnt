@@ -8,6 +8,7 @@ pub struct U64Adder {
     inner: Arc<U64AdderInner>,
     index: usize,
 }
+#[derive(Clone)]
 pub struct SingleU64Adder {
     inner: Arc<SingleU64AdderInner>,
 }

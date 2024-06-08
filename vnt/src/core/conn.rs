@@ -1,4 +1,3 @@
-use anyhow::Context;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -7,8 +6,6 @@ use std::time::Duration;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 use rand::Rng;
-#[cfg(not(target_os = "android"))]
-use tun::device::IFace;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::idle::Idle;
@@ -24,13 +21,13 @@ use crate::handle::maintain::PunchReceiver;
 use crate::handle::recv_data::RecvDataHandler;
 use crate::handle::{maintain, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
+#[cfg(feature = "inner_tun")]
 use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
+use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::util::{
     Scheduler, SingleU64Adder, StopManager, U64Adder, WatchSingleU64Adder, WatchU64Adder,
 };
 use crate::{nat, VntCallback};
-#[cfg(not(target_os = "android"))]
-use crate::{tun_tap_device, DeviceInfo};
 
 #[derive(Clone)]
 pub struct Vnt {
@@ -47,7 +44,23 @@ pub struct Vnt {
 }
 
 impl Vnt {
+    #[cfg(feature = "inner_tun")]
     pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
+        Vnt::new_device0(config, callback, DeviceAdapter::default())
+    }
+    #[cfg(not(feature = "inner_tun"))]
+    pub fn new_device<Call: VntCallback, Device: DeviceWrite>(
+        config: Config,
+        callback: Call,
+        device: Device,
+    ) -> anyhow::Result<Self> {
+        Vnt::new_device0(config, callback, device)
+    }
+    fn new_device0<Call: VntCallback, Device: DeviceWrite>(
+        config: Config,
+        callback: Call,
+        device: Device,
+    ) -> anyhow::Result<Self> {
         log::info!("config.toml:{:?}", config);
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
@@ -85,6 +98,11 @@ impl Vnt {
             config.device_id.clone(),
             config.server_address_str.clone(),
             config.name_servers.clone(),
+            config.mtu.unwrap_or(1420),
+            #[cfg(target_os = "windows")]
+            config.tap,
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+            config.device_name.clone(),
         );
         // 服务停止管理器
         let stop_manager = {
@@ -129,21 +147,6 @@ impl Vnt {
             udp_ports,
             tcp_port,
         );
-
-        // pc上先创建虚拟网卡
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-        let device = {
-            log::info!("开始创建tun");
-            let device = tun_tap_device::create_device(&config).context("create tun failed")?;
-            log::info!("创建tun成功");
-            let tun_info = DeviceInfo::new(
-                device.name().unwrap_or("unknown".into()),
-                device.version().unwrap_or("unknown".into()),
-            );
-            log::info!("tun信息{:?}", tun_info);
-            callback.create_tun(tun_info);
-            device
-        };
         // 定时器
         let scheduler = Scheduler::new(stop_manager.clone())?;
         let external_route = ExternalRoute::new(config.in_ips.clone());
@@ -172,24 +175,23 @@ impl Vnt {
         );
         let up_counter = SingleU64Adder::new();
         let up_count_watcher = up_counter.watch();
-        let tun_helper = TunDeviceHelper::new(
-            stop_manager.clone(),
-            context.clone(),
-            current_device.clone(),
-            external_route.clone(),
-            #[cfg(feature = "ip_proxy")]
-            proxy_map.clone(),
-            client_cipher.clone(),
-            server_cipher.clone(),
-            config.parallel,
-            up_counter,
-            device_list.clone(),
-            config.compressor,
-        );
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-        let device_adapter = DeviceAdapter::new(device.clone());
-        #[cfg(target_os = "android")]
-        let device_adapter = DeviceAdapter::new(tun_helper);
+        #[cfg(feature = "inner_tun")]
+        let tun_device_helper = {
+            TunDeviceHelper::new(
+                stop_manager.clone(),
+                context.clone(),
+                current_device.clone(),
+                external_route.clone(),
+                #[cfg(feature = "ip_proxy")]
+                proxy_map.clone(),
+                client_cipher.clone(),
+                server_cipher.clone(),
+                up_counter,
+                device_list.clone(),
+                config.compressor,
+                device.clone().into_device_adapter(),
+            )
+        };
 
         let handler = RecvDataHandler::new(
             #[cfg(feature = "server_encrypt")]
@@ -197,7 +199,7 @@ impl Vnt {
             server_cipher.clone(),
             client_cipher.clone(),
             current_device.clone(),
-            device_adapter,
+            device,
             device_list.clone(),
             config_info.clone(),
             nat_test.clone(),
@@ -210,6 +212,8 @@ impl Vnt {
             proxy_map.clone(),
             down_counter,
             handshake.clone(),
+            #[cfg(feature = "inner_tun")]
+            tun_device_helper,
         );
 
         //初始化网络数据通道
@@ -225,8 +229,8 @@ impl Vnt {
             nat_test.clone(),
         );
 
-        #[cfg(not(target_os = "android"))]
-        tun_helper.start(device)?;
+        // #[cfg(not(target_os = "android"))]
+        // tun_helper.start(device)?;
 
         maintain::idle_gateway(
             &scheduler,

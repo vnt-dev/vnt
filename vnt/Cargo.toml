@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tun = { path = "tun" }
+tun = { path = "tun" ,optional = true}
 packet = { path = "./packet" }
 bytes = "1.5.0"
 log = "0.4.17"
@@ -53,7 +53,7 @@ protoc-bin-vendored = "3.0.0"
 cfg_aliases = "0.2.1"
 
 [features]
-default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "lz4_compress", "zstd_compress"]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "lz4_compress", "zstd_compress","inner_tun"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]
@@ -68,3 +68,4 @@ ip_proxy = ["tokio"]
 port_mapping = ["tokio"]
 lz4_compress = ["lz4_flex"]
 zstd_compress = ["zstd"]
+inner_tun = ["tun"]

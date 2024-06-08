@@ -7,6 +7,7 @@ pub mod handshaker;
 pub mod maintain;
 pub mod recv_data;
 pub mod registrar;
+#[cfg(feature = "inner_tun")]
 pub mod tun_tap;
 
 const SELF_IP: Ipv4Addr = Ipv4Addr::new(0, 0, 0, 2);
@@ -19,12 +20,6 @@ pub fn now_time() -> u64 {
     } else {
         0
     }
-}
-
-/// 是否在一个网段
-fn check_dest(dest: Ipv4Addr, virtual_netmask: Ipv4Addr, virtual_network: Ipv4Addr) -> bool {
-    u32::from_be_bytes(dest.octets()) & u32::from_be_bytes(virtual_netmask.octets())
-        == u32::from_be_bytes(virtual_network.octets())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +59,11 @@ pub struct BaseConfigInfo {
     pub device_id: String,
     pub server_addr: String,
     pub name_servers: Vec<String>,
+    pub mtu: u32,
+    #[cfg(target_os = "windows")]
+    pub tap: bool,
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    pub device_name: Option<String>,
 }
 
 impl BaseConfigInfo {
@@ -76,6 +76,10 @@ impl BaseConfigInfo {
         device_id: String,
         server_addr: String,
         name_servers: Vec<String>,
+        mtu: u32,
+        #[cfg(target_os = "windows")] tap: bool,
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        device_name: Option<String>,
     ) -> Self {
         Self {
             name,
@@ -86,6 +90,11 @@ impl BaseConfigInfo {
             device_id,
             server_addr,
             name_servers,
+            mtu,
+            #[cfg(target_os = "windows")]
+            tap,
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+            device_name,
         }
     }
 }

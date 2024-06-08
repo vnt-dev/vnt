@@ -13,12 +13,11 @@ use tun::device::IFace;
 use tun::Device;
 
 use crate::channel::context::ChannelContext;
-use crate::channel::BUFFER_SIZE;
 use crate::cipher::Cipher;
 use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
-use crate::handle::tun_tap::channel_group::channel_group;
-use crate::handle::{check_dest, CurrentDeviceInfo, PeerDeviceInfo};
+use crate::handle::tun_tap::DeviceStop;
+use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 #[cfg(feature = "ip_proxy")]
@@ -28,7 +27,11 @@ use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
 use crate::util::{SingleU64Adder, StopManager};
-
+/// 是否在一个网段
+fn check_dest(dest: Ipv4Addr, virtual_netmask: Ipv4Addr, virtual_network: Ipv4Addr) -> bool {
+    u32::from_be_bytes(dest.octets()) & u32::from_be_bytes(virtual_netmask.octets())
+        == u32::from_be_bytes(virtual_network.octets())
+}
 fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
     if ipv4_packet.protocol() == Protocol::Icmp {
         let mut icmp = IcmpPacket::new(ipv4_packet.payload_mut())?;
@@ -54,89 +57,33 @@ pub fn start(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    parallel: usize,
     mut up_counter: SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
+    device_stop: DeviceStop,
 ) -> io::Result<()> {
-    if parallel > 1 {
-        let (sender, receivers) = channel_group::<(Vec<u8>, usize)>(parallel, 16);
-        for (index, receiver) in receivers.into_iter().enumerate() {
-            let context = context.clone();
-            let device = device.clone();
-            let current_device = current_device.clone();
-            let ip_route = ip_route.clone();
-            #[cfg(feature = "ip_proxy")]
-            let ip_proxy_map = ip_proxy_map.clone();
-            let client_cipher = client_cipher.clone();
-            let server_cipher = server_cipher.clone();
-            let device_list = device_list.clone();
-            thread::Builder::new()
-                .name(format!("tunHandler-{}", index))
-                .spawn(move || {
-                    let mut extend = [0; BUFFER_SIZE];
-                    while let Ok((mut buf, len)) = receiver.recv() {
-                        #[cfg(not(target_os = "macos"))]
-                        let start = 0;
-                        #[cfg(target_os = "macos")]
-                        let start = 4;
-                        match handle(
-                            &context,
-                            &mut buf[start..],
-                            len,
-                            &mut extend,
-                            &device,
-                            current_device.load(),
-                            &ip_route,
-                            #[cfg(feature = "ip_proxy")]
-                            &ip_proxy_map,
-                            &client_cipher,
-                            &server_cipher,
-                            &device_list,
-                            &compressor,
-                        ) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                log::warn!("{:?}", e)
-                            }
-                        }
-                    }
-                })?;
-        }
-        thread::Builder::new()
-            .name("tunHandlerM".into())
-            .spawn(move || {
-                if let Err(e) = crate::handle::tun_tap::start_multi(
-                    stop_manager,
-                    device,
-                    sender,
-                    &mut up_counter,
-                ) {
-                    log::warn!("stop:{}", e);
-                }
-            })?;
-    } else {
-        thread::Builder::new()
-            .name("tunHandlerS".into())
-            .spawn(move || {
-                if let Err(e) = crate::handle::tun_tap::start_simple(
-                    stop_manager,
-                    &context,
-                    device,
-                    current_device,
-                    ip_route,
-                    #[cfg(feature = "ip_proxy")]
-                    ip_proxy_map,
-                    client_cipher,
-                    server_cipher,
-                    &mut up_counter,
-                    device_list,
-                    compressor,
-                ) {
-                    log::warn!("stop:{}", e);
-                }
-            })?;
-    }
+    thread::Builder::new()
+        .name("tunHandlerS".into())
+        .spawn(move || {
+            if let Err(e) = crate::handle::tun_tap::start_simple(
+                stop_manager,
+                &context,
+                device,
+                current_device,
+                ip_route,
+                #[cfg(feature = "ip_proxy")]
+                ip_proxy_map,
+                client_cipher,
+                server_cipher,
+                &mut up_counter,
+                device_list,
+                compressor,
+                device_stop,
+            ) {
+                log::warn!("stop:{}", e);
+            }
+        })?;
+
     Ok(())
 }
 
