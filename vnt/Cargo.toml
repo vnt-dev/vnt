@@ -53,7 +53,7 @@ protoc-bin-vendored = "3.0.0"
 cfg_aliases = "0.2.1"
 
 [features]
-default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "lz4_compress", "zstd_compress","inner_tun"]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "lz4_compress", "zstd_compress","integrated_tun"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]
@@ -68,4 +68,4 @@ ip_proxy = ["tokio"]
 port_mapping = ["tokio"]
 lz4_compress = ["lz4_flex"]
 zstd_compress = ["zstd"]
-inner_tun = ["tun"]
+integrated_tun = ["tun"]

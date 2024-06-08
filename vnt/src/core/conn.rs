@@ -21,7 +21,7 @@ use crate::handle::maintain::PunchReceiver;
 use crate::handle::recv_data::RecvDataHandler;
 use crate::handle::{maintain, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
-#[cfg(feature = "inner_tun")]
+#[cfg(feature = "integrated_tun")]
 use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
 use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::util::{
@@ -44,11 +44,11 @@ pub struct Vnt {
 }
 
 impl Vnt {
-    #[cfg(feature = "inner_tun")]
+    #[cfg(feature = "integrated_tun")]
     pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
         Vnt::new_device0(config, callback, DeviceAdapter::default())
     }
-    #[cfg(not(feature = "inner_tun"))]
+    #[cfg(not(feature = "integrated_tun"))]
     pub fn new_device<Call: VntCallback, Device: DeviceWrite>(
         config: Config,
         callback: Call,
@@ -175,7 +175,7 @@ impl Vnt {
         );
         let up_counter = SingleU64Adder::new();
         let up_count_watcher = up_counter.watch();
-        #[cfg(feature = "inner_tun")]
+        #[cfg(feature = "integrated_tun")]
         let tun_device_helper = {
             TunDeviceHelper::new(
                 stop_manager.clone(),
@@ -212,7 +212,7 @@ impl Vnt {
             proxy_map.clone(),
             down_counter,
             handshake.clone(),
-            #[cfg(feature = "inner_tun")]
+            #[cfg(feature = "integrated_tun")]
             tun_device_helper,
         );
 

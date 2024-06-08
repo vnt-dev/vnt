@@ -284,7 +284,7 @@ pub trait VntCallback: Clone + Send + Sync + 'static {
 
     /// 创建网卡的信息
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-    #[cfg(feature = "inner_tun")]
+    #[cfg(feature = "integrated_tun")]
     fn create_tun(&self, _info: DeviceInfo) {}
     /// 连接
     fn connect(&self, _info: ConnectInfo) {}
@@ -296,7 +296,7 @@ pub trait VntCallback: Clone + Send + Sync + 'static {
     fn register(&self, _info: RegisterInfo) -> bool {
         true
     }
-    #[cfg(not(feature = "inner_tun"))]
+    #[cfg(not(feature = "integrated_tun"))]
     fn create_device(
         &self,
         _channel_sender: crate::channel::sender::ChannelSender,
@@ -304,7 +304,7 @@ pub trait VntCallback: Clone + Send + Sync + 'static {
     ) {
     }
     #[cfg(target_os = "android")]
-    #[cfg(feature = "inner_tun")]
+    #[cfg(feature = "integrated_tun")]
     fn generate_tun(&self, _info: DeviceConfig) -> usize {
         0
     }

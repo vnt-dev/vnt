@@ -93,7 +93,7 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
         counter: U64Adder,
         handshake: Handshake,
-        #[cfg(feature = "inner_tun")]
+        #[cfg(feature = "integrated_tun")]
         tun_device_helper: crate::tun_tap_device::tun_create_helper::TunDeviceHelper,
     ) -> Self {
         let server = ServerPacketHandler::new(
@@ -108,7 +108,7 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
             callback,
             external_route.clone(),
             handshake,
-            #[cfg(feature = "inner_tun")]
+            #[cfg(feature = "integrated_tun")]
             tun_device_helper,
         );
         let client = ClientPacketHandler::new(

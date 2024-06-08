@@ -52,7 +52,7 @@ pub struct ServerPacketHandler<Call, Device> {
     up_key_time: Arc<AtomicCell<Instant>>,
     external_route: ExternalRoute,
     handshake: Handshake,
-    #[cfg(feature = "inner_tun")]
+    #[cfg(feature = "integrated_tun")]
     tun_device_helper: crate::tun_tap_device::tun_create_helper::TunDeviceHelper,
 }
 
@@ -68,7 +68,7 @@ impl<Call, Device> ServerPacketHandler<Call, Device> {
         callback: Call,
         external_route: ExternalRoute,
         handshake: Handshake,
-        #[cfg(feature = "inner_tun")]
+        #[cfg(feature = "integrated_tun")]
         tun_device_helper: crate::tun_tap_device::tun_create_helper::TunDeviceHelper,
     ) -> Self {
         Self {
@@ -85,7 +85,7 @@ impl<Call, Device> ServerPacketHandler<Call, Device> {
             up_key_time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
             external_route,
             handshake,
-            #[cfg(feature = "inner_tun")]
+            #[cfg(feature = "integrated_tun")]
             tun_device_helper,
         }
     }
@@ -321,9 +321,9 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                             virtual_network,
                             self.external_route.to_route(),
                         );
-                        #[cfg(not(feature = "inner_tun"))]
+                        #[cfg(not(feature = "integrated_tun"))]
                         self.callback.create_device(context.sender(), device_config);
-                        #[cfg(feature = "inner_tun")]
+                        #[cfg(feature = "integrated_tun")]
                         {
                             self.tun_device_helper.stop();
                             #[cfg(any(
