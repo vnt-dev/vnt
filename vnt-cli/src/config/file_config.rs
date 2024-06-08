@@ -32,7 +32,6 @@ pub struct FileConfig {
     #[cfg(feature = "ip_proxy")]
     pub no_proxy: bool,
     pub server_encrypt: bool,
-    pub parallel: usize,
     pub cipher_model: Option<String>,
     pub finger: bool,
     pub punch_model: String,
@@ -72,7 +71,6 @@ impl Default for FileConfig {
             #[cfg(feature = "ip_proxy")]
             no_proxy: false,
             server_encrypt: false,
-            parallel: 1,
             cipher_model: None,
             finger: false,
             punch_model: "all".to_string(),
@@ -153,7 +151,6 @@ pub fn read_config(file_path: &str) -> anyhow::Result<(Config, bool)> {
         #[cfg(feature = "ip_proxy")]
         file_conf.no_proxy,
         file_conf.server_encrypt,
-        file_conf.parallel,
         cipher_model,
         file_conf.finger,
         punch_model,

@@ -309,7 +309,6 @@ fn main() {
             #[cfg(feature = "ip_proxy")]
             no_proxy,
             server_encrypt,
-            parallel,
             cipher_model,
             finger,
             punch_model,
@@ -479,7 +478,6 @@ fn print_usage(program: &str, _opts: Options) {
 
     println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
-    println!("  --par <parallel>    任务并行度(必须为正整数),默认值为1");
     let mut enums = String::new();
     #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]
     enums.push_str("/aes_gcm");
