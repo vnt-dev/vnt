@@ -5,8 +5,8 @@ use std::os::fd::AsRawFd;
 use std::{io, mem, ptr};
 
 use libc::{
-    c_char, c_short, ifreq, AF_INET, IFF_MULTI_QUEUE, IFF_NO_PI, IFF_RUNNING, IFF_TUN,
-    IFF_UP, IFNAMSIZ, O_RDWR, SOCK_DGRAM,
+    c_char, c_short, ifreq, AF_INET, IFF_MULTI_QUEUE, IFF_NO_PI, IFF_RUNNING, IFF_TUN, IFF_UP,
+    IFNAMSIZ, O_RDWR, SOCK_DGRAM,
 };
 
 use crate::device::IFace;
