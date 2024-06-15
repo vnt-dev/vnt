@@ -1,6 +1,6 @@
 mod notify;
 mod scheduler;
-pub use notify::StopManager;
+pub use notify::{StopManager, Worker};
 pub use scheduler::Scheduler;
 
 mod counter;
