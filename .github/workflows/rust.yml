@@ -108,7 +108,7 @@ jobs:
           rustup set auto-self-update disable
           
           if [[ $OS =~ ^ubuntu.*$ ]]; then
-            sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools
+            sudo apt-get update && sudo apt-get install clang llvm libc6-dev-i386 crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools libboost-all-dev libc6-dev -y
             #  curl -s musl.cc | grep mipsel
             case $TARGET in 
               mipsel-unknown-linux-musl)
@@ -193,7 +193,9 @@ jobs:
           EOF
       - name: Install rust target
         run: rustup target add $TARGET
-      - name: Run build
+      - name: Run build vn-link-cli
+        run: cargo build --package vn-link-cli --release --verbose --target $TARGET --features $FEATURES
+      - name: Run build vnt-cli
         run: cargo build --package vnt-cli --release --verbose --target $TARGET --features $FEATURES
       - name: List target
         run: find ./target
@@ -202,17 +204,22 @@ jobs:
           mkdir -p ./artifacts
           # windows is the only OS using a different convention for executable file name
           if [[ $OS =~ ^windows.*$ ]]; then
-              EXEC=$NAME.exe
+              EXEC_VNT_CLI=vnt-cli.exe
+              EXEC_VN_LINK_CLI=vn-link-cli.exe
           else
-              EXEC=$NAME
+              EXEC_VNT_CLI=vnt-cli
+              EXEC_VN_LINK_CLI=vn-link-cli
           fi
           if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
             TAG=$GITHUB_REF_NAME
           else
             TAG=$GITHUB_SHA
           fi
-          mv ./target/$TARGET/release/$EXEC ./artifacts/$EXEC
-          tar -czf ./artifacts/$NAME-$TARGET-$TAG.tar.gz -C ./artifacts $EXEC
+          mv ./target/$TARGET/release/$EXEC_VNT_CLI ./artifacts/$EXEC_VNT_CLI
+          mv ./target/$TARGET/release/$EXEC_VN_LINK_CLI ./artifacts/$EXEC_VN_LINK_CLI
+          mv ./README ./artifacts/README
+          cd ./artifacts
+          tar -czf vnt-$TARGET-$TAG.tar.gz *
       - name: Archive artifact
         uses: actions/upload-artifact@v2
         with:
