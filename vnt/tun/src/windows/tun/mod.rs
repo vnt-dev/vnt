@@ -101,7 +101,7 @@ impl Device {
                 ));
             }
             // 开启session
-            let session = win_tun.WintunStartSession(adapter, MAX_RING_CAPACITY);
+            let session = win_tun.WintunStartSession(adapter, 128 * 1024);
             if session.is_null() {
                 log::error!("session.is_null {:?}", io::Error::last_os_error());
                 return Err(io::Error::new(
