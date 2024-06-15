@@ -1,31 +1,111 @@
 use std::io;
-use std::ops::Deref;
+use std::net::Ipv4Addr;
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::sync::Arc;
 
+use crossbeam_utils::atomic::AtomicCell;
 use mio::Token;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::notify::{AcceptNotify, WritableNotify};
+use crate::cipher::Cipher;
+use crate::compression::Compressor;
+use crate::external_route::ExternalRoute;
+use crate::handle::CurrentDeviceInfo;
+use crate::protocol;
+use crate::protocol::{ip_turn_packet, NetPacket};
 
 #[derive(Clone)]
-pub struct ChannelSender {
+pub struct IpPacketSender {
     context: ChannelContext,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+    compressor: Compressor,
+    client_cipher: Cipher,
+    ip_route: ExternalRoute,
 }
 
-impl ChannelSender {
-    pub fn new(context: ChannelContext) -> Self {
-        Self { context }
+impl IpPacketSender {
+    pub fn new(
+        context: ChannelContext,
+        current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
+        compressor: Compressor,
+        client_cipher: Cipher,
+        ip_route: ExternalRoute,
+    ) -> Self {
+        Self {
+            context,
+            current_device,
+            compressor,
+            client_cipher,
+            ip_route,
+        }
+    }
+    pub fn self_virtual_ip(&self) -> Ipv4Addr {
+        self.current_device.load().virtual_ip
+    }
+    pub fn send_ip(
+        &self,
+        buf: &mut [u8],
+        data_len: usize,
+        auxiliary_buf: &mut [u8],
+        mut dest_ip: Ipv4Addr,
+    ) -> anyhow::Result<()> {
+        let device_info = self.current_device.load();
+        let src_ip = device_info.virtual_ip;
+        if src_ip.is_unspecified() {
+            return Ok(());
+        }
+        if let Some(v) = self.ip_route.route(&dest_ip) {
+            dest_ip = v;
+        }
+        if dest_ip.is_multicast() || dest_ip.is_broadcast() || dest_ip == device_info.broadcast_ip {
+            //广播
+            dest_ip = Ipv4Addr::BROADCAST;
+        }
+
+        let mut net_packet = NetPacket::new0(data_len, buf)?;
+        let mut auxiliary = NetPacket::new(auxiliary_buf)?;
+        net_packet.set_default_version();
+        net_packet.set_protocol(protocol::Protocol::IpTurn);
+        net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
+        net_packet.first_set_ttl(6);
+        net_packet.set_source(src_ip);
+        net_packet.set_destination(dest_ip);
+
+        let mut net_packet = if self.compressor.compress(&net_packet, &mut auxiliary)? {
+            auxiliary.set_default_version();
+            auxiliary.set_protocol(protocol::Protocol::IpTurn);
+            auxiliary.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
+            auxiliary.first_set_ttl(6);
+            auxiliary.set_source(src_ip);
+            auxiliary.set_destination(dest_ip);
+            auxiliary
+        } else {
+            net_packet
+        };
+        self.client_cipher.encrypt_ipv4(&mut net_packet)?;
+        if dest_ip.is_broadcast() {
+            //走服务端广播
+            self.context
+                .send_default(net_packet.buffer(), device_info.connect_server)?;
+            return Ok(());
+        }
+
+        // if u32::from_be_bytes(dest_ip.octets()) & u32::from_be_bytes(device_info.virtual_netmask.octets())
+        //     != u32::from_be_bytes(device_info.virtual_network.octets()) {
+        //     //不是一个网段的直接忽略
+        //     return Ok(());
+        // }
+        self.context.send_ipv4_by_id(
+            net_packet.buffer(),
+            &dest_ip,
+            device_info.connect_server,
+            device_info.status.online(),
+        )?;
+        Ok(())
     }
 }
 
-impl Deref for ChannelSender {
-    type Target = ChannelContext;
-
-    fn deref(&self) -> &Self::Target {
-        &self.context
-    }
-}
 pub struct AcceptSocketSender<T> {
     sender: SyncSender<T>,
     notify: AcceptNotify,
@@ -39,6 +119,7 @@ impl<T> Clone for AcceptSocketSender<T> {
         }
     }
 }
+
 impl<T> AcceptSocketSender<T> {
     pub fn new(notify: AcceptNotify, sender: SyncSender<T>) -> Self {
         Self { sender, notify }

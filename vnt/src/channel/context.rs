@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 use rand::Rng;
 
 use crate::channel::punch::NatType;
-use crate::channel::sender::{AcceptSocketSender, ChannelSender, PacketSender};
+use crate::channel::sender::{AcceptSocketSender, PacketSender};
 use crate::channel::{Route, RouteKey, UseChannelType, DEFAULT_RT};
 
 /// 传输通道上下文，持有udp socket、tcp socket和路由信息
@@ -56,9 +56,6 @@ impl ChannelContext {
         Self {
             inner: Arc::new(inner),
         }
-    }
-    pub fn sender(&self) -> ChannelSender {
-        ChannelSender::new(self.clone())
     }
 }
 
