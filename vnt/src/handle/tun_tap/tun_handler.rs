@@ -28,6 +28,7 @@ use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
 use crate::util::{SingleU64Adder, StopManager};
 /// 是否在一个网段
+#[inline]
 fn check_dest(dest: Ipv4Addr, virtual_netmask: Ipv4Addr, virtual_network: Ipv4Addr) -> bool {
     u32::from_be_bytes(dest.octets()) & u32::from_be_bytes(virtual_netmask.octets())
         == u32::from_be_bytes(virtual_network.octets())
