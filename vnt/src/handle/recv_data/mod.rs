@@ -90,7 +90,9 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         external_route: ExternalRoute,
         route: AllowExternalRoute,
-        #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(feature = "ip_proxy")]
+        ip_proxy_map: Option<IpProxyMap>,
         counter: U64Adder,
         handshake: Handshake,
         #[cfg(feature = "integrated_tun")]
@@ -118,6 +120,7 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
             peer_nat_info_map,
             nat_test.clone(),
             route,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         );

@@ -60,8 +60,10 @@ pub struct BaseConfigInfo {
     pub server_addr: String,
     pub name_servers: Vec<String>,
     pub mtu: u32,
+    #[cfg(feature = "integrated_tun")]
     #[cfg(target_os = "windows")]
     pub tap: bool,
+    #[cfg(feature = "integrated_tun")]
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     pub device_name: Option<String>,
 }
@@ -77,7 +79,10 @@ impl BaseConfigInfo {
         server_addr: String,
         name_servers: Vec<String>,
         mtu: u32,
-        #[cfg(target_os = "windows")] tap: bool,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(target_os = "windows")]
+        tap: bool,
+        #[cfg(feature = "integrated_tun")]
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         device_name: Option<String>,
     ) -> Self {
@@ -91,8 +96,10 @@ impl BaseConfigInfo {
             server_addr,
             name_servers,
             mtu,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(target_os = "windows")]
             tap,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             device_name,
         }

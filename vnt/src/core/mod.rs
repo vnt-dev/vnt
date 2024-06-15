@@ -14,6 +14,7 @@ mod conn;
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    #[cfg(feature = "integrated_tun")]
     #[cfg(target_os = "windows")]
     pub tap: bool,
     pub token: String,
@@ -30,6 +31,7 @@ pub struct Config {
     pub tcp: bool,
     pub ip: Option<Ipv4Addr>,
     #[cfg(feature = "ip_proxy")]
+    #[cfg(feature = "integrated_tun")]
     pub no_proxy: bool,
     pub server_encrypt: bool,
     pub cipher_model: CipherModel,
@@ -37,6 +39,7 @@ pub struct Config {
     pub punch_model: PunchModel,
     pub ports: Option<Vec<u16>>,
     pub first_latency: bool,
+    #[cfg(feature = "integrated_tun")]
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     pub device_name: Option<String>,
     pub use_channel_type: UseChannelType,
@@ -51,7 +54,9 @@ pub struct Config {
 
 impl Config {
     pub fn new(
-        #[cfg(target_os = "windows")] tap: bool,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(target_os = "windows")]
+        tap: bool,
         token: String,
         device_id: String,
         name: String,
@@ -64,14 +69,18 @@ impl Config {
         mtu: Option<u32>,
         tcp: bool,
         ip: Option<Ipv4Addr>,
-        #[cfg(feature = "ip_proxy")] no_proxy: bool,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(feature = "ip_proxy")]
+        no_proxy: bool,
         server_encrypt: bool,
         cipher_model: CipherModel,
         finger: bool,
         punch_model: PunchModel,
         ports: Option<Vec<u16>>,
         first_latency: bool,
-        #[cfg(not(target_os = "android"))] device_name: Option<String>,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(not(target_os = "android"))]
+        device_name: Option<String>,
         use_channel_type: UseChannelType,
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
@@ -110,6 +119,7 @@ impl Config {
         }
         in_ips.sort_by(|(dest1, _, _), (dest2, _, _)| dest2.cmp(dest1));
         Ok(Self {
+            #[cfg(feature = "integrated_tun")]
             #[cfg(target_os = "windows")]
             tap,
             token,
@@ -126,6 +136,7 @@ impl Config {
             tcp,
             ip,
             #[cfg(feature = "ip_proxy")]
+            #[cfg(feature = "integrated_tun")]
             no_proxy,
             server_encrypt,
             cipher_model,
@@ -133,6 +144,7 @@ impl Config {
             punch_model,
             ports,
             first_latency,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(not(target_os = "android"))]
             device_name,
             use_channel_type,

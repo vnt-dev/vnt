@@ -306,8 +306,10 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                             log::info!("ip发生变化,old:{:?},response={:?}", old, response);
                         }
                         let device_config = crate::handle::callback::DeviceConfig::new(
+                            #[cfg(feature = "integrated_tun")]
                             #[cfg(target_os = "windows")]
                             self.config_info.tap,
+                            #[cfg(feature = "integrated_tun")]
                             #[cfg(any(
                                 target_os = "windows",
                                 target_os = "linux",
@@ -322,7 +324,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                             self.external_route.to_route(),
                         );
                         #[cfg(not(feature = "integrated_tun"))]
-                        self.callback.create_device(context.sender(), device_config);
+                        self.callback.create_device(device_config);
                         #[cfg(feature = "integrated_tun")]
                         {
                             self.tun_device_helper.stop();

@@ -191,8 +191,10 @@ impl Into<u8> for ErrorType {
 
 #[derive(Clone, Debug)]
 pub struct DeviceConfig {
+    #[cfg(feature = "integrated_tun")]
     #[cfg(target_os = "windows")]
     pub tap: bool,
+    #[cfg(feature = "integrated_tun")]
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     pub device_name: Option<String>,
     //虚拟网卡mtu值
@@ -211,7 +213,10 @@ pub struct DeviceConfig {
 
 impl DeviceConfig {
     pub fn new(
-        #[cfg(target_os = "windows")] tap: bool,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(target_os = "windows")]
+        tap: bool,
+        #[cfg(feature = "integrated_tun")]
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         device_name: Option<String>,
         mtu: u32,
@@ -222,8 +227,10 @@ impl DeviceConfig {
         external_route: Vec<(Ipv4Addr, Ipv4Addr)>,
     ) -> Self {
         Self {
+            #[cfg(feature = "integrated_tun")]
             #[cfg(target_os = "windows")]
             tap,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             device_name,
             mtu,
@@ -297,12 +304,7 @@ pub trait VntCallback: Clone + Send + Sync + 'static {
         true
     }
     #[cfg(not(feature = "integrated_tun"))]
-    fn create_device(
-        &self,
-        _channel_sender: crate::channel::sender::ChannelSender,
-        _info: DeviceConfig,
-    ) {
-    }
+    fn create_device(&self, _info: DeviceConfig) {}
     #[cfg(target_os = "android")]
     #[cfg(feature = "integrated_tun")]
     fn generate_tun(&self, _info: DeviceConfig) -> usize {

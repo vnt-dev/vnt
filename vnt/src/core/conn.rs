@@ -10,10 +10,12 @@ use rand::Rng;
 use crate::channel::context::ChannelContext;
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
+use crate::channel::sender::IpPacketSender;
 use crate::channel::{init_channel, init_context, Route, RouteKey};
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
+use crate::compression::Compressor;
 use crate::core::Config;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
 use crate::handle::handshaker::Handshake;
@@ -41,6 +43,9 @@ pub struct Vnt {
     down_count_watcher: WatchU64Adder,
     up_count_watcher: WatchSingleU64Adder,
     client_secret_hash: Option<[u8; 16]>,
+    compressor: Compressor,
+    client_cipher: Cipher,
+    external_route: ExternalRoute,
 }
 
 impl Vnt {
@@ -99,8 +104,10 @@ impl Vnt {
             config.server_address_str.clone(),
             config.name_servers.clone(),
             config.mtu.unwrap_or(1420),
+            #[cfg(feature = "integrated_tun")]
             #[cfg(target_os = "windows")]
             config.tap,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             config.device_name.clone(),
         );
@@ -153,6 +160,7 @@ impl Vnt {
         let out_external_route = AllowExternalRoute::new(config.out_ips.clone());
 
         #[cfg(feature = "ip_proxy")]
+        #[cfg(feature = "integrated_tun")]
         let proxy_map = if !config.out_ips.is_empty() && !config.no_proxy {
             Some(crate::ip_proxy::init_proxy(
                 context.clone(),
@@ -209,6 +217,7 @@ impl Vnt {
             external_route.clone(),
             out_external_route,
             #[cfg(feature = "ip_proxy")]
+            #[cfg(feature = "integrated_tun")]
             proxy_map.clone(),
             down_counter,
             handshake.clone(),
@@ -259,6 +268,7 @@ impl Vnt {
                     udp_socket_sender,
                 );
             }
+            let client_cipher = client_cipher.clone();
             //延迟启动
             scheduler.timeout(Duration::from_secs(3), move |scheduler| {
                 start(
@@ -278,7 +288,7 @@ impl Vnt {
                 );
             });
         }
-
+        let compressor = config.compressor;
         Ok(Self {
             stop_manager,
             config,
@@ -290,6 +300,9 @@ impl Vnt {
             down_count_watcher,
             up_count_watcher,
             client_secret_hash: config_info.client_secret_hash,
+            compressor,
+            client_cipher,
+            external_route,
         })
     }
 }
@@ -386,6 +399,9 @@ impl Vnt {
     pub fn current_device(&self) -> CurrentDeviceInfo {
         self.current_device.load()
     }
+    pub fn current_device_info(&self) -> Arc<AtomicCell<CurrentDeviceInfo>> {
+        self.current_device.clone()
+    }
     pub fn peer_nat_info(&self, ip: &Ipv4Addr) -> Option<NatInfo> {
         self.peer_nat_info_map.read().get(ip).cloned()
     }
@@ -432,6 +448,12 @@ impl Vnt {
         let _ = self.context.lock().take();
         self.stop_manager.stop()
     }
+    pub fn add_stop_listener<F>(&self, name: String, f: F) -> anyhow::Result<crate::util::Worker>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.stop_manager.add_listener(name, f)
+    }
     pub fn wait(&self) {
         self.stop_manager.wait()
     }
@@ -440,5 +462,18 @@ impl Vnt {
     }
     pub fn config(&self) -> &Config {
         &self.config
+    }
+    pub fn ipv4_packet_sender(&self) -> Option<IpPacketSender> {
+        if let Some(c) = self.context.lock().as_ref() {
+            Some(IpPacketSender::new(
+                c.clone(),
+                self.current_device.clone(),
+                self.compressor.clone(),
+                self.client_cipher.clone(),
+                self.external_route.clone(),
+            ))
+        } else {
+            None
+        }
     }
 }

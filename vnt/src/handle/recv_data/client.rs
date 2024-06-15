@@ -40,6 +40,7 @@ pub struct ClientPacketHandler<Device> {
     nat_test: NatTest,
     route: AllowExternalRoute,
     #[cfg(feature = "ip_proxy")]
+    #[cfg(feature = "integrated_tun")]
     ip_proxy_map: Option<IpProxyMap>,
 }
 
@@ -51,7 +52,9 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         nat_test: NatTest,
         route: AllowExternalRoute,
-        #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(feature = "ip_proxy")]
+        ip_proxy_map: Option<IpProxyMap>,
     ) -> Self {
         Self {
             device,
@@ -60,6 +63,7 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
             peer_nat_info_map,
             nat_test,
             route,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         }
@@ -181,6 +185,7 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                         _ => {}
                     }
                     #[cfg(feature = "ip_proxy")]
+                    #[cfg(feature = "integrated_tun")]
                     if let Some(ip_proxy_map) = &self.ip_proxy_map {
                         if ip_proxy_map.recv_handle(&mut ipv4, source, destination)? {
                             return Ok(());
