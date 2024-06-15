@@ -1,0 +1,29 @@
+[package]
+name = "vn-link"
+version = "1.2.10"
+edition = "2021"
+
+[dependencies]
+lwip-rs = { git = "https://github.com/lbl8603/lwip-rs" }
+vnt = { path = "../vnt", package = "vnt", default-features = false }
+log = "0.4.17"
+anyhow = "1.0.82"
+parking_lot = "0.12.1"
+
+tokio = { version = "1.37.0", features = ["full"] }
+crossbeam-utils = "0.8"
+
+[features]
+default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "port_mapping", "lz4_compress"]
+openssl = ["vnt/openssl"]
+openssl-vendored = ["vnt/openssl-vendored"]
+ring-cipher = ["vnt/ring-cipher"]
+aes_cbc = ["vnt/aes_cbc"]
+aes_ecb = ["vnt/aes_ecb"]
+sm4_cbc = ["vnt/sm4_cbc"]
+aes_gcm = ["vnt/aes_gcm"]
+chacha20_poly1305 = ["vnt/chacha20_poly1305"]
+server_encrypt = ["vnt/server_encrypt"]
+port_mapping = ["vnt/port_mapping"]
+lz4_compress = ["vnt/lz4_compress"]
+zstd_compress = ["vnt/zstd_compress"]
