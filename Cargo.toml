@@ -1,11 +1,11 @@
 [workspace]
-members = ["vnt","common","vnt-cli","vnt-jni"]
+members = ["vnt", "common", "vnt-cli", "vn-link", "vn-link-cli"]
 
 [profile.release]
 opt-level = 'z'
 debug = 0
 debug-assertions = false
-strip= "debuginfo"
+strip = "debuginfo"
 lto = true
 panic = 'abort'
 incremental = false
