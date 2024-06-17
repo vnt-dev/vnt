@@ -40,7 +40,6 @@ fn pub_address_request(
 ) {
     let channel_num = context.channel_num();
     let index = count % channel_num;
-    let mut time = if index == channel_num - 1 { 19 } else { 1 };
     if let Err(e) = addr_request0(
         &context,
         &current_device_info,
@@ -51,12 +50,20 @@ fn pub_address_request(
         log::warn!("{:?}", e);
     }
     let nat_info = nat_test.nat_info();
-    if nat_info.nat_type == NatType::Symmetric {
+    let time = if !nat_info.public_ports.contains(&0) && !nat_info.public_ips.is_empty() {
         //对称网络探测端口没啥作用，把频率放低，（锥形网络也只在打洞前需要探测端口，后续可以改改）
-        if !nat_info.public_ports.contains(&0) && !nat_info.public_ips.is_empty() {
-            time = 600;
+        if nat_info.nat_type == NatType::Symmetric {
+            600
+        } else {
+            if index == channel_num - 1 {
+                19
+            } else {
+                7
+            }
         }
-    }
+    } else {
+        3
+    };
 
     let rs = scheduler.timeout(Duration::from_secs(time), move |s| {
         pub_address_request(
