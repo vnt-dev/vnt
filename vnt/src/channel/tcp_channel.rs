@@ -358,7 +358,11 @@ where
     if let Some((route_key, stream, buf, begin)) = map.get_mut(token) {
         loop {
             let end = if *begin >= 4 {
-                4 + (((buf[2] as u16) << 8) | buf[3] as u16) as usize
+                let len = ((buf[0] as usize) << 24)
+                    | ((buf[1] as usize) << 16)
+                    | ((buf[2] as usize) << 8)
+                    | buf[3] as usize;
+                4 + len
             } else {
                 4
             };

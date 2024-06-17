@@ -170,7 +170,12 @@ impl PacketSenderInner {
     fn try_send(&self, buf: &[u8]) -> io::Result<()> {
         let len = buf.len();
         let mut buf_vec = Vec::with_capacity(buf.len() + 4);
-        buf_vec.extend_from_slice(&[0, 0, (len >> 8) as u8, (len & 0xFF) as u8]);
+        buf_vec.extend_from_slice(&[
+            (len >> 24) as u8,
+            (len >> 16) as u8,
+            (len >> 8) as u8,
+            len as u8,
+        ]);
         buf_vec.extend_from_slice(buf);
         match self.buffer.try_send(buf_vec) {
             Ok(_) => self.notify.notify(self.token, true),
