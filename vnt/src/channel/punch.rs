@@ -99,10 +99,12 @@ impl NatInfo {
             nat_type,
         }
     }
-    pub fn update_addr(&mut self, index: usize, ip: Ipv4Addr, port: u16) {
+    pub fn update_addr(&mut self, index: usize, ip: Ipv4Addr, port: u16) -> bool {
+        let mut updated = false;
         if port != 0 {
             if let Some(public_port) = self.public_ports.get_mut(index) {
                 if *public_port != port {
+                    updated = true;
                     log::info!("端口变化={}:{} index={}", ip, port, index)
                 }
                 *public_port = port;
@@ -116,9 +118,11 @@ impl NatInfo {
         {
             if !self.public_ips.contains(&ip) {
                 self.public_ips.push(ip);
+                updated = true;
                 log::info!("ip变化={},{:?}", ip, self.public_ips)
             }
         }
+        updated
     }
     pub fn local_ipv4(&self) -> Option<Ipv4Addr> {
         self.local_ipv4

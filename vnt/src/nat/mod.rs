@@ -185,7 +185,7 @@ impl NatTest {
         }
         false
     }
-    pub fn update_addr(&self, index: usize, ip: Ipv4Addr, port: u16) {
+    pub fn update_addr(&self, index: usize, ip: Ipv4Addr, port: u16) -> bool {
         let mut guard = self.info.lock();
         guard.update_addr(index, ip, port)
     }
@@ -273,7 +273,9 @@ impl NatTest {
                     && !ip.is_loopback()
                     && !ip.is_private()
                 {
-                    self.update_addr(index, *addr.ip(), addr.port());
+                    if self.update_addr(index, *addr.ip(), addr.port()) {
+                        log::info!("回应地址{:?},来源stun {:?}", addr, source_addr)
+                    }
                 }
             }
         }
