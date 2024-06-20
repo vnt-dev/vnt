@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::ops::{Div, Mul};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
@@ -249,6 +250,7 @@ impl Punch {
         id: Ipv4Addr,
         mut nat_info: NatInfo,
         punch_tcp: bool,
+        count: usize,
     ) -> io::Result<()> {
         if self.context.route_table.no_need_punch(&id) {
             log::info!("已打洞成功,无需打洞:{:?}", id);
@@ -320,7 +322,11 @@ impl Punch {
                 //预测范围内最多发送max_k1个包
                 let max_k1 = 60;
                 //全局最多发送max_k2个包
-                let max_k2 = rand::thread_rng().gen_range(600..800);
+                let mut max_k2: usize = rand::thread_rng().gen_range(600..800);
+                if count > 1 {
+                    //递减探测规模
+                    max_k2 = max_k2.mul(4).div(3).div(count).max(max_k1 as usize);
+                }
                 let port = nat_info.public_ports.get(0).map(|e| *e).unwrap_or(0);
                 if nat_info.public_port_range < max_k1 * 3 {
                     //端口变化不大时，在预测的范围内随机发送
@@ -336,8 +342,7 @@ impl Punch {
                     } else {
                         (max_port - min_port + 1) as usize
                     };
-                    let mut nums: Vec<u16> = (min_port..max_port).collect();
-                    nums.push(max_port);
+                    let mut nums: Vec<u16> = (min_port..=max_port).collect();
                     nums.shuffle(&mut rand::thread_rng());
                     self.punch_symmetric(&nums[..k], buf, &nat_info.public_ips, max_k1 as usize)?;
                 }
@@ -401,7 +406,7 @@ impl Punch {
                 }
                 let addr = SocketAddr::V4(SocketAddrV4::new(*pub_ip, *port));
                 self.context.send_main_udp(0, buf, addr)?;
-                thread::sleep(Duration::from_millis(2));
+                thread::sleep(Duration::from_millis(3));
             }
         }
         Ok(ports.len())

@@ -199,7 +199,7 @@ impl ContextInner {
             if let Err(e) = udp.send_to(buf, addr) {
                 log::warn!("{:?},add={:?}", e, addr);
             }
-            thread::sleep(Duration::from_millis(1));
+            thread::sleep(Duration::from_millis(3));
         }
     }
     pub fn try_send_all_main(&self, buf: &[u8], addr: SocketAddr) {

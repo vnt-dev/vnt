@@ -158,7 +158,7 @@ fn punch_start(
             log::error!("{:?}", e);
             continue;
         }
-        if let Err(e) = punch.punch(packet.buffer(), peer_ip, nat_info, count < 2) {
+        if let Err(e) = punch.punch(packet.buffer(), peer_ip, nat_info, count < 2, count) {
             log::warn!("{:?}", e)
         }
     }
@@ -190,7 +190,7 @@ fn punch_request(
         ) {
             log::warn!("{:?}", e)
         }
-        let sleep_time = [5, 6, 7];
+        let sleep_time = [6, 7];
         Duration::from_secs(sleep_time[count % sleep_time.len()])
     } else {
         Duration::from_secs(5)
