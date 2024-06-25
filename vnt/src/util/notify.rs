@@ -28,7 +28,7 @@ impl StopManager {
         self.inner.add_listener(name, f)
     }
     pub fn stop(&self) {
-        self.inner.stop("");
+        self.inner.stop();
     }
     pub fn wait(&self) {
         self.inner.wait();
@@ -81,14 +81,11 @@ impl StopManagerInner {
         guard.1.push((name.clone(), Box::new(f)));
         Ok(Worker::new(name, self.clone()))
     }
-    fn stop(&self, skip_name: &str) {
+    fn stop(&self) {
         self.state.store(true, Ordering::Release);
         let mut guard = self.listeners.lock();
         guard.0 = true;
-        for (name, listener) in guard.1.drain(..) {
-            if &name == skip_name {
-                continue;
-            }
+        for (_name, listener) in guard.1.drain(..) {
             listener();
         }
     }
@@ -136,6 +133,19 @@ impl Worker {
     }
     fn release0(&self) {
         let inner = &self.inner;
+        let worker_name = &self.name;
+        {
+            let mut mutex_guard = inner.listeners.lock();
+            if let Some(pos) = mutex_guard
+                .1
+                .iter()
+                .position(|(name, _)| name == worker_name)
+            {
+                let (_, listener) = mutex_guard.1.remove(pos);
+                listener();
+            }
+        }
+
         let count = inner.worker_num.fetch_sub(1, Ordering::AcqRel);
         if count == 1 {
             for x in inner.park_threads.lock().drain(..) {
@@ -145,7 +155,10 @@ impl Worker {
         }
     }
     pub fn stop_all(self) {
-        self.inner.stop(&self.name)
+        self.inner.stop()
+    }
+    pub fn stop_self(self) {
+        drop(self)
     }
 }
 

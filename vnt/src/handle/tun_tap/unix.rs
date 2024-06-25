@@ -35,36 +35,23 @@ pub(crate) fn start_simple(
     compressor: Compressor,
     device_stop: DeviceStop,
 ) -> anyhow::Result<()> {
-    let stop_all = Arc::new(AtomicCell::new(true));
     let poll = Poll::new()?;
     let waker = Arc::new(Waker::new(poll.registry(), STOP)?);
     let _waker = waker.clone();
-    let device_cell = Arc::new(AtomicCell::new(Some(waker)));
     let worker = {
-        let device_cell = device_cell.clone();
         stop_manager.add_listener("tun_device".into(), move || {
-            if let Some(waker) = device_cell.take() {
-                if let Err(e) = waker.wake() {
-                    log::warn!("{:?}", e);
-                }
+            if let Err(e) = waker.wake() {
+                log::warn!("{:?}", e);
             }
         })?
     };
-    {
-        let stop_all = stop_all.clone();
-        device_stop.set_stop_fn(move || {
-            if let Some(waker) = device_cell.take() {
-                stop_all.store(false);
-                if let Err(e) = waker.wake() {
-                    log::warn!("{:?}", e);
-                    return false;
-                }
-                true
-            } else {
-                false
-            }
-        });
-    }
+    let worker_cell = Arc::new(AtomicCell::new(Some(worker)));
+    let _worker_cell = worker_cell.clone();
+    device_stop.set_stop_fn(move || {
+        if let Some(worker) = _worker_cell.take() {
+            worker.stop_self()
+        }
+    });
     if let Err(e) = start_simple0(
         poll,
         context,
@@ -82,7 +69,7 @@ pub(crate) fn start_simple(
         log::error!("{:?}", e);
     };
     device_stop.stopped();
-    if stop_all.load() {
+    if let Some(worker) = worker_cell.take() {
         worker.stop_all();
     }
     drop(_waker);

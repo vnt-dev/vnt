@@ -18,22 +18,20 @@ pub(crate) use windows::*;
 /// 仅仅是停止tun，不停止vnt
 #[derive(Clone, Default)]
 pub struct DeviceStop {
-    f: Arc<Mutex<Option<Box<dyn FnOnce() -> bool + Send>>>>,
+    f: Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>,
     stopped: Arc<AtomicCell<bool>>,
 }
 
 impl DeviceStop {
     pub fn set_stop_fn<F>(&self, f: F)
     where
-        F: FnOnce() -> bool + Send + 'static,
+        F: FnOnce() + Send + 'static,
     {
         self.f.lock().replace(Box::new(f));
     }
-    pub fn stop(&self) -> bool {
+    pub fn stop(&self) {
         if let Some(f) = self.f.lock().take() {
             f()
-        } else {
-            false
         }
     }
     pub fn stopped(&self) {
