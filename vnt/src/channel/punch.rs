@@ -323,9 +323,9 @@ impl Punch {
                 let max_k1 = 60;
                 //全局最多发送max_k2个包
                 let mut max_k2: usize = rand::thread_rng().gen_range(600..800);
-                if count > 1 {
+                if count > 2 {
                     //递减探测规模
-                    max_k2 = max_k2.mul(4).div(3).div(count).max(max_k1 as usize);
+                    max_k2 = max_k2.mul(2).div(count).max(max_k1 as usize);
                 }
                 let port = nat_info.public_ports.get(0).map(|e| *e).unwrap_or(0);
                 if nat_info.public_port_range < max_k1 * 3 {

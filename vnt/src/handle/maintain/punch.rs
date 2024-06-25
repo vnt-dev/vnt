@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::ops::{Div, Mul};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
 use std::thread;
@@ -249,9 +250,11 @@ fn punch0(
             .lock()
             .get(&info.virtual_ip)
             .cloned()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .mul(2)
+            .div(3);
         let p2p_num = context.route_table.p2p_num(&info.virtual_ip);
-        let mut max_punch_interval = 70;
+        let mut max_punch_interval = 50;
         if p2p_num > 0 {
             if punch_count == 0 {
                 continue;
