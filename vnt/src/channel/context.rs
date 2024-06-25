@@ -68,7 +68,7 @@ impl Deref for ChannelContext {
 }
 
 /// 对称网络增加的udp socket数目，有助于增加打洞成功率
-pub const SYMMETRIC_CHANNEL_NUM: usize = 100;
+pub const SYMMETRIC_CHANNEL_NUM: usize = 84;
 const PACKET_LOSS_RATE_DENOMINATOR: u32 = 100_0000;
 
 pub struct ContextInner {
