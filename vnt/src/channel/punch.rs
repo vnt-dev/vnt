@@ -1,7 +1,9 @@
+use crossbeam_utils::atomic::AtomicCell;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::ops::{Div, Mul};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use std::{io, thread};
 
@@ -12,6 +14,7 @@ use rand::Rng;
 use crate::channel::context::ChannelContext;
 use crate::channel::sender::AcceptSocketSender;
 use crate::external_route::ExternalRoute;
+use crate::handle::CurrentDeviceInfo;
 use crate::nat::NatTest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -194,6 +197,7 @@ pub struct Punch {
     tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
     external_route: ExternalRoute,
     nat_test: NatTest,
+    current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 }
 
 impl Punch {
@@ -204,6 +208,7 @@ impl Punch {
         tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
         external_route: ExternalRoute,
         nat_test: NatTest,
+        current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ) -> Self {
         let mut port_vec: Vec<u16> = (1..65535).collect();
         port_vec.push(65535);
@@ -218,6 +223,7 @@ impl Punch {
             tcp_socket_sender,
             external_route,
             nat_test,
+            current_device,
         }
     }
 }
@@ -256,12 +262,13 @@ impl Punch {
             log::info!("已打洞成功,无需打洞:{:?}", id);
             return Ok(());
         }
-        nat_info
-            .public_ips
-            .retain(|ip| self.external_route.route(&ip).is_none());
-        nat_info
-            .local_ipv4
-            .filter(|ip| self.external_route.route(&ip).is_none());
+        let device_info = self.current_device.load();
+        nat_info.public_ips.retain(|ip| {
+            self.external_route.route(ip).is_none() && device_info.not_in_network(*ip)
+        });
+        nat_info.local_ipv4.filter(|ip| {
+            self.external_route.route(ip).is_none() && device_info.not_in_network(*ip)
+        });
         nat_info.ipv6.filter(|ip| {
             if let Some(ip) = ip.to_ipv4_mapped() {
                 self.external_route.route(&ip).is_none()

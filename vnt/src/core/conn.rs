@@ -236,6 +236,7 @@ impl Vnt {
             tcp_socket_sender.clone(),
             external_route.clone(),
             nat_test.clone(),
+            current_device.clone(),
         );
 
         // #[cfg(not(target_os = "android"))]

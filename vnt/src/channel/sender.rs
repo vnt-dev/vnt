@@ -91,11 +91,10 @@ impl IpPacketSender {
             return Ok(());
         }
 
-        // if u32::from_be_bytes(dest_ip.octets()) & u32::from_be_bytes(device_info.virtual_netmask.octets())
-        //     != u32::from_be_bytes(device_info.virtual_network.octets()) {
-        //     //不是一个网段的直接忽略
-        //     return Ok(());
-        // }
+        if device_info.not_in_network(dest_ip) {
+            //不是一个网段的直接忽略
+            return Ok(());
+        }
         self.context.send_ipv4_by_id(
             net_packet.buffer(),
             &dest_ip,

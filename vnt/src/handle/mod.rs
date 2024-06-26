@@ -229,8 +229,13 @@ impl CurrentDeviceInfo {
     pub fn virtual_gateway(&self) -> Ipv4Addr {
         self.virtual_gateway
     }
+    #[inline]
     pub fn is_gateway(&self, ip: &Ipv4Addr) -> bool {
         &self.virtual_gateway == ip || ip == &GATEWAY_IP
+    }
+    #[inline]
+    pub fn not_in_network(&self, ip: Ipv4Addr) -> bool {
+        u32::from(ip) & u32::from(self.virtual_netmask) != u32::from(self.virtual_network)
     }
 }
 pub fn change_status(

@@ -27,12 +27,7 @@ use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
 use crate::util::{SingleU64Adder, StopManager};
-/// 是否在一个网段
-#[inline]
-fn check_dest(dest: Ipv4Addr, virtual_netmask: Ipv4Addr, virtual_network: Ipv4Addr) -> bool {
-    u32::from_be_bytes(dest.octets()) & u32::from_be_bytes(virtual_netmask.octets())
-        == u32::from_be_bytes(virtual_network.octets())
-}
+
 fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
     if ipv4_packet.protocol() == Protocol::Icmp {
         let mut icmp = IcmpPacket::new(ipv4_packet.payload_mut())?;
@@ -222,11 +217,7 @@ pub(crate) fn handle(
     }
     if !dest_ip.is_multicast() && !dest_ip.is_broadcast() && current_device.broadcast_ip != dest_ip
     {
-        if !check_dest(
-            dest_ip,
-            current_device.virtual_netmask,
-            current_device.virtual_network,
-        ) {
+        if current_device.not_in_network(dest_ip) {
             if let Some(r_dest_ip) = ip_route.route(&dest_ip) {
                 //路由的目标不能是自己
                 if r_dest_ip == src_ip {
