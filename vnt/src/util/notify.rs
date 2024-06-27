@@ -36,8 +36,8 @@ impl StopManager {
     pub fn wait_timeout(&self, dur: Duration) -> bool {
         self.inner.wait_timeout(dur)
     }
-    pub fn is_stop(&self) -> bool {
-        self.inner.state.load(Ordering::Acquire)
+    pub fn is_stopped(&self) -> bool {
+        self.inner.is_stopped()
     }
 }
 
@@ -89,6 +89,9 @@ impl StopManagerInner {
             listener();
         }
     }
+    pub fn is_stopped(&self) -> bool {
+        self.worker_num.load(Ordering::Acquire) == 0
+    }
     fn wait(&self) {
         {
             let mut guard = self.park_threads.lock();
@@ -115,6 +118,7 @@ impl StopManagerInner {
         self.worker_num.load(Ordering::Acquire) == 0
     }
     fn stop_call(&self) {
+        self.stop();
         if let Some(call) = self.stop_call.lock().take() {
             call();
         }

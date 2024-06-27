@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,6 +34,32 @@ use crate::{nat, VntCallback};
 
 #[derive(Clone)]
 pub struct Vnt {
+    inner: Arc<VntInner>,
+}
+impl Vnt {
+    #[cfg(feature = "integrated_tun")]
+    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
+        let inner = Arc::new(VntInner::new(config, callback)?);
+        Ok(Self { inner })
+    }
+    #[cfg(not(feature = "integrated_tun"))]
+    pub fn new_device<Call: VntCallback, Device: DeviceWrite>(
+        config: Config,
+        callback: Call,
+        device: Device,
+    ) -> anyhow::Result<Self> {
+        let inner = Arc::new(VntInner::new_device(config, callback, device)?);
+        Ok(Self { inner })
+    }
+}
+impl Deref for Vnt {
+    type Target = VntInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+pub struct VntInner {
     stop_manager: StopManager,
     config: Config,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -48,10 +75,10 @@ pub struct Vnt {
     external_route: ExternalRoute,
 }
 
-impl Vnt {
+impl VntInner {
     #[cfg(feature = "integrated_tun")]
     pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
-        Vnt::new_device0(config, callback, DeviceAdapter::default())
+        VntInner::new_device0(config, callback, DeviceAdapter::default())
     }
     #[cfg(not(feature = "integrated_tun"))]
     pub fn new_device<Call: VntCallback, Device: DeviceWrite>(
@@ -59,7 +86,7 @@ impl Vnt {
         callback: Call,
         device: Device,
     ) -> anyhow::Result<Self> {
-        Vnt::new_device0(config, callback, device)
+        VntInner::new_device0(config, callback, device)
     }
     fn new_device0<Call: VntCallback, Device: DeviceWrite>(
         config: Config,
@@ -384,7 +411,7 @@ pub fn start<Call: VntCallback>(
     )
 }
 
-impl Vnt {
+impl VntInner {
     pub fn name(&self) -> &str {
         &self.config.name
     }
@@ -449,6 +476,9 @@ impl Vnt {
         let _ = self.context.lock().take();
         self.stop_manager.stop()
     }
+    pub fn is_stopped(&self) -> bool {
+        self.stop_manager.is_stopped()
+    }
     pub fn add_stop_listener<F>(&self, name: String, f: F) -> anyhow::Result<crate::util::Worker>
     where
         F: FnOnce() + Send + 'static,
@@ -476,5 +506,10 @@ impl Vnt {
         } else {
             None
         }
+    }
+}
+impl Drop for VntInner {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
