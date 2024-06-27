@@ -114,12 +114,7 @@ impl NatInfo {
                 *public_port = port;
             }
         }
-        if !ip.is_multicast()
-            && !ip.is_broadcast()
-            && !ip.is_unspecified()
-            && !ip.is_loopback()
-            && !ip.is_private()
-        {
+        if crate::nat::is_ipv4_global(&ip) {
             if !self.public_ips.contains(&ip) {
                 self.public_ips.push(ip);
                 updated = true;
