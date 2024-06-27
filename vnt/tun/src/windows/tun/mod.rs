@@ -172,7 +172,7 @@ impl IFace for Device {
 
     fn shutdown(&self) -> io::Result<()> {
         unsafe {
-            if 0 == synchapi::SetEvent(self.shutdown_event) {
+            if winapi::shared::minwindef::TRUE == synchapi::SetEvent(self.shutdown_event) {
                 Ok(())
             } else {
                 Err(io::Error::last_os_error())
@@ -284,11 +284,11 @@ impl Device {
                     if result == winbase::WAIT_OBJECT_0 {
                         //We have data!
                         continue;
-                    } else if result == winbase::WAIT_OBJECT_0 + 1 {
+                    } else {
                         //Shutdown event triggered
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
-                            "Shutdown event triggered",
+                            format!("Shutdown event triggered {}", io::Error::last_os_error()),
                         ));
                     }
                 }
@@ -336,8 +336,8 @@ impl Drop for Device {
             }
             self.win_tun.WintunEndSession(self.session);
             self.win_tun.WintunCloseAdapter(self.adapter);
-            if 0 != self.win_tun.WintunDeleteDriver() {
-                log::warn!("WintunDeleteDriver failed")
+            if winapi::shared::minwindef::FALSE == self.win_tun.WintunDeleteDriver() {
+                log::warn!("WintunDeleteDriver failed {:?}", io::Error::last_os_error())
             }
         }
     }
