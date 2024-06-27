@@ -2,8 +2,8 @@ use anyhow::anyhow;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-use crate::args_parse;
 use crate::config::get_device_id;
+use crate::{args_parse, config};
 use serde::{Deserialize, Serialize};
 use vnt::channel::punch::PunchModel;
 use vnt::channel::UseChannelType;
@@ -49,6 +49,10 @@ pub struct FileConfig {
 
 impl Default for FileConfig {
     fn default() -> Self {
+        let mut stun_server = Vec::new();
+        for x in config::PUB_STUN {
+            stun_server.push(x.to_string());
+        }
         Self {
             #[cfg(target_os = "windows")]
             tap: false,
@@ -59,11 +63,7 @@ impl Default for FileConfig {
                 .unwrap_or("UnknownName")
                 .to_string(),
             server_address: "nat1.wherewego.top:29872".to_string(),
-            stun_server: vec![
-                "stun1.l.google.com:19302".to_string(),
-                "stun2.l.google.com:19302".to_string(),
-                "stun.miwifi.com:3478".to_string(),
-            ],
+            stun_server,
             dns: vec![],
             in_ips: vec![],
             out_ips: vec![],

@@ -156,9 +156,9 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
 
         let mut stun_server = matches.opt_strs("e");
         if stun_server.is_empty() {
-            stun_server.push("stun1.l.google.com:19302".to_string());
-            stun_server.push("stun2.l.google.com:19302".to_string());
-            stun_server.push("stun.miwifi.com:3478".to_string());
+            for x in config::PUB_STUN {
+                stun_server.push(x.to_string());
+            }
         }
         let dns = matches.opt_strs("dns");
         let in_ip = matches.opt_strs("i");
@@ -340,7 +340,7 @@ fn print_usage(program: &str, _opts: Options) {
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip,注意不能重复");
     println!("  -s <server>         注册和中继服务器地址,以'TXT:'开头表示解析TXT记录");
-    println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun1.l.google.com -e stun2.l.google.com");
+    println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun.miwifi.com -e turn.cloudflare.com");
     #[cfg(target_os = "windows")]
     #[cfg(feature = "integrated_tun")]
     println!(

@@ -1,3 +1,9 @@
+pub const PUB_STUN: [&'static str; 4] = [
+    "stun.miwifi.com",
+    "stun.chat.bilibili.com",
+    "stun.hitv.com",
+    "stun.cdnbye.com",
+];
 #[cfg(feature = "file_config")]
 mod file_config;
 

@@ -9,17 +9,12 @@ use std::net::UdpSocket;
 use stun_format::Attr;
 
 pub fn stun_test_nat(stun_servers: Vec<String>) -> io::Result<(NatType, Vec<Ipv4Addr>, u16)> {
-    let mut th = Vec::new();
-    for _ in 0..2 {
-        let stun_servers = stun_servers.clone();
-        let handle = std::thread::spawn(move || stun_test_nat0(stun_servers));
-        th.push(handle);
-    }
     let mut nat_type = NatType::Cone;
     let mut port_range = 0;
     let mut hash_set = HashSet::new();
-    for x in th {
-        match x.join().unwrap() {
+    for _ in 0..2 {
+        let stun_servers = stun_servers.clone();
+        match stun_test_nat0(stun_servers) {
             Ok((nat_type_t, ip_list_t, port_range_t)) => {
                 if nat_type_t == NatType::Symmetric {
                     nat_type = NatType::Symmetric;
@@ -86,13 +81,13 @@ fn test_nat(udp: &UdpSocket, stun_server: &String) -> io::Result<HashSet<SocketA
     udp.connect(stun_server)?;
     let tid = rand::thread_rng().next_u64() as u128;
     let mut addr = HashSet::new();
-    let (mapped_addr1, changed_addr1) = test_nat_(&udp, true, true, tid)?;
+    let (mapped_addr1, changed_addr1) = test_nat_(&udp, stun_server, true, true, tid)?;
     if mapped_addr1.is_ipv4() {
         addr.insert(mapped_addr1);
     }
     if let Some(changed_addr1) = changed_addr1 {
         if udp.connect(changed_addr1).is_ok() {
-            match test_nat_(&udp, false, false, tid + 1) {
+            match test_nat_(&udp, stun_server, false, false, tid + 1) {
                 Ok((mapped_addr2, _)) => {
                     if mapped_addr2.is_ipv4() {
                         addr.insert(mapped_addr1);
@@ -116,6 +111,7 @@ fn test_nat(udp: &UdpSocket, stun_server: &String) -> io::Result<HashSet<SocketA
 
 fn test_nat_(
     udp: &UdpSocket,
+    stun_server: &String,
     change_ip: bool,
     change_port: bool,
     tid: u128,
@@ -134,7 +130,7 @@ fn test_nat_(
         let (len, _addr) = match udp.recv_from(&mut buf) {
             Ok(rs) => rs,
             Err(e) => {
-                log::warn!("stun error {:?}", e);
+                log::warn!("stun {} error {:?}", stun_server, e);
                 continue;
             }
         };
