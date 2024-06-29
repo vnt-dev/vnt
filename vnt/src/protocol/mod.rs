@@ -214,8 +214,7 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_gateway_flag(&mut self, is_gateway: bool) {
         if is_gateway {
-            // 后面的版本再改为0x40，改了之后不兼容1.2.5之前的版本
-            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x50
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x40
         } else {
             self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0xBF
         };
