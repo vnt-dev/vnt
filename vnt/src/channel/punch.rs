@@ -265,7 +265,7 @@ impl Punch {
             self.external_route.route(ip).is_none() && device_info.not_in_network(*ip)
         });
         nat_info.ipv6.filter(|ip| {
-            if let Some(ip) = ip.to_ipv4_mapped() {
+            if let Some(ip) = ip.to_ipv4() {
                 self.external_route.route(&ip).is_none()
             } else {
                 true
