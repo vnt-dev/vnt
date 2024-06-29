@@ -39,7 +39,7 @@ ip_proxy = ["vnt/ip_proxy", "common/ip_proxy"]
 log = ["common/log"]
 command = ["common/command"]
 file_config = ["common/file_config"]
-
+upnp = ["common/upnp"]
 
 [build-dependencies]
 rand = "0.8.5"

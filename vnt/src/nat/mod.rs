@@ -13,6 +13,8 @@ use rand::Rng;
 
 use crate::channel::punch::{NatInfo, NatType};
 use crate::proto::message::PunchNatType;
+#[cfg(feature = "upnp")]
+use crate::util::UPnP;
 
 mod stun;
 
@@ -111,6 +113,8 @@ pub struct NatTest {
     time: Arc<AtomicCell<Instant>>,
     udp_ports: Vec<u16>,
     tcp_port: u16,
+    #[cfg(feature = "upnp")]
+    upnp: UPnP,
 }
 
 impl From<NatType> for PunchNatType {
@@ -157,6 +161,14 @@ impl NatTest {
             NatType::Cone,
         );
         let info = Arc::new(Mutex::new(nat_info));
+        #[cfg(feature = "upnp")]
+        let upnp = UPnP::default();
+        #[cfg(feature = "upnp")]
+        for port in &udp_ports {
+            upnp.add_udp_port(*port);
+        }
+        #[cfg(feature = "upnp")]
+        upnp.add_tcp_port(tcp_port);
         NatTest {
             stun_server,
             info,
@@ -165,6 +177,8 @@ impl NatTest {
             )),
             udp_ports,
             tcp_port,
+            #[cfg(feature = "upnp")]
+            upnp,
         }
     }
     pub fn can_update(&self) -> bool {
@@ -255,6 +269,13 @@ impl NatTest {
 
         Ok(guard.clone())
     }
+    #[cfg(feature = "upnp")]
+    pub fn reset_upnp(&self) {
+        let local_ipv4 = self.info.lock().local_ipv4.clone();
+        if let Some(local_ipv4) = local_ipv4 {
+            self.upnp.reset(local_ipv4)
+        }
+    }
     pub fn send_data(&self) -> anyhow::Result<(Vec<u8>, SocketAddr)> {
         let len = self.stun_server.len();
         let stun_server = if len == 1 {
@@ -297,7 +318,7 @@ impl NatTest {
             let source_ip = match source_addr.ip() {
                 IpAddr::V4(ip) => ip,
                 IpAddr::V6(ip) => {
-                    if let Some(ip) = ip.to_ipv4_mapped() {
+                    if let Some(ip) = ip.to_ipv4() {
                         ip
                     } else {
                         return Ok(());

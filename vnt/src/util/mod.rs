@@ -8,3 +8,8 @@ pub use counter::*;
 
 mod dns_query;
 pub use dns_query::*;
+
+#[cfg(feature = "upnp")]
+mod upnp;
+#[cfg(feature = "upnp")]
+pub use upnp::*;

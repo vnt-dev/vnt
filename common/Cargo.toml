@@ -32,7 +32,7 @@ ip_proxy = ["vnt/ip_proxy"]
 port_mapping = ["vnt/port_mapping"]
 lz4 = ["vnt/lz4_compress"]
 zstd = ["vnt/zstd_compress"]
-
+upnp = ["vnt/upnp"]
 command = []
 file_config = []
 log = ["log4rs"]

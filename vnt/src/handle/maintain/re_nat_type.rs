@@ -42,6 +42,9 @@ fn retrieve_nat_type0(
                         log::warn!("nat re_test {:?}", e);
                     }
                 };
+                #[cfg(feature = "upnp")]
+                nat_test.reset_upnp();
+                log::info!("刷新nat成功")
             }
         })
         .expect("natTest");
