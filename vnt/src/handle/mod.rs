@@ -1,5 +1,5 @@
 use crossbeam_utils::atomic::AtomicCell;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 pub mod callback;
 mod extension;
@@ -236,6 +236,16 @@ impl CurrentDeviceInfo {
     #[inline]
     pub fn not_in_network(&self, ip: Ipv4Addr) -> bool {
         u32::from(ip) & u32::from(self.virtual_netmask) != u32::from(self.virtual_network)
+    }
+    pub fn is_server_addr(&self, addr: SocketAddr) -> bool {
+        if self.connect_server == addr {
+            return true;
+        }
+        let f = |ip: IpAddr| match ip {
+            IpAddr::V4(v4) => Some(v4),
+            IpAddr::V6(v6) => v6.to_ipv4(),
+        };
+        addr.port() == self.connect_server.port() && f(addr.ip()) == f(self.connect_server.ip())
     }
 }
 pub fn change_status(

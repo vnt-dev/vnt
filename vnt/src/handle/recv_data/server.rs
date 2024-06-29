@@ -100,6 +100,15 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
         context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
     ) -> anyhow::Result<()> {
+        if !current_device.is_server_addr(route_key.addr) {
+            //拦截不是服务端的流量
+            log::info!(
+                "route_key={:?},不是来源于服务端地址{}",
+                route_key,
+                current_device.connect_server
+            );
+            return Ok(());
+        }
         context
             .route_table
             .update_read_time(&net_packet.source(), &route_key);
@@ -548,7 +557,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                     //纪元不一致，可能有新客户端连接，向服务端拉取客户端列表
                     let mut poll_device = NetPacket::new_encrypt([0; 12 + ENCRYPTION_RESERVED])?;
                     poll_device.set_source(current_device.virtual_ip);
-                    poll_device.set_destination(GATEWAY_IP);
+                    poll_device.set_destination(current_device.virtual_gateway);
                     poll_device.set_default_version();
                     poll_device.set_gateway_flag(true);
                     poll_device.first_set_ttl(MAX_TTL);
