@@ -7,7 +7,7 @@ use crate::handle::tun_tap::DeviceStop;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
-use crate::util::{SingleU64Adder, StopManager};
+use crate::util::{StopManager, U64Adder};
 use crossbeam_utils::atomic::AtomicCell;
 use mio::event::Source;
 use mio::unix::SourceFd;
@@ -30,7 +30,7 @@ pub(crate) fn start_simple(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: &mut SingleU64Adder,
+    up_counter: &U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
     device_stop: DeviceStop,
@@ -85,7 +85,7 @@ fn start_simple0(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: &mut SingleU64Adder,
+    up_counter: &U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
 ) -> anyhow::Result<()> {

@@ -27,9 +27,7 @@ use crate::nat::NatTest;
 #[cfg(feature = "integrated_tun")]
 use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
 use crate::tun_tap_device::vnt_device::DeviceWrite;
-use crate::util::{
-    Scheduler, SingleU64Adder, StopManager, U64Adder, WatchSingleU64Adder, WatchU64Adder,
-};
+use crate::util::{Scheduler, StopManager, U64Adder, WatchU64Adder};
 use crate::{nat, VntCallback};
 
 #[derive(Clone)]
@@ -68,7 +66,7 @@ pub struct VntInner {
     context: Arc<Mutex<Option<ChannelContext>>>,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
+    up_count_watcher: WatchU64Adder,
     client_secret_hash: Option<[u8; 16]>,
     compressor: Compressor,
     client_cipher: Cipher,
@@ -201,14 +199,13 @@ impl VntInner {
         let (punch_sender, punch_receiver) = maintain::punch_channel();
         let peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>> =
             Arc::new(RwLock::new(HashMap::with_capacity(16)));
-        let down_counter =
-            U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
+        let down_counter = U64Adder::default();
         let down_count_watcher = down_counter.watch();
         let handshake = Handshake::new(
             #[cfg(feature = "server_encrypt")]
             rsa_cipher.clone(),
         );
-        let up_counter = SingleU64Adder::new();
+        let up_counter = U64Adder::default();
         let up_count_watcher = up_counter.watch();
         #[cfg(feature = "integrated_tun")]
         let tun_device_helper = {
@@ -348,7 +345,7 @@ pub fn start<Call: VntCallback>(
     punch: Punch,
     callback: Call,
     down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
+    up_count_watcher: WatchU64Adder,
 ) {
     // 定时心跳
     maintain::heartbeat(

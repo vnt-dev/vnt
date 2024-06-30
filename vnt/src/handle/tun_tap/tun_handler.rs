@@ -26,7 +26,7 @@ use crate::protocol;
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
-use crate::util::{SingleU64Adder, StopManager};
+use crate::util::{StopManager, U64Adder};
 
 fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
     if ipv4_packet.protocol() == Protocol::Icmp {
@@ -53,7 +53,7 @@ pub fn start(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    mut up_counter: SingleU64Adder,
+    up_counter: U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
     device_stop: DeviceStop,
@@ -71,7 +71,7 @@ pub fn start(
                 ip_proxy_map,
                 client_cipher,
                 server_cipher,
-                &mut up_counter,
+                &up_counter,
                 device_list,
                 compressor,
                 device_stop,

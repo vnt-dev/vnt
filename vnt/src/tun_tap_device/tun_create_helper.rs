@@ -16,7 +16,7 @@ use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::vnt_device::DeviceWrite;
-use crate::util::{SingleU64Adder, StopManager};
+use crate::util::{StopManager, U64Adder};
 
 #[repr(transparent)]
 #[derive(Clone, Default)]
@@ -67,7 +67,7 @@ struct TunDeviceHelperInner {
     ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: SingleU64Adder,
+    up_counter: U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
 }
@@ -81,7 +81,7 @@ impl TunDeviceHelper {
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
         client_cipher: Cipher,
         server_cipher: Cipher,
-        up_counter: SingleU64Adder,
+        up_counter: U64Adder,
         device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
         compressor: Compressor,
         device_adapter: DeviceAdapter,

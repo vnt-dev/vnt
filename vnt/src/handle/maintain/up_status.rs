@@ -3,7 +3,7 @@ use crate::handle::CurrentDeviceInfo;
 use crate::proto::message::{ClientStatusInfo, PunchNatType, RouteItem};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::{service_packet, NetPacket, Protocol, HEAD_LEN, MAX_TTL};
-use crate::util::{Scheduler, WatchSingleU64Adder, WatchU64Adder};
+use crate::util::{Scheduler, WatchU64Adder};
 use crossbeam_utils::atomic::AtomicCell;
 use protobuf::Message;
 use std::io;
@@ -16,7 +16,7 @@ pub fn up_status(
     context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
+    up_count_watcher: WatchU64Adder,
 ) {
     let _ = scheduler.timeout(Duration::from_secs(60), move |x| {
         up_status0(
@@ -34,7 +34,7 @@ fn up_status0(
     context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
+    up_count_watcher: WatchU64Adder,
 ) {
     if let Err(e) = send_up_status_packet(
         &context,
@@ -62,7 +62,7 @@ fn send_up_status_packet(
     context: &ChannelContext,
     current_device_info: &AtomicCell<CurrentDeviceInfo>,
     down_count_watcher: &WatchU64Adder,
-    up_count_watcher: &WatchSingleU64Adder,
+    up_count_watcher: &WatchU64Adder,
 ) -> io::Result<()> {
     let device_info = current_device_info.load();
     if device_info.status.offline() {
