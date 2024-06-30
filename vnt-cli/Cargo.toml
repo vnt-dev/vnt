@@ -1,6 +1,6 @@
 [package]
 name = "vnt-cli"
-version = "1.2.10"
+version = "1.2.11"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -40,6 +40,7 @@ log = ["common/log"]
 command = ["common/command"]
 file_config = ["common/file_config"]
 upnp = ["common/upnp"]
+websocket = ["common/websocket"]
 
 [build-dependencies]
 rand = "0.8.5"

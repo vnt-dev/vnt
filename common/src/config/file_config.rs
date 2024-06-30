@@ -156,7 +156,6 @@ pub fn read_config(file_path: &str) -> anyhow::Result<(Config, Vec<String>, bool
         out_ips,
         file_conf.password,
         file_conf.mtu,
-        file_conf.tcp,
         virtual_ip,
         #[cfg(feature = "integrated_tun")]
         #[cfg(feature = "ip_proxy")]

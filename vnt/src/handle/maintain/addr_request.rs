@@ -92,7 +92,7 @@ fn addr_request0(
         return Ok(());
     }
 
-    if current_dev.connect_server.is_ipv4() && !context.is_main_tcp() {
+    if current_dev.connect_server.is_ipv4() && !context.main_protocol().is_base_tcp() {
         // 如果连接的是ipv4服务，则探测公网端口
         let gateway_ip = current_dev.virtual_gateway;
         let src_ip = current_dev.virtual_ip;

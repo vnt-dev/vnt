@@ -5,7 +5,7 @@ use std::str::FromStr;
 pub use conn::Vnt;
 
 use crate::channel::punch::PunchModel;
-use crate::channel::UseChannelType;
+use crate::channel::{ConnectProtocol, UseChannelType};
 use crate::cipher::CipherModel;
 use crate::compression::Compressor;
 use crate::util::{address_choose, dns_query_all};
@@ -28,7 +28,7 @@ pub struct Config {
     pub out_ips: Vec<(u32, u32)>,
     pub password: Option<String>,
     pub mtu: Option<u32>,
-    pub tcp: bool,
+    pub protocol: ConnectProtocol,
     pub ip: Option<Ipv4Addr>,
     #[cfg(feature = "ip_proxy")]
     #[cfg(feature = "integrated_tun")]
@@ -67,7 +67,6 @@ impl Config {
         out_ips: Vec<(u32, u32)>,
         password: Option<String>,
         mtu: Option<u32>,
-        tcp: bool,
         ip: Option<Ipv4Addr>,
         #[cfg(feature = "integrated_tun")]
         #[cfg(feature = "ip_proxy")]
@@ -109,8 +108,32 @@ impl Config {
         if name.is_empty() || name.len() > 128 {
             return Err(anyhow!("name too long"));
         }
-        let server_address =
-            address_choose(dns_query_all(&server_address_str, name_servers.clone())?)?;
+        let mut server_address_str = server_address_str.to_lowercase();
+        let mut _query_dns = true;
+        let mut protocol = ConnectProtocol::UDP;
+        #[cfg(feature = "websocket")]
+        {
+            if server_address_str.starts_with("ws://") {
+                protocol = ConnectProtocol::WS;
+                _query_dns = false;
+            }
+            if server_address_str.starts_with("wss://") {
+                protocol = ConnectProtocol::WSS;
+                _query_dns = false;
+            }
+        }
+
+        let mut server_address = "0.0.0.0:0".parse().unwrap();
+        if _query_dns {
+            if let Some(s) = server_address_str.strip_prefix("udp://") {
+                server_address_str = s.to_string();
+            } else if let Some(s) = server_address_str.strip_prefix("tcp://") {
+                server_address_str = s.to_string();
+                protocol = ConnectProtocol::TCP;
+            }
+            server_address =
+                address_choose(dns_query_all(&server_address_str, name_servers.clone())?)?;
+        }
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;
 
@@ -133,7 +156,7 @@ impl Config {
             out_ips,
             password,
             mtu,
-            tcp,
+            protocol,
             ip,
             #[cfg(feature = "ip_proxy")]
             #[cfg(feature = "integrated_tun")]

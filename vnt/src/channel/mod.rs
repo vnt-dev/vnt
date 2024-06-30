@@ -1,12 +1,15 @@
 use anyhow::Context;
 use std::net::{SocketAddr, UdpSocket};
 use std::str::FromStr;
+use tokio::sync::mpsc::channel;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
-use crate::channel::sender::AcceptSocketSender;
+use crate::channel::sender::{AcceptSocketSender, ConnectUtil};
 use crate::channel::tcp_channel::tcp_listen;
 use crate::channel::udp_channel::udp_listen;
+#[cfg(feature = "websocket")]
+use crate::channel::ws_channel::ws_connect_accept;
 use crate::util::StopManager;
 
 pub mod context;
@@ -17,14 +20,21 @@ pub mod punch;
 pub mod sender;
 pub mod tcp_channel;
 pub mod udp_channel;
+#[cfg(feature = "websocket")]
+pub mod ws_channel;
 
-pub const BUFFER_SIZE: usize = 1024 * 16;
+pub const BUFFER_SIZE: usize = 1024 * 64;
+// 这里留个坑，tcp是支持_TCP_MAX_PACKET_SIZE长度的，
+// 但是缓存只用BUFFER_SIZE，会导致多余的数据接收不了
+const TCP_MAX_PACKET_SIZE: usize = (1 << 24) - 1;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UseChannelType {
     Relay,
     P2p,
     All,
 }
+
 impl UseChannelType {
     pub fn is_only_relay(&self) -> bool {
         self == &UseChannelType::Relay
@@ -36,6 +46,7 @@ impl UseChannelType {
         self == &UseChannelType::All
     }
 }
+
 impl FromStr for UseChannelType {
     type Err = String;
 
@@ -48,15 +59,49 @@ impl FromStr for UseChannelType {
         }
     }
 }
+
 impl Default for UseChannelType {
     fn default() -> Self {
         UseChannelType::All
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum ConnectProtocol {
+    UDP,
+    TCP,
+    WS,
+    WSS,
+}
+
+impl ConnectProtocol {
+    #[inline]
+    pub fn is_tcp(&self) -> bool {
+        self == &ConnectProtocol::TCP
+    }
+    #[inline]
+    pub fn is_udp(&self) -> bool {
+        self == &ConnectProtocol::UDP
+    }
+    #[inline]
+    pub fn is_ws(&self) -> bool {
+        self == &ConnectProtocol::WS
+    }
+    #[inline]
+    pub fn is_wss(&self) -> bool {
+        self == &ConnectProtocol::WSS
+    }
+    pub fn is_transport(&self) -> bool {
+        self.is_tcp() || self.is_udp()
+    }
+    pub fn is_base_tcp(&self) -> bool {
+        self.is_tcp() || self.is_ws() || self.is_wss()
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Route {
-    pub is_tcp: bool,
+    pub protocol: ConnectProtocol,
     index: usize,
     pub addr: SocketAddr,
     pub metric: u8,
@@ -68,11 +113,19 @@ pub struct RouteSortKey {
     pub metric: u8,
     pub rt: i64,
 }
+
 const DEFAULT_RT: i64 = 9999;
+
 impl Route {
-    pub fn new(is_tcp: bool, index: usize, addr: SocketAddr, metric: u8, rt: i64) -> Self {
+    pub fn new(
+        protocol: ConnectProtocol,
+        index: usize,
+        addr: SocketAddr,
+        metric: u8,
+        rt: i64,
+    ) -> Self {
         Self {
-            is_tcp,
+            protocol,
             index,
             addr,
             metric,
@@ -81,7 +134,7 @@ impl Route {
     }
     pub fn from(route_key: RouteKey, metric: u8, rt: i64) -> Self {
         Self {
-            is_tcp: route_key.is_tcp,
+            protocol: route_key.protocol,
             index: route_key.index,
             addr: route_key.addr,
             metric,
@@ -90,7 +143,7 @@ impl Route {
     }
     pub fn from_default_rt(route_key: RouteKey, metric: u8) -> Self {
         Self {
-            is_tcp: route_key.is_tcp,
+            protocol: route_key.protocol,
             index: route_key.index,
             addr: route_key.addr,
             metric,
@@ -99,7 +152,7 @@ impl Route {
     }
     pub fn route_key(&self) -> RouteKey {
         RouteKey {
-            is_tcp: self.is_tcp,
+            protocol: self.protocol,
             index: self.index,
             addr: self.addr,
         }
@@ -117,22 +170,24 @@ impl Route {
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
 pub struct RouteKey {
-    is_tcp: bool,
+    protocol: ConnectProtocol,
     index: usize,
     pub addr: SocketAddr,
 }
 
 impl RouteKey {
-    pub(crate) fn new(is_tcp: bool, index: usize, addr: SocketAddr) -> Self {
+    pub(crate) fn new(protocol: ConnectProtocol, index: usize, addr: SocketAddr) -> Self {
         Self {
-            is_tcp,
+            protocol,
             index,
             addr,
         }
     }
-    pub fn is_tcp(&self) -> bool {
-        self.is_tcp
+    #[inline]
+    pub fn protocol(&self) -> ConnectProtocol {
+        self.protocol
     }
+    #[inline]
     pub fn index(&self) -> usize {
         self.index
     }
@@ -142,10 +197,10 @@ pub(crate) fn init_context(
     ports: Vec<u16>,
     use_channel_type: UseChannelType,
     first_latency: bool,
-    is_tcp: bool,
+    protocol: ConnectProtocol,
     packet_loss_rate: Option<f64>,
     packet_delay: u32,
-) -> anyhow::Result<(ChannelContext, mio::net::TcpListener)> {
+) -> anyhow::Result<(ChannelContext, std::net::TcpListener)> {
     assert!(!ports.is_empty(), "not channel");
     let mut udps = Vec::with_capacity(ports.len());
     //检查系统是否支持ipv6
@@ -188,7 +243,7 @@ pub(crate) fn init_context(
         udps,
         use_channel_type,
         first_latency,
-        is_tcp,
+        protocol,
         packet_loss_rate,
         packet_delay,
         use_ipv6,
@@ -229,32 +284,37 @@ pub(crate) fn init_context(
     socket.listen(128)?;
     socket.set_nonblocking(true)?;
     socket.set_nodelay(false)?;
-    let tcp_listener = mio::net::TcpListener::from_std(socket.into());
-    Ok((context, tcp_listener))
+    Ok((context, socket.into()))
 }
 
 pub(crate) fn init_channel<H>(
-    tcp_listener: mio::net::TcpListener,
+    tcp_listener: std::net::TcpListener,
     context: ChannelContext,
     stop_manager: StopManager,
     recv_handler: H,
 ) -> anyhow::Result<(
     AcceptSocketSender<Option<Vec<mio::net::UdpSocket>>>,
-    AcceptSocketSender<(mio::net::TcpStream, SocketAddr, Option<Vec<u8>>)>,
+    ConnectUtil,
 )>
 where
     H: RecvChannelHandler,
 {
+    let (tcp_connect_s, tcp_connect_r) = channel(16);
+    let (ws_connect_s, _ws_connect_r) = channel(16);
+    let connect_util = ConnectUtil::new(tcp_connect_s, ws_connect_s);
     // udp监听，udp_socket_sender 用于NAT类型切换
     let udp_socket_sender =
         udp_listen(stop_manager.clone(), recv_handler.clone(), context.clone())?;
     // 建立tcp监听，tcp_socket_sender 用于tcp 直连
-    let tcp_socket_sender = tcp_listen(
+    tcp_listen(
         tcp_listener,
-        stop_manager.clone(),
+        tcp_connect_r,
         recv_handler.clone(),
         context.clone(),
+        stop_manager.clone(),
     )?;
+    #[cfg(feature = "websocket")]
+    ws_connect_accept(_ws_connect_r, recv_handler, context.clone(), stop_manager)?;
 
-    Ok((udp_socket_sender, tcp_socket_sender))
+    Ok((udp_socket_sender, connect_util))
 }

@@ -56,7 +56,6 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
     opts.optopt("w", "", "客户端加密", "<password>");
     opts.optflag("W", "", "服务端加密");
     opts.optopt("u", "", "自定义mtu(默认为1430)", "<mtu>");
-    opts.optflag("", "tcp", "tcp");
     opts.optopt("", "ip", "指定虚拟ip", "<ip>");
     opts.optflag("", "relay", "仅使用服务器转发");
     opts.optopt("", "par", "任务并行度(必须为正整数)", "<parallel>");
@@ -213,7 +212,6 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
                 return Err(anyhow::anyhow!("'--ip {}' invalid", virtual_ip));
             }
         }
-        let tcp_channel = matches.opt_present("tcp");
         let relay = matches.opt_present("relay");
 
         let cipher_model = match matches.opt_get::<CipherModel>("model") {
@@ -290,7 +288,6 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
             out_ip,
             password,
             mtu,
-            tcp_channel,
             virtual_ip,
             #[cfg(feature = "integrated_tun")]
             #[cfg(feature = "ip_proxy")]
@@ -339,7 +336,9 @@ fn print_usage(program: &str, _opts: Options) {
     );
     println!("  -n <name>           给设备一个名字,便于区分不同设备,默认使用系统版本");
     println!("  -d <id>             设备唯一标识符,不使用--ip参数时,服务端凭此参数分配虚拟ip,注意不能重复");
-    println!("  -s <server>         注册和中继服务器地址,以'TXT:'开头表示解析TXT记录");
+    println!(
+        "  -s <server>         注册和中继服务器地址,协议支持使用tcp://和ws://和wss://,默认为udp://"
+    );
     println!("  -e <stun-server>    stun服务器,用于探测NAT类型,可使用多个地址,如-e stun.miwifi.com -e turn.cloudflare.com");
     #[cfg(target_os = "windows")]
     #[cfg(feature = "integrated_tun")]
@@ -357,7 +356,6 @@ fn print_usage(program: &str, _opts: Options) {
     #[cfg(feature = "file_config")]
     println!("  -f <conf_file>      读取配置文件中的配置");
 
-    println!("  --tcp               和服务端使用tcp通信,默认使用udp,遇到udp qos时可指定使用tcp");
     println!("  --ip <ip>           指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配");
     let mut enums = String::new();
     #[cfg(any(feature = "aes_gcm", feature = "server_encrypt"))]

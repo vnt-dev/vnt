@@ -21,6 +21,11 @@ pub fn console_info(status: Info) {
 
     println!("NAT type: {}", style(status.nat_type).green());
     println!("Relay server: {}", style(status.relay_server).green());
+    println!(
+        "Udp listen: {}",
+        style(status.udp_listen_addr.join(", ")).green()
+    );
+    println!("Tcp listen: {}", style(status.tcp_listen_addr).green());
     println!("Public ips: {}", style(status.public_ips).green());
     println!("Local addr: {}", style(status.local_addr).green());
     println!("IPv6: {}", style(status.ipv6_addr).green());

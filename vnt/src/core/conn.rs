@@ -164,7 +164,7 @@ impl VntInner {
             ports,
             config.use_channel_type,
             config.first_latency,
-            config.tcp,
+            config.protocol,
             config.packet_loss_rate,
             config.packet_delay,
         )?;
@@ -253,14 +253,14 @@ impl VntInner {
         );
 
         //初始化网络数据通道
-        let (udp_socket_sender, tcp_socket_sender) =
+        let (udp_socket_sender, connect_util) =
             init_channel(tcp_listener, context.clone(), stop_manager.clone(), handler)?;
         // 打洞逻辑
         let punch = Punch::new(
             context.clone(),
             config.punch_model,
-            config.tcp,
-            tcp_socket_sender.clone(),
+            config.protocol.is_base_tcp(),
+            connect_util.clone(),
             external_route.clone(),
             nat_test.clone(),
             current_device.clone(),
@@ -274,7 +274,7 @@ impl VntInner {
             context.clone(),
             current_device.clone(),
             config_info.clone(),
-            tcp_socket_sender.clone(),
+            connect_util.clone(),
             callback.clone(),
             0,
             handshake,

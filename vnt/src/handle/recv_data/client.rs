@@ -238,7 +238,7 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                 //忽略掉来源于自己的包
                 if self
                     .nat_test
-                    .is_local_address(route_key.is_tcp(), route_key.addr)
+                    .is_local_address(route_key.protocol().is_base_tcp(), route_key.addr)
                 {
                     return Ok(());
                 }
@@ -261,7 +261,7 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                 }
                 if self
                     .nat_test
-                    .is_local_address(route_key.is_tcp(), route_key.addr)
+                    .is_local_address(route_key.protocol().is_base_tcp(), route_key.addr)
                 {
                     return Ok(());
                 }

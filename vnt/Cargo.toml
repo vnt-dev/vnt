@@ -1,6 +1,6 @@
 [package]
 name = "vnt"
-version = "1.2.10"
+version = "1.2.11"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -37,13 +37,15 @@ crossbeam-queue = "0.3.11"
 anyhow = "1.0.82"
 dns-parser = "0.8.0"
 
-tokio = { version = "1.37.0", features = ["full"], optional = true }
+tokio = { version = "1.37.0", features = ["full"] }
 
 lz4_flex = { version = "0.11", default-features = false, optional = true }
 zstd = { version = "0.13.1", optional = true }
 
 fnv = "1.0.7"
 igd = { version = "0.12.1", optional = true }
+tokio-tungstenite = { version = "0.23.1", optional = true }
+futures-util = "0.3.30"
 [target.'cfg(target_os = "windows")'.dependencies]
 libloading = "0.8.0"
 
@@ -54,7 +56,7 @@ protoc-bin-vendored = "3.0.0"
 cfg_aliases = "0.2.1"
 
 [features]
-default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "lz4_compress", "zstd_compress", "integrated_tun"]
+default = ["websocket", "server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "lz4_compress", "zstd_compress", "integrated_tun"]
 openssl = ["openssl-sys"]
 # 从源码编译
 openssl-vendored = ["openssl-sys/vendored"]
@@ -65,9 +67,10 @@ sm4_cbc = ["libsm"]
 aes_gcm = ["aes-gcm"]
 chacha20_poly1305 = ["chacha20poly1305", "chacha20"]
 server_encrypt = ["aes-gcm", "rsa", "spki"]
-ip_proxy = ["tokio"]
-port_mapping = ["tokio"]
+ip_proxy = []
+port_mapping = []
 lz4_compress = ["lz4_flex"]
 zstd_compress = ["zstd"]
 integrated_tun = ["tun"]
 upnp = ["igd"]
+websocket = ["tokio-tungstenite"]

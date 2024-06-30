@@ -7,12 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{io, thread};
 
-use mio::net::TcpStream;
 use rand::prelude::SliceRandom;
 use rand::Rng;
 
 use crate::channel::context::ChannelContext;
-use crate::channel::sender::AcceptSocketSender;
+use crate::channel::sender::ConnectUtil;
 use crate::external_route::ExternalRoute;
 use crate::handle::CurrentDeviceInfo;
 use crate::nat::NatTest;
@@ -51,7 +50,7 @@ pub struct NatInfo {
     pub nat_type: NatType,
     pub(crate) local_ipv4: Option<Ipv4Addr>,
     pub(crate) ipv6: Option<Ipv6Addr>,
-    pub(crate) udp_ports: Vec<u16>,
+    pub udp_ports: Vec<u16>,
     pub tcp_port: u16,
 }
 
@@ -189,7 +188,7 @@ pub struct Punch {
     port_index: HashMap<Ipv4Addr, usize>,
     punch_model: PunchModel,
     is_tcp: bool,
-    tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
+    connect_util: ConnectUtil,
     external_route: ExternalRoute,
     nat_test: NatTest,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -200,7 +199,7 @@ impl Punch {
         context: ChannelContext,
         punch_model: PunchModel,
         is_tcp: bool,
-        tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
+        connect_util: ConnectUtil,
         external_route: ExternalRoute,
         nat_test: NatTest,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -215,7 +214,7 @@ impl Punch {
             port_index: HashMap::new(),
             punch_model,
             is_tcp,
-            tcp_socket_sender,
+            connect_util,
             external_route,
             nat_test,
             current_device,
@@ -224,26 +223,11 @@ impl Punch {
 }
 
 impl Punch {
-    fn connect_tcp(&self, buf: &[u8], addr: SocketAddr) -> bool {
+    fn connect_tcp(&self, buf: &[u8], addr: SocketAddr) {
         if self.nat_test.is_local_address(true, addr) {
-            return false;
+            return;
         }
-        // mio是非阻塞的，不能立马判断是否能连接成功，所以用标准库的tcp
-        match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
-            Ok(tcp_stream) => {
-                if tcp_stream.set_nonblocking(true).is_err() {
-                    return false;
-                }
-                return self
-                    .tcp_socket_sender
-                    .try_add_socket((TcpStream::from_std(tcp_stream), addr, Some(buf.to_vec())))
-                    .is_ok();
-            }
-            Err(e) => {
-                log::warn!("连接到tcp失败,addr={},err={}", addr, e);
-            }
-        }
-        false
+        self.connect_util.try_connect_tcp(buf.to_vec(), addr);
     }
     pub fn punch(
         &mut self,
@@ -274,22 +258,16 @@ impl Punch {
         if punch_tcp && self.is_tcp && nat_info.tcp_port != 0 {
             //向tcp发起连接
             if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
-                if self.connect_tcp(buf, ipv6_addr) {
-                    // return Ok(());
-                }
+                self.connect_tcp(buf, ipv6_addr)
             }
             //向tcp发起连接
             if let Some(ipv4_addr) = nat_info.local_tcp_ipv4addr() {
-                if self.connect_tcp(buf, ipv4_addr) {
-                    // return Ok(());
-                }
+                self.connect_tcp(buf, ipv4_addr)
             }
             if nat_info.nat_type == NatType::Cone && nat_info.public_ips.len() == 1 {
                 let addr =
                     SocketAddr::V4(SocketAddrV4::new(nat_info.public_ips[0], nat_info.tcp_port));
-                if self.connect_tcp(buf, addr) {
-                    // return Ok(());
-                }
+                self.connect_tcp(buf, addr)
             }
         }
         let channel_num = self.context.channel_num();

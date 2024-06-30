@@ -1,13 +1,13 @@
 use std::io;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::sync::Arc;
 
 use crossbeam_utils::atomic::AtomicCell;
-use mio::Token;
+use tokio::sync::mpsc::Sender;
 
 use crate::channel::context::ChannelContext;
-use crate::channel::notify::{AcceptNotify, WritableNotify};
+use crate::channel::notify::AcceptNotify;
 use crate::cipher::Cipher;
 use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
@@ -133,58 +133,54 @@ impl<T> AcceptSocketSender<T> {
         }
     }
 }
-
 #[derive(Clone)]
 pub struct PacketSender {
-    inner: Arc<PacketSenderInner>,
+    sender: Sender<Vec<u8>>,
 }
 
 impl PacketSender {
-    pub fn new(notify: WritableNotify, buffer: SyncSender<Vec<u8>>, token: Token) -> Self {
-        Self {
-            inner: Arc::new(PacketSenderInner {
-                token,
-                notify,
-                buffer,
-            }),
-        }
+    pub fn new(sender: Sender<Vec<u8>>) -> Self {
+        Self { sender }
     }
-    #[inline]
     pub fn try_send(&self, buf: &[u8]) -> io::Result<()> {
-        self.inner.try_send(buf)
-    }
-    pub fn shutdown(&self) -> io::Result<()> {
-        self.inner.shutdown()
-    }
-}
-
-pub struct PacketSenderInner {
-    token: Token,
-    notify: WritableNotify,
-    buffer: SyncSender<Vec<u8>>,
-}
-
-impl PacketSenderInner {
-    #[inline]
-    fn try_send(&self, buf: &[u8]) -> io::Result<()> {
-        let len = buf.len();
-        let mut buf_vec = Vec::with_capacity(buf.len() + 4);
-        buf_vec.extend_from_slice(&[
-            (len >> 24) as u8,
-            (len >> 16) as u8,
-            (len >> 8) as u8,
-            len as u8,
-        ]);
-        buf_vec.extend_from_slice(buf);
-        match self.buffer.try_send(buf_vec) {
-            Ok(_) => self.notify.notify(self.token, true),
-            Err(e) => match e {
-                TrySendError::Disconnected(_) => Err(io::Error::from(io::ErrorKind::WriteZero)),
-                TrySendError::Full(_) => Err(io::Error::from(io::ErrorKind::WouldBlock)),
-            },
+        match self.sender.try_send(buf.to_vec()) {
+            Ok(_) => Ok(()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "通道已满，发生丢包",
+            )),
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "通道关闭，发生丢包",
+            )),
         }
     }
-    fn shutdown(&self) -> io::Result<()> {
-        self.notify.notify(self.token, false)
+}
+
+#[derive(Clone)]
+pub struct ConnectUtil {
+    connect_tcp: Sender<(Vec<u8>, SocketAddr)>,
+    connect_ws: Sender<(Vec<u8>, String)>,
+}
+
+impl ConnectUtil {
+    pub fn new(
+        connect_tcp: Sender<(Vec<u8>, SocketAddr)>,
+        connect_ws: Sender<(Vec<u8>, String)>,
+    ) -> Self {
+        Self {
+            connect_tcp,
+            connect_ws,
+        }
+    }
+    pub fn try_connect_tcp(&self, buf: Vec<u8>, addr: SocketAddr) {
+        if self.connect_tcp.try_send((buf, addr)).is_err() {
+            log::warn!("try_connect_tcp failed {}", addr);
+        }
+    }
+    pub fn try_connect_ws(&self, buf: Vec<u8>, addr: String) {
+        if self.connect_ws.try_send((buf, addr)).is_err() {
+            log::warn!("try_connect_ws failed");
+        }
     }
 }

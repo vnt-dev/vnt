@@ -1,6 +1,6 @@
 [package]
 name = "vn-link"
-version = "1.2.10"
+version = "1.2.11"
 edition = "2021"
 
 [dependencies]
@@ -27,3 +27,5 @@ server_encrypt = ["vnt/server_encrypt"]
 port_mapping = ["vnt/port_mapping"]
 lz4_compress = ["vnt/lz4_compress"]
 zstd_compress = ["vnt/zstd_compress"]
+upnp = ["vnt/upnp"]
+websocket = ["vnt/websocket"]

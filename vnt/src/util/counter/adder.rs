@@ -90,7 +90,7 @@ impl U64Adder {
             index: 0,
         }
     }
-    pub fn add(&mut self, num: u64) {
+    pub fn add(&self, num: u64) {
         self.inner.base[self.index].add(num);
     }
     pub fn get(&self) -> u64 {

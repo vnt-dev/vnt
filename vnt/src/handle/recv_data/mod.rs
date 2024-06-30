@@ -44,7 +44,7 @@ pub struct RecvDataHandler<Call, Device> {
 
 impl<Call: VntCallback, Device: DeviceWrite> RecvChannelHandler for RecvDataHandler<Call, Device> {
     fn handle(
-        &mut self,
+        &self,
         buf: &mut [u8],
         extend: &mut [u8],
         route_key: RouteKey,
@@ -54,7 +54,7 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvChannelHandler for RecvDataHand
             return;
         }
         //判断stun响应包
-        if !route_key.is_tcp() {
+        if route_key.protocol().is_udp() {
             if let Ok(rs) = self
                 .nat_test
                 .recv_data(route_key.index(), route_key.addr, buf)
@@ -135,7 +135,7 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
         }
     }
     fn handle0(
-        &mut self,
+        &self,
         buf: &mut [u8],
         extend: &mut [u8],
         route_key: RouteKey,

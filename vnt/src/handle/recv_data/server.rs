@@ -24,9 +24,7 @@ use crate::handle::callback::{ErrorInfo, ErrorType, HandshakeInfo, RegisterInfo,
 use crate::handle::handshaker;
 use crate::handle::handshaker::Handshake;
 use crate::handle::recv_data::PacketHandler;
-use crate::handle::{
-    registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo, GATEWAY_IP,
-};
+use crate::handle::{registrar, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
 use crate::proto::message::{DeviceList, HandshakeResponse, RegistrationResponse};
 use crate::protocol::body::ENCRYPTION_RESERVED;

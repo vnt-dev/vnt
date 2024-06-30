@@ -1,4 +1,5 @@
 use std::io;
+use vnt::channel::ConnectProtocol;
 use vnt::core::Vnt;
 
 use crate::command::entity::{DeviceItem, Info, RouteItem};
@@ -81,6 +82,7 @@ fn command_(cmd: CommandEnum) -> io::Result<()> {
 
 pub fn command_route(vnt: &Vnt) -> Vec<RouteItem> {
     let route_table = vnt.route_table();
+    let server_addr = vnt.config().server_address_str.clone();
     let mut route_list = Vec::with_capacity(route_table.len());
     for (destination, routes) in route_table {
         for route in routes {
@@ -93,11 +95,14 @@ pub fn command_route(vnt: &Vnt) -> Vec<RouteItem> {
             } else {
                 route.rt.to_string()
             };
-            let interface = if route.is_tcp {
-                format!("tcp@{}", route.addr)
-            } else {
-                route.addr.to_string()
+            let interface = match route.protocol {
+                ConnectProtocol::UDP => route.addr.to_string(),
+                ConnectProtocol::TCP => {
+                    format!("tcp@{}", route.addr)
+                }
+                ConnectProtocol::WS | ConnectProtocol::WSS => server_addr.clone(),
             };
+
             let item = RouteItem {
                 destination: destination.to_string(),
                 next_hop,
@@ -145,7 +150,7 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
             };
         let (nat_traversal_type, rt) = if let Some(route) = vnt.route(&peer.virtual_ip) {
             let nat_traversal_type = if route.metric == 1 {
-                if route.is_tcp {
+                if route.protocol.is_base_tcp() {
                     "tcp-p2p"
                 } else {
                     "p2p"
@@ -195,6 +200,7 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
 }
 
 pub fn command_info(vnt: &Vnt) -> Info {
+    let config = vnt.config();
     let current_device = vnt.current_device();
     let nat_info = vnt.nat_info();
     let name = vnt.name().to_string();
@@ -202,7 +208,11 @@ pub fn command_info(vnt: &Vnt) -> Info {
     let virtual_gateway = current_device.virtual_gateway().to_string();
     let virtual_netmask = current_device.virtual_netmask.to_string();
     let connect_status = format!("{:?}", vnt.connection_status());
-    let relay_server = current_device.connect_server.to_string();
+    let relay_server = if current_device.connect_server.port() == 0 {
+        config.server_address_str.clone()
+    } else {
+        current_device.connect_server.to_string()
+    };
     let nat_type = format!("{:?}", nat_info.nat_type);
     let public_ips: Vec<String> = nat_info.public_ips.iter().map(|v| v.to_string()).collect();
     let public_ips = public_ips.join(",");
@@ -222,6 +232,12 @@ pub fn command_info(vnt: &Vnt) -> Info {
     let port_mapping_list = vec![];
     let in_ips = vnt.config().in_ips.clone();
     let out_ips = vnt.config().out_ips.clone();
+    let udp_listen_addr = nat_info
+        .udp_ports
+        .iter()
+        .map(|port| format!("0.0.0.0:{}", port))
+        .collect();
+    let tcp_listen_addr = format!("0.0.0.0:{}", nat_info.tcp_port);
     Info {
         name,
         virtual_ip,
@@ -238,5 +254,7 @@ pub fn command_info(vnt: &Vnt) -> Info {
         port_mapping_list,
         in_ips,
         out_ips,
+        udp_listen_addr,
+        tcp_listen_addr,
     }
 }

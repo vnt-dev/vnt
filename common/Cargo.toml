@@ -1,6 +1,6 @@
 [package]
 name = "common"
-version = "1.2.10"
+version = "1.2.11"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -33,6 +33,7 @@ port_mapping = ["vnt/port_mapping"]
 lz4 = ["vnt/lz4_compress"]
 zstd = ["vnt/zstd_compress"]
 upnp = ["vnt/upnp"]
+websocket = ["vnt/websocket"]
 command = []
 file_config = []
 log = ["log4rs"]
