@@ -78,10 +78,9 @@ async fn connect_ws<H>(
 where
     H: RecvChannelHandler,
 {
-    println!("ws协议 {}", url);
     let (mut ws, response) =
         tokio::time::timeout(Duration::from_secs(3), connect_async(url)).await??;
-    println!("ws协议 {:?}", response);
+    log::info!("ws协议握手 {:?}", response);
     ws.send(Message::Binary(data)).await?;
     let (mut ws_write, ws_read) = ws.split();
     let (sender, mut receiver) = channel::<Vec<u8>>(100);
