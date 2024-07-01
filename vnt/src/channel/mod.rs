@@ -227,12 +227,7 @@ pub(crate) fn init_context(
                 address,
             )
         };
-        if let Err(e) = socket.set_send_buffer_size(2 * 1024 * 1024) {
-            log::warn!("set_send_buffer_size {:?}", e);
-        }
-        if let Err(e) = socket.set_recv_buffer_size(2 * 1024 * 1024) {
-            log::warn!("set_send_buffer_size {:?}", e);
-        }
+
         socket
             .bind(&address.into())
             .with_context(|| format!("bind failed: {}", &address))?;
