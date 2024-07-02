@@ -309,7 +309,7 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
         ) {
             Ok(config) => config,
             Err(e) => {
-                println!("config.toml error: {}", e);
+                println!("config error: {}", e);
                 std::process::exit(1);
             }
         };
