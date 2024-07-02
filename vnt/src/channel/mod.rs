@@ -8,7 +8,7 @@ use crate::channel::handler::RecvChannelHandler;
 use crate::channel::sender::{AcceptSocketSender, ConnectUtil};
 use crate::channel::tcp_channel::tcp_listen;
 use crate::channel::udp_channel::udp_listen;
-#[cfg(feature = "websocket")]
+#[cfg(feature = "ws")]
 use crate::channel::ws_channel::ws_connect_accept;
 use crate::util::StopManager;
 
@@ -20,7 +20,7 @@ pub mod punch;
 pub mod sender;
 pub mod tcp_channel;
 pub mod udp_channel;
-#[cfg(feature = "websocket")]
+#[cfg(feature = "ws")]
 pub mod ws_channel;
 
 pub const BUFFER_SIZE: usize = 1024 * 64;
@@ -308,7 +308,7 @@ where
         context.clone(),
         stop_manager.clone(),
     )?;
-    #[cfg(feature = "websocket")]
+    #[cfg(feature = "ws")]
     ws_connect_accept(_ws_connect_r, recv_handler, context.clone(), stop_manager)?;
 
     Ok((udp_socket_sender, connect_util))

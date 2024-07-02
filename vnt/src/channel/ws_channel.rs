@@ -8,7 +8,8 @@ use std::thread;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{channel, Receiver};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::http::StatusCode;
+use tokio_tungstenite::tungstenite::{Error, Message};
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::channel::context::ChannelContext;
@@ -71,15 +72,44 @@ const WS_ADDR: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFI
 
 async fn connect_ws<H>(
     data: Vec<u8>,
-    url: String,
+    mut url: String,
     recv_handler: H,
     context: ChannelContext,
 ) -> anyhow::Result<()>
 where
     H: RecvChannelHandler,
 {
-    let (mut ws, response) =
-        tokio::time::timeout(Duration::from_secs(3), connect_async(url)).await??;
+    let mut count = 0;
+    log::info!("尝试建立连接 {:?}", url);
+    let (mut ws, response) = loop {
+        count += 1;
+        if count > 3 {
+            Err(anyhow::anyhow!("发生多次重定向，链接终止"))?
+        }
+        match tokio::time::timeout(Duration::from_secs(3), connect_async(url)).await? {
+            Ok(rs) => break rs,
+            Err(e) => {
+                if let Error::Http(res) = &e {
+                    if res.status() == StatusCode::MOVED_PERMANENTLY
+                        || res.status() == StatusCode::FOUND
+                        || res.status() == StatusCode::SEE_OTHER
+                        || res.status() == StatusCode::TEMPORARY_REDIRECT
+                        || res.status() == StatusCode::PERMANENT_REDIRECT
+                    {
+                        if let Some(v) = res.headers().get("Location") {
+                            if let Ok(redirect) = v.to_str() {
+                                log::info!("url重定向响应头 {:?}", res.headers());
+                                log::info!("url重定向地址 {}", redirect);
+                                url = redirect.to_string();
+                                continue;
+                            }
+                        }
+                    }
+                }
+                return Err(e)?;
+            }
+        }
+    };
     log::info!("ws协议握手 {:?}", response);
     ws.send(Message::Binary(data)).await?;
     let (mut ws_write, ws_read) = ws.split();

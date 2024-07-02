@@ -44,40 +44,40 @@ jobs:
             FEATURES: default
           - TARGET: x86_64-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: aarch64-unknown-linux-musl # tested on aws t4g.nano in alpine container
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: armv7-unknown-linux-musleabihf # raspberry pi 2-3-4, not tested
             OS: ubuntu-latest
-            FEATURES: openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: armv7-unknown-linux-musleabi # raspberry pi 2-3-4, not tested
             OS: ubuntu-latest
-            FEATURES: openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: arm-unknown-linux-musleabihf # raspberry pi 0-1, not tested
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: arm-unknown-linux-musleabi # raspberry pi 0-1, not tested
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: x86_64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: aarch64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: i686-pc-windows-msvc # tested on a windows machine
             OS: windows-2019
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
             OS: windows-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: mipsel-unknown-linux-musl # openwrt
             OS: ubuntu-latest
-            FEATURES: openssl-vendored,ring-cipher
+            FEATURES: ring-cipher,wss
           - TARGET: mips-unknown-linux-musl # openwrt
             OS: ubuntu-latest
-            FEATURES: openssl-vendored
+            FEATURES: ring-cipher,wss
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:

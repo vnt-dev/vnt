@@ -21,7 +21,7 @@ winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "win
 
 [features]
 default = ["default-feature"]
-default-feature = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "log", "command", "file_config", "lz4"]
+default-feature = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "log", "command", "file_config", "lz4", "ws"]
 
 openssl = ["vnt/openssl", "common/openssl"]
 openssl-vendored = ["vnt/openssl-vendored", "common/openssl-vendored"]
@@ -36,12 +36,12 @@ port_mapping = ["vnt/port_mapping", "common/port_mapping"]
 lz4 = ["vnt/lz4_compress", "common/lz4"]
 zstd = ["vnt/zstd_compress", "common/zstd"]
 ip_proxy = ["vnt/ip_proxy", "common/ip_proxy"]
+upnp = ["vnt/upnp", "common/upnp"]
+ws = ["vnt/ws", "common/ws"]
+wss = ["vnt/wss", "common/wss"]
 log = ["common/log"]
 command = ["common/command"]
 file_config = ["common/file_config"]
-upnp = ["common/upnp"]
-websocket = ["common/websocket"]
-
 [build-dependencies]
 rand = "0.8.5"
 chrono = "0.4.23"

@@ -111,16 +111,17 @@ impl Config {
         let mut server_address_str = server_address_str.to_lowercase();
         let mut _query_dns = true;
         let mut protocol = ConnectProtocol::UDP;
-        #[cfg(feature = "websocket")]
-        {
-            if server_address_str.starts_with("ws://") {
-                protocol = ConnectProtocol::WS;
-                _query_dns = false;
-            }
-            if server_address_str.starts_with("wss://") {
-                protocol = ConnectProtocol::WSS;
-                _query_dns = false;
-            }
+        if server_address_str.starts_with("ws://") {
+            #[cfg(not(feature = "ws"))]
+            Err(anyhow!("Ws not supported"))?;
+            protocol = ConnectProtocol::WS;
+            _query_dns = false;
+        }
+        if server_address_str.starts_with("wss://") {
+            #[cfg(not(feature = "wss"))]
+            Err(anyhow!("Wss not supported"))?;
+            protocol = ConnectProtocol::WSS;
+            _query_dns = false;
         }
 
         let mut server_address = "0.0.0.0:0".parse().unwrap();
