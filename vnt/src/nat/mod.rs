@@ -2,7 +2,6 @@ use anyhow::Context;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::net::{SocketAddr, UdpSocket};
-use std::ops::Sub;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -61,6 +60,7 @@ pub fn local_ipv6() -> Option<Ipv6Addr> {
     }
     None
 }
+
 pub const fn is_ipv4_global(ipv4: &Ipv4Addr) -> bool {
     !(ipv4.octets()[0] == 0 // "This network"
         || ipv4.is_private()
@@ -78,6 +78,7 @@ pub const fn is_ipv4_global(ipv4: &Ipv4Addr) -> bool {
         || ipv4.octets()[0] & 240 == 240 && !ipv4.is_broadcast()//ipv4.is_reserved()
         || ipv4.is_broadcast())
 }
+
 pub const fn is_ipv6_global(ipv6addr: &Ipv6Addr) -> bool {
     !(ipv6addr.is_unspecified()
         || ipv6addr.is_loopback()
@@ -169,11 +170,14 @@ impl NatTest {
         }
         #[cfg(feature = "upnp")]
         upnp.add_tcp_port(tcp_port);
+        let instant = Instant::now();
         NatTest {
             stun_server,
             info,
             time: Arc::new(AtomicCell::new(
-                Instant::now().sub(Duration::from_secs(100)),
+                instant
+                    .checked_sub(Duration::from_secs(100))
+                    .unwrap_or(instant),
             )),
             udp_ports,
             tcp_port,

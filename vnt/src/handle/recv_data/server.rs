@@ -80,7 +80,11 @@ impl<Call, Device> ServerPacketHandler<Call, Device> {
             nat_test,
             callback,
             #[cfg(feature = "server_encrypt")]
-            up_key_time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
+            up_key_time: Arc::new(AtomicCell::new(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(60))
+                    .unwrap_or(Instant::now()),
+            )),
             external_route,
             handshake,
             #[cfg(feature = "integrated_tun")]

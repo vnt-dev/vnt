@@ -30,7 +30,11 @@ impl Handshake {
         #[cfg(feature = "server_encrypt")] rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
     ) -> Self {
         Handshake {
-            time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
+            time: Arc::new(AtomicCell::new(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(60))
+                    .unwrap_or(Instant::now()),
+            )),
             #[cfg(feature = "server_encrypt")]
             rsa_cipher,
         }
