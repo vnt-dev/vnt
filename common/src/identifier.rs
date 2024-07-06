@@ -56,7 +56,8 @@ pub fn get_unique_identifier() -> Option<String> {
     if let Ok(output) = Command::new("dmidecode")
         .arg("-s")
         .arg("system-uuid")
-        .output() {
+        .output()
+    {
         let identifier = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         if !identifier.is_empty() {
             return Some(identifier.to_string());
