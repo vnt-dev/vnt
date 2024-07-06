@@ -78,7 +78,9 @@ impl Device {
                 ));
             }
             wintun_log::set_default_logger_if_unset(&win_tun);
-            let _ = Self::delete_for_name(&win_tun, &name_utf16);
+            if Self::delete_for_name(&win_tun, &name_utf16).is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
             let mut guid_bytes: [u8; 16] = [0u8; 16];
             rand::thread_rng().fill(&mut guid_bytes);
             let guid = u128::from_ne_bytes(guid_bytes);
@@ -237,7 +239,10 @@ impl Device {
             if last_error == winapi::shared::winerror::ERROR_NO_MORE_ITEMS {
                 Ok(None)
             } else {
-                Err(io::Error::new(io::ErrorKind::Other, "try_receive failed"))
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("try_receive failed {:?}", io::Error::last_os_error()),
+                ))
             }
         } else {
             Ok(Some(packet::TunPacket {
@@ -254,13 +259,21 @@ impl Device {
         loop {
             //Try 16 times to receive without blocking so we don't have to issue a syscall to wait
             //for the event if packets are being received at a rapid rate
-            for _i in 0..20 {
-                match self.try_receive()? {
-                    None => {
-                        continue;
-                    }
-                    Some(packet) => {
-                        return Ok(packet);
+            for i in 0..20 {
+                match self.try_receive() {
+                    Ok(data) => match data {
+                        None => {
+                            continue;
+                        }
+                        Some(packet) => {
+                            return Ok(packet);
+                        }
+                    },
+                    Err(e) => {
+                        if i > 10 {
+                            // 某些系统存在错误退出的情况(原因不明)，这里尝试忽略部分错误
+                            return Err(e);
+                        }
                     }
                 }
             }
