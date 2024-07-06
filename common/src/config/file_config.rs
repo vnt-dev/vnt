@@ -45,6 +45,7 @@ pub struct FileConfig {
     pub mapping: Vec<String>,
     pub compressor: Option<String>,
     pub vnt_mapping: Vec<String>,
+    pub disable_stats: bool,
 }
 
 impl Default for FileConfig {
@@ -88,6 +89,7 @@ impl Default for FileConfig {
             mapping: vec![],
             compressor: None,
             vnt_mapping: vec![],
+            disable_stats: false,
         }
     }
 }
@@ -174,6 +176,7 @@ pub fn read_config(file_path: &str) -> anyhow::Result<(Config, Vec<String>, bool
         #[cfg(feature = "port_mapping")]
         file_conf.mapping,
         compressor,
+        !file_conf.disable_stats,
     )?;
 
     Ok((config, file_conf.vnt_mapping, file_conf.cmd))

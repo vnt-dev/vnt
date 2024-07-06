@@ -16,7 +16,7 @@ use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::vnt_device::DeviceWrite;
-use crate::util::{StopManager, U64Adder};
+use crate::util::StopManager;
 
 #[repr(transparent)]
 #[derive(Clone, Default)]
@@ -67,7 +67,6 @@ struct TunDeviceHelperInner {
     ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
 }
@@ -81,7 +80,6 @@ impl TunDeviceHelper {
         #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
         client_cipher: Cipher,
         server_cipher: Cipher,
-        up_counter: U64Adder,
         device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
         compressor: Compressor,
         device_adapter: DeviceAdapter,
@@ -95,7 +93,6 @@ impl TunDeviceHelper {
             ip_proxy_map,
             client_cipher,
             server_cipher,
-            up_counter,
             device_list,
             compressor,
         };
@@ -113,7 +110,7 @@ impl TunDeviceHelper {
                 device_stop.stop();
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 //确保停止了
-                if device_stop.is_stop() {
+                if device_stop.is_stopped() {
                     break;
                 }
             }
@@ -136,7 +133,6 @@ impl TunDeviceHelper {
             inner.ip_proxy_map,
             inner.client_cipher,
             inner.server_cipher,
-            inner.up_counter,
             inner.device_list,
             inner.compressor,
             device_stop,

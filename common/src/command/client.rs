@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::str::FromStr;
 use std::time::Duration;
 
-use crate::command::entity::{DeviceItem, Info, RouteItem};
+use crate::command::entity::{ChartA, ChartB, DeviceItem, Info, RouteItem};
 
 pub struct CommandClient {
     buf: Vec<u8>,
@@ -52,6 +52,17 @@ impl CommandClient {
     }
     pub fn info(&mut self) -> io::Result<Info> {
         self.send_cmd(b"info")
+    }
+    pub fn chart_a(&mut self) -> io::Result<ChartA> {
+        self.send_cmd(b"chart_a")
+    }
+    pub fn chart_b(&mut self, input: &str) -> io::Result<ChartB> {
+        let cmd = if input.is_empty() {
+            "chart_b".to_string()
+        } else {
+            format!("chart_b:{}", input)
+        };
+        self.send_cmd(cmd.as_bytes())
     }
     fn send_cmd<'a, V: Deserialize<'a>>(&'a mut self, cmd: &[u8]) -> io::Result<V> {
         self.udp.send(cmd)?;

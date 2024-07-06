@@ -37,7 +37,7 @@ impl DeviceStop {
     pub fn stopped(&self) {
         self.stopped.store(true);
     }
-    pub fn is_stop(&self) -> bool {
+    pub fn is_stopped(&self) -> bool {
         self.stopped.load()
     }
 }

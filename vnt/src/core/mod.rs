@@ -50,6 +50,7 @@ pub struct Config {
     #[cfg(feature = "port_mapping")]
     pub port_mapping_list: Vec<(bool, SocketAddr, String)>,
     pub compressor: Compressor,
+    pub enable_traffic: bool,
 }
 
 impl Config {
@@ -86,6 +87,7 @@ impl Config {
         // 例如 [udp:127.0.0.1:80->10.26.0.10:8080,tcp:127.0.0.1:80->10.26.0.10:8080]
         #[cfg(feature = "port_mapping")] port_mapping_list: Vec<String>,
         compressor: Compressor,
+        enable_traffic: bool,
     ) -> anyhow::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -177,6 +179,7 @@ impl Config {
             #[cfg(feature = "port_mapping")]
             port_mapping_list,
             compressor,
+            enable_traffic,
         })
     }
 }

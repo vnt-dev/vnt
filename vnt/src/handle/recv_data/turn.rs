@@ -40,7 +40,7 @@ impl PacketHandler for TurnPacketHandler {
                 }
                 if route.metric <= ttl {
                     return context
-                        .send_by_key(net_packet.buffer(), route.route_key())
+                        .send_by_key(&net_packet, route.route_key())
                         .context("转发失败");
                 }
             }

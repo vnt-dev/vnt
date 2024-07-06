@@ -77,7 +77,7 @@ fn main0(config: Config, _show_cmd: bool) {
             let mut cmd = String::new();
             loop {
                 cmd.clear();
-                println!("======== input:list,info,route,all,stop ========");
+                println!("======== input:list,info,route,all,stop,chart_a,chart_b[:ip] ========");
                 match std::io::stdin().read_line(&mut cmd) {
                     Ok(len) => {
                         if !common::command::command_str(&cmd[..len], &vnt_util) {

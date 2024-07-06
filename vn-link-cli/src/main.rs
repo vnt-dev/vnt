@@ -65,7 +65,7 @@ async fn main0(config: Config, vn_link_config: VnLinkConfig, _show_cmd: bool) {
             let mut reader = tokio::io::BufReader::new(tokio::io::stdin());
             loop {
                 cmd.clear();
-                println!("======== input:list,info,route,all,stop ========");
+                println!("======== input:list,info,route,all,stop,chart_a,chart_b[:ip] ========");
                 match reader.read_line(&mut cmd).await {
                     Ok(len) => {
                         if !common::command::command_str(&cmd[..len], vnt_c) {

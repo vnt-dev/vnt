@@ -27,13 +27,15 @@ use crate::nat::NatTest;
 #[cfg(feature = "integrated_tun")]
 use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
 use crate::tun_tap_device::vnt_device::DeviceWrite;
-use crate::util::{Scheduler, StopManager, U64Adder, WatchU64Adder};
+use crate::util::limit::TrafficMeterMultiAddress;
+use crate::util::{Scheduler, StopManager};
 use crate::{nat, VntCallback};
 
 #[derive(Clone)]
 pub struct Vnt {
     inner: Arc<VntInner>,
 }
+
 impl Vnt {
     #[cfg(feature = "integrated_tun")]
     pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
@@ -50,6 +52,7 @@ impl Vnt {
         Ok(Self { inner })
     }
 }
+
 impl Deref for Vnt {
     type Target = VntInner;
 
@@ -57,6 +60,7 @@ impl Deref for Vnt {
         &self.inner
     }
 }
+
 pub struct VntInner {
     stop_manager: StopManager,
     config: Config,
@@ -65,12 +69,12 @@ pub struct VntInner {
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     context: Arc<Mutex<Option<ChannelContext>>>,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
-    down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchU64Adder,
     client_secret_hash: Option<[u8; 16]>,
     compressor: Compressor,
     client_cipher: Cipher,
     external_route: ExternalRoute,
+    up_traffic_meter: Option<TrafficMeterMultiAddress>,
+    down_traffic_meter: Option<TrafficMeterMultiAddress>,
 }
 
 impl VntInner {
@@ -91,7 +95,15 @@ impl VntInner {
         callback: Call,
         device: Device,
     ) -> anyhow::Result<Self> {
-        log::info!("config.toml:{:?}", config);
+        log::info!("config: {:?}", config);
+        let (up_traffic_meter, down_traffic_meter) = if config.enable_traffic {
+            (
+                Some(TrafficMeterMultiAddress::default()),
+                Some(TrafficMeterMultiAddress::default()),
+            )
+        } else {
+            (None, None)
+        };
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
         let rsa_cipher: Arc<Mutex<Option<RsaCipher>>> = Arc::new(Mutex::new(None));
@@ -165,6 +177,8 @@ impl VntInner {
             config.protocol,
             config.packet_loss_rate,
             config.packet_delay,
+            up_traffic_meter.clone(),
+            down_traffic_meter.clone(),
         )?;
         let local_ipv4 = nat::local_ipv4();
         let local_ipv6 = nat::local_ipv6();
@@ -199,14 +213,10 @@ impl VntInner {
         let (punch_sender, punch_receiver) = maintain::punch_channel();
         let peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>> =
             Arc::new(RwLock::new(HashMap::with_capacity(16)));
-        let down_counter = U64Adder::default();
-        let down_count_watcher = down_counter.watch();
         let handshake = Handshake::new(
             #[cfg(feature = "server_encrypt")]
             rsa_cipher.clone(),
         );
-        let up_counter = U64Adder::default();
-        let up_count_watcher = up_counter.watch();
         #[cfg(feature = "integrated_tun")]
         let tun_device_helper = {
             TunDeviceHelper::new(
@@ -218,7 +228,6 @@ impl VntInner {
                 proxy_map.clone(),
                 client_cipher.clone(),
                 server_cipher.clone(),
-                up_counter,
                 device_list.clone(),
                 config.compressor,
                 device.clone().into_device_adapter(),
@@ -243,7 +252,6 @@ impl VntInner {
             #[cfg(feature = "ip_proxy")]
             #[cfg(feature = "integrated_tun")]
             proxy_map.clone(),
-            down_counter,
             handshake.clone(),
             #[cfg(feature = "integrated_tun")]
             tun_device_helper,
@@ -280,8 +288,6 @@ impl VntInner {
             let context = context.clone();
             let nat_test = nat_test.clone();
             let device_list = device_list.clone();
-            let down_count_watcher = down_count_watcher.clone();
-            let up_count_watcher = up_count_watcher.clone();
             let config_info = config_info.clone();
             let current_device = current_device.clone();
             if !config.use_channel_type.is_only_relay() {
@@ -308,8 +314,6 @@ impl VntInner {
                     config_info,
                     punch,
                     callback,
-                    down_count_watcher,
-                    up_count_watcher,
                 );
             });
         }
@@ -322,12 +326,12 @@ impl VntInner {
             device_list,
             context: Arc::new(Mutex::new(Some(context))),
             peer_nat_info_map,
-            down_count_watcher,
-            up_count_watcher,
             client_secret_hash: config_info.client_secret_hash,
             compressor,
             client_cipher,
             external_route,
+            up_traffic_meter,
+            down_traffic_meter,
         })
     }
 }
@@ -344,8 +348,6 @@ pub fn start<Call: VntCallback>(
     config_info: BaseConfigInfo,
     punch: Punch,
     callback: Call,
-    down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchU64Adder,
 ) {
     // 定时心跳
     maintain::heartbeat(
@@ -399,13 +401,7 @@ pub fn start<Call: VntCallback>(
             punch,
         );
     }
-    maintain::up_status(
-        scheduler,
-        context.clone(),
-        current_device.clone(),
-        down_count_watcher,
-        up_count_watcher,
-    )
+    maintain::up_status(scheduler, context.clone(), current_device.clone())
 }
 
 impl VntInner {
@@ -463,10 +459,24 @@ impl VntInner {
         }
     }
     pub fn up_stream(&self) -> u64 {
-        self.up_count_watcher.get()
+        self.up_traffic_meter.as_ref().map_or(0, |v| v.total())
+    }
+    pub fn up_stream_all(&self) -> Option<(u64, HashMap<Ipv4Addr, u64>)> {
+        self.up_traffic_meter.as_ref().map(|v| v.get_all())
+    }
+    pub fn up_stream_history(&self) -> Option<(u64, HashMap<Ipv4Addr, (u64, Vec<usize>)>)> {
+        self.up_traffic_meter.as_ref().map(|v| v.get_all_history())
     }
     pub fn down_stream(&self) -> u64 {
-        self.down_count_watcher.get()
+        self.down_traffic_meter.as_ref().map_or(0, |v| v.total())
+    }
+    pub fn down_stream_all(&self) -> Option<(u64, HashMap<Ipv4Addr, u64>)> {
+        self.down_traffic_meter.as_ref().map(|v| v.get_all())
+    }
+    pub fn down_stream_history(&self) -> Option<(u64, HashMap<Ipv4Addr, (u64, Vec<usize>)>)> {
+        self.down_traffic_meter
+            .as_ref()
+            .map(|v| v.get_all_history())
     }
     pub fn stop(&self) {
         //退出协助回收资源
@@ -505,6 +515,7 @@ impl VntInner {
         }
     }
 }
+
 impl Drop for VntInner {
     fn drop(&mut self) {
         self.stop();

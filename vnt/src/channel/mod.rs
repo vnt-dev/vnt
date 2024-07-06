@@ -10,6 +10,7 @@ use crate::channel::tcp_channel::tcp_listen;
 use crate::channel::udp_channel::udp_listen;
 #[cfg(feature = "ws")]
 use crate::channel::ws_channel::ws_connect_accept;
+use crate::util::limit::TrafficMeterMultiAddress;
 use crate::util::StopManager;
 
 pub mod context;
@@ -200,6 +201,8 @@ pub(crate) fn init_context(
     protocol: ConnectProtocol,
     packet_loss_rate: Option<f64>,
     packet_delay: u32,
+    up_traffic_meter: Option<TrafficMeterMultiAddress>,
+    down_traffic_meter: Option<TrafficMeterMultiAddress>,
 ) -> anyhow::Result<(ChannelContext, std::net::TcpListener)> {
     assert!(!ports.is_empty(), "not channel");
     let mut udps = Vec::with_capacity(ports.len());
@@ -227,7 +230,9 @@ pub(crate) fn init_context(
                 address,
             )
         };
-
+        if let Err(e) = socket.set_recv_buffer_size(2 * 1024 * 1024) {
+            log::warn!("set_recv_buffer_size {:?}", e);
+        }
         socket
             .bind(&address.into())
             .with_context(|| format!("bind failed: {}", &address))?;
@@ -242,6 +247,8 @@ pub(crate) fn init_context(
         packet_loss_rate,
         packet_delay,
         use_ipv6,
+        up_traffic_meter,
+        down_traffic_meter,
     );
 
     let port = context.main_local_udp_port()?[0];

@@ -26,7 +26,7 @@ use crate::protocol;
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
-use crate::util::{StopManager, U64Adder};
+use crate::util::StopManager;
 
 fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
     if ipv4_packet.protocol() == Protocol::Icmp {
@@ -53,7 +53,6 @@ pub fn start(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
     device_stop: DeviceStop,
@@ -71,7 +70,6 @@ pub fn start(
                 ip_proxy_map,
                 client_cipher,
                 server_cipher,
-                &up_counter,
                 device_list,
                 compressor,
                 device_stop,
@@ -107,10 +105,7 @@ fn broadcast(
             break;
         }
         if let Some(route) = sender.route_table.route_one_p2p(&peer_ip) {
-            if sender
-                .send_by_key(net_packet.buffer(), route.route_key())
-                .is_ok()
-            {
+            if sender.send_by_key(&net_packet, route.route_key()).is_ok() {
                 p2p_ips.push(peer_ip);
                 continue;
             }
@@ -125,7 +120,7 @@ fn broadcast(
     if p2p_ips.is_empty() {
         //都没有p2p则直接由服务器转发
         if current_device.status.online() {
-            sender.send_default(net_packet.buffer(), current_device.connect_server)?;
+            sender.send_default(&net_packet, current_device.connect_server)?;
         }
         return Ok(());
     }
@@ -135,7 +130,7 @@ fn broadcast(
             //非直连的广播要改变目的地址，不然服务端收到了会再次广播
             net_packet.set_destination(peer_ip);
             sender.send_ipv4_by_id(
-                net_packet.buffer(),
+                &net_packet,
                 &peer_ip,
                 current_device.connect_server,
                 current_device.status.online(),
@@ -163,7 +158,7 @@ fn broadcast(
     broadcast.set_address(&p2p_ips)?;
     broadcast.set_data(net_packet.buffer())?;
     server_cipher.encrypt_ipv4(&mut server_packet)?;
-    sender.send_default(server_packet.buffer(), current_device.connect_server)?;
+    sender.send_default(&server_packet, current_device.connect_server)?;
     Ok(())
 }
 
@@ -211,7 +206,7 @@ pub(crate) fn handle(
         if protocol == Protocol::Icmp {
             net_packet.set_gateway_flag(true);
             server_cipher.encrypt_ipv4(&mut net_packet)?;
-            context.send_default(net_packet.buffer(), current_device.connect_server)?;
+            context.send_default(&net_packet, current_device.connect_server)?;
         }
         return Ok(());
     }
@@ -269,7 +264,7 @@ pub(crate) fn handle(
 
     client_cipher.encrypt_ipv4(&mut net_packet)?;
     context.send_ipv4_by_id(
-        net_packet.buffer(),
+        &net_packet,
         &dest_ip,
         current_device.connect_server,
         current_device.status.online(),

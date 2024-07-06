@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Info {
     pub name: String,
@@ -12,8 +14,6 @@ pub struct Info {
     pub public_ips: String,
     pub local_addr: String,
     pub ipv6_addr: String,
-    pub up: u64,
-    pub down: u64,
     pub port_mapping_list: Vec<(bool, SocketAddr, String)>,
     pub in_ips: Vec<(u32, u32, Ipv4Addr)>,
     pub out_ips: Vec<(u32, u32)>,
@@ -45,4 +45,23 @@ pub struct DeviceItem {
     pub client_secret_hash: Vec<u8>,
     pub current_client_secret: bool,
     pub current_client_secret_hash: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ChartA {
+    pub disable_stats: bool,
+    pub up_total: u64,
+    pub down_total: u64,
+    pub up_map: HashMap<Ipv4Addr, u64>,
+    pub down_map: HashMap<Ipv4Addr, u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ChartB {
+    pub disable_stats: bool,
+    pub ip: Option<Ipv4Addr>,
+    pub up_total: u64,
+    pub up_list: Vec<usize>,
+    pub down_total: u64,
+    pub down_list: Vec<usize>,
 }

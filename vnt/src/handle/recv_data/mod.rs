@@ -26,7 +26,6 @@ use crate::ip_proxy::IpProxyMap;
 use crate::nat::NatTest;
 use crate::protocol::{NetPacket, HEAD_LEN};
 use crate::tun_tap_device::vnt_device::DeviceWrite;
-use crate::util::U64Adder;
 
 mod client;
 mod server;
@@ -38,7 +37,6 @@ pub struct RecvDataHandler<Call, Device> {
     turn: TurnPacketHandler,
     client: ClientPacketHandler<Device>,
     server: ServerPacketHandler<Call, Device>,
-    counter: U64Adder,
     nat_test: NatTest,
 }
 
@@ -93,7 +91,6 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
         #[cfg(feature = "integrated_tun")]
         #[cfg(feature = "ip_proxy")]
         ip_proxy_map: Option<IpProxyMap>,
-        counter: U64Adder,
         handshake: Handshake,
         #[cfg(feature = "integrated_tun")]
         tun_device_helper: crate::tun_tap_device::tun_create_helper::TunDeviceHelper,
@@ -130,7 +127,6 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
             turn,
             client,
             server,
-            counter,
             nat_test,
         }
     }
@@ -141,9 +137,8 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
         route_key: RouteKey,
         context: &ChannelContext,
     ) -> anyhow::Result<()> {
-        // 统计流量
-        self.counter.add(buf.len() as _);
         let net_packet = NetPacket::new(buf)?;
+
         let extend = NetPacket::unchecked(extend);
         if net_packet.ttl() == 0 || net_packet.source_ttl() < net_packet.ttl() {
             log::warn!("丢弃过时包:{:?} {}", net_packet.head(), route_key.addr);
@@ -158,6 +153,10 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
             || dest.is_unspecified()
             || dest == current_device.broadcast_ip
         {
+            // 统计流量
+            if let Some(down_traffic_meter) = &context.down_traffic_meter {
+                down_traffic_meter.add_traffic(net_packet.source(), net_packet.data_len())
+            }
             //发给自己的包
             if net_packet.is_gateway() {
                 //服务端-客户端包

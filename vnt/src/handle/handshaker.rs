@@ -47,7 +47,7 @@ impl Handshake {
         }
         let request_packet = self.handshake_request_packet(secret)?;
         log::info!("发送握手请求,secret={},{:?}", secret, addr);
-        context.send_default(request_packet.buffer(), addr)?;
+        context.send_default(&request_packet, addr)?;
         self.time.store(Instant::now());
         Ok(())
     }

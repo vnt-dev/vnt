@@ -155,7 +155,7 @@ fn recv_handle(
                             return;
                         }
                         if let Err(e) = context.send_ipv4_by_id(
-                            net_packet.buffer(),
+                            &net_packet,
                             &dest_ip,
                             current_device.connect_server,
                             current_device.status.online(),

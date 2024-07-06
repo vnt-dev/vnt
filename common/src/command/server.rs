@@ -1,3 +1,4 @@
+use crate::command::command_chart_b;
 use std::io;
 use std::io::Write;
 use std::net::UdpSocket;
@@ -62,15 +63,26 @@ fn command(cmd: &str, vnt: &Vnt) -> io::Result<String> {
             .unwrap_or_else(|e| format!("error {:?}", e)),
         "info" => serde_yaml::to_string(&crate::command::command_info(vnt))
             .unwrap_or_else(|e| format!("error {:?}", e)),
+        "chart_a" => serde_yaml::to_string(&crate::command::command_chart_a(vnt))
+            .unwrap_or_else(|e| format!("error {:?}", e)),
         "stop" => {
             vnt.stop();
             "stopped".to_string()
         }
         _ => {
-            format!(
-                "command '{}' not found.  Try to enter: 'route'/'list'/'stop' \n",
-                cmd
-            )
+            if let Some(ip) = cmd.strip_prefix("chart_b") {
+                let chart = if ip.is_empty() {
+                    command_chart_b(&vnt, &vnt.current_device().virtual_gateway.to_string())
+                } else {
+                    command_chart_b(&vnt, &ip[1..])
+                };
+                serde_yaml::to_string(&chart).unwrap_or_else(|e| format!("error {:?}", e))
+            } else {
+                format!(
+                    "command '{}' not found.  Try to enter: 'route'/'list'/'stop' \n",
+                    cmd
+                )
+            }
         }
     };
     Ok(out_str)

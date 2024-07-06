@@ -7,7 +7,7 @@ use crate::handle::tun_tap::DeviceStop;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
-use crate::util::{StopManager, U64Adder};
+use crate::util::StopManager;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -23,7 +23,6 @@ pub(crate) fn start_simple(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: &U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
     device_stop: DeviceStop,
@@ -55,7 +54,6 @@ pub(crate) fn start_simple(
         ip_proxy_map,
         client_cipher,
         server_cipher,
-        up_counter,
         device_list,
         compressor,
     ) {
@@ -76,7 +74,6 @@ fn start_simple0(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: &U64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
 ) -> anyhow::Result<()> {
@@ -85,7 +82,6 @@ fn start_simple0(
     loop {
         let len = device.read(&mut buf[12..])? + 12;
         //单线程的
-        up_counter.add(len as u64);
         // buf是重复利用的，需要重置头部
         buf[..12].fill(0);
         match crate::handle::tun_tap::tun_handler::handle(

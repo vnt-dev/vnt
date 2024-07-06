@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::io;
+use std::net::Ipv4Addr;
 use vnt::channel::ConnectProtocol;
 use vnt::core::Vnt;
 
-use crate::command::entity::{DeviceItem, Info, RouteItem};
+use crate::command::entity::{ChartA, ChartB, DeviceItem, Info, RouteItem};
 use crate::console_out;
 
 pub mod client;
@@ -14,6 +16,8 @@ pub enum CommandEnum {
     List,
     All,
     Info,
+    ChartA,
+    ChartB(String),
     Stop,
 }
 
@@ -21,7 +25,9 @@ pub fn command_str(cmd: &str, vnt: &Vnt) -> bool {
     if cmd.is_empty() {
         return false;
     }
-    match cmd.to_lowercase().trim() {
+    let cmd = cmd.to_lowercase();
+    let cmd = cmd.trim();
+    match cmd {
         "list" => {
             let list = command_list(&vnt);
             console_out::console_device_list(list);
@@ -38,11 +44,23 @@ pub fn command_str(cmd: &str, vnt: &Vnt) -> bool {
             let list = command_list(&vnt);
             console_out::console_device_list_all(list);
         }
+        "chart_a" => {
+            let chart = command_chart_a(&vnt);
+            console_out::console_chart_a(chart);
+        }
         "stop" => {
             let _ = vnt.stop();
             return false;
         }
         _ => {}
+    }
+    if let Some(ip) = cmd.strip_prefix("chart_b") {
+        let chart = if ip.is_empty() {
+            command_chart_b(&vnt, &vnt.current_device().virtual_gateway.to_string())
+        } else {
+            command_chart_b(&vnt, &ip[1..])
+        };
+        console_out::console_chart_b(chart);
     }
     println!();
     return true;
@@ -72,6 +90,14 @@ fn command_(cmd: CommandEnum) -> io::Result<()> {
         CommandEnum::Info => {
             let info = command_client.info()?;
             console_out::console_info(info);
+        }
+        CommandEnum::ChartA => {
+            let chart = command_client.chart_a()?;
+            console_out::console_chart_a(chart);
+        }
+        CommandEnum::ChartB(input) => {
+            let chart = command_client.chart_b(&input)?;
+            console_out::console_chart_b(chart);
         }
         CommandEnum::Stop => {
             command_client.stop()?;
@@ -224,8 +250,6 @@ pub fn command_info(vnt: &Vnt) -> Info {
         .ipv6()
         .map(|v| v.to_string())
         .unwrap_or("None".to_string());
-    let up = vnt.up_stream();
-    let down = vnt.down_stream();
     #[cfg(feature = "port_mapping")]
     let port_mapping_list = vnt.config().port_mapping_list.clone();
     #[cfg(not(feature = "port_mapping"))]
@@ -249,12 +273,80 @@ pub fn command_info(vnt: &Vnt) -> Info {
         public_ips,
         local_addr,
         ipv6_addr,
-        up,
-        down,
         port_mapping_list,
         in_ips,
         out_ips,
         udp_listen_addr,
         tcp_listen_addr,
     }
+}
+
+pub fn command_chart_a(vnt: &Vnt) -> ChartA {
+    let disable_stats = !vnt.config().enable_traffic;
+    if disable_stats {
+        let mut chart = ChartA::default();
+        chart.disable_stats = true;
+        return chart;
+    }
+    let (up_total, up_map) = vnt.up_stream_all().unwrap_or_default();
+    let (down_total, down_map) = vnt.down_stream_all().unwrap_or_default();
+    ChartA {
+        disable_stats,
+        up_total,
+        down_total,
+        up_map,
+        down_map,
+    }
+}
+
+pub fn command_chart_b(vnt: &Vnt, input_str: &str) -> ChartB {
+    let disable_stats = !vnt.config().enable_traffic;
+    if disable_stats {
+        let mut chart = ChartB::default();
+        chart.disable_stats = true;
+        return chart;
+    }
+    let (_, up_map) = vnt.up_stream_history().unwrap_or_default();
+    let (_, down_map) = vnt.down_stream_history().unwrap_or_default();
+    let up_keys: HashSet<_> = up_map.keys().cloned().collect();
+    let down_keys: HashSet<_> = down_map.keys().cloned().collect();
+    let mut keys: Vec<Ipv4Addr> = up_keys.union(&down_keys).cloned().collect();
+    keys.sort();
+    if let Some(ip) = find_matching_ipv4_address(input_str, &keys) {
+        let (up_total, up_list) = up_map.get(&ip).cloned().unwrap_or_default();
+        let (down_total, down_list) = down_map.get(&ip).cloned().unwrap_or_default();
+        ChartB {
+            disable_stats,
+            ip: Some(ip),
+            up_total,
+            up_list,
+            down_total,
+            down_list,
+        }
+    } else {
+        ChartB::default()
+    }
+}
+
+fn match_from_end(input_str: &str, ip: &str) -> bool {
+    let mut input_chars = input_str.chars().rev();
+    let mut ip_chars = ip.chars().rev();
+
+    while let (Some(ic), Some(pc)) = (input_chars.next(), ip_chars.next()) {
+        if ic != pc {
+            return false;
+        }
+    }
+
+    input_chars.next().is_none() // Ensure all input characters matched
+}
+
+fn find_matching_ipv4_address(input_str: &str, ip_addresses: &[Ipv4Addr]) -> Option<Ipv4Addr> {
+    for &ip in ip_addresses {
+        let ip_str = ip.to_string();
+        if match_from_end(input_str, &ip_str) {
+            return Some(ip);
+        }
+    }
+    None
 }

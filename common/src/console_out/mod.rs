@@ -1,7 +1,8 @@
 use console::{style, Style};
+use std::collections::HashSet;
 use std::net::Ipv4Addr;
 
-use crate::command::entity::{DeviceItem, Info, RouteItem};
+use crate::command::entity::{ChartA, ChartB, DeviceItem, Info, RouteItem};
 
 pub mod table;
 
@@ -29,8 +30,6 @@ pub fn console_info(status: Info) {
     println!("Public ips: {}", style(status.public_ips).green());
     println!("Local addr: {}", style(status.local_addr).green());
     println!("IPv6: {}", style(status.ipv6_addr).green());
-    println!("Up: {}", style(convert(status.up)).green());
-    println!("Down: {}", style(convert(status.down)).green());
 
     if !status.port_mapping_list.is_empty() {
         println!("------------------------------------------");
@@ -241,4 +240,119 @@ pub fn console_device_list_all(mut list: Vec<DeviceItem>) {
         }
     }
     table::println_table(out_list)
+}
+
+pub fn console_chart_a(chart_a: ChartA) {
+    if chart_a.disable_stats {
+        println!("Traffic statistics not enabled");
+        return;
+    }
+    println!();
+    println!("-----------------------------------------------------------------");
+    println!(
+        "Upload total = {}",
+        style(convert(chart_a.up_total)).green()
+    );
+    println!(
+        "Download total = {}",
+        style(convert(chart_a.down_total)).green()
+    );
+    println!("-----------------------------------------------------------------");
+    let up_keys: HashSet<_> = chart_a.up_map.keys().cloned().collect();
+    let down_keys: HashSet<_> = chart_a.down_map.keys().cloned().collect();
+    let mut keys: Vec<Ipv4Addr> = up_keys.union(&down_keys).cloned().collect();
+    // 排序
+    keys.sort();
+
+    // 找到最大的值，用于缩放条形图长度
+    let up_max_value = *chart_a.up_map.values().max().unwrap_or(&0);
+    let down_max_value = *chart_a.down_map.values().max().unwrap_or(&0);
+    let max_value = up_max_value.max(down_max_value);
+    let max_height = 50;
+    // 打印条形图
+    for key in &keys {
+        if let Some(&value) = chart_a.up_map.get(key) {
+            let bar = "█".repeat(((value as f64 / max_value as f64) * max_height as f64) as usize);
+            println!(
+                "{:<10} | {} upload {}",
+                key,
+                bar,
+                style(convert(value)).green()
+            );
+        }
+        if let Some(&value) = chart_a.down_map.get(key) {
+            let bar = "█".repeat(((value as f64 / max_value as f64) * max_height as f64) as usize);
+            println!(
+                "{:<10} | {} download {}",
+                key,
+                bar,
+                style(convert(value)).green()
+            );
+        }
+        println!("-");
+    }
+}
+
+pub fn console_chart_b(chart_b: ChartB) {
+    if chart_b.disable_stats {
+        println!("Traffic statistics not enabled");
+        return;
+    }
+    let ip = if let Some(ip) = chart_b.ip {
+        ip
+    } else {
+        println!("Ip: None");
+        return;
+    };
+    println!("----------------------------  upload  ----------------------------");
+    println!("IP: {}", ip);
+    println!("Upload total: {}", style(convert(chart_b.up_total)).green());
+    println!(
+        "Max: {}",
+        style(convert(
+            chart_b
+                .up_list
+                .iter()
+                .max()
+                .cloned()
+                .map_or(0, |v| v as u64)
+        ))
+        .green()
+    );
+    console_chart_b_list(chart_b.up_list);
+    println!("---------------------------- download ----------------------------");
+    println!("IP: {}", ip);
+    println!(
+        "Download total: {}",
+        style(convert(chart_b.down_total)).green()
+    );
+    println!(
+        "Max: {}",
+        style(convert(
+            chart_b
+                .down_list
+                .iter()
+                .max()
+                .cloned()
+                .map_or(0, |v| v as u64)
+        ))
+        .green()
+    );
+    console_chart_b_list(chart_b.down_list);
+}
+fn console_chart_b_list(list: Vec<usize>) {
+    let max_value = *list.iter().max().unwrap_or(&0);
+    let max_height = max_value.min(20);
+    // 遍历从最大高度到0
+    for i in (0..=max_height).rev() {
+        for &value in &list {
+            let scaled_value = (value as f64 / max_value as f64 * max_height as f64) as usize;
+            if scaled_value >= i {
+                print!("█");
+            } else {
+                print!(" ");
+            }
+        }
+        println!();
+    }
 }

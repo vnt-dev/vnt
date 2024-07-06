@@ -74,12 +74,15 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
     opts.optmulti("", "vnt-mapping", "vnt-mapping", "<mapping>");
     opts.optopt("f", "", "配置文件", "<conf>");
     opts.optopt("", "compressor", "压缩算法", "<lz4>");
+    opts.optflag("", "disable-stats", "关闭流量统计");
     //"后台运行时,查看其他设备列表"
     opts.optflag("", "add", "后台运行时,添加地址");
     opts.optflag("", "list", "后台运行时,查看其他设备列表");
     opts.optflag("", "all", "后台运行时,查看其他设备完整信息");
     opts.optflag("", "info", "后台运行时,查看当前设备信息");
     opts.optflag("", "route", "后台运行时,查看数据转发路径");
+    opts.optflag("", "chart_a", "后台运行时,查看流量统计");
+    opts.optopt("", "chart_b", "后台运行时,查看流量统计", "<IP>");
     opts.optflag("", "stop", "停止后台运行");
     opts.optflag("h", "help", "帮助");
     let matches = match opts.parse(&args[1..]) {
@@ -109,6 +112,13 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
         return Ok(None);
     } else if matches.opt_present("all") {
         command::command(command::CommandEnum::All);
+        return Ok(None);
+    } else if matches.opt_present("chart_a") {
+        command::command(command::CommandEnum::ChartA);
+        return Ok(None);
+    }
+    if let Some(v) = matches.opt_str("chart_b") {
+        command::command(command::CommandEnum::ChartB(v));
         return Ok(None);
     }
     let conf = matches.opt_str("f");
@@ -267,6 +277,7 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = matches.opt_strs("mapping");
         let vnt_mapping_list = matches.opt_strs("vnt-mapping");
+        let disable_stats = matches.opt_present("disable-stats");
         let compressor = if let Some(compressor) = matches.opt_str("compressor").as_ref() {
             Compressor::from_str(compressor)
                 .map_err(|e| anyhow!("{}", e))
@@ -306,6 +317,7 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
             #[cfg(feature = "port_mapping")]
             port_mapping_list,
             compressor,
+            !disable_stats,
         ) {
             Ok(config) => config,
             Err(e) => {
@@ -419,6 +431,7 @@ fn print_usage(program: &str, _opts: Options) {
                 .to_string()
         )
     );
+    println!("  --disable-stats     关闭流量统计");
     println!();
     #[cfg(feature = "command")]
     {
@@ -442,6 +455,14 @@ fn print_usage(program: &str, _opts: Options) {
         println!(
             "  --route             {}",
             yellow("后台运行时,查看数据转发路径".to_string())
+        );
+        println!(
+            "  --chart_a           {}",
+            yellow("后台运行时,查看所有IP的流量统计".to_string())
+        );
+        println!(
+            "  --chart_b <IP>      {}",
+            yellow("后台运行时,查看单个IP的历史流量".to_string())
         );
         println!(
             "  --stop              {}",

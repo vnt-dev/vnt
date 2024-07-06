@@ -13,6 +13,8 @@ use rand::Rng;
 use crate::channel::punch::NatType;
 use crate::channel::sender::{AcceptSocketSender, PacketSender};
 use crate::channel::{ConnectProtocol, Route, RouteKey, UseChannelType, DEFAULT_RT};
+use crate::protocol::NetPacket;
+use crate::util::limit::TrafficMeterMultiAddress;
 
 /// 传输通道上下文，持有udp socket、tcp socket和路由信息
 #[derive(Clone)]
@@ -29,6 +31,8 @@ impl ChannelContext {
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
         use_ipv6: bool,
+        up_traffic_meter: Option<TrafficMeterMultiAddress>,
+        down_traffic_meter: Option<TrafficMeterMultiAddress>,
     ) -> Self {
         let channel_num = main_udp_socket.len();
         assert_ne!(channel_num, 0, "not channel");
@@ -52,6 +56,8 @@ impl ChannelContext {
             packet_delay,
             main_index: AtomicUsize::new(0),
             use_ipv6,
+            up_traffic_meter,
+            down_traffic_meter,
         };
         Self {
             inner: Arc::new(inner),
@@ -88,6 +94,8 @@ pub struct ContextInner {
     packet_delay: u32,
     main_index: AtomicUsize,
     use_ipv6: bool,
+    pub(crate) up_traffic_meter: Option<TrafficMeterMultiAddress>,
+    pub(crate) down_traffic_meter: Option<TrafficMeterMultiAddress>,
 }
 
 impl ContextInner {
@@ -179,12 +187,20 @@ impl ContextInner {
         Ok(())
     }
     /// 将数据发送到默认通道，一般发往服务器才用此方法
-    pub fn send_default(&self, buf: &[u8], addr: SocketAddr) -> io::Result<()> {
+    pub fn send_default<B: AsRef<[u8]>>(
+        &self,
+        buf: &NetPacket<B>,
+        addr: SocketAddr,
+    ) -> io::Result<()> {
         if self.protocol.is_udp() {
-            self.send_main_udp(self.main_index.load(Ordering::Relaxed), buf, addr)
+            self.send_main_udp(self.main_index.load(Ordering::Relaxed), buf.buffer(), addr)?
         } else {
-            self.send_tcp(buf, addr)
+            self.send_tcp(buf.buffer(), addr)?
         }
+        if let Some(up_traffic_meter) = &self.up_traffic_meter {
+            up_traffic_meter.add_traffic(buf.destination(), buf.data_len());
+        }
+        Ok(())
     }
 
     pub fn change_main_index(&self) {
@@ -209,9 +225,9 @@ impl ContextInner {
         }
     }
     /// 发送网络数据
-    pub fn send_ipv4_by_id(
+    pub fn send_ipv4_by_id<B: AsRef<[u8]>>(
         &self,
-        buf: &[u8],
+        buf: &NetPacket<B>,
         id: &Ipv4Addr,
         server_addr: SocketAddr,
         send_default: bool,
@@ -221,6 +237,7 @@ impl ContextInner {
                 return Ok(());
             }
         }
+
         if self.packet_delay > 0 {
             thread::sleep(Duration::from_millis(self.packet_delay as _));
         }
@@ -237,7 +254,7 @@ impl ContextInner {
         Ok(())
     }
     /// 将数据发到指定id
-    pub fn send_by_id(&self, buf: &[u8], id: &Ipv4Addr) -> io::Result<()> {
+    pub fn send_by_id<B: AsRef<[u8]>>(&self, buf: &NetPacket<B>, id: &Ipv4Addr) -> io::Result<()> {
         let mut c = 0;
         loop {
             let route = self.route_table.get_route_by_id(c, id)?;
@@ -257,28 +274,35 @@ impl ContextInner {
         }
     }
     /// 将数据发到指定路由
-    pub fn send_by_key(&self, buf: &[u8], route_key: RouteKey) -> io::Result<()> {
+    pub fn send_by_key<B: AsRef<[u8]>>(
+        &self,
+        buf: &NetPacket<B>,
+        route_key: RouteKey,
+    ) -> io::Result<()> {
         match route_key.protocol() {
             ConnectProtocol::UDP => {
                 if let Some(main_udp) = self.main_udp_socket.get(route_key.index) {
-                    main_udp.send_to(buf, route_key.addr)?;
+                    main_udp.send_to(buf.buffer(), route_key.addr)?;
                 } else {
                     if let Some(udp) = self
                         .sub_udp_socket
                         .read()
                         .get(route_key.index - self.main_udp_socket.len())
                     {
-                        udp.send_to(buf, route_key.addr)?;
+                        udp.send_to(buf.buffer(), route_key.addr)?;
                     } else {
                         Err(io::Error::from(io::ErrorKind::NotFound))?
                     }
                 }
-                Ok(())
             }
             ConnectProtocol::TCP | ConnectProtocol::WS | ConnectProtocol::WSS => {
-                self.send_tcp(buf, route_key.addr)
+                self.send_tcp(buf.buffer(), route_key.addr)?
             }
         }
+        if let Some(up_traffic_meter) = &self.up_traffic_meter {
+            up_traffic_meter.add_traffic(buf.destination(), buf.data_len());
+        }
+        Ok(())
     }
     pub fn remove_route(&self, ip: &Ipv4Addr, route_key: RouteKey) {
         self.route_table.remove_route(ip, route_key)

@@ -87,7 +87,7 @@ impl IpPacketSender {
         if dest_ip.is_broadcast() {
             //走服务端广播
             self.context
-                .send_default(net_packet.buffer(), device_info.connect_server)?;
+                .send_default(&net_packet, device_info.connect_server)?;
             return Ok(());
         }
 
@@ -96,7 +96,7 @@ impl IpPacketSender {
             return Ok(());
         }
         self.context.send_ipv4_by_id(
-            net_packet.buffer(),
+            &net_packet,
             &dest_ip,
             device_info.connect_server,
             device_info.status.online(),

@@ -140,7 +140,7 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
                             self.config_info.token.clone(),
                             key,
                         )?;
-                        context.send_by_key(packet.buffer(), route_key)?;
+                        context.send_by_key(&packet, route_key)?;
                     }
                 }
             }
@@ -164,7 +164,7 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
                                 key,
                             )?;
                             drop(guard);
-                            context.send_by_key(packet.buffer(), route_key)?;
+                            context.send_by_key(&packet, route_key)?;
                             return Ok(());
                         }
                         log::warn!(
@@ -199,7 +199,7 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
                         self.config_info.token.clone(),
                         key,
                     )?;
-                    context.send_by_key(packet.buffer(), route_key)?;
+                    context.send_by_key(&packet, route_key)?;
                     self.rsa_cipher.lock().replace(rsa_cipher);
                 }
                 return Ok(());
@@ -484,7 +484,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
         )?;
         log::info!("发送注册请求，{:?}", self.config_info);
         //注册请求只发送到默认通道
-        context.send_default(response.buffer(), current_device.connect_server)?;
+        context.send_default(&response, current_device.connect_server)?;
         Ok(())
     }
     fn error(
@@ -568,7 +568,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                         .set_transport_protocol(service_packet::Protocol::PullDeviceList.into());
                     self.server_cipher.encrypt_ipv4(&mut poll_device)?;
                     //发送到默认服务端即可
-                    context.send_default(poll_device.buffer(), current_device.connect_server)?;
+                    context.send_default(&poll_device, current_device.connect_server)?;
                 }
             }
             ControlPacket::AddrResponse(addr_packet) => {
