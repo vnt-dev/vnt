@@ -105,11 +105,16 @@ fn start_simple0(
             if event.token() == STOP {
                 return Ok(());
             }
+            let mut retries = 0;
             loop {
                 let len = match fd.read(&mut buf[start..]) {
                     Ok(len) => len + start,
                     Err(e) => {
                         if e.kind() == io::ErrorKind::WouldBlock {
+                            retries += 1;
+                            if retries < 8 {
+                                continue;
+                            }
                             break;
                         }
                         Err(e)?
