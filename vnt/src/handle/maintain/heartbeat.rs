@@ -59,8 +59,7 @@ fn heartbeat0(
     let mut is_send_gateway = false;
     match heartbeat_packet_server(device_list, server_cipher, src_ip, gateway_ip) {
         Ok(net_packet) => {
-            if let Err(e) = context.send_default(net_packet.buffer(), current_device.connect_server)
-            {
+            if let Err(e) = context.send_default(&net_packet, current_device.connect_server) {
                 log::warn!("heartbeat err={:?}", e)
             } else {
                 is_send_gateway = true
@@ -88,7 +87,7 @@ fn heartbeat0(
             }
         };
         for route in routes {
-            if let Err(e) = context.send_by_key(net_packet.buffer(), route.route_key()) {
+            if let Err(e) = context.send_by_key(&net_packet, route.route_key()) {
                 log::warn!("heartbeat err={:?}", e)
             }
         }
@@ -113,8 +112,7 @@ fn heartbeat0(
                     continue;
                 }
             };
-            if let Err(e) = context.send_default(net_packet.buffer(), current_device.connect_server)
-            {
+            if let Err(e) = context.send_default(&net_packet, current_device.connect_server) {
                 log::error!("heartbeat_packet send_default err={:?}", e);
             }
         }
@@ -195,7 +193,7 @@ fn client_relay0(
             if current_device.is_gateway(ip) {
                 continue;
             }
-            if let Err(e) = context.send_by_key(client_packet.buffer(), route.route_key()) {
+            if let Err(e) = context.send_by_key(&client_packet, route.route_key()) {
                 log::error!("{:?}", e);
             }
             if index >= 2 {

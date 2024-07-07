@@ -19,13 +19,6 @@ use crate::proto::message::SecretHandshakeRequest;
 use crate::protocol::body::RSA_ENCRYPTION_RESERVED;
 use crate::protocol::{service_packet, NetPacket, Protocol, MAX_TTL};
 
-pub enum HandshakeEnum {
-    NotSecret,
-    KeyError,
-    Timeout,
-    ServerError(String),
-    Other(String),
-}
 #[derive(Clone)]
 pub struct Handshake {
     time: Arc<AtomicCell<Instant>>,
@@ -37,7 +30,11 @@ impl Handshake {
         #[cfg(feature = "server_encrypt")] rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
     ) -> Self {
         Handshake {
-            time: Arc::new(AtomicCell::new(Instant::now() - Duration::from_secs(60))),
+            time: Arc::new(AtomicCell::new(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(60))
+                    .unwrap_or(Instant::now()),
+            )),
             #[cfg(feature = "server_encrypt")]
             rsa_cipher,
         }
@@ -50,7 +47,7 @@ impl Handshake {
         }
         let request_packet = self.handshake_request_packet(secret)?;
         log::info!("发送握手请求,secret={},{:?}", secret, addr);
-        context.send_default(request_packet.buffer(), addr)?;
+        context.send_default(&request_packet, addr)?;
         self.time.store(Instant::now());
         Ok(())
     }

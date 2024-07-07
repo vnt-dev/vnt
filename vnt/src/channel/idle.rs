@@ -39,7 +39,7 @@ impl Idle {
                 }
             }
         }
-        let sleep_time = self.read_idle - max;
+        let sleep_time = self.read_idle.checked_sub(max).unwrap_or_default();
         return IdleType::Sleep(sleep_time);
     }
 }

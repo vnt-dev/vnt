@@ -3,11 +3,11 @@ use crate::channel::BUFFER_SIZE;
 use crate::cipher::Cipher;
 use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
-use crate::handle::tun_tap::channel_group::GroupSyncSender;
+use crate::handle::tun_tap::DeviceStop;
 use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
-use crate::util::{SingleU64Adder, StopManager};
+use crate::util::StopManager;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -23,9 +23,9 @@ pub(crate) fn start_simple(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
+    device_stop: DeviceStop,
 ) -> anyhow::Result<()> {
     let worker = {
         let device = device.clone();
@@ -35,6 +35,16 @@ pub(crate) fn start_simple(
             }
         })?
     };
+    let worker_cell = Arc::new(AtomicCell::new(Some(worker)));
+
+    {
+        let worker_cell = worker_cell.clone();
+        device_stop.set_stop_fn(move || {
+            if let Some(worker) = worker_cell.take() {
+                worker.stop_self()
+            }
+        });
+    }
     if let Err(e) = start_simple0(
         context,
         device,
@@ -44,15 +54,18 @@ pub(crate) fn start_simple(
         ip_proxy_map,
         client_cipher,
         server_cipher,
-        up_counter,
         device_list,
         compressor,
     ) {
         log::error!("{:?}", e);
     }
-    worker.stop_all();
+    device_stop.stopped();
+    if let Some(worker) = worker_cell.take() {
+        worker.stop_all();
+    }
     Ok(())
 }
+
 fn start_simple0(
     context: &ChannelContext,
     device: Arc<Device>,
@@ -61,7 +74,6 @@ fn start_simple0(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    up_counter: &mut SingleU64Adder,
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     compressor: Compressor,
 ) -> anyhow::Result<()> {
@@ -70,7 +82,6 @@ fn start_simple0(
     loop {
         let len = device.read(&mut buf[12..])? + 12;
         //单线程的
-        up_counter.add(len as u64);
         // buf是重复利用的，需要重置头部
         buf[..12].fill(0);
         match crate::handle::tun_tap::tun_handler::handle(
@@ -92,41 +103,6 @@ fn start_simple0(
             Err(e) => {
                 log::warn!("tun/tap {:?}", e)
             }
-        }
-    }
-}
-pub(crate) fn start_multi(
-    stop_manager: StopManager,
-    device: Arc<Device>,
-    group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
-    up_counter: &mut SingleU64Adder,
-) -> anyhow::Result<()> {
-    let worker = {
-        let device = device.clone();
-        stop_manager.add_listener("tun_device_multi".into(), move || {
-            if let Err(e) = device.shutdown() {
-                log::warn!("{:?}", e);
-            }
-        })?
-    };
-    if let Err(e) = start_multi0(device, group_sync_sender, up_counter) {
-        log::error!("{:?}", e);
-    };
-    worker.stop_all();
-    Ok(())
-}
-fn start_multi0(
-    device: Arc<Device>,
-    mut group_sync_sender: GroupSyncSender<(Vec<u8>, usize)>,
-    up_counter: &mut SingleU64Adder,
-) -> anyhow::Result<()> {
-    loop {
-        let mut buf = vec![0; 1024 * 16];
-        let len = device.read(&mut buf[12..])? + 12;
-        //单线程的
-        up_counter.add(len as u64);
-        if group_sync_sender.send((buf, len)).is_err() {
-            return Ok(());
         }
     }
 }

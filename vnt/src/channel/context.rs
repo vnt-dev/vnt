@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use fnv::FnvHashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, UdpSocket};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -11,8 +11,10 @@ use parking_lot::RwLock;
 use rand::Rng;
 
 use crate::channel::punch::NatType;
-use crate::channel::sender::{AcceptSocketSender, ChannelSender, PacketSender};
-use crate::channel::{Route, RouteKey, UseChannelType, DEFAULT_RT};
+use crate::channel::sender::{AcceptSocketSender, PacketSender};
+use crate::channel::{ConnectProtocol, Route, RouteKey, UseChannelType, DEFAULT_RT};
+use crate::protocol::NetPacket;
+use crate::util::limit::TrafficMeterMultiAddress;
 
 /// 传输通道上下文，持有udp socket、tcp socket和路由信息
 #[derive(Clone)]
@@ -25,10 +27,12 @@ impl ChannelContext {
         main_udp_socket: Vec<UdpSocket>,
         use_channel_type: UseChannelType,
         first_latency: bool,
-        is_tcp: bool,
+        protocol: ConnectProtocol,
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
         use_ipv6: bool,
+        up_traffic_meter: Option<TrafficMeterMultiAddress>,
+        down_traffic_meter: Option<TrafficMeterMultiAddress>,
     ) -> Self {
         let channel_num = main_udp_socket.len();
         assert_ne!(channel_num, 0, "not channel");
@@ -44,21 +48,20 @@ impl ChannelContext {
             .unwrap_or(0);
         let inner = ContextInner {
             main_udp_socket,
-            sub_udp_socket: RwLock::new(Vec::with_capacity(64)),
-            tcp_map: RwLock::new(HashMap::with_capacity(64)),
+            sub_udp_socket: RwLock::new(Vec::new()),
+            packet_map: RwLock::new(FnvHashMap::default()),
             route_table: RouteTable::new(use_channel_type, first_latency, channel_num),
-            is_tcp,
+            protocol,
             packet_loss_rate,
             packet_delay,
             main_index: AtomicUsize::new(0),
             use_ipv6,
+            up_traffic_meter,
+            down_traffic_meter,
         };
         Self {
             inner: Arc::new(inner),
         }
-    }
-    pub fn sender(&self) -> ChannelSender {
-        ChannelSender::new(self.clone())
     }
 }
 
@@ -71,7 +74,7 @@ impl Deref for ChannelContext {
 }
 
 /// 对称网络增加的udp socket数目，有助于增加打洞成功率
-pub const SYMMETRIC_CHANNEL_NUM: usize = 100;
+pub const SYMMETRIC_CHANNEL_NUM: usize = 84;
 const PACKET_LOSS_RATE_DENOMINATOR: u32 = 100_0000;
 
 pub struct ContextInner {
@@ -80,17 +83,19 @@ pub struct ContextInner {
     // 对称网络增加的udp socket
     sub_udp_socket: RwLock<Vec<UdpSocket>>,
     // tcp数据发送器
-    pub(crate) tcp_map: RwLock<HashMap<SocketAddr, PacketSender>>,
+    pub(crate) packet_map: RwLock<FnvHashMap<SocketAddr, PacketSender>>,
     // 路由信息
     pub route_table: RouteTable,
-    // 是否使用tcp连接服务器
-    is_tcp: bool,
+    // 使用什么协议连接服务器
+    protocol: ConnectProtocol,
     //控制丢包率，取值v=[0,100_0000] 丢包率r=v/100_0000
     packet_loss_rate: u32,
     //控制延迟
     packet_delay: u32,
     main_index: AtomicUsize,
     use_ipv6: bool,
+    pub(crate) up_traffic_meter: Option<TrafficMeterMultiAddress>,
+    pub(crate) down_traffic_meter: Option<TrafficMeterMultiAddress>,
 }
 
 impl ContextInner {
@@ -101,11 +106,11 @@ impl ContextInner {
     pub fn is_cone(&self) -> bool {
         self.sub_udp_socket.read().is_empty()
     }
-    pub fn is_main_tcp(&self) -> bool {
-        self.is_tcp
+    pub fn main_protocol(&self) -> ConnectProtocol {
+        self.protocol
     }
     pub fn is_udp_main(&self, route_key: &RouteKey) -> bool {
-        !route_key.is_tcp() && route_key.index < self.main_udp_socket.len()
+        route_key.protocol().is_udp() && route_key.index < self.main_udp_socket.len()
     }
     pub fn first_latency(&self) -> bool {
         self.route_table.first_latency
@@ -160,7 +165,7 @@ impl ContextInner {
         Ok(ports)
     }
     pub fn send_tcp(&self, buf: &[u8], addr: SocketAddr) -> io::Result<()> {
-        if let Some(tcp) = self.tcp_map.read().get(&addr) {
+        if let Some(tcp) = self.packet_map.read().get(&addr) {
             tcp.try_send(buf)
         } else {
             Err(io::Error::from(io::ErrorKind::NotFound))
@@ -182,13 +187,20 @@ impl ContextInner {
         Ok(())
     }
     /// 将数据发送到默认通道，一般发往服务器才用此方法
-    pub fn send_default(&self, buf: &[u8], addr: SocketAddr) -> io::Result<()> {
-        if self.is_tcp {
-            //服务端地址只在重连时检测变化
-            self.send_tcp(buf, addr)
+    pub fn send_default<B: AsRef<[u8]>>(
+        &self,
+        buf: &NetPacket<B>,
+        addr: SocketAddr,
+    ) -> io::Result<()> {
+        if self.protocol.is_udp() {
+            self.send_main_udp(self.main_index.load(Ordering::Relaxed), buf.buffer(), addr)?
         } else {
-            self.send_main_udp(self.main_index.load(Ordering::Relaxed), buf, addr)
+            self.send_tcp(buf.buffer(), addr)?
         }
+        if let Some(up_traffic_meter) = &self.up_traffic_meter {
+            up_traffic_meter.add_traffic(buf.destination(), buf.data_len());
+        }
+        Ok(())
     }
 
     pub fn change_main_index(&self) {
@@ -202,7 +214,7 @@ impl ContextInner {
             if let Err(e) = udp.send_to(buf, addr) {
                 log::warn!("{:?},add={:?}", e, addr);
             }
-            thread::sleep(Duration::from_millis(1));
+            thread::sleep(Duration::from_millis(3));
         }
     }
     pub fn try_send_all_main(&self, buf: &[u8], addr: SocketAddr) {
@@ -213,9 +225,9 @@ impl ContextInner {
         }
     }
     /// 发送网络数据
-    pub fn send_ipv4_by_id(
+    pub fn send_ipv4_by_id<B: AsRef<[u8]>>(
         &self,
-        buf: &[u8],
+        buf: &NetPacket<B>,
         id: &Ipv4Addr,
         server_addr: SocketAddr,
         send_default: bool,
@@ -225,6 +237,7 @@ impl ContextInner {
                 return Ok(());
             }
         }
+
         if self.packet_delay > 0 {
             thread::sleep(Duration::from_millis(self.packet_delay as _));
         }
@@ -241,7 +254,7 @@ impl ContextInner {
         Ok(())
     }
     /// 将数据发到指定id
-    pub fn send_by_id(&self, buf: &[u8], id: &Ipv4Addr) -> io::Result<()> {
+    pub fn send_by_id<B: AsRef<[u8]>>(&self, buf: &NetPacket<B>, id: &Ipv4Addr) -> io::Result<()> {
         let mut c = 0;
         loop {
             let route = self.route_table.get_route_by_id(c, id)?;
@@ -261,25 +274,35 @@ impl ContextInner {
         }
     }
     /// 将数据发到指定路由
-    pub fn send_by_key(&self, buf: &[u8], route_key: RouteKey) -> io::Result<()> {
-        if route_key.is_tcp {
-            self.send_tcp(buf, route_key.addr)
-        } else {
-            if let Some(main_udp) = self.main_udp_socket.get(route_key.index) {
-                main_udp.send_to(buf, route_key.addr)?;
-            } else {
-                if let Some(udp) = self
-                    .sub_udp_socket
-                    .read()
-                    .get(route_key.index - self.main_udp_socket.len())
-                {
-                    udp.send_to(buf, route_key.addr)?;
+    pub fn send_by_key<B: AsRef<[u8]>>(
+        &self,
+        buf: &NetPacket<B>,
+        route_key: RouteKey,
+    ) -> io::Result<()> {
+        match route_key.protocol() {
+            ConnectProtocol::UDP => {
+                if let Some(main_udp) = self.main_udp_socket.get(route_key.index) {
+                    main_udp.send_to(buf.buffer(), route_key.addr)?;
                 } else {
-                    Err(io::Error::from(io::ErrorKind::NotFound))?
+                    if let Some(udp) = self
+                        .sub_udp_socket
+                        .read()
+                        .get(route_key.index - self.main_udp_socket.len())
+                    {
+                        udp.send_to(buf.buffer(), route_key.addr)?;
+                    } else {
+                        Err(io::Error::from(io::ErrorKind::NotFound))?
+                    }
                 }
             }
-            Ok(())
+            ConnectProtocol::TCP | ConnectProtocol::WS | ConnectProtocol::WSS => {
+                self.send_tcp(buf.buffer(), route_key.addr)?
+            }
         }
+        if let Some(up_traffic_meter) = &self.up_traffic_meter {
+            up_traffic_meter.add_traffic(buf.destination(), buf.data_len());
+        }
+        Ok(())
     }
     pub fn remove_route(&self, ip: &Ipv4Addr, route_key: RouteKey) {
         self.route_table.remove_route(ip, route_key)
@@ -288,7 +311,7 @@ impl ContextInner {
 
 pub struct RouteTable {
     pub(crate) route_table:
-        RwLock<HashMap<Ipv4Addr, (AtomicUsize, Vec<(Route, AtomicCell<Instant>)>)>>,
+        RwLock<FnvHashMap<Ipv4Addr, (AtomicUsize, Vec<(Route, AtomicCell<Instant>)>)>>,
     first_latency: bool,
     channel_num: usize,
     use_channel_type: UseChannelType,
@@ -297,7 +320,7 @@ pub struct RouteTable {
 impl RouteTable {
     fn new(use_channel_type: UseChannelType, first_latency: bool, channel_num: usize) -> Self {
         Self {
-            route_table: RwLock::new(HashMap::with_capacity(64)),
+            route_table: RwLock::new(FnvHashMap::with_capacity_and_hasher(64, Default::default())),
             use_channel_type,
             first_latency,
             channel_num,

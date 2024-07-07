@@ -10,7 +10,7 @@ use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::notify::AcceptNotify;
 use crate::channel::sender::AcceptSocketSender;
-use crate::channel::{RouteKey, BUFFER_SIZE};
+use crate::channel::{ConnectProtocol, RouteKey, BUFFER_SIZE};
 use crate::util::StopManager;
 
 pub fn udp_listen<H>(
@@ -60,7 +60,7 @@ where
 
 fn sub_udp_listen0<H>(
     mut poll: Poll,
-    mut recv_handler: H,
+    recv_handler: H,
     context: ChannelContext,
     accept_notify: AcceptNotify,
     accept_receiver: Receiver<Option<Vec<UdpSocket>>>,
@@ -73,7 +73,10 @@ where
     let mut extend = [0; BUFFER_SIZE];
     let mut read_map: HashMap<Token, UdpSocket> = HashMap::with_capacity(32);
     loop {
-        poll.poll(&mut events, None)?;
+        if let Err(e) = poll.poll(&mut events, None) {
+            crate::ignore_io_interrupted(e)?;
+            continue;
+        }
         for event in events.iter() {
             match event.token() {
                 NOTIFY => {
@@ -117,7 +120,7 @@ where
                                     recv_handler.handle(
                                         &mut buf[..len],
                                         &mut extend,
-                                        RouteKey::new(false, token.0, addr),
+                                        RouteKey::new(ConnectProtocol::UDP, token.0, addr),
                                         &context,
                                     );
                                 }
@@ -235,7 +238,7 @@ where
 
 pub fn main_udp_listen0<H>(
     mut poll: Poll,
-    mut recv_handler: H,
+    recv_handler: H,
     context: ChannelContext,
 ) -> io::Result<()>
 where
@@ -256,7 +259,10 @@ where
     let mut events = Events::with_capacity(udps.len());
     let mut extend = [0; BUFFER_SIZE];
     loop {
-        poll.poll(&mut events, None)?;
+        if let Err(e) = poll.poll(&mut events, None) {
+            crate::ignore_io_interrupted(e)?;
+            continue;
+        }
         for x in events.iter() {
             let index = match x.token() {
                 NOTIFY => return Ok(()),
@@ -274,7 +280,7 @@ where
                         recv_handler.handle(
                             &mut buf[..len],
                             &mut extend,
-                            RouteKey::new(false, index, addr),
+                            RouteKey::new(ConnectProtocol::UDP, index, addr),
                             &context,
                         );
                     }

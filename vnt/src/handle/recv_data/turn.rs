@@ -27,6 +27,10 @@ impl PacketHandler for TurnPacketHandler {
         // ttl减一
         let ttl = net_packet.incr_ttl();
         if ttl > 0 {
+            if net_packet.is_gateway() {
+                // 暂时不转发服务端包
+                return Ok(());
+            }
             let destination = net_packet.destination();
             if let Some(route) = context.route_table.route_one(&destination) {
                 if route.addr == route_key.addr {
@@ -36,7 +40,7 @@ impl PacketHandler for TurnPacketHandler {
                 }
                 if route.metric <= ttl {
                     return context
-                        .send_by_key(net_packet.buffer(), route.route_key())
+                        .send_by_key(&net_packet, route.route_key())
                         .context("转发失败");
                 }
             }

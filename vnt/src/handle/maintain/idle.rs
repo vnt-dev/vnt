@@ -1,14 +1,13 @@
 use std::io;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_utils::atomic::AtomicCell;
-use mio::net::TcpStream;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::idle::{Idle, IdleType};
-use crate::channel::sender::AcceptSocketSender;
+use crate::channel::sender::ConnectUtil;
+use crate::channel::ConnectProtocol;
 use crate::handle::callback::{ConnectInfo, ErrorType};
 use crate::handle::handshaker::Handshake;
 use crate::handle::{BaseConfigInfo, ConnectStatus, CurrentDeviceInfo};
@@ -36,7 +35,7 @@ pub fn idle_gateway<Call: VntCallback>(
     context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
     config: BaseConfigInfo,
-    tcp_socket_sender: AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
+    connect_util: ConnectUtil,
     call: Call,
     mut connect_count: usize,
     handshake: Handshake,
@@ -45,7 +44,7 @@ pub fn idle_gateway<Call: VntCallback>(
         &context,
         &current_device_info,
         &config,
-        &tcp_socket_sender,
+        &connect_util,
         &call,
         &mut connect_count,
         &handshake,
@@ -56,7 +55,7 @@ pub fn idle_gateway<Call: VntCallback>(
             context,
             current_device_info,
             config,
-            tcp_socket_sender,
+            connect_util,
             call,
             connect_count,
             handshake,
@@ -71,7 +70,7 @@ fn idle_gateway0<Call: VntCallback>(
     context: &ChannelContext,
     current_device: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
-    tcp_socket_sender: &AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
+    connect_util: &ConnectUtil,
     call: &Call,
     connect_count: &mut usize,
     handshake: &Handshake,
@@ -80,7 +79,7 @@ fn idle_gateway0<Call: VntCallback>(
         context,
         current_device,
         config,
-        tcp_socket_sender,
+        connect_util,
         call,
         connect_count,
         handshake,
@@ -120,7 +119,7 @@ fn check_gateway_channel<Call: VntCallback>(
     context: &ChannelContext,
     current_device_info: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
-    tcp_socket_sender: &AcceptSocketSender<(TcpStream, SocketAddr, Option<Vec<u8>>)>,
+    connect_util: &ConnectUtil,
     call: &Call,
     count: &mut usize,
     handshake: &Handshake,
@@ -128,28 +127,29 @@ fn check_gateway_channel<Call: VntCallback>(
     let mut current_device = current_device_info.load();
     if current_device.status.offline() {
         *count += 1;
-        // 探测服务器地址
-        current_device = domain_request0(current_device_info, config);
+        let connect_protocol = context.main_protocol();
+        if connect_protocol.is_transport() {
+            // 传输层的协议需要探测服务器地址
+            current_device = domain_request0(current_device_info, config);
+        }
         //需要重连
         call.connect(ConnectInfo::new(*count, current_device.connect_server));
         log::info!("发送握手请求,{:?}", config);
         if let Err(e) = handshake.send(context, config.server_secret, current_device.connect_server)
         {
             log::warn!("{:?}", e);
-            if context.is_main_tcp() {
-                let request_packet = handshake.handshake_request_packet(config.server_secret)?;
-                //tcp需要重连
-                let tcp_stream = std::net::TcpStream::connect_timeout(
-                    &current_device.connect_server,
-                    Duration::from_secs(5),
-                )?;
-                tcp_stream.set_nonblocking(true)?;
-                if let Err(e) = tcp_socket_sender.try_add_socket((
-                    TcpStream::from_std(tcp_stream),
-                    current_device.connect_server,
-                    Some(request_packet.into_buffer()),
-                )) {
-                    log::warn!("{:?}", e)
+            let request_packet = handshake.handshake_request_packet(config.server_secret)?;
+            match connect_protocol {
+                ConnectProtocol::UDP => {}
+                ConnectProtocol::TCP => {
+                    connect_util.try_connect_tcp(
+                        request_packet.into_buffer(),
+                        current_device.connect_server,
+                    );
+                }
+                ConnectProtocol::WS | ConnectProtocol::WSS => {
+                    connect_util
+                        .try_connect_ws(request_packet.into_buffer(), config.server_addr.clone());
                 }
             }
         }

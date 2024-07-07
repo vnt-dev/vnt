@@ -15,10 +15,10 @@ pub fn convert(vec: Vec<String>) -> anyhow::Result<Vec<(bool, SocketAddr, String
     for x in vec {
         let string = x.trim().to_lowercase();
         if let Some(udp_mapping) = string.strip_prefix("udp:") {
-            let mut split = udp_mapping.split("->");
+            let mut split = udp_mapping.split("-");
             let bind_addr = split.next().with_context(|| {
                 format!(
-                    "udp_mapping error {:?},eg: udp:127.0.0.1:80->10.26.0.10:8080",
+                    "udp_mapping error {:?},eg: udp:127.0.0.1:80-10.26.0.10:8080",
                     x
                 )
             })?;
@@ -26,7 +26,7 @@ pub fn convert(vec: Vec<String>) -> anyhow::Result<Vec<(bool, SocketAddr, String
                 .with_context(|| format!("udp_mapping error {}", bind_addr))?;
             let dest = split.next().with_context(|| {
                 format!(
-                    "udp_mapping error {:?},eg: udp:127.0.0.1:80->10.26.0.10:8080",
+                    "udp_mapping error {:?},eg: udp:127.0.0.1:80-10.26.0.10:8080",
                     x
                 )
             })?;
@@ -34,10 +34,10 @@ pub fn convert(vec: Vec<String>) -> anyhow::Result<Vec<(bool, SocketAddr, String
             continue;
         }
         if let Some(tcp_mapping) = string.strip_prefix("tcp:") {
-            let mut split = tcp_mapping.split("->");
+            let mut split = tcp_mapping.split("-");
             let bind_addr = split.next().with_context(|| {
                 format!(
-                    "tcp_mapping error {:?},eg: tcp:127.0.0.1:80->10.26.0.10:8080",
+                    "tcp_mapping error {:?},eg: tcp:127.0.0.1:80-10.26.0.10:8080",
                     x
                 )
             })?;
@@ -45,7 +45,7 @@ pub fn convert(vec: Vec<String>) -> anyhow::Result<Vec<(bool, SocketAddr, String
                 .with_context(|| format!("udp_mapping error {}", bind_addr))?;
             let dest = split.next().with_context(|| {
                 format!(
-                    "tcp_mapping error {:?},eg: tcp:127.0.0.1:80->10.26.0.10:8080",
+                    "tcp_mapping error {:?},eg: tcp:127.0.0.1:80-10.26.0.10:8080",
                     x
                 )
             })?;
@@ -53,7 +53,7 @@ pub fn convert(vec: Vec<String>) -> anyhow::Result<Vec<(bool, SocketAddr, String
             continue;
         }
         Err(anyhow::anyhow!(
-            "port_mapping error {:?},eg: tcp:127.0.0.1:80->10.26.0.10:8080",
+            "port_mapping error {:?},eg: tcp:127.0.0.1:80-10.26.0.10:8080",
             x
         ))?;
     }

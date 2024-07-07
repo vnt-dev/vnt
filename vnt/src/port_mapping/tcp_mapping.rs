@@ -6,7 +6,11 @@ pub async fn tcp_mapping(bind_addr: SocketAddr, destination: String) -> anyhow::
     let tcp_listener = TcpListener::bind(bind_addr)
         .await
         .with_context(|| format!("TCP binding {:?} failed", bind_addr))?;
-    tokio::spawn(tcp_mapping_(bind_addr, tcp_listener, destination));
+    tokio::spawn(async move {
+        if let Err(e) = tcp_mapping_(bind_addr, tcp_listener, destination).await {
+            log::warn!("tcp_mapping {:?}", e);
+        }
+    });
     Ok(())
 }
 

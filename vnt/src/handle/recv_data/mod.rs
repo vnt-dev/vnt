@@ -24,34 +24,35 @@ use crate::handle::{BaseConfigInfo, CurrentDeviceInfo, PeerDeviceInfo, SELF_IP};
 #[cfg(feature = "ip_proxy")]
 use crate::ip_proxy::IpProxyMap;
 use crate::nat::NatTest;
-use crate::protocol::NetPacket;
-use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
-use crate::util::U64Adder;
+use crate::protocol::{NetPacket, HEAD_LEN};
+use crate::tun_tap_device::vnt_device::DeviceWrite;
 
 mod client;
 mod server;
 mod turn;
 
 #[derive(Clone)]
-pub struct RecvDataHandler<Call> {
+pub struct RecvDataHandler<Call, Device> {
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     turn: TurnPacketHandler,
-    client: ClientPacketHandler,
-    server: ServerPacketHandler<Call>,
-    counter: U64Adder,
+    client: ClientPacketHandler<Device>,
+    server: ServerPacketHandler<Call, Device>,
     nat_test: NatTest,
 }
 
-impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
+impl<Call: VntCallback, Device: DeviceWrite> RecvChannelHandler for RecvDataHandler<Call, Device> {
     fn handle(
-        &mut self,
+        &self,
         buf: &mut [u8],
         extend: &mut [u8],
         route_key: RouteKey,
         context: &ChannelContext,
     ) {
+        if buf.len() < HEAD_LEN {
+            return;
+        }
         //判断stun响应包
-        if !route_key.is_tcp() {
+        if route_key.protocol().is_udp() {
             if let Ok(rs) = self
                 .nat_test
                 .recv_data(route_key.index(), route_key.addr, buf)
@@ -72,13 +73,13 @@ impl<Call: VntCallback> RecvChannelHandler for RecvDataHandler<Call> {
     }
 }
 
-impl<Call: VntCallback> RecvDataHandler<Call> {
+impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
     pub fn new(
         #[cfg(feature = "server_encrypt")] rsa_cipher: Arc<Mutex<Option<RsaCipher>>>,
         server_cipher: Cipher,
         client_cipher: Cipher,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
-        device: DeviceAdapter,
+        device: Device,
         device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
         config_info: BaseConfigInfo,
         nat_test: NatTest,
@@ -87,9 +88,12 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         external_route: ExternalRoute,
         route: AllowExternalRoute,
-        #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
-        counter: U64Adder,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(feature = "ip_proxy")]
+        ip_proxy_map: Option<IpProxyMap>,
         handshake: Handshake,
+        #[cfg(feature = "integrated_tun")]
+        tun_device_helper: crate::tun_tap_device::tun_create_helper::TunDeviceHelper,
     ) -> Self {
         let server = ServerPacketHandler::new(
             #[cfg(feature = "server_encrypt")]
@@ -103,6 +107,8 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             callback,
             external_route.clone(),
             handshake,
+            #[cfg(feature = "integrated_tun")]
+            tun_device_helper,
         );
         let client = ClientPacketHandler::new(
             device.clone(),
@@ -111,6 +117,7 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             peer_nat_info_map,
             nat_test.clone(),
             route,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         );
@@ -120,23 +127,21 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             turn,
             client,
             server,
-            counter,
             nat_test,
         }
     }
     fn handle0(
-        &mut self,
+        &self,
         buf: &mut [u8],
         extend: &mut [u8],
         route_key: RouteKey,
         context: &ChannelContext,
     ) -> anyhow::Result<()> {
-        // 统计流量
-        self.counter.add(buf.len() as _);
         let net_packet = NetPacket::new(buf)?;
+
         let extend = NetPacket::unchecked(extend);
         if net_packet.ttl() == 0 || net_packet.source_ttl() < net_packet.ttl() {
-            log::warn!("丢弃过时包:{:?}", net_packet.head());
+            log::warn!("丢弃过时包:{:?} {}", net_packet.head(), route_key.addr);
             return Ok(());
         }
         let current_device = self.current_device.load();
@@ -148,6 +153,10 @@ impl<Call: VntCallback> RecvDataHandler<Call> {
             || dest.is_unspecified()
             || dest == current_device.broadcast_ip
         {
+            // 统计流量
+            if let Some(down_traffic_meter) = &context.down_traffic_meter {
+                down_traffic_meter.add_traffic(net_packet.source(), net_packet.data_len())
+            }
             //发给自己的包
             if net_packet.is_gateway() {
                 //服务端-客户端包

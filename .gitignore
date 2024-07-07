@@ -1,3 +1,6 @@
 target/*
 vnt/src/proto/*
-vnt-cli/src/generated_serial_number.rs
+common/src/generated_serial_number.rs
+
+# RustRover
+.idea

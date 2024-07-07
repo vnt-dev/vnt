@@ -48,13 +48,7 @@ impl Sm4CbcCipher {
         }
 
         if let Some(finger) = &self.finger {
-            let mut nonce_raw = [0; 12];
-            nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-            nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-            nonce_raw[8] = net_packet.protocol().into();
-            nonce_raw[9] = net_packet.transport_protocol();
-            nonce_raw[10] = net_packet.is_gateway() as u8;
-            nonce_raw[11] = net_packet.source_ttl();
+            let nonce_raw = net_packet.head_tag();
             let len = net_packet.payload().len();
             if len < 12 {
                 return Err(anyhow!("payload len <12"));
@@ -126,13 +120,7 @@ impl Sm4CbcCipher {
                 net_packet.payload_mut()[..len].copy_from_slice(&out[..len]);
                 net_packet.payload_mut()[len..].copy_from_slice(&iv);
                 if let Some(finger) = &self.finger {
-                    let mut nonce_raw = [0; 12];
-                    nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-                    nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-                    nonce_raw[8] = net_packet.protocol().into();
-                    nonce_raw[9] = net_packet.transport_protocol();
-                    nonce_raw[10] = net_packet.is_gateway() as u8;
-                    nonce_raw[11] = net_packet.source_ttl();
+                    let nonce_raw = net_packet.head_tag();
                     let finger = finger.calculate_finger(&nonce_raw, net_packet.payload());
                     let src_data_len = net_packet.data_len();
                     //设置实际长度

@@ -135,6 +135,7 @@ impl Compressor {
 }
 
 #[test]
+#[cfg(feature = "zstd_compress")]
 fn test_lz4() {
     use crate::protocol::extension::{CompressionAlgorithm, ExtensionTailPacket};
     let lz4 = Compressor::Lz4;
@@ -166,7 +167,7 @@ fn test_lz4() {
                 unimplemented!()
             }
         },
-        ExtensionTailPacket::Unknown => {
+        _ => {
             unimplemented!()
         }
     }
@@ -174,6 +175,7 @@ fn test_lz4() {
     assert_eq!(in_packet.payload(), src_out_packet.payload())
 }
 #[test]
+#[cfg(feature = "zstd_compress")]
 fn test_zstd() {
     use crate::protocol::extension::{CompressionAlgorithm, ExtensionTailPacket};
     let zstd = Compressor::Zstd(22);
@@ -209,7 +211,7 @@ fn test_zstd() {
                 unimplemented!()
             }
         },
-        ExtensionTailPacket::Unknown => {
+        _ => {
             unimplemented!()
         }
     }

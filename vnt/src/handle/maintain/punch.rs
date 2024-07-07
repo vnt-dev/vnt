@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::ops::{Div, Mul};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
 use std::thread;
@@ -158,7 +159,7 @@ fn punch_start(
             log::error!("{:?}", e);
             continue;
         }
-        if let Err(e) = punch.punch(packet.buffer(), peer_ip, nat_info, count < 2) {
+        if let Err(e) = punch.punch(packet.buffer(), peer_ip, nat_info, count < 2, count) {
             log::warn!("{:?}", e)
         }
     }
@@ -190,7 +191,7 @@ fn punch_request(
         ) {
             log::warn!("{:?}", e)
         }
-        let sleep_time = [5, 6, 7];
+        let sleep_time = [6, 7];
         Duration::from_secs(sleep_time[count % sleep_time.len()])
     } else {
         Duration::from_secs(5)
@@ -249,9 +250,11 @@ fn punch0(
             .lock()
             .get(&info.virtual_ip)
             .cloned()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .mul(2)
+            .div(3);
         let p2p_num = context.route_table.p2p_num(&info.virtual_ip);
-        let mut max_punch_interval = 70;
+        let mut max_punch_interval = 50;
         if p2p_num > 0 {
             if punch_count == 0 {
                 continue;
@@ -286,7 +289,7 @@ fn punch0(
                 punch_count,
                 total_count,
             );
-            context.send_default(packet.buffer(), current_device.connect_server)?;
+            context.send_default(&packet, current_device.connect_server)?;
             break;
         }
     }

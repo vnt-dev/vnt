@@ -59,12 +59,7 @@ impl AesCbcCipher {
             return Err(anyhow!("aes_cbc data err"));
         }
         let mut iv = [0; 16];
-        iv[0..4].copy_from_slice(&net_packet.source().octets());
-        iv[4..8].copy_from_slice(&net_packet.destination().octets());
-        iv[8] = net_packet.protocol().into();
-        iv[9] = net_packet.transport_protocol();
-        iv[10] = net_packet.is_gateway() as u8;
-        iv[11] = net_packet.source_ttl();
+        iv[0..12].copy_from_slice(&net_packet.head_tag());
         if let Some(finger) = &self.finger {
             iv[12..16].copy_from_slice(&finger.hash[0..4]);
         }
@@ -102,12 +97,7 @@ impl AesCbcCipher {
     ) -> anyhow::Result<()> {
         let data_len = net_packet.data_len();
         let mut iv = [0; 16];
-        iv[0..4].copy_from_slice(&net_packet.source().octets());
-        iv[4..8].copy_from_slice(&net_packet.destination().octets());
-        iv[8] = net_packet.protocol().into();
-        iv[9] = net_packet.transport_protocol();
-        iv[10] = net_packet.is_gateway() as u8;
-        iv[11] = net_packet.source_ttl();
+        iv[0..12].copy_from_slice(&net_packet.head_tag());
         if let Some(finger) = &self.finger {
             iv[12..16].copy_from_slice(&finger.hash[0..4]);
             net_packet.set_data_len(data_len + 16)?;
@@ -145,4 +135,19 @@ impl AesCbcCipher {
             Err(e) => Err(anyhow!("aes_cbc 加密失败:{}", e)),
         };
     }
+}
+#[test]
+fn test_aes_cbc() {
+    let d = AesCbcCipher::new_128([0; 16], Some(Finger::new("123")));
+    let mut p = NetPacket::new_encrypt([0; 100]).unwrap();
+    let src = p.buffer().to_vec();
+    d.encrypt_ipv4(&mut p).unwrap();
+    d.decrypt_ipv4(&mut p).unwrap();
+    assert_eq!(p.buffer(), &src);
+    let d = AesCbcCipher::new_128([0; 16], None);
+    let mut p = NetPacket::new_encrypt([0; 100]).unwrap();
+    let src = p.buffer().to_vec();
+    d.encrypt_ipv4(&mut p).unwrap();
+    d.decrypt_ipv4(&mut p).unwrap();
+    assert_eq!(p.buffer(), &src);
 }

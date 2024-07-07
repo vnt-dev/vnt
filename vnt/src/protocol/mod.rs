@@ -6,7 +6,7 @@ use std::{fmt, io};
    0                                            15                                              31
    0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |e |s |u |u|   版本(4) |      协议(8)          |      上层协议(8)        | 初始ttl(4) | 生存时间(4) |
+  |e |s |x |u|   版本(4) |      协议(8)          |      上层协议(8)        | 初始ttl(4) | 生存时间(4) |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   |                                          源ip地址(32)                                         |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -14,7 +14,7 @@ use std::{fmt, io};
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   |                                           数据体                                              |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  注：e为是否加密标志，s为服务端通信包标志，u未使用
+  注：e为是否加密标志，s为服务端通信包标志，x扩展标志，u未使用
 */
 pub const HEAD_LEN: usize = 12;
 
@@ -128,15 +128,15 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
                 "length overflow",
             ));
         }
-        // 不能大于udp最大载荷长度
-        if data_len < 12 || data_len > 65535 - 20 - 8 {
+        if data_len < 12 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "length overflow",
+                "data_len too short",
             ));
         }
         Ok(NetPacket { data_len, buffer })
     }
+    #[inline]
     pub fn buffer(&self) -> &[u8] {
         &self.buffer.as_ref()[..self.data_len]
     }
@@ -214,8 +214,7 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_gateway_flag(&mut self, is_gateway: bool) {
         if is_gateway {
-            // 后面的版本再改为0x40，改了之后不兼容1.2.5之前的版本
-            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x50
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x40
         } else {
             self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0xBF
         };

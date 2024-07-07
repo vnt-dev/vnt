@@ -9,8 +9,6 @@ use protobuf::Message;
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use tun::device::IFace;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::punch::NatInfo;
@@ -30,30 +28,33 @@ use crate::protocol::control_packet::ControlPacket;
 use crate::protocol::{
     control_packet, ip_turn_packet, other_turn_packet, NetPacket, Protocol, MAX_TTL,
 };
-use crate::tun_tap_device::tun_create_helper::DeviceAdapter;
+use crate::tun_tap_device::vnt_device::DeviceWrite;
 
 /// 处理来源于客户端的包
 #[derive(Clone)]
-pub struct ClientPacketHandler {
-    device: DeviceAdapter,
+pub struct ClientPacketHandler<Device> {
+    device: Device,
     client_cipher: Cipher,
     punch_sender: PunchSender,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
     nat_test: NatTest,
     route: AllowExternalRoute,
     #[cfg(feature = "ip_proxy")]
+    #[cfg(feature = "integrated_tun")]
     ip_proxy_map: Option<IpProxyMap>,
 }
 
-impl ClientPacketHandler {
+impl<Device: DeviceWrite> ClientPacketHandler<Device> {
     pub fn new(
-        device: DeviceAdapter,
+        device: Device,
         client_cipher: Cipher,
         punch_sender: PunchSender,
         peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
         nat_test: NatTest,
         route: AllowExternalRoute,
-        #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(feature = "ip_proxy")]
+        ip_proxy_map: Option<IpProxyMap>,
     ) -> Self {
         Self {
             device,
@@ -62,13 +63,14 @@ impl ClientPacketHandler {
             peer_nat_info_map,
             nat_test,
             route,
+            #[cfg(feature = "integrated_tun")]
             #[cfg(feature = "ip_proxy")]
             ip_proxy_map,
         }
     }
 }
 
-impl PacketHandler for ClientPacketHandler {
+impl<Device: DeviceWrite> PacketHandler for ClientPacketHandler<Device> {
     fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
@@ -110,7 +112,7 @@ impl PacketHandler for ClientPacketHandler {
     }
 }
 
-impl ClientPacketHandler {
+impl<Device: DeviceWrite> ClientPacketHandler<Device> {
     fn ip_turn(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
@@ -138,7 +140,7 @@ impl ClientPacketHandler {
                                 net_packet.set_destination(source);
                                 //不管加不加密，和接收到的数据长度都一致
                                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                                context.send_by_key(net_packet.buffer(), route_key)?;
+                                context.send_by_key(&net_packet, route_key)?;
                                 return Ok(());
                             }
                         }
@@ -183,6 +185,7 @@ impl ClientPacketHandler {
                         _ => {}
                     }
                     #[cfg(feature = "ip_proxy")]
+                    #[cfg(feature = "integrated_tun")]
                     if let Some(ip_proxy_map) = &self.ip_proxy_map {
                         if ip_proxy_map.recv_handle(&mut ipv4, source, destination)? {
                             return Ok(());
@@ -214,7 +217,7 @@ impl ClientPacketHandler {
                 net_packet.set_destination(source);
                 net_packet.first_set_ttl(MAX_TTL);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                context.send_by_key(net_packet.buffer(), route_key)?;
+                context.send_by_key(&net_packet, route_key)?;
                 let route = Route::from_default_rt(route_key, metric);
                 context.route_table.add_route_if_absent(source, route);
             }
@@ -235,7 +238,7 @@ impl ClientPacketHandler {
                 //忽略掉来源于自己的包
                 if self
                     .nat_test
-                    .is_local_address(route_key.is_tcp(), route_key.addr)
+                    .is_local_address(route_key.protocol().is_base_tcp(), route_key.addr)
                 {
                     return Ok(());
                 }
@@ -246,7 +249,7 @@ impl ClientPacketHandler {
                 net_packet.set_destination(source);
                 net_packet.first_set_ttl(1);
                 self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                context.send_by_key(net_packet.buffer(), route_key)?;
+                context.send_by_key(&net_packet, route_key)?;
                 // 收到PunchRequest就添加路由，会导致单向通信的问题，删掉试试
                 // let route = Route::from_default_rt(route_key, 1);
                 // context.route_table.add_route_if_absent(source, route);
@@ -258,7 +261,7 @@ impl ClientPacketHandler {
                 }
                 if self
                     .nat_test
-                    .is_local_address(route_key.is_tcp(), route_key.addr)
+                    .is_local_address(route_key.protocol().is_base_tcp(), route_key.addr)
                 {
                     return Ok(());
                 }
@@ -278,7 +281,7 @@ impl ClientPacketHandler {
                     addr_packet.set_ipv4(ipv4);
                     addr_packet.set_port(route_key.addr.port());
                     self.client_cipher.encrypt_ipv4(&mut packet)?;
-                    context.send_by_key(packet.buffer(), route_key)?;
+                    context.send_by_key(&packet, route_key)?;
                 }
                 std::net::IpAddr::V6(_) => {}
             },
@@ -374,7 +377,7 @@ impl ClientPacketHandler {
                     punch_packet.set_payload(&bytes)?;
                     self.client_cipher.encrypt_ipv4(&mut punch_packet)?;
                     if self.punch_sender.send(true, source, peer_nat_info) {
-                        context.send_by_key(punch_packet.buffer(), route_key)?;
+                        context.send_by_key(&punch_packet, route_key)?;
                     }
                 } else {
                     self.punch_sender.send(false, source, peer_nat_info);

@@ -3,8 +3,11 @@ use anyhow::anyhow;
 use ring::aead;
 use ring::aead::{LessSafeKey, UnboundKey};
 
+use crate::cipher::finger::{gen_nonce, gen_random_nonce};
 use crate::cipher::Finger;
-use crate::protocol::body::{SecretBody, AES_GCM_ENCRYPTION_RESERVED};
+use crate::protocol::body::{
+    AEADSecretBody, SecretTail, SecretTailMut, FINGER_RESERVED, RANDOM_RESERVED, TAG_RESERVED,
+};
 use crate::protocol::NetPacket;
 
 #[derive(Clone)]
@@ -40,34 +43,29 @@ impl ChaCha20Poly1305Cipher {
             //未加密的数据直接丢弃
             return Err(anyhow!("not encrypt"));
         }
-        if net_packet.payload().len() < AES_GCM_ENCRYPTION_RESERVED {
-            log::error!("数据异常,长度小于{}", AES_GCM_ENCRYPTION_RESERVED);
+        if net_packet.payload().len() < TAG_RESERVED {
+            log::error!("数据异常,长度小于{}", TAG_RESERVED);
             return Err(anyhow!("data err"));
         }
-        let mut nonce_raw = [0; 12];
-        nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-        nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-        nonce_raw[8] = net_packet.protocol().into();
-        nonce_raw[9] = net_packet.transport_protocol();
-        nonce_raw[10] = net_packet.is_gateway() as u8;
-        nonce_raw[11] = net_packet.source_ttl();
-        let nonce = aead::Nonce::assume_unique_for_key(nonce_raw);
-        let mut secret_body = SecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
+        let mut head_tag = net_packet.head_tag();
+        let mut secret_body = AEADSecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
         if let Some(finger) = &self.finger {
-            let finger = finger.calculate_finger(&nonce_raw, secret_body.en_body());
+            let finger = finger.calculate_finger(&head_tag, secret_body.data_tag_mut());
             if &finger != secret_body.finger() {
                 return Err(anyhow!("ring CHACHA20_POLY1305 finger err"));
             }
         }
-
+        gen_nonce(&mut head_tag, secret_body.random_buf());
+        let nonce = aead::Nonce::assume_unique_for_key(head_tag);
         let rs = self
             .cipher
-            .open_in_place(nonce, aead::Aad::empty(), secret_body.en_body_mut());
+            .open_in_place(nonce, aead::Aad::empty(), secret_body.data_tag_mut());
         if let Err(e) = rs {
             return Err(anyhow!("ring CHACHA20_POLY1305 解密失败:{}", e));
         }
+        let len = secret_body.data().len();
         net_packet.set_encrypt_flag(false);
-        net_packet.set_data_len(net_packet.data_len() - AES_GCM_ENCRYPTION_RESERVED)?;
+        net_packet.set_payload_len(len)?;
         return Ok(());
     }
     /// net_packet 必须预留足够长度
@@ -77,23 +75,23 @@ impl ChaCha20Poly1305Cipher {
         &self,
         net_packet: &mut NetPacket<B>,
     ) -> anyhow::Result<()> {
-        let mut nonce_raw = [0; 12];
-        nonce_raw[0..4].copy_from_slice(&net_packet.source().octets());
-        nonce_raw[4..8].copy_from_slice(&net_packet.destination().octets());
-        nonce_raw[8] = net_packet.protocol().into();
-        nonce_raw[9] = net_packet.transport_protocol();
-        nonce_raw[10] = net_packet.is_gateway() as u8;
-        nonce_raw[11] = net_packet.source_ttl();
-        let nonce = aead::Nonce::assume_unique_for_key(nonce_raw);
-        let data_len = net_packet.data_len() + AES_GCM_ENCRYPTION_RESERVED;
-        net_packet.set_data_len(data_len)?;
-        let mut secret_body = SecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
+        let head_tag = net_packet.head_tag();
+        let data_len = net_packet.data_len();
+        if self.finger.is_some() {
+            net_packet.set_data_len(data_len + TAG_RESERVED + RANDOM_RESERVED + FINGER_RESERVED)?;
+        } else {
+            net_packet.set_data_len(data_len + TAG_RESERVED + RANDOM_RESERVED)?;
+        }
+        let mut secret_body = AEADSecretBody::new(net_packet.payload_mut(), self.finger.is_some())?;
+        let mut nonce = head_tag;
+        secret_body.set_random(&gen_random_nonce(&mut nonce));
+        let nonce = aead::Nonce::assume_unique_for_key(nonce);
         let rs = self.cipher.seal_in_place_separate_tag(
             nonce,
             aead::Aad::empty(),
-            secret_body.body_mut(),
+            secret_body.data_mut(),
         );
-        return match rs {
+        match rs {
             Ok(tag) => {
                 let tag = tag.as_ref();
                 if tag.len() != 16 {
@@ -101,14 +99,14 @@ impl ChaCha20Poly1305Cipher {
                 }
                 secret_body.set_tag(tag)?;
                 if let Some(finger) = &self.finger {
-                    let finger = finger.calculate_finger(&nonce_raw, secret_body.en_body());
+                    let finger = finger.calculate_finger(&head_tag, secret_body.data_tag_mut());
                     secret_body.set_finger(&finger)?;
                 }
                 net_packet.set_encrypt_flag(true);
                 Ok(())
             }
             Err(e) => Err(anyhow!("ring CHACHA20_POLY1305 加密失败:{}", e)),
-        };
+        }
     }
 }
 

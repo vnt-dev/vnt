@@ -3,7 +3,7 @@ use crate::handle::CurrentDeviceInfo;
 use crate::proto::message::{ClientStatusInfo, PunchNatType, RouteItem};
 use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::{service_packet, NetPacket, Protocol, HEAD_LEN, MAX_TTL};
-use crate::util::{Scheduler, WatchSingleU64Adder, WatchU64Adder};
+use crate::util::Scheduler;
 use crossbeam_utils::atomic::AtomicCell;
 use protobuf::Message;
 use std::io;
@@ -15,17 +15,9 @@ pub fn up_status(
     scheduler: &Scheduler,
     context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
-    down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
 ) {
     let _ = scheduler.timeout(Duration::from_secs(60), move |x| {
-        up_status0(
-            x,
-            context,
-            current_device_info,
-            down_count_watcher,
-            up_count_watcher,
-        )
+        up_status0(x, context, current_device_info)
     });
 }
 
@@ -33,25 +25,12 @@ fn up_status0(
     scheduler: &Scheduler,
     context: ChannelContext,
     current_device_info: Arc<AtomicCell<CurrentDeviceInfo>>,
-    down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
 ) {
-    if let Err(e) = send_up_status_packet(
-        &context,
-        &current_device_info,
-        &down_count_watcher,
-        &up_count_watcher,
-    ) {
+    if let Err(e) = send_up_status_packet(&context, &current_device_info) {
         log::warn!("{:?}", e)
     }
     let rs = scheduler.timeout(Duration::from_secs(10 * 60), move |x| {
-        up_status0(
-            x,
-            context,
-            current_device_info,
-            down_count_watcher,
-            up_count_watcher,
-        )
+        up_status0(x, context, current_device_info)
     });
     if !rs {
         log::info!("定时任务停止");
@@ -61,8 +40,6 @@ fn up_status0(
 fn send_up_status_packet(
     context: &ChannelContext,
     current_device_info: &AtomicCell<CurrentDeviceInfo>,
-    down_count_watcher: &WatchU64Adder,
-    up_count_watcher: &WatchSingleU64Adder,
 ) -> io::Result<()> {
     let device_info = current_device_info.load();
     if device_info.status.offline() {
@@ -79,8 +56,8 @@ fn send_up_status_packet(
         item.next_ip = ip.into();
         message.p2p_list.push(item);
     }
-    message.up_stream = up_count_watcher.get();
-    message.down_stream = down_count_watcher.get();
+    message.up_stream = context.up_traffic_meter.as_ref().map_or(0, |v| v.total());
+    message.down_stream = context.down_traffic_meter.as_ref().map_or(0, |v| v.total());
     message.nat_type = protobuf::EnumOrUnknown::new(if context.is_cone() {
         PunchNatType::Cone
     } else {
@@ -99,6 +76,6 @@ fn send_up_status_packet(
     net_packet.set_source(device_info.virtual_ip);
     net_packet.set_destination(device_info.virtual_gateway);
     net_packet.set_payload(&buf)?;
-    context.send_default(net_packet.buffer(), device_info.connect_server)?;
+    context.send_default(&net_packet, device_info.connect_server)?;
     Ok(())
 }

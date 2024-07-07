@@ -34,6 +34,8 @@
 
 注意：仅在windows上支持使用tap，用于兼容低版本windows系统（低版本windows不支持wintun）
 
+使用tap模式需要手动创建tap网卡，使用--nic参数指定已经创建好的tap网卡名称
+
 ### --nic `<tun0>`
 
 指定虚拟网卡名称，默认tun模式使用vnt-tun，tap模式使用vnt-tap
@@ -92,18 +94,18 @@ aes_gcm/aes_cbc/aes_ecb/sm4_cbc/chacha20_poly1305/chacha20/xor，默认使用aes
 
 特别说明：xor只是对数据进行简单异或，仅仅避免了明文传输，安全性很差，同时对性能影响也极小；
 
-| 密码位数  | model             | 加密算法              |  
-|-------|-------------------|-------------------|
-| 1~8位  | aes_gcm           | AES128-GCM        |
-| `>=`8 | aes_gcm           | AES256-GCM        |
-| 1~8位  | aes_cbc           | AES128-CBC        |
-| `>=`8 | aes_cbc           | AES256-CBC        |
-| 1~8位  | aes_ecb           | AES128-ECB        |
-| `>=`8 | aes_ecb           | AES256-ECB        |
-| `>0`  | sm4_cbc           | SM4-CBC           |
-| `>0`  | chacha20_poly1305 | ChaCha20-Poly1305 |
-| `>0`  | chacha20          | ChaCha20          |
-| `>0`  | xor               | 简单异或混淆            |
+| 密码位数   | model             | 加密算法              |  
+|--------|-------------------|-------------------|
+| `< 8`  | aes_gcm           | AES128-GCM        |
+| `>= 8` | aes_gcm           | AES256-GCM        |
+| `< 8`  | aes_cbc           | AES128-CBC        |
+| `>= 8` | aes_cbc           | AES256-CBC        |
+| `< 8`  | aes_ecb           | AES128-ECB        |
+| `>= 8` | aes_ecb           | AES256-ECB        |
+| `> 0`  | sm4_cbc           | SM4-CBC           |
+| `> 0`  | chacha20_poly1305 | ChaCha20-Poly1305 |
+| `> 0`  | chacha20          | ChaCha20          |
+| `> 0`  | xor               | 简单异或混淆            |
 
 ### --finger
 
@@ -141,9 +143,9 @@ aes_gcm/aes_cbc/aes_ecb/sm4_cbc/chacha20_poly1305/chacha20/xor，默认使用aes
 
 当地址解析失败时，会依次尝试后面的dns，直到有A记录、AAAA记录(或TXT记录)的解析结果
 
-### --mapping `<udp:0.0.0.0:80->10.26.0.10:80>`
+### --mapping `<udp:0.0.0.0:80-10.26.0.10:80>`
 
-端口映射,可以设置多个映射地址，例如 '--mapping udp:0.0.0.0:80->10.26.0.10:80 --mapping tcp:0.0.0.0:80->10.26.0.11:81'
+端口映射,可以设置多个映射地址，例如 '--mapping udp:0.0.0.0:80-10.26.0.10:80 --mapping tcp:0.0.0.0:80-10.26.0.11:81'
 表示将本地udp 80端口的数据转发到10.26.0.10:80，将本地tcp 80端口的数据转发到10.26.0.11:81，转发的目的地址可以使用域名+端口
 
 ### --compressor `<lz4>`
@@ -196,9 +198,9 @@ dns:
   - 223.5.5.5 # 首选dns
   - 8.8.8.8 # 备选dns
 mapping:
-  - udp:0.0.0.0:80->10.26.0.10:80 # 映射udp数据
-  - tcp:0.0.0.0:80->10.26.0.10:81 # 映射tcp数据
-  - tcp:0.0.0.0:82->localhost:83 # 映射tcp数据
+  - udp:0.0.0.0:80-10.26.0.10:80 # 映射udp数据
+  - tcp:0.0.0.0:80-10.26.0.10:81 # 映射tcp数据
+  - tcp:0.0.0.0:82-localhost:83 # 映射tcp数据
 ```
 
 或者需要哪个配置就加哪个，当然token是必须的

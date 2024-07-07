@@ -1,21 +1,22 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::{Mutex, RwLock};
 use rand::Rng;
-#[cfg(not(target_os = "android"))]
-use tun::device::IFace;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
+use crate::channel::sender::IpPacketSender;
 use crate::channel::{init_channel, init_context, Route, RouteKey};
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
 use crate::cipher::RsaCipher;
+use crate::compression::Compressor;
 use crate::core::Config;
 use crate::external_route::{AllowExternalRoute, ExternalRoute};
 use crate::handle::handshaker::Handshake;
@@ -23,16 +24,44 @@ use crate::handle::maintain::PunchReceiver;
 use crate::handle::recv_data::RecvDataHandler;
 use crate::handle::{maintain, BaseConfigInfo, ConnectStatus, CurrentDeviceInfo, PeerDeviceInfo};
 use crate::nat::NatTest;
+#[cfg(feature = "integrated_tun")]
 use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
-use crate::util::{
-    Scheduler, SingleU64Adder, StopManager, U64Adder, WatchSingleU64Adder, WatchU64Adder,
-};
+use crate::tun_tap_device::vnt_device::DeviceWrite;
+use crate::util::limit::TrafficMeterMultiAddress;
+use crate::util::{Scheduler, StopManager};
 use crate::{nat, VntCallback};
-#[cfg(not(target_os = "android"))]
-use crate::{tun_tap_device, DeviceInfo};
 
 #[derive(Clone)]
 pub struct Vnt {
+    inner: Arc<VntInner>,
+}
+
+impl Vnt {
+    #[cfg(feature = "integrated_tun")]
+    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
+        let inner = Arc::new(VntInner::new(config, callback)?);
+        Ok(Self { inner })
+    }
+    #[cfg(not(feature = "integrated_tun"))]
+    pub fn new_device<Call: VntCallback, Device: DeviceWrite>(
+        config: Config,
+        callback: Call,
+        device: Device,
+    ) -> anyhow::Result<Self> {
+        let inner = Arc::new(VntInner::new_device(config, callback, device)?);
+        Ok(Self { inner })
+    }
+}
+
+impl Deref for Vnt {
+    type Target = VntInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+pub struct VntInner {
     stop_manager: StopManager,
     config: Config,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
@@ -40,14 +69,41 @@ pub struct Vnt {
     device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
     context: Arc<Mutex<Option<ChannelContext>>>,
     peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>>,
-    down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
     client_secret_hash: Option<[u8; 16]>,
+    compressor: Compressor,
+    client_cipher: Cipher,
+    external_route: ExternalRoute,
+    up_traffic_meter: Option<TrafficMeterMultiAddress>,
+    down_traffic_meter: Option<TrafficMeterMultiAddress>,
 }
 
-impl Vnt {
+impl VntInner {
+    #[cfg(feature = "integrated_tun")]
     pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
-        log::info!("config.toml:{:?}", config);
+        VntInner::new_device0(config, callback, DeviceAdapter::default())
+    }
+    #[cfg(not(feature = "integrated_tun"))]
+    pub fn new_device<Call: VntCallback, Device: DeviceWrite>(
+        config: Config,
+        callback: Call,
+        device: Device,
+    ) -> anyhow::Result<Self> {
+        VntInner::new_device0(config, callback, device)
+    }
+    fn new_device0<Call: VntCallback, Device: DeviceWrite>(
+        config: Config,
+        callback: Call,
+        device: Device,
+    ) -> anyhow::Result<Self> {
+        log::info!("config: {:?}", config);
+        let (up_traffic_meter, down_traffic_meter) = if config.enable_traffic {
+            (
+                Some(TrafficMeterMultiAddress::default()),
+                Some(TrafficMeterMultiAddress::default()),
+            )
+        } else {
+            (None, None)
+        };
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
         let rsa_cipher: Arc<Mutex<Option<RsaCipher>>> = Arc::new(Mutex::new(None));
@@ -66,7 +122,7 @@ impl Vnt {
         };
         //客户端对称加密
         let client_cipher =
-            Cipher::new_password(config.cipher_model, config.password.clone(), finger);
+            Cipher::new_password(config.cipher_model, config.password.clone(), finger)?;
         //当前设备信息
         let current_device = Arc::new(AtomicCell::new(CurrentDeviceInfo::new0(
             config.server_address,
@@ -84,6 +140,13 @@ impl Vnt {
             config.device_id.clone(),
             config.server_address_str.clone(),
             config.name_servers.clone(),
+            config.mtu.unwrap_or(1420),
+            #[cfg(feature = "integrated_tun")]
+            #[cfg(target_os = "windows")]
+            config.tap,
+            #[cfg(feature = "integrated_tun")]
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+            config.device_name.clone(),
         );
         // 服务停止管理器
         let stop_manager = {
@@ -111,9 +174,11 @@ impl Vnt {
             ports,
             config.use_channel_type,
             config.first_latency,
-            config.tcp,
+            config.protocol,
             config.packet_loss_rate,
             config.packet_delay,
+            up_traffic_meter.clone(),
+            down_traffic_meter.clone(),
         )?;
         let local_ipv4 = nat::local_ipv4();
         let local_ipv6 = nat::local_ipv6();
@@ -128,24 +193,13 @@ impl Vnt {
             udp_ports,
             tcp_port,
         );
-
-        // pc上先创建虚拟网卡
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-        let device = {
-            log::info!("开始创建tun");
-            let device = tun_tap_device::create_device(&config)?;
-            log::info!("创建tun成功");
-            let tun_info = DeviceInfo::new(device.name()?, device.version()?);
-            log::info!("tun信息{:?}", tun_info);
-            callback.create_tun(tun_info);
-            device
-        };
         // 定时器
         let scheduler = Scheduler::new(stop_manager.clone())?;
         let external_route = ExternalRoute::new(config.in_ips.clone());
         let out_external_route = AllowExternalRoute::new(config.out_ips.clone());
 
         #[cfg(feature = "ip_proxy")]
+        #[cfg(feature = "integrated_tun")]
         let proxy_map = if !config.out_ips.is_empty() && !config.no_proxy {
             Some(crate::ip_proxy::init_proxy(
                 context.clone(),
@@ -159,33 +213,26 @@ impl Vnt {
         let (punch_sender, punch_receiver) = maintain::punch_channel();
         let peer_nat_info_map: Arc<RwLock<HashMap<Ipv4Addr, NatInfo>>> =
             Arc::new(RwLock::new(HashMap::with_capacity(16)));
-        let down_counter =
-            U64Adder::with_capacity(config.ports.as_ref().map(|v| v.len()).unwrap_or_default() + 8);
-        let down_count_watcher = down_counter.watch();
         let handshake = Handshake::new(
             #[cfg(feature = "server_encrypt")]
             rsa_cipher.clone(),
         );
-        let up_counter = SingleU64Adder::new();
-        let up_count_watcher = up_counter.watch();
-        let tun_helper = TunDeviceHelper::new(
-            stop_manager.clone(),
-            context.clone(),
-            current_device.clone(),
-            external_route.clone(),
-            #[cfg(feature = "ip_proxy")]
-            proxy_map.clone(),
-            client_cipher.clone(),
-            server_cipher.clone(),
-            config.parallel,
-            up_counter,
-            device_list.clone(),
-            config.compressor,
-        );
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-        let device_adapter = DeviceAdapter::new(device.clone());
-        #[cfg(target_os = "android")]
-        let device_adapter = DeviceAdapter::new(tun_helper);
+        #[cfg(feature = "integrated_tun")]
+        let tun_device_helper = {
+            TunDeviceHelper::new(
+                stop_manager.clone(),
+                context.clone(),
+                current_device.clone(),
+                external_route.clone(),
+                #[cfg(feature = "ip_proxy")]
+                proxy_map.clone(),
+                client_cipher.clone(),
+                server_cipher.clone(),
+                device_list.clone(),
+                config.compressor,
+                device.clone().into_device_adapter(),
+            )
+        };
 
         let handler = RecvDataHandler::new(
             #[cfg(feature = "server_encrypt")]
@@ -193,7 +240,7 @@ impl Vnt {
             server_cipher.clone(),
             client_cipher.clone(),
             current_device.clone(),
-            device_adapter,
+            device,
             device_list.clone(),
             config_info.clone(),
             nat_test.clone(),
@@ -203,33 +250,36 @@ impl Vnt {
             external_route.clone(),
             out_external_route,
             #[cfg(feature = "ip_proxy")]
+            #[cfg(feature = "integrated_tun")]
             proxy_map.clone(),
-            down_counter,
             handshake.clone(),
+            #[cfg(feature = "integrated_tun")]
+            tun_device_helper,
         );
 
         //初始化网络数据通道
-        let (udp_socket_sender, tcp_socket_sender) =
+        let (udp_socket_sender, connect_util) =
             init_channel(tcp_listener, context.clone(), stop_manager.clone(), handler)?;
         // 打洞逻辑
         let punch = Punch::new(
             context.clone(),
             config.punch_model,
-            config.tcp,
-            tcp_socket_sender.clone(),
+            config.protocol.is_base_tcp(),
+            connect_util.clone(),
             external_route.clone(),
             nat_test.clone(),
+            current_device.clone(),
         );
 
-        #[cfg(not(target_os = "android"))]
-        tun_helper.start(device)?;
+        // #[cfg(not(target_os = "android"))]
+        // tun_helper.start(device)?;
 
         maintain::idle_gateway(
             &scheduler,
             context.clone(),
             current_device.clone(),
             config_info.clone(),
-            tcp_socket_sender.clone(),
+            connect_util.clone(),
             callback.clone(),
             0,
             handshake,
@@ -238,8 +288,6 @@ impl Vnt {
             let context = context.clone();
             let nat_test = nat_test.clone();
             let device_list = device_list.clone();
-            let down_count_watcher = down_count_watcher.clone();
-            let up_count_watcher = up_count_watcher.clone();
             let config_info = config_info.clone();
             let current_device = current_device.clone();
             if !config.use_channel_type.is_only_relay() {
@@ -251,6 +299,7 @@ impl Vnt {
                     udp_socket_sender,
                 );
             }
+            let client_cipher = client_cipher.clone();
             //延迟启动
             scheduler.timeout(Duration::from_secs(3), move |scheduler| {
                 start(
@@ -265,12 +314,10 @@ impl Vnt {
                     config_info,
                     punch,
                     callback,
-                    down_count_watcher,
-                    up_count_watcher,
                 );
             });
         }
-
+        let compressor = config.compressor;
         Ok(Self {
             stop_manager,
             config,
@@ -279,9 +326,12 @@ impl Vnt {
             device_list,
             context: Arc::new(Mutex::new(Some(context))),
             peer_nat_info_map,
-            down_count_watcher,
-            up_count_watcher,
             client_secret_hash: config_info.client_secret_hash,
+            compressor,
+            client_cipher,
+            external_route,
+            up_traffic_meter,
+            down_traffic_meter,
         })
     }
 }
@@ -298,8 +348,6 @@ pub fn start<Call: VntCallback>(
     config_info: BaseConfigInfo,
     punch: Punch,
     callback: Call,
-    down_count_watcher: WatchU64Adder,
-    up_count_watcher: WatchSingleU64Adder,
 ) {
     // 定时心跳
     maintain::heartbeat(
@@ -353,16 +401,10 @@ pub fn start<Call: VntCallback>(
             punch,
         );
     }
-    maintain::up_status(
-        scheduler,
-        context.clone(),
-        current_device.clone(),
-        down_count_watcher,
-        up_count_watcher,
-    )
+    maintain::up_status(scheduler, context.clone(), current_device.clone())
 }
 
-impl Vnt {
+impl VntInner {
     pub fn name(&self) -> &str {
         &self.config.name
     }
@@ -377,6 +419,9 @@ impl Vnt {
     }
     pub fn current_device(&self) -> CurrentDeviceInfo {
         self.current_device.load()
+    }
+    pub fn current_device_info(&self) -> Arc<AtomicCell<CurrentDeviceInfo>> {
+        self.current_device.clone()
     }
     pub fn peer_nat_info(&self, ip: &Ipv4Addr) -> Option<NatInfo> {
         self.peer_nat_info_map.read().get(ip).cloned()
@@ -414,15 +459,38 @@ impl Vnt {
         }
     }
     pub fn up_stream(&self) -> u64 {
-        self.up_count_watcher.get()
+        self.up_traffic_meter.as_ref().map_or(0, |v| v.total())
+    }
+    pub fn up_stream_all(&self) -> Option<(u64, HashMap<Ipv4Addr, u64>)> {
+        self.up_traffic_meter.as_ref().map(|v| v.get_all())
+    }
+    pub fn up_stream_history(&self) -> Option<(u64, HashMap<Ipv4Addr, (u64, Vec<usize>)>)> {
+        self.up_traffic_meter.as_ref().map(|v| v.get_all_history())
     }
     pub fn down_stream(&self) -> u64 {
-        self.down_count_watcher.get()
+        self.down_traffic_meter.as_ref().map_or(0, |v| v.total())
+    }
+    pub fn down_stream_all(&self) -> Option<(u64, HashMap<Ipv4Addr, u64>)> {
+        self.down_traffic_meter.as_ref().map(|v| v.get_all())
+    }
+    pub fn down_stream_history(&self) -> Option<(u64, HashMap<Ipv4Addr, (u64, Vec<usize>)>)> {
+        self.down_traffic_meter
+            .as_ref()
+            .map(|v| v.get_all_history())
     }
     pub fn stop(&self) {
         //退出协助回收资源
         let _ = self.context.lock().take();
         self.stop_manager.stop()
+    }
+    pub fn is_stopped(&self) -> bool {
+        self.stop_manager.is_stopped()
+    }
+    pub fn add_stop_listener<F>(&self, name: String, f: F) -> anyhow::Result<crate::util::Worker>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.stop_manager.add_listener(name, f)
     }
     pub fn wait(&self) {
         self.stop_manager.wait()
@@ -432,5 +500,24 @@ impl Vnt {
     }
     pub fn config(&self) -> &Config {
         &self.config
+    }
+    pub fn ipv4_packet_sender(&self) -> Option<IpPacketSender> {
+        if let Some(c) = self.context.lock().as_ref() {
+            Some(IpPacketSender::new(
+                c.clone(),
+                self.current_device.clone(),
+                self.compressor.clone(),
+                self.client_cipher.clone(),
+                self.external_route.clone(),
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for VntInner {
+    fn drop(&mut self) {
+        self.stop();
     }
 }

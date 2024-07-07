@@ -189,9 +189,16 @@ impl Into<u8> for ErrorType {
     }
 }
 
-#[cfg(target_os = "android")]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DeviceConfig {
+    #[cfg(feature = "integrated_tun")]
+    #[cfg(target_os = "windows")]
+    pub tap: bool,
+    #[cfg(feature = "integrated_tun")]
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    pub device_name: Option<String>,
+    //虚拟网卡mtu值
+    pub mtu: u32,
     //本机虚拟IP
     pub virtual_ip: Ipv4Addr,
     //子网掩码
@@ -204,9 +211,15 @@ pub struct DeviceConfig {
     pub external_route: Vec<(Ipv4Addr, Ipv4Addr)>,
 }
 
-#[cfg(target_os = "android")]
 impl DeviceConfig {
     pub fn new(
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(target_os = "windows")]
+        tap: bool,
+        #[cfg(feature = "integrated_tun")]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        device_name: Option<String>,
+        mtu: u32,
         virtual_ip: Ipv4Addr,
         virtual_netmask: Ipv4Addr,
         virtual_gateway: Ipv4Addr,
@@ -214,6 +227,13 @@ impl DeviceConfig {
         external_route: Vec<(Ipv4Addr, Ipv4Addr)>,
     ) -> Self {
         Self {
+            #[cfg(feature = "integrated_tun")]
+            #[cfg(target_os = "windows")]
+            tap,
+            #[cfg(feature = "integrated_tun")]
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+            device_name,
+            mtu,
             virtual_ip,
             virtual_netmask,
             virtual_gateway,
@@ -223,7 +243,6 @@ impl DeviceConfig {
     }
 }
 
-#[cfg(target_os = "android")]
 impl Display for DeviceConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!(
@@ -272,6 +291,7 @@ pub trait VntCallback: Clone + Send + Sync + 'static {
 
     /// 创建网卡的信息
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    #[cfg(feature = "integrated_tun")]
     fn create_tun(&self, _info: DeviceInfo) {}
     /// 连接
     fn connect(&self, _info: ConnectInfo) {}
@@ -283,8 +303,11 @@ pub trait VntCallback: Clone + Send + Sync + 'static {
     fn register(&self, _info: RegisterInfo) -> bool {
         true
     }
+    #[cfg(not(feature = "integrated_tun"))]
+    fn create_device(&self, _info: DeviceConfig) {}
     #[cfg(target_os = "android")]
-    fn generate_tun(&self, _info: DeviceConfig) -> u32 {
+    #[cfg(feature = "integrated_tun")]
+    fn generate_tun(&self, _info: DeviceConfig) -> usize {
         0
     }
     fn peer_client_list(&self, _info: Vec<PeerClientInfo>) {}
