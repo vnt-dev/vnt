@@ -268,6 +268,7 @@ pub fn console_chart_a(chart_a: ChartA) {
     let up_max_value = *chart_a.up_map.values().max().unwrap_or(&0);
     let down_max_value = *chart_a.down_map.values().max().unwrap_or(&0);
     let max_value = up_max_value.max(down_max_value);
+    let max_value = max_value.max(1);
     let max_height = 50;
     // 打印条形图
     for key in &keys {
@@ -342,6 +343,7 @@ pub fn console_chart_b(chart_b: ChartB) {
 }
 fn console_chart_b_list(list: Vec<usize>) {
     let max_value = *list.iter().max().unwrap_or(&0);
+    let max_value = max_value.max(1);
     let max_height = max_value.min(20);
     // 遍历从最大高度到0
     for i in (0..=max_height).rev() {
