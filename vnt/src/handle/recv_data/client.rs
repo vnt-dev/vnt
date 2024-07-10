@@ -212,14 +212,18 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
         let source = net_packet.source();
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PingPacket(_) => {
-                net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
-                net_packet.set_source(current_device.virtual_ip);
-                net_packet.set_destination(source);
-                net_packet.first_set_ttl(MAX_TTL);
-                self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                context.send_by_key(&net_packet, route_key)?;
                 let route = Route::from_default_rt(route_key, metric);
-                context.route_table.add_route_if_absent(source, route);
+                if context.route_table.add_route_if_absent(source, route)
+                    || net_packet.source() < current_device.virtual_ip
+                {
+                    //在路由表中，或者来源比自己小，就需要回复，注意不能调换顺序
+                    net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
+                    net_packet.set_source(current_device.virtual_ip);
+                    net_packet.set_destination(source);
+                    net_packet.first_set_ttl(MAX_TTL);
+                    self.client_cipher.encrypt_ipv4(&mut net_packet)?;
+                    context.send_by_key(&net_packet, route_key)?;
+                }
             }
             ControlPacket::PongPacket(pong_packet) => {
                 let current_time = crate::handle::now_time() as u16;

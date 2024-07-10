@@ -353,18 +353,18 @@ impl RouteTable {
         }
         Err(io::Error::new(io::ErrorKind::NotFound, "route not found"))
     }
-    pub fn add_route_if_absent(&self, id: Ipv4Addr, route: Route) {
+    pub fn add_route_if_absent(&self, id: Ipv4Addr, route: Route) -> bool {
         self.add_route_(id, route, true)
     }
-    pub fn add_route(&self, id: Ipv4Addr, route: Route) {
+    pub fn add_route(&self, id: Ipv4Addr, route: Route) -> bool {
         self.add_route_(id, route, false)
     }
-    fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) {
+    fn add_route_(&self, id: Ipv4Addr, route: Route, only_if_absent: bool) -> bool {
         // 限制通道类型
         match self.use_channel_type {
             UseChannelType::P2p => {
                 if !route.is_p2p() {
-                    return;
+                    return false;
                 }
             }
             _ => {}
@@ -372,10 +372,18 @@ impl RouteTable {
         let key = route.route_key();
         if only_if_absent {
             if let Some((_, list)) = self.route_table.read().get(&id) {
+                let mut p2p_num = 0;
                 for (x, _) in list {
-                    if x.route_key() == key {
-                        return;
+                    if x.is_p2p() {
+                        p2p_num += 1;
                     }
+                    if x.route_key() == key {
+                        return true;
+                    }
+                }
+                if !self.first_latency && p2p_num >= self.channel_num {
+                    // 非优先延迟的情况下，通道满了则不用再添加
+                    return false;
                 }
             }
         }
@@ -387,11 +395,11 @@ impl RouteTable {
         for (x, time) in list.iter_mut() {
             if x.metric < route.metric && !self.first_latency {
                 //非优先延迟的情况下 不能比当前的路径更长
-                return;
+                return false;
             }
             if x.route_key() == key {
                 if only_if_absent {
-                    return;
+                    return true;
                 }
                 x.metric = route.metric;
                 x.rt = route.rt;
@@ -406,7 +414,7 @@ impl RouteTable {
             //如果延迟都稳定了，则去除多余通道
             for (route, _) in list.iter() {
                 if route.rt == DEFAULT_RT {
-                    return;
+                    return true;
                 }
             }
             //延迟优先模式需要更多的通道探测延迟最低的路线
@@ -422,6 +430,9 @@ impl RouteTable {
                     //非优先延迟的情况下 添加了直连的则排除非直连的
                     list.retain(|(k, _)| k.is_p2p());
                 }
+                if self.channel_num <= list.len() {
+                    return false;
+                }
             };
             //增加路由表容量，避免波动
             let limit_len = self.channel_num * 2;
@@ -429,6 +440,7 @@ impl RouteTable {
             self.truncate_(list, limit_len);
             list.push((route, AtomicCell::new(Instant::now())));
         }
+        return true;
     }
     fn truncate_(&self, list: &mut Vec<(Route, AtomicCell<Instant>)>, len: usize) {
         if list.len() <= len {
