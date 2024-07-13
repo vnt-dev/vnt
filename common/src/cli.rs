@@ -113,10 +113,13 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
     } else if matches.opt_present("all") {
         command::command(command::CommandEnum::All);
         return Ok(None);
-    } else if matches.opt_present("chart_a") {
+    }
+    #[cfg(feature = "command")]
+    if matches.opt_present("chart_a") {
         command::command(command::CommandEnum::ChartA);
         return Ok(None);
     }
+    #[cfg(feature = "command")]
     if let Some(v) = matches.opt_str("chart_b") {
         command::command(command::CommandEnum::ChartB(v));
         return Ok(None);
