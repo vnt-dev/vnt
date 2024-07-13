@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::net::{SocketAddr, UdpSocket};
@@ -139,17 +139,12 @@ impl Into<NatType> for PunchNatType {
 impl NatTest {
     pub fn new(
         _channel_num: usize,
-        mut stun_server: Vec<String>,
+        stun_server: Vec<String>,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
         udp_ports: Vec<u16>,
         tcp_port: u16,
     ) -> NatTest {
-        if stun_server.len() > 5 {
-            stun_server.shuffle(&mut rand::thread_rng());
-            stun_server.truncate(5);
-            log::info!("stun_server truncate {:?}", stun_server);
-        }
         let ports = vec![0; udp_ports.len()];
         let nat_info = NatInfo::new(
             Vec::new(),
@@ -262,8 +257,17 @@ impl NatTest {
         &self,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
-    ) -> io::Result<NatInfo> {
-        let (nat_type, public_ips, port_range) = stun::stun_test_nat(self.stun_server.clone())?;
+    ) -> anyhow::Result<NatInfo> {
+        let mut stun_server = self.stun_server.clone();
+        if stun_server.len() > 5 {
+            stun_server.shuffle(&mut rand::thread_rng());
+            stun_server.truncate(5);
+            log::info!("stun_server truncate {:?}", stun_server);
+        }
+        let (nat_type, public_ips, port_range) = stun::stun_test_nat(stun_server)?;
+        if public_ips.is_empty() {
+            Err(anyhow!("public_ips.is_empty"))?
+        }
         let mut guard = self.info.lock();
         guard.nat_type = nat_type;
         guard.public_ips = public_ips;

@@ -233,7 +233,7 @@ fn punch0(
             || nat_info.public_ports.iter().filter(|&&v| v == 0).count()
                 > nat_info.public_ports.len() / 2)
     {
-        log::info!("公网地址为空，暂时放弃打洞,第{}轮", total_count);
+        log::info!("未获取到公网地址，暂时放弃打洞,第{}轮", total_count);
         return Ok(());
     }
     let current_ip = current_device.virtual_ip;

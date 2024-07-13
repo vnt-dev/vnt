@@ -385,7 +385,6 @@ pub fn start<Call: VntCallback>(
             &scheduler,
             context.clone(),
             current_device.clone(),
-            server_cipher.clone(),
             nat_test.clone(),
             config_info.clone(),
         );
