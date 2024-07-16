@@ -16,6 +16,7 @@ serde_yaml = "0.9.32"
 getopts = "0.2.21"
 gethostname = "0.4.3"
 uuid = { version = "1.8.0", features = ["v4"] }
+sys-locale = "0.3.1"
 
 [features]
 default = []
