@@ -43,6 +43,7 @@ message DeviceInfo {
     uint32 device_status = 3;
     bool client_secret = 4;
     bytes client_secret_hash = 5;
+    bool wireguard = 6;
 }
 
 message DeviceList {

@@ -51,6 +51,7 @@ pub struct Config {
     pub port_mapping_list: Vec<(bool, SocketAddr, String)>,
     pub compressor: Compressor,
     pub enable_traffic: bool,
+    pub allow_wire_guard: bool,
 }
 
 impl Config {
@@ -88,6 +89,8 @@ impl Config {
         #[cfg(feature = "port_mapping")] port_mapping_list: Vec<String>,
         compressor: Compressor,
         enable_traffic: bool,
+        // 允许传递wg流量
+        allow_wire_guard: bool,
     ) -> anyhow::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -180,6 +183,7 @@ impl Config {
             port_mapping_list,
             compressor,
             enable_traffic,
+            allow_wire_guard,
         })
     }
 }

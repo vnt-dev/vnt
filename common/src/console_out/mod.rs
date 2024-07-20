@@ -132,15 +132,21 @@ pub fn console_device_list(mut list: Vec<DeviceItem>) {
         ("Rt".to_string(), Style::new()),
     ]);
     for item in list {
+        let name = if item.wire_guard {
+            format!("{}(wg)", item.name)
+        } else {
+            item.name
+        };
         if &item.status == "Online" {
-            if item.client_secret != item.current_client_secret
-                || (!item.current_client_secret_hash.is_empty()
-                    && !item.client_secret_hash.is_empty()
-                    && item.current_client_secret_hash != item.client_secret_hash)
+            if !item.wire_guard
+                && (item.client_secret != item.current_client_secret
+                    || (!item.current_client_secret_hash.is_empty()
+                        && !item.client_secret_hash.is_empty()
+                        && item.current_client_secret_hash != item.client_secret_hash))
             {
                 //加密状态不一致，无法通信的
                 out_list.push(vec![
-                    (item.name, Style::new().red()),
+                    (name, Style::new().red()),
                     (item.virtual_ip, Style::new().red()),
                     (item.status, Style::new().red()),
                     ("Mismatch".to_string(), Style::new().red()),
@@ -149,7 +155,7 @@ pub fn console_device_list(mut list: Vec<DeviceItem>) {
             } else {
                 if item.nat_traversal_type.contains("p2p") {
                     out_list.push(vec![
-                        (item.name, Style::new().green()),
+                        (name, Style::new().green()),
                         (item.virtual_ip, Style::new().green()),
                         (item.status, Style::new().green()),
                         (item.nat_traversal_type, Style::new().green()),
@@ -157,7 +163,7 @@ pub fn console_device_list(mut list: Vec<DeviceItem>) {
                     ]);
                 } else {
                     out_list.push(vec![
-                        (item.name, Style::new().yellow()),
+                        (name, Style::new().yellow()),
                         (item.virtual_ip, Style::new().yellow()),
                         (item.status, Style::new().yellow()),
                         (item.nat_traversal_type, Style::new().yellow()),
@@ -167,7 +173,7 @@ pub fn console_device_list(mut list: Vec<DeviceItem>) {
             }
         } else {
             out_list.push(vec![
-                (item.name, Style::new().color256(102)),
+                (name, Style::new().color256(102)),
                 (item.virtual_ip, Style::new().color256(102)),
                 (item.status, Style::new().color256(102)),
                 ("".to_string(), Style::new().color256(102)),

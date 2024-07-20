@@ -13,7 +13,9 @@ use mio::event::Source;
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token, Waker};
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::io;
+use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use tun::Device;
@@ -30,9 +32,10 @@ pub(crate) fn start_simple(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     compressor: Compressor,
     device_stop: DeviceStop,
+    allow_wire_guard: bool,
 ) -> anyhow::Result<()> {
     let poll = Poll::new()?;
     let waker = Arc::new(Waker::new(poll.registry(), STOP)?);
@@ -61,8 +64,9 @@ pub(crate) fn start_simple(
         ip_proxy_map,
         client_cipher,
         server_cipher,
-        device_list,
+        device_map,
         compressor,
+        allow_wire_guard,
     ) {
         log::error!("{:?}", e);
     };
@@ -83,8 +87,9 @@ fn start_simple0(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     compressor: Compressor,
+    allow_wire_guard: bool,
 ) -> anyhow::Result<()> {
     let mut buf = [0; BUFFER_SIZE];
     let mut extend = [0; BUFFER_SIZE];
@@ -134,8 +139,9 @@ fn start_simple0(
                     &ip_proxy_map,
                     &client_cipher,
                     &server_cipher,
-                    &device_list,
+                    &device_map,
                     &compressor,
+                    allow_wire_guard,
                 ) {
                     Ok(_) => {}
                     Err(e) => {

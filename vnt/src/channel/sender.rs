@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::sync::Arc;
 
 use crossbeam_utils::atomic::AtomicCell;
+use parking_lot::Mutex;
 use tokio::sync::mpsc::Sender;
 
 use crate::channel::context::ChannelContext;
@@ -11,7 +13,7 @@ use crate::channel::notify::AcceptNotify;
 use crate::cipher::Cipher;
 use crate::compression::Compressor;
 use crate::external_route::ExternalRoute;
-use crate::handle::CurrentDeviceInfo;
+use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::protocol;
 use crate::protocol::{ip_turn_packet, NetPacket};
 
@@ -21,7 +23,10 @@ pub struct IpPacketSender {
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     compressor: Compressor,
     client_cipher: Cipher,
+    server_cipher: Cipher,
     ip_route: ExternalRoute,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
+    allow_wire_guard: bool,
 }
 
 impl IpPacketSender {
@@ -30,14 +35,20 @@ impl IpPacketSender {
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         compressor: Compressor,
         client_cipher: Cipher,
+        server_cipher: Cipher,
         ip_route: ExternalRoute,
+        device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
+        allow_wire_guard: bool,
     ) -> Self {
         Self {
             context,
             current_device,
             compressor,
             client_cipher,
+            server_cipher,
             ip_route,
+            device_map,
+            allow_wire_guard,
         }
     }
     pub fn self_virtual_ip(&self) -> Ipv4Addr {
@@ -58,19 +69,54 @@ impl IpPacketSender {
         if let Some(v) = self.ip_route.route(&dest_ip) {
             dest_ip = v;
         }
-        if dest_ip.is_multicast() || dest_ip.is_broadcast() || dest_ip == device_info.broadcast_ip {
+        if dest_ip.is_multicast() {
             //广播
             dest_ip = Ipv4Addr::BROADCAST;
         }
-
         let mut net_packet = NetPacket::new0(data_len, buf)?;
-        let mut auxiliary = NetPacket::new(auxiliary_buf)?;
         net_packet.set_default_version();
         net_packet.set_protocol(protocol::Protocol::IpTurn);
         net_packet.set_transport_protocol(ip_turn_packet::Protocol::Ipv4.into());
         net_packet.first_set_ttl(6);
         net_packet.set_source(src_ip);
         net_packet.set_destination(dest_ip);
+        if self.allow_wire_guard {
+            if dest_ip.is_broadcast() || dest_ip == device_info.broadcast_ip {
+                let exists_wg = self
+                    .device_map
+                    .lock()
+                    .1
+                    .values()
+                    .any(|v| v.status.is_online() && v.wireguard);
+                if exists_wg {
+                    send_to_wg_broadcast(
+                        &self.context,
+                        &net_packet,
+                        &self.server_cipher,
+                        &device_info,
+                    )?;
+                }
+            } else {
+                let guard = self.device_map.lock();
+                if let Some(peer_info) = guard.1.get(&dest_ip) {
+                    if peer_info.wireguard {
+                        if peer_info.status.is_offline() {
+                            return Ok(());
+                        }
+                        drop(guard);
+                        send_to_wg(
+                            &self.context,
+                            &mut net_packet,
+                            &self.server_cipher,
+                            &device_info,
+                        )?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        let mut auxiliary = NetPacket::new(auxiliary_buf)?;
 
         let mut net_packet = if self.compressor.compress(&net_packet, &mut auxiliary)? {
             auxiliary.set_default_version();
@@ -84,7 +130,7 @@ impl IpPacketSender {
             net_packet
         };
         self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-        if dest_ip.is_broadcast() {
+        if dest_ip.is_broadcast() || dest_ip == device_info.broadcast_ip {
             //走服务端广播
             self.context
                 .send_default(&net_packet, device_info.connect_server)?;
@@ -103,6 +149,40 @@ impl IpPacketSender {
         )?;
         Ok(())
     }
+}
+
+pub fn send_to_wg_broadcast(
+    sender: &ChannelContext,
+    net_packet: &NetPacket<&mut [u8]>,
+    server_cipher: &Cipher,
+    current_device: &CurrentDeviceInfo,
+) -> anyhow::Result<()> {
+    let mut copy_packet = NetPacket::new0(net_packet.data_len(), [0; 65536])?;
+    copy_packet.set_default_version();
+    copy_packet.set_protocol(protocol::Protocol::IpTurn);
+    copy_packet.set_transport_protocol(ip_turn_packet::Protocol::WGIpv4.into());
+    copy_packet.first_set_ttl(6);
+    copy_packet.set_source(net_packet.source());
+    copy_packet.set_destination(net_packet.destination());
+    copy_packet.set_gateway_flag(true);
+    copy_packet.set_payload(net_packet.payload())?;
+    server_cipher.encrypt_ipv4(&mut copy_packet)?;
+    sender.send_default(&copy_packet, current_device.connect_server)?;
+
+    Ok(())
+}
+pub fn send_to_wg(
+    sender: &ChannelContext,
+    net_packet: &mut NetPacket<&mut [u8]>,
+    server_cipher: &Cipher,
+    current_device: &CurrentDeviceInfo,
+) -> anyhow::Result<()> {
+    net_packet.set_transport_protocol(ip_turn_packet::Protocol::WGIpv4.into());
+    net_packet.set_gateway_flag(true);
+    server_cipher.encrypt_ipv4(net_packet)?;
+    sender.send_default(&net_packet, current_device.connect_server)?;
+
+    Ok(())
 }
 
 pub struct AcceptSocketSender<T> {

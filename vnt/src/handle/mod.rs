@@ -29,6 +29,7 @@ pub struct PeerDeviceInfo {
     pub status: PeerDeviceStatus,
     pub client_secret: bool,
     pub client_secret_hash: Vec<u8>,
+    pub wireguard: bool,
 }
 
 impl PeerDeviceInfo {
@@ -38,6 +39,7 @@ impl PeerDeviceInfo {
         status: u8,
         client_secret: bool,
         client_secret_hash: Vec<u8>,
+        wireguard: bool,
     ) -> Self {
         Self {
             virtual_ip,
@@ -45,6 +47,7 @@ impl PeerDeviceInfo {
             status: PeerDeviceStatus::from(status),
             client_secret,
             client_secret_hash,
+            wireguard,
         }
     }
 }
@@ -66,6 +69,7 @@ pub struct BaseConfigInfo {
     #[cfg(feature = "integrated_tun")]
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     pub device_name: Option<String>,
+    pub allow_wire_guard: bool,
 }
 
 impl BaseConfigInfo {
@@ -85,6 +89,7 @@ impl BaseConfigInfo {
         #[cfg(feature = "integrated_tun")]
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         device_name: Option<String>,
+        allow_wire_guard: bool,
     ) -> Self {
         Self {
             name,
@@ -102,6 +107,7 @@ impl BaseConfigInfo {
             #[cfg(feature = "integrated_tun")]
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             device_name,
+            allow_wire_guard,
         }
     }
 }
@@ -115,6 +121,9 @@ pub enum PeerDeviceStatus {
 impl PeerDeviceStatus {
     pub fn is_online(&self) -> bool {
         self == &PeerDeviceStatus::Online
+    }
+    pub fn is_offline(&self) -> bool {
+        self == &PeerDeviceStatus::Offline
     }
 }
 

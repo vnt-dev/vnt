@@ -194,6 +194,9 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                 }
                 self.device.write(net_packet.payload())?;
             }
+            ip_turn_packet::Protocol::WGIpv4 => {
+                // WG客户端的数据不会直接发过来，不用处理
+            }
             ip_turn_packet::Protocol::Ipv4Broadcast => {
                 //客户端不帮忙转发广播包，所以不会出现这种类型的数据
             }
