@@ -126,7 +126,7 @@ fn broadcast(
         }
         return Ok(());
     }
-    if !overflow && relay_ips.len() == 2 {
+    if !overflow && relay_ips.len() == 1 {
         // 如果转发的ip数不多就直接发
         for peer_ip in relay_ips {
             //非直连的广播要改变目的地址，不然服务端收到了会再次广播
@@ -256,10 +256,10 @@ pub(crate) fn handle(
             // 如果是wg客户端则发到vnts转发
             let guard = device_map.lock();
             if let Some(peer_info) = guard.1.get(&dest_ip) {
+                if peer_info.status.is_offline() {
+                    return Ok(());
+                }
                 if peer_info.wireguard {
-                    if peer_info.status.is_offline() {
-                        return Ok(());
-                    }
                     drop(guard);
                     send_to_wg(context, &mut net_packet, server_cipher, &current_device)?;
                     return Ok(());
