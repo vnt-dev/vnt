@@ -97,9 +97,12 @@ fn broadcast(
         .filter(|info| !info.wireguard && info.status.is_online())
         .map(|info| info.virtual_ip)
         .collect();
+    if list.is_empty() {
+        return Ok(());
+    }
     const MAX_COUNT: usize = 8;
     let mut p2p_ips = Vec::with_capacity(8);
-    let mut relay_ips = Vec::with_capacity(8);
+    let mut relay = false;
     let mut overflow = false;
     for (index, peer_ip) in list.into_iter().enumerate() {
         if index > MAX_COUNT {
@@ -112,38 +115,22 @@ fn broadcast(
                 continue;
             }
         }
-        relay_ips.push(peer_ip);
+        relay = true;
     }
-    if !overflow && relay_ips.is_empty() {
+    if !overflow && !relay {
         //全部p2p,不需要服务器中转
-        return Ok(());
-    }
-
-    if p2p_ips.is_empty() {
-        //都没有p2p则直接由服务器转发
-        if current_device.status.online() {
-            sender.send_default(&net_packet, current_device.connect_server)?;
-        }
-        return Ok(());
-    }
-    if !overflow && relay_ips.len() == 1 {
-        // 如果转发的ip数不多就直接发
-        for peer_ip in relay_ips {
-            //非直连的广播要改变目的地址，不然服务端收到了会再次广播
-            net_packet.set_destination(peer_ip);
-            sender.send_ipv4_by_id(
-                &net_packet,
-                &peer_ip,
-                current_device.connect_server,
-                current_device.status.online(),
-            )?;
-        }
         return Ok(());
     }
     if current_device.status.offline() {
         //离线的不再转发
         return Ok(());
     }
+    if p2p_ips.is_empty() {
+        //都没有p2p则直接由服务器转发
+        sender.send_default(&net_packet, current_device.connect_server)?;
+        return Ok(());
+    }
+
     let buf = vec![0u8; 12 + 1 + p2p_ips.len() * 4 + net_packet.data_len() + ENCRYPTION_RESERVED];
     //剩余的发送到服务端，需要告知哪些已发送过
     let mut server_packet = NetPacket::new_encrypt(buf)?;
@@ -279,7 +266,7 @@ pub(crate) fn handle(
     } else {
         net_packet
     };
-    if dest_ip.is_broadcast() || current_device.broadcast_ip == dest_ip {
+    if is_broadcast {
         // 广播 发送到直连目标
         client_cipher.encrypt_ipv4(&mut net_packet)?;
         broadcast(
