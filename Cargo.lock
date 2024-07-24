@@ -1968,6 +1968,7 @@ dependencies = [
  "libloading",
  "log",
  "rand",
+ "sha2",
  "widestring",
  "winapi",
 ]
