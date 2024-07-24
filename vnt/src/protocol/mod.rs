@@ -6,7 +6,7 @@ use std::{fmt, io};
    0                                            15                                              31
    0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |e |s |u |u|   版本(4) |      协议(8)          |      上层协议(8)        | 初始ttl(4) | 生存时间(4) |
+  |e |s |x |u|   版本(4) |      协议(8)          |      上层协议(8)        | 初始ttl(4) | 生存时间(4) |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   |                                          源ip地址(32)                                         |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -14,28 +14,30 @@ use std::{fmt, io};
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   |                                           数据体                                              |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  注：e为是否加密标志，s为服务端通信包标志，u未使用
+  注：e为是否加密标志，s为服务端通信包标志，x扩展标志，u未使用
 */
 pub const HEAD_LEN: usize = 12;
 
 pub mod body;
 pub mod control_packet;
 pub mod error_packet;
+pub mod extension;
 pub mod ip_turn_packet;
 pub mod other_turn_packet;
 pub mod service_packet;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum Version {
-    V1,
-    UnKnow(u8),
+    V2,
+    Unknown(u8),
 }
 
 impl From<u8> for Version {
     fn from(value: u8) -> Self {
         match value {
-            1 => Version::V1,
-            val => Version::UnKnow(val),
+            // 版本从2开始，用于和stun协议的binging响应区分开
+            2 => Version::V2,
+            val => Version::Unknown(val),
         }
     }
 }
@@ -43,8 +45,8 @@ impl From<u8> for Version {
 impl Into<u8> for Version {
     fn into(self) -> u8 {
         match self {
-            Version::V1 => 1,
-            Version::UnKnow(val) => val,
+            Version::V2 => 2,
+            Version::Unknown(val) => val,
         }
     }
 }
@@ -61,7 +63,7 @@ pub enum Protocol {
     IpTurn,
     /// 转发其他数据
     OtherTurn,
-    UnKnow(u8),
+    Unknown(u8),
 }
 
 impl From<u8> for Protocol {
@@ -72,7 +74,7 @@ impl From<u8> for Protocol {
             3 => Protocol::Control,
             4 => Protocol::IpTurn,
             5 => Protocol::OtherTurn,
-            val => Protocol::UnKnow(val),
+            val => Protocol::Unknown(val),
         }
     }
 }
@@ -85,7 +87,7 @@ impl Into<u8> for Protocol {
             Protocol::Control => 3,
             Protocol::IpTurn => 4,
             Protocol::OtherTurn => 5,
-            Protocol::UnKnow(val) => val,
+            Protocol::Unknown(val) => val,
         }
     }
 }
@@ -100,6 +102,10 @@ pub struct NetPacket<B> {
 }
 
 impl<B: AsRef<[u8]>> NetPacket<B> {
+    pub fn unchecked(buffer: B) -> Self {
+        let data_len = buffer.as_ref().len();
+        Self { data_len, buffer }
+    }
     pub fn new(buffer: B) -> io::Result<NetPacket<B>> {
         let data_len = buffer.as_ref().len();
         Self::new0(data_len, buffer)
@@ -122,15 +128,15 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
                 "length overflow",
             ));
         }
-        // 不能大于udp最大载荷长度
-        if data_len < 12 || buffer.as_ref().len() > 65535 - 20 - 8 {
+        if data_len < 12 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "length overflow",
+                "data_len too short",
             ));
         }
         Ok(NetPacket { data_len, buffer })
     }
+    #[inline]
     pub fn buffer(&self) -> &[u8] {
         &self.buffer.as_ref()[..self.data_len]
     }
@@ -156,6 +162,10 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
     /// 网关通信的标识
     pub fn is_gateway(&self) -> bool {
         self.buffer.as_ref()[0] & 0x40 == 0x40
+    }
+    /// 扩展协议
+    pub fn is_extension(&self) -> bool {
+        self.buffer.as_ref()[0] & 0x20 == 0x20
     }
     pub fn version(&self) -> Version {
         Version::from(self.buffer.as_ref()[0] & 0x0F)
@@ -183,9 +193,15 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
     pub fn payload(&self) -> &[u8] {
         &self.buffer.as_ref()[12..self.data_len]
     }
+    pub fn head(&self) -> &[u8] {
+        &self.buffer.as_ref()[..12]
+    }
 }
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
+    pub fn head_mut(&mut self) -> &mut [u8] {
+        &mut self.buffer.as_mut()[..12]
+    }
     pub fn buffer_mut(&mut self) -> &mut [u8] {
         &mut self.buffer.as_mut()[..self.data_len]
     }
@@ -198,14 +214,20 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_gateway_flag(&mut self, is_gateway: bool) {
         if is_gateway {
-            // 后面的版本再改为0x40，改了之后不兼容1.2.5之前的版本
-            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x50
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x40
         } else {
             self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0xBF
         };
     }
-    pub fn set_version(&mut self, version: Version) {
-        let v: u8 = version.into();
+    pub fn set_extension_flag(&mut self, is_extension: bool) {
+        if is_extension {
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] | 0x20
+        } else {
+            self.buffer.as_mut()[0] = self.buffer.as_ref()[0] & 0xDF
+        };
+    }
+    pub fn set_default_version(&mut self) {
+        let v: u8 = Version::V2.into();
         self.buffer.as_mut()[0] = (self.buffer.as_ref()[0] & 0xF0) | (0x0F & v);
     }
     pub fn set_protocol(&mut self, protocol: Protocol) {
@@ -214,11 +236,19 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     pub fn set_transport_protocol(&mut self, transport_protocol: u8) {
         self.buffer.as_mut()[2] = transport_protocol;
     }
+    pub fn set_transport_protocol_into<P: Into<u8>>(&mut self, transport_protocol: P) {
+        self.buffer.as_mut()[2] = transport_protocol.into();
+    }
     pub fn first_set_ttl(&mut self, ttl: u8) {
         self.buffer.as_mut()[3] = ttl << 4 | ttl;
     }
     pub fn set_ttl(&mut self, ttl: u8) {
         self.buffer.as_mut()[3] = (self.buffer.as_mut()[3] & MAX_SOURCE) | (MAX_TTL & ttl);
+    }
+    pub fn incr_ttl(&mut self) -> u8 {
+        let ttl = self.ttl() - 1;
+        self.set_ttl(ttl);
+        ttl
     }
     pub fn set_source_ttl(&mut self, source_ttl: u8) {
         self.buffer.as_mut()[3] = (source_ttl << 4) | (MAX_TTL & self.buffer.as_ref()[3]);
@@ -251,6 +281,10 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
         }
         self.data_len = data_len;
         Ok(())
+    }
+    pub fn set_payload_len(&mut self, payload_len: usize) -> io::Result<()> {
+        let data_len = HEAD_LEN + payload_len;
+        self.set_data_len(data_len)
     }
     pub fn set_data_len_max(&mut self) {
         self.data_len = self.buffer.as_ref().len();

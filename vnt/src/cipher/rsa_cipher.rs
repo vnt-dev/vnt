@@ -1,36 +1,32 @@
-use crate::protocol::NetPacket;
 use std::io;
 
-#[cfg(feature = "server_encrypt")]
-use crate::protocol::body::{RsaSecretBody, RSA_ENCRYPTION_RESERVED};
-#[cfg(feature = "server_encrypt")]
-use rand::Rng;
-#[cfg(feature = "server_encrypt")]
-use rsa::pkcs8::der::Decode;
-#[cfg(feature = "server_encrypt")]
-use rsa::RsaPublicKey;
-#[cfg(feature = "server_encrypt")]
-use sha2::Digest;
-#[cfg(feature = "server_encrypt")]
-use spki::{DecodePublicKey, EncodePublicKey};
+use {
+    crate::protocol::body::{RsaSecretBody, RSA_ENCRYPTION_RESERVED},
+    rand::Rng,
+    rsa::pkcs8::der::Decode,
+    rsa::RsaPublicKey,
+    sha2::Digest,
+    spki::{DecodePublicKey, EncodePublicKey},
+};
+
+use crate::protocol::NetPacket;
 
 #[derive(Clone)]
 pub struct RsaCipher {
-    #[cfg(feature = "server_encrypt")]
     inner: Inner,
 }
-#[cfg(feature = "server_encrypt")]
 #[derive(Clone)]
 struct Inner {
     public_key: RsaPublicKey,
+    finger: String,
 }
 
 impl RsaCipher {
-    #[cfg(feature = "server_encrypt")]
     pub fn new(der: &[u8]) -> io::Result<Self> {
         match RsaPublicKey::from_public_key_der(der) {
             Ok(public_key) => {
-                let inner = Inner { public_key };
+                let finger = finger(&public_key)?;
+                let inner = Inner { public_key, finger };
                 Ok(Self { inner })
             }
             Err(e) => Err(io::Error::new(
@@ -39,47 +35,36 @@ impl RsaCipher {
             )),
         }
     }
-    #[cfg(not(feature = "server_encrypt"))]
-    pub fn new(_der: &[u8]) -> io::Result<Self> {
-        unimplemented!()
+    pub fn finger(&self) -> &String {
+        &self.inner.finger
     }
-    #[cfg(feature = "server_encrypt")]
-    pub fn finger(&self) -> io::Result<String> {
-        match self.inner.public_key.to_public_key_der() {
-            Ok(der) => match rsa::pkcs8::SubjectPublicKeyInfoRef::from_der(der.as_bytes()) {
-                Ok(spki) => match spki.fingerprint_base64() {
-                    Ok(finger) => Ok(finger),
-                    Err(e) => Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("fingerprint_base64 error {}", e),
-                    )),
-                },
+    pub fn public_key(&self) -> io::Result<&RsaPublicKey> {
+        return Ok(&self.inner.public_key);
+    }
+}
+pub fn finger(public_key: &RsaPublicKey) -> io::Result<String> {
+    match public_key.to_public_key_der() {
+        Ok(der) => match rsa::pkcs8::SubjectPublicKeyInfoRef::from_der(der.as_bytes()) {
+            Ok(spki) => match spki.fingerprint_base64() {
+                Ok(finger) => Ok(finger),
                 Err(e) => Err(io::Error::new(
                     io::ErrorKind::Other,
-                    format!("from_der error {}", e),
+                    format!("fingerprint_base64 error {}", e),
                 )),
             },
             Err(e) => Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("to_public_key_der error {}", e),
+                format!("from_der error {}", e),
             )),
-        }
-    }
-    #[cfg(not(feature = "server_encrypt"))]
-    pub fn finger(&self) -> io::Result<String> {
-        unimplemented!()
+        },
+        Err(e) => Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("to_public_key_der error {}", e),
+        )),
     }
 }
 
 impl RsaCipher {
-    #[cfg(not(feature = "server_encrypt"))]
-    pub fn encrypt<B: AsRef<[u8]> + AsMut<[u8]>>(
-        &self,
-        _net_packet: &mut NetPacket<B>,
-    ) -> io::Result<NetPacket<Vec<u8>>> {
-        unimplemented!()
-    }
-    #[cfg(feature = "server_encrypt")]
     /// net_packet 必须预留足够长度
     pub fn encrypt<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,

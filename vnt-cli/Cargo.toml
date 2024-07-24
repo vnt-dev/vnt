@@ -1,45 +1,47 @@
 [package]
 name = "vnt-cli"
-version = "1.2.6"
+version = "1.2.11"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vnt = { path = "../vnt", package = "vnt",default-features = false }
-common = { path = "../common" }
-tokio = { version = "1.32.0", features = ["full"] }
-getopts = "0.2.21"
-console = "0.15.2"
-os_info = "3.7.0"
-dirs = "5.0.1"
-serde = "1.0"
-serde_json = "1.0.94"
-serde_yaml = "0.8.26"
+vnt = { path = "../vnt", package = "vnt", default-features = false, features = ["integrated_tun"] }
+common = { path = "../common", default-features = false, features = ["integrated_tun"] }
 log = "0.4.17"
-log4rs = "1.2.0"
-[dependencies.uuid]
-version = "1.4.1"
-features = [
-    "v4", # Lets you generate random UUIDs
-]
+anyhow = "1.0.82"
+
 
 [target.'cfg(any(target_os = "linux",target_os = "macos"))'.dependencies]
 sudo = "0.6.0"
+signal-hook = "0.3.17"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
 
 [features]
-default = ["server_encrypt","aes_gcm","aes_cbc","aes_ecb","sm4_cbc","ip_proxy"]
-openssl = ["vnt/openssl"]
-openssl-vendored = ["vnt/openssl-vendored"]
-ring-cipher = ["vnt/ring-cipher"]
-aes_cbc=["vnt/aes_cbc"]
-aes_ecb=["vnt/aes_ecb"]
-sm4_cbc=["vnt/sm4_cbc"]
-aes_gcm=["vnt/aes_gcm"]
-server_encrypt=["vnt/server_encrypt"]
-ip_proxy=["vnt/ip_proxy"]
+default = ["default-feature"]
+default-feature = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "log", "command", "file_config", "lz4", "ws"]
+
+openssl = ["vnt/openssl", "common/openssl"]
+openssl-vendored = ["vnt/openssl-vendored", "common/openssl-vendored"]
+ring-cipher = ["vnt/ring-cipher", "common/ring-cipher"]
+aes_cbc = ["vnt/aes_cbc", "common/aes_cbc"]
+aes_ecb = ["vnt/aes_ecb", "common/aes_ecb"]
+sm4_cbc = ["vnt/sm4_cbc", "common/sm4_cbc"]
+aes_gcm = ["vnt/aes_gcm", "common/aes_gcm"]
+chacha20_poly1305 = ["vnt/chacha20_poly1305", "common/chacha20_poly1305"]
+server_encrypt = ["vnt/server_encrypt", "common/server_encrypt"]
+port_mapping = ["vnt/port_mapping", "common/port_mapping"]
+lz4 = ["vnt/lz4_compress", "common/lz4"]
+zstd = ["vnt/zstd_compress", "common/zstd"]
+ip_proxy = ["vnt/ip_proxy", "common/ip_proxy"]
+upnp = ["vnt/upnp", "common/upnp"]
+ws = ["vnt/ws", "common/ws"]
+wss = ["vnt/wss", "common/wss"]
+log = ["common/log"]
+command = ["common/command"]
+file_config = ["common/file_config"]
 [build-dependencies]
-embed-manifest = "1.4.0"
+rand = "0.8.5"
+chrono = "0.4.23"

@@ -1,63 +1,81 @@
 syntax = "proto3";
-message HandshakeRequest{
-  string version = 1;
-  bool secret = 2;
+
+message HandshakeRequest {
+    string version = 1;
+    bool secret = 2;
+    string key_finger = 3;
 }
-message HandshakeResponse{
-  string version = 1;
-  bool secret = 2;
-  bytes public_key = 3;
-  string key_finger = 4;
+message HandshakeResponse {
+    string version = 1;
+    bool secret = 2;
+    bytes public_key = 3;
+    string key_finger = 4;
 }
-message SecretHandshakeRequest{
-  string token = 1;
-  bytes key = 2;
+message SecretHandshakeRequest {
+    string token = 1;
+    bytes key = 2;
 }
-message RegistrationRequest{
-  string token = 1;
-  string device_id = 2;
-  string name = 3;
-  bool is_fast = 4;
-  string version = 5;
-  fixed32 virtual_ip = 6;
-  bool allow_ip_change = 7;
-  bool client_secret = 8;
+message RegistrationRequest {
+    string token = 1;
+    string device_id = 2;
+    string name = 3;
+    bool is_fast = 4;
+    string version = 5;
+    fixed32 virtual_ip = 6;
+    bool allow_ip_change = 7;
+    bool client_secret = 8;
+    bytes client_secret_hash = 9;
 }
 
-message RegistrationResponse{
-  fixed32 virtual_ip = 1;
-  fixed32 virtual_gateway = 2;
-  fixed32 virtual_netmask = 3;
-  uint32 epoch = 4;
-  repeated DeviceInfo device_info_list = 5;
-  fixed32 public_ip = 6;
-  uint32 public_port = 7;
-  bytes public_ipv6 = 8;
+message RegistrationResponse {
+    fixed32 virtual_ip = 1;
+    fixed32 virtual_gateway = 2;
+    fixed32 virtual_netmask = 3;
+    uint32 epoch = 4;
+    repeated DeviceInfo device_info_list = 5;
+    fixed32 public_ip = 6;
+    uint32 public_port = 7;
+    bytes public_ipv6 = 8;
 }
-message DeviceInfo{
-  string name = 1;
-  fixed32 virtual_ip = 2;
-  uint32 device_status = 3;
-  bool client_secret = 4;
-}
-
-message DeviceList{
-  uint32 epoch = 1;
-  repeated DeviceInfo device_info_list = 2;
+message DeviceInfo {
+    string name = 1;
+    fixed32 virtual_ip = 2;
+    uint32 device_status = 3;
+    bool client_secret = 4;
+    bytes client_secret_hash = 5;
 }
 
-message PunchInfo{
-  repeated fixed32 public_ip_list = 2;
-  uint32 public_port = 3;
-  uint32 public_port_range = 4;
-  PunchNatType nat_type = 5;
-  bool reply = 6;
-  fixed32 local_ip = 7;
-  uint32 local_port = 8;
-  bytes ipv6 = 9;
-  uint32 ipv6_port = 10;
+message DeviceList {
+    uint32 epoch = 1;
+    repeated DeviceInfo device_info_list = 2;
 }
-enum PunchNatType{
-  Symmetric = 0;
-  Cone = 1;
+
+message PunchInfo {
+    repeated fixed32 public_ip_list = 2;
+    uint32 public_port = 3;
+    uint32 public_port_range = 4;
+    PunchNatType nat_type = 5;
+    bool reply = 6;
+    fixed32 local_ip = 7;
+    uint32 local_port = 8;
+    bytes ipv6 = 9;
+    uint32 ipv6_port = 10;
+    uint32 tcp_port = 11;
+    repeated uint32 udp_ports = 12;
+    repeated uint32 public_ports = 13;
+}
+enum PunchNatType {
+    Symmetric = 0;
+    Cone = 1;
+}
+/// 向服务器上报客户端状态信息
+message ClientStatusInfo {
+    fixed32 source = 1;
+    repeated RouteItem p2p_list = 2;
+    uint64 up_stream = 3;
+    uint64 down_stream = 4;
+    PunchNatType nat_type = 5;
+}
+message RouteItem {
+    fixed32 next_ip = 1;
 }

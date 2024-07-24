@@ -1,8 +1,45 @@
 [package]
 name = "common"
-version = "1.2.6"
+version = "1.2.11"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+vnt = { path = "../vnt", package = "vnt", default-features = false }
+anyhow = "1.0.82"
+console = "0.15.2"
+log = "0.4.17"
+log4rs = { version = "1.3.0", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9.32"
+getopts = "0.2.21"
+gethostname = "0.4.3"
+uuid = { version = "1.8.0", features = ["v4"] }
+
+[features]
+default = []
+openssl = ["vnt/openssl"]
+openssl-vendored = ["vnt/openssl-vendored"]
+ring-cipher = ["vnt/ring-cipher"]
+aes_cbc = ["vnt/aes_cbc"]
+aes_ecb = ["vnt/aes_ecb"]
+sm4_cbc = ["vnt/sm4_cbc"]
+aes_gcm = ["vnt/aes_gcm"]
+chacha20_poly1305 = ["vnt/chacha20_poly1305"]
+server_encrypt = ["vnt/server_encrypt"]
+ip_proxy = ["vnt/ip_proxy"]
+port_mapping = ["vnt/port_mapping"]
+lz4 = ["vnt/lz4_compress"]
+zstd = ["vnt/zstd_compress"]
+upnp = ["vnt/upnp"]
+ws = ["vnt/ws"]
+wss = ["vnt/wss"]
+command = []
+file_config = []
+log = ["log4rs"]
+integrated_tun = ["vnt/integrated_tun"]
+
+[build-dependencies]
+rand = "0.8.5"
+chrono = "0.4.23"

@@ -1,0 +1,32 @@
+[package]
+name = "tun"
+version = "0.1.0"
+edition = "2021"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2.153"
+
+log = { version = "0.4.20", features = [] }
+rand = "0.8.5"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+ioctl = { version = "0.8", package = "ioctl-sys" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+libloading = "0.8.0"
+widestring = "1.0.2"
+winapi = {version = "0.3",features = [
+    "errhandlingapi",
+    "combaseapi",
+    "ioapiset",
+    "winioctl",
+    "setupapi",
+    "synchapi",
+    "netioapi",
+    "fileapi","handleapi","winerror","minwindef","ifdef","basetsd","winnt","winreg","winbase","minwinbase",
+    "impl-default"
+]}
+

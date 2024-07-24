@@ -44,34 +44,40 @@ jobs:
             FEATURES: default
           - TARGET: x86_64-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: aarch64-unknown-linux-musl # tested on aws t4g.nano in alpine container
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: armv7-unknown-linux-musleabihf # raspberry pi 2-3-4, not tested
             OS: ubuntu-latest
-            FEATURES: openssl-vendored
+            FEATURES: ring-cipher,wss
+          - TARGET: armv7-unknown-linux-musleabi # raspberry pi 2-3-4, not tested
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
           - TARGET: arm-unknown-linux-musleabihf # raspberry pi 0-1, not tested
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
+          - TARGET: arm-unknown-linux-musleabi # raspberry pi 0-1, not tested
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
           - TARGET: x86_64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: aarch64-apple-darwin # tested on a mac, is not properly signed so there are security warnings
             OS: macos-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: i686-pc-windows-msvc # tested on a windows machine
             OS: windows-2019
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: x86_64-pc-windows-msvc # tested on a windows machine
             OS: windows-latest
-            FEATURES: ring-cipher,openssl-vendored
+            FEATURES: ring-cipher,wss
           - TARGET: mipsel-unknown-linux-musl # openwrt
             OS: ubuntu-latest
-            FEATURES: openssl-vendored,ring-cipher
+            FEATURES: ring-cipher,wss
           - TARGET: mips-unknown-linux-musl # openwrt
             OS: ubuntu-latest
-            FEATURES: openssl-vendored
+            FEATURES: ring-cipher,wss
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:
@@ -99,8 +105,10 @@ jobs:
         run: |
           # dependencies are only needed on ubuntu as that's the only place where
           # we make cross-compilation
+          rustup set auto-self-update disable
+          
           if [[ $OS =~ ^ubuntu.*$ ]]; then
-            sudo apt-get update && sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools
+            sudo apt-get update && sudo apt-get install clang llvm libc6-dev-i386 crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools libboost-all-dev libc6-dev -y
             #  curl -s musl.cc | grep mipsel
             case $TARGET in 
               mipsel-unknown-linux-musl)
@@ -111,14 +119,29 @@ jobs:
                 ;;
               armv7-unknown-linux-musleabihf)
                 MUSL_URI=armv7l-linux-musleabihf-cross
+                ;;    
+              armv7-unknown-linux-musleabi)
+                MUSL_URI=armv7m-linux-musleabi-cross
                 ;;   
               arm-unknown-linux-musleabihf)
                 MUSL_URI=arm-linux-musleabihf-cross
+                ;;    
+              arm-unknown-linux-musleabi)
+                MUSL_URI=arm-linux-musleabi-cross
                 ;;        
               mips-unknown-linux-musl)
                 MUSL_URI=mips-linux-musl-cross
                 ;;
             esac
+          
+            if [[ $TARGET =~ ^mips.*$ ]]; then
+              # mips平台使用1.71.1版本
+              rustup install 1.71.1
+              rustup default 1.71.1  
+            else
+              rustup install 1.77
+              rustup default 1.77
+            fi
           
             if [  -n "$MUSL_URI" ]; then
               mkdir -p ./musl_gcc 
@@ -126,8 +149,11 @@ jobs:
               tar zxf ./musl_gcc/$MUSL_URI.tgz -C ./musl_gcc/
               sudo ln -s $(pwd)/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
             fi
+          else
+            rustup install 1.77
+            rustup default 1.77 
           fi
-          
+          rustup -V
           
           # some additional configuration for cross-compilation on linux
           cat >>~/.cargo/config <<EOF
@@ -139,8 +165,14 @@ jobs:
           [target.armv7-unknown-linux-musleabihf]
           linker = "armv7l-linux-musleabihf-gcc"
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.armv7-unknown-linux-musleabi]
+          linker = "armv7m-linux-musleabi-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.arm-unknown-linux-musleabihf]
           linker = "arm-linux-musleabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]   
+          [target.arm-unknown-linux-musleabi]
+          linker = "arm-linux-musleabi-gcc"
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.mipsel-unknown-linux-musl]
           linker = "mipsel-linux-musl-gcc"
@@ -161,7 +193,9 @@ jobs:
           EOF
       - name: Install rust target
         run: rustup target add $TARGET
-      - name: Run build
+      - name: Run build vn-link-cli
+        run: cargo build --package vn-link-cli --release --verbose --target $TARGET --features $FEATURES
+      - name: Run build vnt-cli
         run: cargo build --package vnt-cli --release --verbose --target $TARGET --features $FEATURES
       - name: List target
         run: find ./target
@@ -170,17 +204,22 @@ jobs:
           mkdir -p ./artifacts
           # windows is the only OS using a different convention for executable file name
           if [[ $OS =~ ^windows.*$ ]]; then
-              EXEC=$NAME.exe
+              EXEC_VNT_CLI=vnt-cli.exe
+              EXEC_VN_LINK_CLI=vn-link-cli.exe
           else
-              EXEC=$NAME
+              EXEC_VNT_CLI=vnt-cli
+              EXEC_VN_LINK_CLI=vn-link-cli
           fi
           if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
             TAG=$GITHUB_REF_NAME
           else
             TAG=$GITHUB_SHA
           fi
-          mv ./target/$TARGET/release/$EXEC ./artifacts/$EXEC
-          tar -czf ./artifacts/$NAME-$TARGET-$TAG.tar.gz -C ./artifacts $EXEC
+          mv ./target/$TARGET/release/$EXEC_VNT_CLI ./artifacts/$EXEC_VNT_CLI
+          mv ./target/$TARGET/release/$EXEC_VN_LINK_CLI ./artifacts/$EXEC_VN_LINK_CLI
+          mv ./README ./artifacts/README.txt
+          cd ./artifacts
+          tar -czf vnt-$TARGET-$TAG.tar.gz *
       - name: Archive artifact
         uses: actions/upload-artifact@v2
         with:

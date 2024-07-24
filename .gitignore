@@ -1,0 +1,6 @@
+target/*
+vnt/src/proto/*
+common/src/generated_serial_number.rs
+
+# RustRover
+.idea

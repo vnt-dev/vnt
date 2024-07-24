@@ -39,7 +39,7 @@ A virtual network tool (VPN)
     ```
 4. 最后可以用虚拟ip实现设备间相互访问
 
-      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/vnt/dev/documents/img/ssh.jpg">
+      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/vnt/main/documents/img/ssh.jpg">
 5. 帮助，使用-h命令查看
 
 ### 更多玩法
@@ -73,34 +73,48 @@ cargo build -p vnt-cli --no-default-features
 
 features说明
 
-| feature          | 说明                   | 是否默认 |
-|------------------|----------------------|------|
-| openssl          | 使用openssl中的aes_ecb算法 | 否    |
-| openssl-vendored | 从源码编译openssl         | 否    |
-| ring-cipher      | 使用ring中的aes_gcm算法    | 否    |
-| aes_cbc          | 支持aes_cbc加密          | 是    |
-| aes_ecb          | 支持aes_ecb加密          | 是    |
-| aes_gcm          | 支持aes_gcm加密          | 是    |
-| sm4_cbc          | 支持sm4_cbc加密          | 是    |
-| server_encrypt   | 支持服务端加密              | 是    |
-| ip_proxy         | 内置ip代理               | 是    |
+| feature           | 说明                             | 是否默认 |
+|-------------------|--------------------------------|------|
+| openssl           | 使用openssl中的加密算法                | 否    |
+| openssl-vendored  | 从源码编译openssl                   | 否    |
+| ring-cipher       | 使用ring中的加密算法                   | 否    |
+| aes_cbc           | 支持aes_cbc加密                    | 是    |
+| aes_ecb           | 支持aes_ecb加密                    | 是    |
+| aes_gcm           | 支持aes_gcm加密                    | 是    |
+| sm4_cbc           | 支持sm4_cbc加密                    | 是    |
+| chacha20_poly1305 | 支持chacha20和chacha20_poly1305加密 | 是    |
+| server_encrypt    | 支持服务端加密                        | 是    |
+| ip_proxy          | 内置ip代理                         | 是    |
+| port_mapping      | 端口映射                           | 是    |
+| log               | 日志                             | 是    |
+| command           | list、route等命令                  | 是    |
+| file_config       | yaml配置文件                       | 是    |
+| lz4               | lz4压缩                          | 是    |
+| zstd              | zstd压缩                         | 否    |
+
+### ip转发/代理
 
 如果编译时去除了内置的ip代理(或使用--no-proxy关闭了代理)，则可以使用网卡NAT转发来实现点对网，
 一般来说使用网卡NAT转发会比内置的ip代理性能更好
 <details> <summary>NAT配置可参考如下示例,点击展开</summary>
 
 ### 在出口一端做如下配置
+
 注意原有的-i(入口)和-o(出口)的参数不能少
 
 ### windows
+
 参考 https://learn.microsoft.com/zh-cn/virtualization/hyper-v-on-windows/user-guide/setup-nat-network
+
 ```shell
 #设置nat,名字可以自己取，网段是vnt的网段
 New-NetNat -Name vntnat -InternalIPInterfaceAddressPrefix 10.26.0.0/24
 #查看设置
 Get-NetNat
 ```
+
 ### linux
+
 ```shell
 # 开启ip转发
 sudo sysctl -w net.ipv4.ip_forward=1
@@ -143,6 +157,7 @@ sudo iptables-restore iptables.rules
 ```
 
 ### macos
+
 ```shell
 # 开启ip转发
 sudo sysctl -w net.ipv4.ip_forward=1
@@ -152,18 +167,21 @@ nat on en0 from 10.26.0.0/24 to any -> (en0)
 # 加载规则
 sudo pfctl -f /etc/pf.conf -e
 ```
+
 </details>
 
 ### 支持平台
 
 - Mac
 - Linux
-    - Arch Linux `yay -Syu vnt`
 - Windows
     - 默认使用tun网卡 依赖wintun.dll([win-tun](https://www.wintun.net/))(将dll放到同目录下，建议使用版本0.14.1)
     - 使用tap网卡 依赖tap-windows([win-tap](https://build.openvpn.net/downloads/releases/))(建议使用版本9.24.7)
 - Android
-    - [VntApp](https://github.com/lbl8603/VntApp)
+
+### GUI
+
+支持安卓和Windows [下载](https://github.com/lbl8603/VntApp/releases/)
 
 ### 特性
 
@@ -212,7 +230,6 @@ sudo pfctl -f /etc/pf.conf -e
 ### Todo
 
 - 桌面UI(测试中)
-- 支持Ipv6(1.2.2已支持客户端之间的ipv6，待支持客户端和服务端之间的ipv6通信)
 
 ### 常见问题
 
@@ -252,19 +269,36 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 ##### 解决方法：
 
 1. 使用TCP模式中继转发（vnt-cli增加--tcp参数）
-2. 如果p2p后效果很差，可以选择禁用p2p（vnt-cli增加--relay参数）
+2. 如果p2p后效果很差，可以选择禁用p2p（vnt-cli增加--use-channel relay 参数）
+
+#### 问题4：重启后虚拟IP发生变化，或指定了IP不能启动
+
+##### 可能原因：
+
+设备重启后程序自动获取的id值改变，导致注册时重新分配了新的IP，或是IP冲突
+
+##### 解决方法：
+
+1. 命令行启动增加-d参数（使用配置文件启动则在配置文件中增加device_id参数），要保证每个设备的值都不一样，取值可以任意64位以内字符串
 
 </details>
 
 ### 交流群
 
+对VNT有任何问题均可以加群联系作者
+
 QQ: 1034868233
+### 赞助
+如果VNT对你有帮助，欢迎打赏作者
+
+ <img width="300" alt="" src="https://github.com/lbl8603/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
 
 ### 其他
 
 可使用社区小伙伴搭建的中继服务器
 
 1. -s vnt.8443.eu.org:29871
+2. -s vnt.wherewego.top:29872
 
 ### 参与贡献
 
