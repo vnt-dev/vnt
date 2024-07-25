@@ -363,7 +363,7 @@ fn get_description(key: &str, language: &str) -> String {
         ("--ip <ip>", ("指定虚拟ip,指定的ip不能和其他设备重复,必须有效并且在服务端所属网段下,默认情况由服务端分配", "Specify virtual IP, must be unique and valid within server subnet, by default allocated by server")),
         ("--model <model>", ("加密模式(默认aes_gcm),可选值{}", "Encryption mode (default aes_gcm), options {}")),
         ("--finger", ("增加数据指纹校验,可增加安全性,如果服务端开启指纹校验,则客户端也必须开启", "Add data fingerprint verification for increased security, client must enable if server does")),
-        ("--punch <punch>", ("取值ipv4/ipv6/all,ipv4表示仅使用ipv4打洞", "Values ipv4/ipv6/all, ipv4 for IPv4 hole punching only")),
+        ("--punch <punch>", ("取值ipv4/ipv6/ipv4-tcp/ipv4-udp/ipv6-tcp/ipv6-udp/all,ipv4表示仅使用ipv4打洞", "Values ipv4/ipv6/ipv4-tcp/ipv4-udp/ipv6-tcp/ipv6-udp/all, ipv4 for IPv4 hole punching only")),
         ("--ports <port,port>", ("取值0~65535,指定本地监听的一组端口,默认监听两个随机端口,使用过多端口会增加网络负担", "Values 0~65535, specify a group of local listening ports, defaults to two random ports, using many ports increases network load")),
         ("--cmd", ("开启交互式命令,使用此参数开启控制台输入", "Enable interactive command mode, use this parameter to enable console input")),
         ("--no-proxy", ("关闭内置代理,如需点对网则需要配置网卡NAT转发", "Disable built-in proxy, configure network card NAT forwarding for point-to-point networking")),
