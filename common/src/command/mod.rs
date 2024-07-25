@@ -219,6 +219,7 @@ pub fn command_list(vnt: &Vnt) -> Vec<DeviceItem> {
             client_secret_hash: peer.client_secret_hash,
             current_client_secret,
             current_client_secret_hash: client_encrypt_hash.to_vec(),
+            wire_guard: peer.wireguard,
         };
         list.push(item);
     }

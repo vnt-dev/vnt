@@ -1,6 +1,6 @@
 [package]
 name = "vnt"
-version = "1.2.11"
+version = "1.2.12"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -29,8 +29,8 @@ aes = "0.8.3"
 stun-format = { version = "1.0.1", features = ["fmt", "rfc3489"] }
 rsa = { version = "0.9.2", features = [], optional = true }
 spki = { version = "0.7.2", features = ["fingerprint", "alloc", "base64"], optional = true }
-openssl-sys = { git = "https://github.com/lbl8603/rust-openssl", optional = true }
-libsm = { git = "https://github.com/lbl8603/libsm", optional = true }
+openssl-sys = { git = "https://github.com/vnt-dev/rust-openssl", optional = true }
+libsm = { git = "https://github.com/vnt-dev/libsm", optional = true }
 
 mio = { version = "=0.8.11", features = ["os-poll", "net", "os-ext"] }
 crossbeam-queue = "0.3.11"

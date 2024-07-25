@@ -1,6 +1,6 @@
 [package]
 name = "vn-link-cli"
-version = "1.2.11"
+version = "1.2.12"
 edition = "2021"
 
 [dependencies]
@@ -11,7 +11,7 @@ log = "0.4.17"
 
 [features]
 default = ["default-feature"]
-default-feature = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "port_mapping", "log", "command", "file_config", "lz4"]
+default-feature = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "port_mapping", "log", "command", "file_config", "lz4", "ws"]
 
 openssl = ["vn-link/openssl", "common/openssl"]
 openssl-vendored = ["vn-link/openssl-vendored", "common/openssl-vendored"]

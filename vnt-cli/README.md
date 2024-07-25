@@ -135,7 +135,7 @@ aes_gcm/aes_cbc/aes_ecb/sm4_cbc/chacha20_poly1305/chacha20/xor，默认使用aes
 ### --no-proxy
 
 关闭内置的ip代理，内置的代理较为简单，而且一般来说直接使用网卡NAT转发性能会更高，
-有需要可以自行配置NAT转发，[可参考‘编译’小节中的NAT配置](https://github.com/lbl8603/vnt#%E7%BC%96%E8%AF%91)
+有需要可以自行配置NAT转发，[可参考‘编译’小节中的NAT配置](https://github.com/vnt-dev/vnt#%E7%BC%96%E8%AF%91)
 
 ### --dns `<223.5.5.5>`
 
@@ -201,6 +201,8 @@ mapping:
   - udp:0.0.0.0:80-10.26.0.10:80 # 映射udp数据
   - tcp:0.0.0.0:80-10.26.0.10:81 # 映射tcp数据
   - tcp:0.0.0.0:82-localhost:83 # 映射tcp数据
+disable_stats: false # 为true表示关闭统计
+allow_wire_guard: false # 为true则表示允许接入wg
 ```
 
 或者需要哪个配置就加哪个，当然token是必须的
@@ -222,6 +224,14 @@ token: xxx #组网token
 ### --packet-delay `<0>`
 
 模拟延迟,整数,单位毫秒(ms),程序会按设定的值延迟发包,可用于模拟弱网
+
+### --disable-stats
+
+关闭流量统计
+
+### --allow-wg
+
+允许接入WireGuard客户端，和wg混用时必须开启此参数
 
 ### --list
 

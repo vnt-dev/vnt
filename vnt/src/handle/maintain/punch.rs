@@ -90,7 +90,7 @@ pub fn punch(
     scheduler: &Scheduler,
     context: ChannelContext,
     nat_test: NatTest,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
     receiver: PunchReceiver,
@@ -102,7 +102,7 @@ pub fn punch(
         scheduler,
         context,
         nat_test,
-        device_list,
+        device_map,
         current_device.clone(),
         client_cipher.clone(),
         0,
@@ -170,7 +170,7 @@ fn punch_request(
     scheduler: &Scheduler,
     context: ChannelContext,
     nat_test: NatTest,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     client_cipher: Cipher,
     count: usize,
@@ -182,7 +182,7 @@ fn punch_request(
         if let Err(e) = punch0(
             &context,
             &nat_test,
-            &device_list,
+            &device_map,
             curr,
             &client_cipher,
             &punch_record,
@@ -201,7 +201,7 @@ fn punch_request(
             s,
             context,
             nat_test,
-            device_list,
+            device_map,
             current_device,
             client_cipher,
             count + 1,
@@ -218,7 +218,7 @@ fn punch_request(
 fn punch0(
     context: &ChannelContext,
     nat_test: &NatTest,
-    device_list: &Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: &Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     current_device: CurrentDeviceInfo,
     client_cipher: &Cipher,
     punch_record: &Mutex<HashMap<Ipv4Addr, usize>>,
@@ -237,11 +237,11 @@ fn punch0(
         return Ok(());
     }
     let current_ip = current_device.virtual_ip;
-    let mut list: Vec<PeerDeviceInfo> = device_list
+    let mut list: Vec<PeerDeviceInfo> = device_map
         .lock()
         .1
-        .iter()
-        .filter(|info| info.status.is_online() && info.virtual_ip > current_ip)
+        .values()
+        .filter(|info| !info.wireguard && info.status.is_online() && info.virtual_ip > current_ip)
         .cloned()
         .collect();
     list.shuffle(&mut rand::thread_rng());

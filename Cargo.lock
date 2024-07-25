@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "1.2.11"
+version = "1.2.12"
 dependencies = [
  "anyhow",
  "chrono",
@@ -319,6 +319,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_yaml",
+ "sys-locale",
  "uuid",
  "vnt",
 ]
@@ -880,7 +881,7 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 [[package]]
 name = "libsm"
 version = "0.5.1"
-source = "git+https://github.com/lbl8603/libsm#f9e1b8cf20d0829efb4934a940d0ba4f3ee0ac14"
+source = "git+https://github.com/vnt-dev/libsm#f9e1b8cf20d0829efb4934a940d0ba4f3ee0ac14"
 dependencies = [
  "byteorder",
  "getrandom",
@@ -954,7 +955,7 @@ dependencies = [
 [[package]]
 name = "lwip-rs"
 version = "0.1.0"
-source = "git+https://github.com/lbl8603/lwip-rs#3133f0c3bde55333a27641182ae3550e7acc2a39"
+source = "git+https://github.com/vnt-dev/lwip-rs#3133f0c3bde55333a27641182ae3550e7acc2a39"
 dependencies = [
  "bindgen",
  "cc",
@@ -1120,7 +1121,7 @@ dependencies = [
 [[package]]
 name = "openssl-sys"
 version = "0.9.93"
-source = "git+https://github.com/lbl8603/rust-openssl#e8b3d2c02d2d07a0e4a82ff4e4bef210f4bc71c8"
+source = "git+https://github.com/vnt-dev/rust-openssl#e8b3d2c02d2d07a0e4a82ff4e4bef210f4bc71c8"
 dependencies = [
  "cc",
  "libc",
@@ -1835,6 +1836,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sys-locale"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e801cf239ecd6ccd71f03d270d67dd53d13e90aab208bf4b8fe4ad957ea949b0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1958,6 +1968,7 @@ dependencies = [
  "libloading",
  "log",
  "rand",
+ "sha2",
  "widestring",
  "winapi",
 ]
@@ -2095,7 +2106,7 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 
 [[package]]
 name = "vn-link"
-version = "1.2.11"
+version = "1.2.12"
 dependencies = [
  "anyhow",
  "crossbeam-utils",
@@ -2108,7 +2119,7 @@ dependencies = [
 
 [[package]]
 name = "vn-link-cli"
-version = "1.2.11"
+version = "1.2.12"
 dependencies = [
  "common",
  "log",
@@ -2118,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "vnt"
-version = "1.2.11"
+version = "1.2.12"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2165,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "vnt-cli"
-version = "1.2.11"
+version = "1.2.12"
 dependencies = [
  "anyhow",
  "chrono",

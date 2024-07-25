@@ -45,6 +45,7 @@ pub struct DeviceItem {
     pub client_secret_hash: Vec<u8>,
     pub current_client_secret: bool,
     pub current_client_secret_hash: Vec<u8>,
+    pub wire_guard: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

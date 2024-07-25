@@ -1,10 +1,10 @@
 [package]
 name = "vn-link"
-version = "1.2.11"
+version = "1.2.12"
 edition = "2021"
 
 [dependencies]
-lwip-rs = { git = "https://github.com/lbl8603/lwip-rs" }
+lwip-rs = { git = "https://github.com/vnt-dev/lwip-rs" }
 vnt = { path = "../vnt", package = "vnt", default-features = false }
 log = "0.4.17"
 anyhow = "1.0.82"

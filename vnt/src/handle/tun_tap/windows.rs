@@ -10,6 +10,8 @@ use crate::ip_proxy::IpProxyMap;
 use crate::util::StopManager;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tun::device::IFace;
 use tun::Device;
@@ -23,9 +25,10 @@ pub(crate) fn start_simple(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     compressor: Compressor,
     device_stop: DeviceStop,
+    allow_wire_guard: bool,
 ) -> anyhow::Result<()> {
     let worker = {
         let device = device.clone();
@@ -54,8 +57,9 @@ pub(crate) fn start_simple(
         ip_proxy_map,
         client_cipher,
         server_cipher,
-        device_list,
+        device_map,
         compressor,
+        allow_wire_guard,
     ) {
         log::error!("{:?}", e);
     }
@@ -74,8 +78,9 @@ fn start_simple0(
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
     client_cipher: Cipher,
     server_cipher: Cipher,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     compressor: Compressor,
+    allow_wire_guard: bool,
 ) -> anyhow::Result<()> {
     let mut buf = [0; BUFFER_SIZE];
     let mut extend = [0; BUFFER_SIZE];
@@ -96,8 +101,9 @@ fn start_simple0(
             &ip_proxy_map,
             &client_cipher,
             &server_cipher,
-            &device_list,
+            &device_map,
             &compressor,
+            allow_wire_guard,
         ) {
             Ok(_) => {}
             Err(e) => {

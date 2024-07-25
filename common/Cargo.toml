@@ -1,6 +1,6 @@
 [package]
 name = "common"
-version = "1.2.11"
+version = "1.2.12"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,6 +16,7 @@ serde_yaml = "0.9.32"
 getopts = "0.2.21"
 gethostname = "0.4.3"
 uuid = { version = "1.8.0", features = ["v4"] }
+sys-locale = "0.3.1"
 
 [features]
 default = []

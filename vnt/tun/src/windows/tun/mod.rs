@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 use libloading::Library;
+use sha2::Digest;
 use std::io;
 use std::net::Ipv4Addr;
-
-use rand::Rng;
 use winapi::um::winbase;
 use winapi::um::{synchapi, winnt};
 
@@ -81,8 +80,7 @@ impl Device {
             if Self::delete_for_name(&win_tun, &name_utf16).is_ok() {
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
-            let mut guid_bytes: [u8; 16] = [0u8; 16];
-            rand::thread_rng().fill(&mut guid_bytes);
+            let guid_bytes: [u8; 16] = hash_guid(&name);
             let guid = u128::from_ne_bytes(guid_bytes);
             //SAFETY: guid is a unique integer so transmuting either all zeroes or the user's preferred
             //guid to the winapi guid type is safe and will allow the windows kernel to see our GUID
@@ -154,7 +152,14 @@ impl Device {
         Ok(())
     }
 }
-
+fn hash_guid(input: &str) -> [u8; 16] {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"VNT");
+    hasher.update(input.as_bytes());
+    hasher.update(b"2024");
+    let hash: [u8; 32] = hasher.finalize().into();
+    hash[..16].try_into().unwrap()
+}
 impl IFace for Device {
     fn version(&self) -> io::Result<String> {
         let version = unsafe { self.win_tun.WintunGetRunningDriverVersion() };

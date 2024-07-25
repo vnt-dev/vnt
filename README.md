@@ -4,7 +4,7 @@ A virtual network tool (VPN)
 
 将不同网络下的多个设备虚拟到一个局域网下
 
-### vnt-cli参数详解 [参数说明](https://github.com/lbl8603/vnt/blob/main/vnt-cli/README.md)
+### vnt-cli参数详解 [参数说明](https://github.com/vnt-dev/vnt/blob/main/vnt-cli/README.md)
 
 ### 快速使用：
 
@@ -39,7 +39,7 @@ A virtual network tool (VPN)
     ```
 4. 最后可以用虚拟ip实现设备间相互访问
 
-      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/lbl8603/vnt/main/documents/img/ssh.jpg">
+      <img width="506" alt="ssh" src="https://raw.githubusercontent.com/vnt-dev/vnt/main/documents/img/ssh.jpg">
 5. 帮助，使用-h命令查看
 
 ### 更多玩法
@@ -56,7 +56,7 @@ A virtual network tool (VPN)
 - 需要root/管理员权限
 - vnt-cli需要使用命令行运行
 - Mac和Linux下需要加可执行权限(例如:chmod +x ./vnt-cli)
-- 可以自己搭注册和中继服务器([server](https://github.com/lbl8603/vnts))
+- 可以自己搭注册和中继服务器([server](https://github.com/vnt-dev/vnts))
 - vnt使用stun服务器探测网络NAT类型，默认使用谷歌和腾讯的stun服务器，也可自己搭建(-e参数指定)
 
 ### 编译
@@ -181,7 +181,7 @@ sudo pfctl -f /etc/pf.conf -e
 
 ### GUI
 
-支持安卓和Windows [下载](https://github.com/lbl8603/VntApp/releases/)
+支持安卓和Windows [下载](https://github.com/vnt-dev/VntApp/releases/)
 
 ### 特性
 
@@ -291,7 +291,7 @@ QQ: 1034868233
 ### 赞助
 如果VNT对你有帮助，欢迎打赏作者
 
- <img width="300" alt="" src="https://github.com/lbl8603/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
+ <img width="300" alt="" src="https://github.com/vnt-dev/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
 
 ### 其他
 
@@ -302,6 +302,6 @@ QQ: 1034868233
 
 ### 参与贡献
 
-<a href="https://github.com/lbl8603/vnt/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=lbl8603/vnt" />
+<a href="https://github.com/vnt-dev/vnt/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=vnt-dev/vnt" />
 </a>

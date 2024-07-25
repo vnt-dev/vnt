@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use std::collections::HashMap;
 use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -42,7 +43,7 @@ pub struct ServerPacketHandler<Call, Device> {
     server_cipher: Cipher,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     device: Device,
-    device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+    device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
     config_info: BaseConfigInfo,
     nat_test: NatTest,
     callback: Call,
@@ -60,7 +61,7 @@ impl<Call, Device> ServerPacketHandler<Call, Device> {
         server_cipher: Cipher,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         device: Device,
-        device_list: Arc<Mutex<(u16, Vec<PeerDeviceInfo>)>>,
+        device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>>,
         config_info: BaseConfigInfo,
         nat_test: NatTest,
         callback: Call,
@@ -75,7 +76,7 @@ impl<Call, Device> ServerPacketHandler<Call, Device> {
             server_cipher,
             current_device,
             device,
-            device_list,
+            device_map,
             config_info,
             nat_test,
             callback,
@@ -246,6 +247,11 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
                             _ => {}
                         }
                     }
+                    ip_turn_packet::Protocol::WGIpv4 => {
+                        if self.config_info.allow_wire_guard {
+                            self.device.write(net_packet.payload())?;
+                        }
+                    }
                     ip_turn_packet::Protocol::Ipv4Broadcast => {}
                     ip_turn_packet::Protocol::Unknown(_) => {}
                 }
@@ -353,7 +359,8 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                     );
                                     log::info!("tun信息{:?}", tun_info);
                                     self.callback.create_tun(tun_info);
-                                    self.tun_device_helper.start(device)?;
+                                    self.tun_device_helper
+                                        .start(device, self.config_info.allow_wire_guard)?;
                                 }
                                 Err(e) => {
                                     log::error!("{:?}", e);
@@ -435,14 +442,18 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                     info.device_status as u8,
                     info.client_secret,
                     info.client_secret_hash,
+                    info.wireguard,
                 )
             })
             .collect();
         {
-            let mut dev = self.device_list.lock();
+            let mut dev = self.device_map.lock();
             //这里可能会收到旧的消息，但是随着时间推移总会收到新的
             dev.0 = epoch;
-            dev.1 = ip_list.clone();
+            dev.1.clear();
+            for info in ip_list.clone() {
+                dev.1.insert(info.virtual_ip, info);
+            }
         }
         self.callback.peer_client_list(
             ip_list
@@ -506,7 +517,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                 self.callback.error(err);
                 //掉线epoch要归零
                 {
-                    let mut dev = self.device_list.lock();
+                    let mut dev = self.device_map.lock();
                     dev.0 = 0;
                     drop(dev);
                 }
@@ -554,7 +565,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                 let rt = (current_time - pong_packet.time()) as i64;
                 let route = Route::from(route_key, metric, rt);
                 context.route_table.add_route(net_packet.source(), route);
-                let epoch = self.device_list.lock().0;
+                let epoch = self.device_map.lock().0;
                 if pong_packet.epoch() != epoch {
                     //纪元不一致，可能有新客户端连接，向服务端拉取客户端列表
                     let mut poll_device = NetPacket::new_encrypt([0; 12 + ENCRYPTION_RESERVED])?;

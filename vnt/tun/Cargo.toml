@@ -11,6 +11,7 @@ libc = "0.2.153"
 
 log = { version = "0.4.20", features = [] }
 rand = "0.8.5"
+sha2 = { version = "0.10.6", features = ["oid"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 ioctl = { version = "0.8", package = "ioctl-sys" }

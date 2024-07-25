@@ -264,9 +264,8 @@ impl Punch {
             if let Some(ipv4_addr) = nat_info.local_tcp_ipv4addr() {
                 self.connect_tcp(buf, ipv4_addr)
             }
-            if nat_info.nat_type == NatType::Cone && nat_info.public_ips.len() == 1 {
-                let addr =
-                    SocketAddr::V4(SocketAddrV4::new(nat_info.public_ips[0], nat_info.tcp_port));
+            for ip in &nat_info.public_ips {
+                let addr = SocketAddr::V4(SocketAddrV4::new(*ip, nat_info.tcp_port));
                 self.connect_tcp(buf, addr)
             }
         }
