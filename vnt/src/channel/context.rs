@@ -1,7 +1,7 @@
 use fnv::FnvHashMap;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV6, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{io, thread};
@@ -12,6 +12,7 @@ use rand::Rng;
 
 use crate::channel::punch::NatType;
 use crate::channel::sender::{AcceptSocketSender, PacketSender};
+use crate::channel::socket::LocalInterface;
 use crate::channel::{ConnectProtocol, Route, RouteKey, UseChannelType, DEFAULT_RT};
 use crate::protocol::NetPacket;
 use crate::util::limit::TrafficMeterMultiAddress;
@@ -25,16 +26,17 @@ pub struct ChannelContext {
 impl ChannelContext {
     pub fn new(
         main_udp_socket: Vec<UdpSocket>,
+        v4_len: usize,
         use_channel_type: UseChannelType,
         first_latency: bool,
         protocol: ConnectProtocol,
         packet_loss_rate: Option<f64>,
         packet_delay: u32,
-        use_ipv6: bool,
         up_traffic_meter: Option<TrafficMeterMultiAddress>,
         down_traffic_meter: Option<TrafficMeterMultiAddress>,
+        default_interface: LocalInterface,
     ) -> Self {
-        let channel_num = main_udp_socket.len();
+        let channel_num = v4_len;
         assert_ne!(channel_num, 0, "not channel");
         let packet_loss_rate = packet_loss_rate
             .map(|v| {
@@ -48,16 +50,16 @@ impl ChannelContext {
             .unwrap_or(0);
         let inner = ContextInner {
             main_udp_socket,
+            v4_len,
             sub_udp_socket: RwLock::new(Vec::new()),
             packet_map: RwLock::new(FnvHashMap::default()),
             route_table: RouteTable::new(use_channel_type, first_latency, channel_num),
             protocol,
             packet_loss_rate,
             packet_delay,
-            main_index: AtomicUsize::new(0),
-            use_ipv6,
             up_traffic_meter,
             down_traffic_meter,
+            default_interface,
         };
         Self {
             inner: Arc::new(inner),
@@ -80,6 +82,7 @@ const PACKET_LOSS_RATE_DENOMINATOR: u32 = 100_0000;
 pub struct ContextInner {
     // 核心udp socket
     pub(crate) main_udp_socket: Vec<UdpSocket>,
+    v4_len: usize,
     // 对称网络增加的udp socket
     sub_udp_socket: RwLock<Vec<UdpSocket>>,
     // tcp数据发送器
@@ -92,15 +95,17 @@ pub struct ContextInner {
     packet_loss_rate: u32,
     //控制延迟
     packet_delay: u32,
-    main_index: AtomicUsize,
-    use_ipv6: bool,
     pub(crate) up_traffic_meter: Option<TrafficMeterMultiAddress>,
     pub(crate) down_traffic_meter: Option<TrafficMeterMultiAddress>,
+    default_interface: LocalInterface,
 }
 
 impl ContextInner {
     pub fn use_channel_type(&self) -> UseChannelType {
         self.route_table.use_channel_type
+    }
+    pub fn default_interface(&self) -> &LocalInterface {
+        &self.default_interface
     }
     /// 通过sub_udp_socket是否为空来判断是否为锥形网络
     pub fn is_cone(&self) -> bool {
@@ -120,7 +125,7 @@ impl ContextInner {
         &self,
         nat_type: NatType,
         udp_socket_sender: &AcceptSocketSender<Option<Vec<mio::net::UdpSocket>>>,
-    ) -> io::Result<()> {
+    ) -> anyhow::Result<()> {
         let mut write_guard = self.sub_udp_socket.write();
         match nat_type {
             NatType::Symmetric => {
@@ -129,9 +134,11 @@ impl ContextInner {
                 }
                 let mut vec = Vec::with_capacity(SYMMETRIC_CHANNEL_NUM);
                 for _ in 0..SYMMETRIC_CHANNEL_NUM {
-                    let udp = UdpSocket::bind("0.0.0.0:0")?;
-                    //副通道使用异步io
-                    udp.set_nonblocking(true)?;
+                    let udp = crate::channel::socket::bind_udp(
+                        "0.0.0.0:0".parse().unwrap(),
+                        &self.default_interface,
+                    )?;
+                    let udp: UdpSocket = udp.into();
                     vec.push(udp);
                 }
                 let mut mio_vec = Vec::with_capacity(SYMMETRIC_CHANNEL_NUM);
@@ -152,14 +159,18 @@ impl ContextInner {
         }
         Ok(())
     }
-
+    #[inline]
     pub fn channel_num(&self) -> usize {
+        self.v4_len
+    }
+    #[inline]
+    pub fn main_len(&self) -> usize {
         self.main_udp_socket.len()
     }
     /// 获取核心udp监听的端口，用于其他客户端连接
     pub fn main_local_udp_port(&self) -> io::Result<Vec<u16>> {
         let mut ports = Vec::new();
-        for udp in self.main_udp_socket.iter() {
+        for udp in self.main_udp_socket[..self.v4_len].iter() {
             ports.push(udp.local_addr()?.port())
         }
         Ok(ports)
@@ -171,20 +182,13 @@ impl ContextInner {
             Err(io::Error::from(io::ErrorKind::NotFound))
         }
     }
-    pub fn send_main_udp(&self, index: usize, buf: &[u8], mut addr: SocketAddr) -> io::Result<()> {
-        if self.use_ipv6 {
-            //如果是v4地址则需要转换成v6
-            if let SocketAddr::V4(ipv4) = addr {
-                addr = SocketAddr::V6(SocketAddrV6::new(
-                    ipv4.ip().to_ipv6_mapped(),
-                    ipv4.port(),
-                    0,
-                    0,
-                ));
-            }
+    pub fn send_main_udp(&self, index: usize, buf: &[u8], addr: SocketAddr) -> io::Result<()> {
+        if let Some(udp) = self.main_udp_socket.get(index) {
+            udp.send_to(buf, addr)?;
+            Ok(())
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, "overflow"))
         }
-        self.main_udp_socket[index].send_to(buf, addr)?;
-        Ok(())
     }
     /// 将数据发送到默认通道，一般发往服务器才用此方法
     pub fn send_default<B: AsRef<[u8]>>(
@@ -193,7 +197,11 @@ impl ContextInner {
         addr: SocketAddr,
     ) -> io::Result<()> {
         if self.protocol.is_udp() {
-            self.send_main_udp(self.main_index.load(Ordering::Relaxed), buf.buffer(), addr)?
+            if addr.is_ipv4() {
+                self.send_main_udp(0, buf.buffer(), addr)?
+            } else {
+                self.send_main_udp(self.v4_len, buf.buffer(), addr)?
+            }
         } else {
             self.send_tcp(buf.buffer(), addr)?
         }
@@ -203,10 +211,6 @@ impl ContextInner {
         Ok(())
     }
 
-    pub fn change_main_index(&self) {
-        let index = (self.main_index.load(Ordering::Relaxed) + 1) % self.main_udp_socket.len();
-        self.main_index.store(index, Ordering::Relaxed);
-    }
     /// 此方法仅用于对称网络打洞
     pub fn try_send_all(&self, buf: &[u8], addr: SocketAddr) {
         self.try_send_all_main(buf, addr);
@@ -287,7 +291,7 @@ impl ContextInner {
                     if let Some(udp) = self
                         .sub_udp_socket
                         .read()
-                        .get(route_key.index - self.main_udp_socket.len())
+                        .get(route_key.index - self.main_len())
                     {
                         udp.send_to(buf.buffer(), route_key.addr)?;
                     } else {

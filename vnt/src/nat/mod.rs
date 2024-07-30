@@ -11,6 +11,7 @@ use rand::prelude::SliceRandom;
 use rand::Rng;
 
 use crate::channel::punch::{NatInfo, NatType};
+use crate::channel::socket::LocalInterface;
 use crate::proto::message::PunchNatType;
 #[cfg(feature = "upnp")]
 use crate::util::UPnP;
@@ -116,6 +117,7 @@ pub struct NatTest {
     tcp_port: u16,
     #[cfg(feature = "upnp")]
     upnp: UPnP,
+    pub(crate) update_local_ipv4: bool,
 }
 
 impl From<NatType> for PunchNatType {
@@ -144,6 +146,7 @@ impl NatTest {
         ipv6: Option<Ipv6Addr>,
         udp_ports: Vec<u16>,
         tcp_port: u16,
+        update_local_ipv4: bool,
     ) -> NatTest {
         let ports = vec![0; udp_ports.len()];
         let nat_info = NatInfo::new(
@@ -178,6 +181,7 @@ impl NatTest {
             tcp_port,
             #[cfg(feature = "upnp")]
             upnp,
+            update_local_ipv4,
         }
     }
     pub fn can_update(&self) -> bool {
@@ -257,6 +261,7 @@ impl NatTest {
         &self,
         local_ipv4: Option<Ipv4Addr>,
         ipv6: Option<Ipv6Addr>,
+        default_interface: &LocalInterface,
     ) -> anyhow::Result<NatInfo> {
         let mut stun_server = self.stun_server.clone();
         if stun_server.len() > 5 {
@@ -264,7 +269,8 @@ impl NatTest {
             stun_server.truncate(5);
             log::info!("stun_server truncate {:?}", stun_server);
         }
-        let (nat_type, public_ips, port_range) = stun::stun_test_nat(stun_server)?;
+        let (nat_type, public_ips, port_range) =
+            stun::stun_test_nat(stun_server, default_interface)?;
         if public_ips.is_empty() {
             Err(anyhow!("public_ips.is_empty"))?
         }
@@ -272,7 +278,9 @@ impl NatTest {
         guard.nat_type = nat_type;
         guard.public_ips = public_ips;
         guard.public_port_range = port_range;
-        guard.local_ipv4 = local_ipv4;
+        if local_ipv4.is_some() {
+            guard.local_ipv4 = local_ipv4;
+        }
         guard.ipv6 = ipv6;
 
         Ok(guard.clone())

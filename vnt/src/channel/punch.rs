@@ -1,4 +1,3 @@
-use crossbeam_utils::atomic::AtomicCell;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::ops::{Div, Mul};
@@ -7,12 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{io, thread};
 
+use crossbeam_utils::atomic::AtomicCell;
 use rand::prelude::SliceRandom;
 use rand::Rng;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::sender::ConnectUtil;
-use crate::external_route::ExternalRoute;
 use crate::handle::CurrentDeviceInfo;
 use crate::nat::NatTest;
 
@@ -189,7 +188,6 @@ pub struct Punch {
     punch_model: PunchModel,
     is_tcp: bool,
     connect_util: ConnectUtil,
-    external_route: ExternalRoute,
     nat_test: NatTest,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 }
@@ -200,7 +198,6 @@ impl Punch {
         punch_model: PunchModel,
         is_tcp: bool,
         connect_util: ConnectUtil,
-        external_route: ExternalRoute,
         nat_test: NatTest,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ) -> Self {
@@ -215,7 +212,6 @@ impl Punch {
             punch_model,
             is_tcp,
             connect_util,
-            external_route,
             nat_test,
             current_device,
         }
@@ -242,19 +238,12 @@ impl Punch {
             return Ok(());
         }
         let device_info = self.current_device.load();
-        nat_info.public_ips.retain(|ip| {
-            self.external_route.route(ip).is_none() && device_info.not_in_network(*ip)
-        });
-        nat_info.local_ipv4.filter(|ip| {
-            self.external_route.route(ip).is_none() && device_info.not_in_network(*ip)
-        });
-        nat_info.ipv6.filter(|ip| {
-            if let Some(ip) = ip.to_ipv4() {
-                self.external_route.route(&ip).is_none()
-            } else {
-                true
-            }
-        });
+        nat_info
+            .public_ips
+            .retain(|ip| device_info.not_in_network(*ip));
+        nat_info
+            .local_ipv4
+            .filter(|ip| device_info.not_in_network(*ip));
         if punch_tcp && self.is_tcp && nat_info.tcp_port != 0 {
             //向tcp发起连接
             if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
@@ -270,6 +259,7 @@ impl Punch {
             }
         }
         let channel_num = self.context.channel_num();
+        let main_len = self.context.main_len();
         for index in 0..channel_num {
             if let Some(ipv4_addr) = nat_info.local_udp_ipv4addr(index) {
                 if !self.nat_test.is_local_address(false, ipv4_addr) {
@@ -279,7 +269,7 @@ impl Punch {
         }
 
         if self.punch_model != PunchModel::IPv4 {
-            for index in 0..channel_num {
+            for index in channel_num..main_len {
                 if let Some(ipv6_addr) = nat_info.local_udp_ipv6addr(index) {
                     if !self.nat_test.is_local_address(false, ipv6_addr) {
                         let rs = self.context.send_main_udp(index, buf, ipv6_addr);

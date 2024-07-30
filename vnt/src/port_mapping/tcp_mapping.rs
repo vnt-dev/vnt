@@ -32,6 +32,7 @@ async fn tcp_mapping_(
 }
 
 async fn copy(source_tcp: TcpStream, destination: &String) -> anyhow::Result<()> {
+    // 或许这里也应该绑定最匹配的网卡，不然全局代理会影响映射
     let dest_tcp = TcpStream::connect(destination)
         .await
         .with_context(|| format!("TCP connection target failed {:?}", destination))?;

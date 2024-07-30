@@ -6,6 +6,7 @@ use tokio::sync::mpsc::channel;
 use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::sender::{AcceptSocketSender, ConnectUtil};
+use crate::channel::socket::{bind_udp, LocalInterface};
 use crate::channel::tcp_channel::tcp_listen;
 use crate::channel::udp_channel::udp_listen;
 #[cfg(feature = "ws")]
@@ -19,6 +20,7 @@ pub mod idle;
 pub mod notify;
 pub mod punch;
 pub mod sender;
+pub mod socket;
 pub mod tcp_channel;
 pub mod udp_channel;
 #[cfg(feature = "ws")]
@@ -201,11 +203,13 @@ pub(crate) fn init_context(
     protocol: ConnectProtocol,
     packet_loss_rate: Option<f64>,
     packet_delay: u32,
+    default_interface: LocalInterface,
     up_traffic_meter: Option<TrafficMeterMultiAddress>,
     down_traffic_meter: Option<TrafficMeterMultiAddress>,
 ) -> anyhow::Result<(ChannelContext, std::net::TcpListener)> {
     assert!(!ports.is_empty(), "not channel");
-    let mut udps = Vec::with_capacity(ports.len());
+    let mut main_udp_socket_v4 = Vec::with_capacity(ports.len());
+    let mut main_udp_socket_v6 = Vec::with_capacity(ports.len());
     //检查系统是否支持ipv6
     let use_ipv6 = match socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None) {
         Ok(_) => true,
@@ -215,40 +219,33 @@ pub(crate) fn init_context(
         }
     };
     for port in &ports {
-        //监听v6+v4双栈
-        let (socket, address) = if use_ipv6 {
-            let address: SocketAddr = format!("[::]:{}", port).parse().unwrap();
-            let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None)?;
-            socket
-                .set_only_v6(false)
-                .with_context(|| format!("set_only_v6 failed: {}", &address))?;
-            (socket, address)
+        let addr_v4: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+        if use_ipv6 {
+            let (main_channel_v4, main_channel_v6) = bind_udp_v4_and_v6(*port, &default_interface)?;
+            main_udp_socket_v4.push(main_channel_v4);
+            main_udp_socket_v6.push(main_channel_v6);
         } else {
-            let address: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
-            (
-                socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)?,
-                address,
-            )
-        };
-        if let Err(e) = socket.set_recv_buffer_size(2 * 1024 * 1024) {
-            log::warn!("set_recv_buffer_size {:?}", e);
+            let socket = bind_udp(addr_v4, &default_interface)?;
+            let main_channel_v4: UdpSocket = socket.into();
+            main_udp_socket_v4.push(main_channel_v4);
         }
-        socket
-            .bind(&address.into())
-            .with_context(|| format!("bind failed: {}", &address))?;
-        let main_channel: UdpSocket = socket.into();
-        udps.push(main_channel);
     }
+    let mut main_udp_socket =
+        Vec::with_capacity(main_udp_socket_v4.len() + main_udp_socket_v6.len());
+    let v4_len = main_udp_socket_v4.len();
+    main_udp_socket.append(&mut main_udp_socket_v4);
+    main_udp_socket.append(&mut main_udp_socket_v6);
     let context = ChannelContext::new(
-        udps,
+        main_udp_socket,
+        v4_len,
         use_channel_type,
         first_latency,
         protocol,
         packet_loss_rate,
         packet_delay,
-        use_ipv6,
         up_traffic_meter,
         down_traffic_meter,
+        default_interface,
     );
 
     let port = context.main_local_udp_port()?[0];
@@ -265,7 +262,7 @@ pub(crate) fn init_context(
         let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)?;
         (socket, address)
     };
-
+    let _ = socket.set_reuse_address(true);
     if let Err(e) = socket.bind(&address.into()) {
         if ports[0] == 0 {
             //端口可能冲突，则使用任意端口
@@ -285,8 +282,48 @@ pub(crate) fn init_context(
     }
     socket.listen(128)?;
     socket.set_nonblocking(true)?;
-    socket.set_nodelay(false)?;
+    socket.set_nodelay(true)?;
     Ok((context, socket.into()))
+}
+fn bind_udp_v4_and_v6(
+    port: u16,
+    default_interface: &LocalInterface,
+) -> anyhow::Result<(UdpSocket, UdpSocket)> {
+    let mut count = 0;
+    loop {
+        let addr_v4: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
+        let socket = bind_udp(addr_v4, default_interface)?;
+        if let Err(e) = socket.set_recv_buffer_size(2 * 1024 * 1024) {
+            log::warn!("set_recv_buffer_size {:?}", e);
+        }
+        let main_channel_v4: UdpSocket = socket.into();
+        let addr = main_channel_v4.local_addr()?;
+        let addr_v6: SocketAddr = format!("[::]:{}", addr.port()).parse().unwrap();
+        let socket = if port == 0 {
+            match bind_udp(addr_v6, default_interface) {
+                Ok(socket) => socket,
+                Err(e) => {
+                    if count > 10 {
+                        return Err(e);
+                    }
+                    if let Some(e) = e.downcast_ref::<std::io::Error>() {
+                        if e.kind() == std::io::ErrorKind::AddrInUse {
+                            count += 1;
+                            continue;
+                        }
+                    }
+                    Err(e)?
+                }
+            }
+        } else {
+            bind_udp(addr_v6, default_interface)?
+        };
+        if let Err(e) = socket.set_recv_buffer_size(2 * 1024 * 1024) {
+            log::warn!("set_recv_buffer_size {:?}", e);
+        }
+        let main_channel_v6: UdpSocket = socket.into();
+        return Ok((main_channel_v4, main_channel_v6));
+    }
 }
 
 pub(crate) fn init_channel<H>(

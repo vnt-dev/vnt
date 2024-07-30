@@ -87,8 +87,11 @@ async fn connect_tcp0<H>(
 where
     H: RecvChannelHandler,
 {
-    let mut stream =
-        tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr)).await??;
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(3),
+        crate::channel::socket::connect_tcp(addr, context.default_interface()),
+    )
+    .await??;
     tcp_write(&mut stream, &data).await?;
 
     tcp_stream_handle(stream, addr, recv_handler, context).await;

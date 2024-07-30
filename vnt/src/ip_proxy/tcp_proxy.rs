@@ -5,12 +5,12 @@ use std::time::Duration;
 use std::{collections::HashMap, io, net::SocketAddr};
 
 use parking_lot::Mutex;
-use tokio::net::{TcpListener, TcpSocket, TcpStream};
+use tokio::net::{TcpListener, TcpStream};
 
+use crate::channel::socket::{create_tcp, LocalInterface};
+use crate::ip_proxy::ProxyHandler;
 use packet::ip::ipv4::packet::IpV4Packet;
 use packet::tcp::tcp::TcpPacket;
-
-use crate::ip_proxy::ProxyHandler;
 
 #[derive(Clone)]
 pub struct TcpProxy {
@@ -19,7 +19,7 @@ pub struct TcpProxy {
 }
 
 impl TcpProxy {
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new(default_interface: LocalInterface) -> anyhow::Result<Self> {
         let nat_map: Arc<Mutex<HashMap<SocketAddrV4, SocketAddrV4>>> =
             Arc::new(Mutex::new(HashMap::with_capacity(16)));
         let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", 0))
@@ -28,7 +28,7 @@ impl TcpProxy {
         let port = tcp_listener.local_addr()?.port();
         {
             let nat_map = nat_map.clone();
-            tokio::spawn(tcp_proxy(tcp_listener, nat_map));
+            tokio::spawn(tcp_proxy(tcp_listener, nat_map, default_interface));
         }
         Ok(Self { port, nat_map })
     }
@@ -79,26 +79,33 @@ impl ProxyHandler for TcpProxy {
 async fn tcp_proxy(
     tcp_listener: TcpListener,
     nat_map: Arc<Mutex<HashMap<SocketAddrV4, SocketAddrV4>>>,
+    default_interface: LocalInterface,
 ) {
     loop {
         match tcp_listener.accept().await {
             Ok((tcp_stream, sender_addr)) => match sender_addr {
                 SocketAddr::V4(sender_addr) => {
                     if let Some(dest_addr) = nat_map.lock().get(&sender_addr).cloned() {
+                        let default_interface = default_interface.clone();
                         tokio::spawn(async move {
-                            let peer_tcp_stream =
-                                match tcp_connect(sender_addr.port(), dest_addr.into()).await {
-                                    Ok(peer_tcp_stream) => peer_tcp_stream,
-                                    Err(e) => {
-                                        log::warn!(
-                                            "tcp代理异常:{:?},来源:{},目标：{}",
-                                            e,
-                                            sender_addr,
-                                            dest_addr
-                                        );
-                                        return;
-                                    }
-                                };
+                            let peer_tcp_stream = match tcp_connect(
+                                sender_addr.port(),
+                                dest_addr.into(),
+                                &default_interface,
+                            )
+                            .await
+                            {
+                                Ok(peer_tcp_stream) => peer_tcp_stream,
+                                Err(e) => {
+                                    log::warn!(
+                                        "tcp代理异常:{:?},来源:{},目标：{}",
+                                        e,
+                                        sender_addr,
+                                        dest_addr
+                                    );
+                                    return;
+                                }
+                            };
                             proxy(sender_addr, dest_addr, tcp_stream, peer_tcp_stream).await
                         });
                     } else {
@@ -114,15 +121,19 @@ async fn tcp_proxy(
     }
 }
 /// 优先使用来源端口建立tcp连接
-async fn tcp_connect(src_port: u16, addr: SocketAddr) -> anyhow::Result<TcpStream> {
-    let socket = TcpSocket::new_v4()?;
+async fn tcp_connect(
+    src_port: u16,
+    addr: SocketAddr,
+    default_interface: &LocalInterface,
+) -> anyhow::Result<TcpStream> {
+    let socket = create_tcp(true, default_interface)?;
     if socket
         .bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, src_port).into())
         .is_err()
     {
         socket.bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into())?;
     }
-    let _ = socket.set_nodelay(false);
+    let _ = socket.set_nodelay(true);
     let tcp_stream = tokio::time::timeout(Duration::from_secs(5), socket.connect(addr))
         .await
         .with_context(|| format!("TCP connection timeout {}", addr))?

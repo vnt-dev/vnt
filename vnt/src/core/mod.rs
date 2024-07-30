@@ -52,6 +52,7 @@ pub struct Config {
     pub compressor: Compressor,
     pub enable_traffic: bool,
     pub allow_wire_guard: bool,
+    pub local_ipv4: Option<Ipv4Addr>,
 }
 
 impl Config {
@@ -91,6 +92,7 @@ impl Config {
         enable_traffic: bool,
         // 允许传递wg流量
         allow_wire_guard: bool,
+        local_ipv4: Option<Ipv4Addr>,
     ) -> anyhow::Result<Self> {
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
@@ -147,6 +149,9 @@ impl Config {
             *dest = *mask & *dest;
         }
         in_ips.sort_by(|(dest1, _, _), (dest2, _, _)| dest2.cmp(dest1));
+        if let Some(local_ip) = local_ipv4 {
+            let _ = crate::channel::socket::get_interface(local_ip)?;
+        }
         Ok(Self {
             #[cfg(feature = "integrated_tun")]
             #[cfg(target_os = "windows")]
@@ -184,6 +189,7 @@ impl Config {
             compressor,
             enable_traffic,
             allow_wire_guard,
+            local_ipv4,
         })
     }
 }

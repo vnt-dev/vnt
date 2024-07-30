@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::mpsc::{sync_channel, Receiver};
 use std::{io, thread};
 
@@ -71,7 +70,8 @@ where
     let mut events = Events::with_capacity(1024);
     let mut buf = [0; BUFFER_SIZE];
     let mut extend = [0; BUFFER_SIZE];
-    let mut read_map: HashMap<Token, UdpSocket> = HashMap::with_capacity(32);
+    let mut list: Vec<UdpSocket> = Vec::with_capacity(100);
+    let main_len = context.main_len();
     loop {
         if let Err(e) = poll.poll(&mut events, None) {
             crate::ignore_io_interrupted(e)?;
@@ -88,39 +88,43 @@ where
                             match option {
                                 None => {
                                     log::info!("切换成锥形模式");
-                                    for (_, mut udp_socket) in read_map.drain() {
+                                    for mut udp_socket in list.drain(..) {
                                         if let Err(e) = udp_socket.deregister(poll.registry()) {
                                             log::error!("{:?}", e);
                                         }
                                     }
                                 }
                                 Some(socket_list) => {
+                                    for mut udp_socket in list.drain(..) {
+                                        if let Err(e) = udp_socket.deregister(poll.registry()) {
+                                            log::error!("deregister {:?}", e);
+                                        }
+                                    }
                                     log::info!("切换成对称模式 监听端口数：{}", socket_list.len());
                                     for (index, mut udp_socket) in
                                         socket_list.into_iter().enumerate()
                                     {
-                                        let token = Token(index + context.channel_num());
                                         poll.registry().register(
                                             &mut udp_socket,
-                                            token,
+                                            Token(index),
                                             Interest::READABLE,
                                         )?;
-                                        read_map.insert(token, udp_socket);
+                                        list.push(udp_socket);
                                     }
                                 }
                             }
                         }
                     }
                 }
-                token => {
-                    if let Some(udp_socket) = read_map.get(&token) {
+                Token(index) => {
+                    if let Some(udp_socket) = list.get(index) {
                         loop {
                             match udp_socket.recv_from(&mut buf) {
                                 Ok((len, addr)) => {
                                     recv_handler.handle(
                                         &mut buf[..len],
                                         &mut extend,
-                                        RouteKey::new(ConnectProtocol::UDP, token.0, addr),
+                                        RouteKey::new(ConnectProtocol::UDP, index + main_len, addr),
                                         &context,
                                     );
                                 }
@@ -266,6 +270,7 @@ where
         for x in events.iter() {
             let index = match x.token() {
                 NOTIFY => return Ok(()),
+                // 0的位置留给NOTIFY了，这里要再减回去，因为路由是通过index来找到对应udp的
                 Token(index) => index - 1,
             };
             let udp = if let Some(udp) = udps.get(index) {

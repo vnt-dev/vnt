@@ -13,6 +13,7 @@ use packet::icmp::icmp::HeaderOther;
 use packet::ip::ipv4::packet::IpV4Packet;
 
 use crate::channel::context::ChannelContext;
+use crate::channel::socket::{LocalInterface, VntSocketTrait};
 use crate::cipher::Cipher;
 use crate::handle::CurrentDeviceInfo;
 use crate::ip_proxy::ProxyHandler;
@@ -30,6 +31,7 @@ impl IcmpProxy {
         context: ChannelContext,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
         client_cipher: Cipher,
+        default_interface: &LocalInterface,
     ) -> anyhow::Result<Self> {
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         let icmp_socket = socket2::Socket::new(
@@ -50,6 +52,7 @@ impl IcmpProxy {
             .bind(&socket2::SockAddr::from(addr))
             .context("bind Socket ICMPV4 failed")?;
         icmp_socket.set_nonblocking(true)?;
+        icmp_socket.set_ip_unicast_if(default_interface)?;
         let std_socket: std::net::UdpSocket = icmp_socket.into();
 
         let tokio_icmp_socket = UdpSocket::from_std(std_socket.try_clone()?)?;

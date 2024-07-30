@@ -1,3 +1,4 @@
+use crate::channel::socket::LocalInterface;
 use crossbeam_utils::atomic::AtomicCell;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -70,6 +71,7 @@ pub struct BaseConfigInfo {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     pub device_name: Option<String>,
     pub allow_wire_guard: bool,
+    pub default_interface: LocalInterface,
 }
 
 impl BaseConfigInfo {
@@ -90,6 +92,7 @@ impl BaseConfigInfo {
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         device_name: Option<String>,
         allow_wire_guard: bool,
+        default_interface: LocalInterface,
     ) -> Self {
         Self {
             name,
@@ -108,6 +111,7 @@ impl BaseConfigInfo {
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             device_name,
             allow_wire_guard,
+            default_interface,
         }
     }
 }
