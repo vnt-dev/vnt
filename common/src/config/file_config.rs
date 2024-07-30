@@ -126,12 +126,12 @@ pub fn read_config(file_path: &str) -> anyhow::Result<(Config, Vec<String>, bool
         None => None,
         Some(r) => Some(r.map_err(|e| anyhow!("ip {:?} error:{}", &file_conf.ip, e))?),
     };
-    let cipher_model = {
+    let cipher_model = if let Some(v) = file_conf.cipher_model {
+        CipherModel::from_str(&v).map_err(|e| anyhow!("{}", e))?
+    } else {
         #[cfg(not(any(feature = "aes_gcm", feature = "server_encrypt")))]
-        if file_conf.password.is_some() && file_conf.cipher_model.is_none() {
+        if file_conf.password.is_some() {
             Err(anyhow!("cipher_model undefined"))?
-        } else if let Some(v) = file_conf.cipher_model {
-            CipherModel::from_str(&v).map_err(|e| anyhow!("{}", e))?
         } else {
             CipherModel::None
         }
