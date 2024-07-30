@@ -1,12 +1,12 @@
-# Vnt
+# VNT
 
-A virtual network tool (VPN)
+🚀An efficient VPN
 
-将不同网络下的多个设备虚拟到一个局域网下
+🚀一个简单、高效、能快速组建虚拟局域网的工具
 
 ### vnt-cli参数详解 [参数说明](https://github.com/vnt-dev/vnt/blob/main/vnt-cli/README.md)
 
-### 快速使用：
+### 快速开始：
 
 1. 指定一个token，在多台设备上运行该程序，例如：
     ```shell
@@ -42,24 +42,23 @@ A virtual network tool (VPN)
       <img width="506" alt="ssh" src="https://raw.githubusercontent.com/vnt-dev/vnt/main/documents/img/ssh.jpg">
 5. 帮助，使用-h命令查看
 
-### 更多玩法
-
-1. 和远程桌面(如mstsc)搭配，超低延迟的体验
-2. 安装samba服务，共享磁盘
-3. 搭配公网服务器nginx反向代理，在公网访问内网文件或服务
-4. 点对网,访问内网其他机器、IP代理(结合启动参数'-i'和'-o')
-
 ### 使用须知
 
 - token的作用是标识一个虚拟局域网，当使用公共服务器时，建议使用一个唯一值当token(比如uuid)，否则有可能连接到其他人创建的虚拟局域网中
 - 默认使用公共服务器做注册和中继，目前的配置是2核4G 4Mbps，有需要再扩展~
-- 需要root/管理员权限
 - vnt-cli需要使用命令行运行
 - Mac和Linux下需要加可执行权限(例如:chmod +x ./vnt-cli)
-- 可以自己搭注册和中继服务器([server](https://github.com/vnt-dev/vnts))
-- vnt使用stun服务器探测网络NAT类型，默认使用谷歌和腾讯的stun服务器，也可自己搭建(-e参数指定)
+- 可以自己搭中继服务器([server](https://github.com/vnt-dev/vnts))
 
-### 编译
+### 直接使用
+
+[**下载release文件**](https://github.com/vnt-dev/vnt/releases)
+
+[**帮助文档**](https://rustvnt.com)
+
+### 自行编译
+
+<details> <summary>点击展开</summary>
 
 前提条件:安装rust编译环境([install rust](https://www.rust-lang.org/zh-CN/tools/install))
 
@@ -91,82 +90,9 @@ features说明
 | file_config       | yaml配置文件                       | 是    |
 | lz4               | lz4压缩                          | 是    |
 | zstd              | zstd压缩                         | 否    |
-
-### ip转发/代理
-
-如果编译时去除了内置的ip代理(或使用--no-proxy关闭了代理)，则可以使用网卡NAT转发来实现点对网，
-一般来说使用网卡NAT转发会比内置的ip代理性能更好
-<details> <summary>NAT配置可参考如下示例,点击展开</summary>
-
-### 在出口一端做如下配置
-
-注意原有的-i(入口)和-o(出口)的参数不能少
-
-### windows
-
-参考 https://learn.microsoft.com/zh-cn/virtualization/hyper-v-on-windows/user-guide/setup-nat-network
-
-```shell
-#设置nat,名字可以自己取，网段是vnt的网段
-New-NetNat -Name vntnat -InternalIPInterfaceAddressPrefix 10.26.0.0/24
-#查看设置
-Get-NetNat
-```
-
-### linux
-
-```shell
-# 开启ip转发
-sudo sysctl -w net.ipv4.ip_forward=1
-# 开启nat转发  表示来源10.26.0.0/24的数据通过nat映射后再从vnt-tun以外的其他网卡发出去
-sudo iptables -t nat -A POSTROUTING ! -o vnt-tun -s 10.26.0.0/24 -j MASQUERADE
-# 或者这样  表示来源10.26.0.0/24的数据通过nat映射后再从eth0网卡发出去
-sudo iptables -t nat -A POSTROUTING  -o eth0 -s 10.26.0.0/24 -j MASQUERADE
-# 查看设置
-iptables -vnL -t nat
-```
-
-### Arch Linux
-
-[![Packaging status](https://repology.org/badge/vertical-allrepos/vnt.svg)](https://repology.org/project/vnt/versions)
-
-- 通过 AUR 安装 [vnt-git](https://aur.archlinux.org/packages/vnt-git)
-
-```bash
-yay -Syu vnt
-```
-
-- 通过 `systemd` 设置开机自启及配置
-
-```bash
-sudo systemctl enable --now vnt-cli@
-sudo systemctl status vnt-cli@
-```
-
-- 启用内置 `IPv4` 转发规则
-
-```bash
-sudo sysctl --system
-```
-
-- 通过内置防火墙文件配置防火墙转发规则
-
-```bash
-sudo cat /etc/vnt/iptables-vnt.rules >> /etc/iptables/iptables.rules
-sudo iptables-restore iptables.rules
-```
-
-### macos
-
-```shell
-# 开启ip转发
-sudo sysctl -w net.ipv4.ip_forward=1
-# 配置NAT转发规则
-# 在/etc/pf.conf文件中添加以下规则,en0是出口网卡，10.26.0.0/24是来源网段
-nat on en0 from 10.26.0.0/24 to any -> (en0)
-# 加载规则
-sudo pfctl -f /etc/pf.conf -e
-```
+| upnp              | upnp协议                         | 否    |
+| ws                | ws协议                           | 是    |
+| wss               | wss协议                          | 是    |
 
 </details>
 
@@ -176,7 +102,7 @@ sudo pfctl -f /etc/pf.conf -e
 - Linux
 - Windows
     - 默认使用tun网卡 依赖wintun.dll([win-tun](https://www.wintun.net/))(将dll放到同目录下，建议使用版本0.14.1)
-    - 使用tap网卡 依赖tap-windows([win-tap](https://build.openvpn.net/downloads/releases/))(建议使用版本9.24.7)
+    - 可选择使用tap网卡 依赖tap-windows([win-tap](https://build.openvpn.net/downloads/releases/))(建议使用版本9.24.7)
 - Android
 
 ### GUI
@@ -186,50 +112,28 @@ sudo pfctl -f /etc/pf.conf -e
 ### 特性
 
 - IP层数据转发
-    - tun虚拟网卡
-    - tap虚拟网卡
 - NAT穿透
     - 点对点穿透
     - 服务端中继转发
     - 客户端中继转发
-- IP代理
+- IP代理(点对点、点对网)
 - p2p组播/广播
-- 客户端数据加密
-- 服务端数据加密
+- 客户端数据加密(`aes-gcm`、`chacha20-poly1305`等多种加密算法)
+- 服务端数据加密(`rsa` + `aes-gcm`)
+- 多通道UDP应对QOS
+- 支持TCP、UDP、WebSocket等多种协议
+- 支持数据压缩
 
-### 结构
+### 更多玩法
 
-<details> <summary>展开</summary>
-
-<pre>
-    
-   0                                            15                                              31
-   0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |e |s |unused| 版本(4)  |      协议(8)        |     上层协议(8)        |初始ttl(4)|生存时间(4)  |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |                                        源ip地址(32)                                         |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |                                        目的ip地址(32)                                       |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |                                          数据体(n)                                          |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |                                                                                             |
-  |                                          指纹(96)                                           |
-  |                                                                                             |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  注：
-  1. e为是否加密标志，s为服务端通信包标志，unused占两位未使用；
-  2. 开启加密时，数据体为加密后的密文(加密方式取决于密码长度和加密模式)，
-     且会存在指纹，指纹使用sha256生成，用于对数据包完整性和真实性的校验
-</pre>
-
-
-</details>
+1. 和远程桌面(如mstsc)搭配，超低延迟的体验
+2. 安装samba服务，共享磁盘
+3. 点对网,访问内网其他机器、IP代理(结合启动参数'-i'和'-o')
 
 ### Todo
 
-- 桌面UI(测试中)
+- ~~桌面UI(已支持)~~
+- 使用FEC、ARQ等方式提升弱网环境的稳定性
 
 ### 常见问题
 
@@ -288,7 +192,9 @@ vnt默认使用10.26.0.0/24网段，和本地网络适配器的ip冲突
 对VNT有任何问题均可以加群联系作者
 
 QQ: 1034868233
+
 ### 赞助
+
 如果VNT对你有帮助，欢迎打赏作者
 
  <img width="300" alt="" src="https://github.com/vnt-dev/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
