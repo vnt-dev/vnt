@@ -268,16 +268,15 @@ impl Punch {
         }
         let device_info = self.current_device.load();
 
-        nat_info.public_ips.retain(|ip| {
-            is_ipv4_global(ip)
-                && device_info.not_in_network(*ip)
-        });
+        nat_info
+            .public_ips
+            .retain(|ip| is_ipv4_global(ip) && device_info.not_in_network(*ip));
         nat_info.public_ports.retain(|port| *port != 0);
         nat_info.udp_ports.retain(|port| *port != 0);
 
-        nat_info.local_ipv4 = nat_info.local_ipv4.filter(|ip| {
-            device_info.not_in_network(*ip)
-        });
+        nat_info.local_ipv4 = nat_info
+            .local_ipv4
+            .filter(|ip| device_info.not_in_network(*ip));
 
         if punch_tcp && self.punch_model.use_tcp() && nat_info.tcp_port != 0 {
             //向tcp发起连接
@@ -383,11 +382,11 @@ impl Punch {
                 }
                 let mut index = start
                     + self.punch_symmetric(
-                    &self.port_vec[start..end],
-                    buf,
-                    &nat_info.public_ips,
-                    max_k2,
-                )?;
+                        &self.port_vec[start..end],
+                        buf,
+                        &nat_info.public_ips,
+                        max_k2,
+                    )?;
                 if index >= self.port_vec.len() {
                     index = 0
                 }
