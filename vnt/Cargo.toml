@@ -52,7 +52,9 @@ network-interface = "2.0.0"
 futures-util = "0.3.30"
 [target.'cfg(target_os = "windows")'.dependencies]
 libloading = "0.8.0"
-windows-sys = {version = "0.52.0",features = [ "Win32_Foundation",
+windows-sys = {version = "0.59.0",features = [ "Win32_Foundation",
+    "Win32_NetworkManagement",
+    "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_System_IO",
     "Win32_System_Threading",
