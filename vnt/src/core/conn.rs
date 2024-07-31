@@ -287,7 +287,6 @@ impl VntInner {
         let punch = Punch::new(
             context.clone(),
             config.punch_model,
-            config.protocol.is_base_tcp(),
             connect_util.clone(),
             nat_test.clone(),
             current_device.clone(),
