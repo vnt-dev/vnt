@@ -11,6 +11,11 @@ fn main() {
             }
         }
         Err(e) => {
+            log::error!(
+                "parse error={:?} cmd={:?}",
+                e,
+                std::env::args().collect::<Vec<String>>()
+            );
             println!("{}", e);
             return;
         }
