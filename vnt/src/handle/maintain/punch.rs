@@ -251,7 +251,7 @@ fn punch0(
         .collect();
     list.shuffle(&mut rand::thread_rng());
     for info in list {
-        if info.status.is_online() {
+        if info.status.is_offline() {
             // 客户端掉线了要重置打洞记录
             punch_record.lock().remove(&info.virtual_ip);
             continue;
@@ -266,12 +266,11 @@ fn punch0(
         let p2p_num = context.route_table.p2p_num(&info.virtual_ip);
         let mut max_punch_interval = 50;
         if p2p_num > 0 {
-            if punch_count == 0 {
-                continue;
-            }
             if p2p_num >= context.channel_num() {
                 //通道数满足要求，不再打洞
-                punch_record.lock().remove(&info.virtual_ip);
+                if punch_count != 0 {
+                    punch_record.lock().remove(&info.virtual_ip);
+                }
                 continue;
             }
             //有p2p通道，但是通道数量不够，则继续打洞
