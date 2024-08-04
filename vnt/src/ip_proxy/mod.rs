@@ -68,14 +68,16 @@ pub fn init_proxy(
 }
 
 async fn init_proxy0(
-    _context: ChannelContext,
+    context: ChannelContext,
     _current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     _client_cipher: Cipher,
 ) -> anyhow::Result<IpProxyMap> {
+    let default_interface = context.default_interface().clone();
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-    let icmp_proxy = IcmpProxy::new(_context, _current_device, _client_cipher).await?;
-    let tcp_proxy = TcpProxy::new().await?;
-    let udp_proxy = UdpProxy::new().await?;
+    let icmp_proxy =
+        IcmpProxy::new(context, _current_device, _client_cipher, &default_interface).await?;
+    let tcp_proxy = TcpProxy::new(default_interface.clone()).await?;
+    let udp_proxy = UdpProxy::new(default_interface.clone()).await?;
 
     Ok(IpProxyMap {
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]

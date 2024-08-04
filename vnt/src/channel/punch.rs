@@ -1,4 +1,3 @@
-use crossbeam_utils::atomic::AtomicCell;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::ops::{Div, Mul};
@@ -7,20 +6,45 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{io, thread};
 
+use crossbeam_utils::atomic::AtomicCell;
 use rand::prelude::SliceRandom;
 use rand::Rng;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::sender::ConnectUtil;
-use crate::external_route::ExternalRoute;
 use crate::handle::CurrentDeviceInfo;
-use crate::nat::NatTest;
+use crate::nat::{is_ipv4_global, NatTest};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PunchModel {
     IPv4,
     IPv6,
+    IPv4Tcp,
+    IPv4Udp,
+    IPv6Tcp,
+    IPv6Udp,
     All,
+}
+
+impl PunchModel {
+    pub fn use_tcp(&self) -> bool {
+        self != &PunchModel::IPv4Udp && self != &PunchModel::IPv6Udp
+    }
+    pub fn use_udp(&self) -> bool {
+        self != &PunchModel::IPv4Tcp && self != &PunchModel::IPv6Tcp
+    }
+    pub fn use_ipv6(&self) -> bool {
+        self == &PunchModel::All
+            || self == &PunchModel::IPv6
+            || self == &PunchModel::IPv6Tcp
+            || self == &PunchModel::IPv6Udp
+    }
+    pub fn use_ipv4(&self) -> bool {
+        self == &PunchModel::All
+            || self == &PunchModel::IPv4
+            || self == &PunchModel::IPv4Tcp
+            || self == &PunchModel::IPv4Udp
+    }
 }
 
 impl FromStr for PunchModel {
@@ -30,8 +54,15 @@ impl FromStr for PunchModel {
         match s.to_lowercase().trim() {
             "ipv4" => Ok(PunchModel::IPv4),
             "ipv6" => Ok(PunchModel::IPv6),
+            "ipv4-tcp" => Ok(PunchModel::IPv4Tcp),
+            "ipv4-udp" => Ok(PunchModel::IPv4Udp),
+            "ipv6-tcp" => Ok(PunchModel::IPv6Tcp),
+            "ipv6-udp" => Ok(PunchModel::IPv6Udp),
             "all" => Ok(PunchModel::All),
-            _ => Err(format!("not match '{}', enum: ipv4/ipv6/all", s)),
+            _ => Err(format!(
+                "not match '{}', enum: ipv4/ipv4-tcp/ipv4-udp/ipv6/ipv6-tcp/ipv6-udp/all",
+                s
+            )),
         }
     }
 }
@@ -187,9 +218,7 @@ pub struct Punch {
     port_vec: Vec<u16>,
     port_index: HashMap<Ipv4Addr, usize>,
     punch_model: PunchModel,
-    is_tcp: bool,
     connect_util: ConnectUtil,
-    external_route: ExternalRoute,
     nat_test: NatTest,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
 }
@@ -198,9 +227,7 @@ impl Punch {
     pub fn new(
         context: ChannelContext,
         punch_model: PunchModel,
-        is_tcp: bool,
         connect_util: ConnectUtil,
-        external_route: ExternalRoute,
         nat_test: NatTest,
         current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ) -> Self {
@@ -213,9 +240,7 @@ impl Punch {
             port_vec,
             port_index: HashMap::new(),
             punch_model,
-            is_tcp,
             connect_util,
-            external_route,
             nat_test,
             current_device,
         }
@@ -242,48 +267,46 @@ impl Punch {
             return Ok(());
         }
         let device_info = self.current_device.load();
-        nat_info.public_ips.retain(|ip| {
-            self.external_route.route(ip).is_none() && device_info.not_in_network(*ip)
-        });
-        nat_info.local_ipv4.filter(|ip| {
-            self.external_route.route(ip).is_none() && device_info.not_in_network(*ip)
-        });
-        nat_info.ipv6.filter(|ip| {
-            if let Some(ip) = ip.to_ipv4() {
-                self.external_route.route(&ip).is_none()
-            } else {
-                true
-            }
-        });
-        if punch_tcp && self.is_tcp && nat_info.tcp_port != 0 {
+
+        nat_info
+            .public_ips
+            .retain(|ip| is_ipv4_global(ip) && device_info.not_in_network(*ip));
+        nat_info.public_ports.retain(|port| *port != 0);
+        nat_info.udp_ports.retain(|port| *port != 0);
+
+        nat_info.local_ipv4 = nat_info
+            .local_ipv4
+            .filter(|ip| device_info.not_in_network(*ip));
+
+        if punch_tcp && self.punch_model.use_tcp() && nat_info.tcp_port != 0 {
             //向tcp发起连接
-            if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
-                self.connect_tcp(buf, ipv6_addr)
+            if self.punch_model.use_ipv6() {
+                if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
+                    self.connect_tcp(buf, ipv6_addr)
+                }
             }
-            //向tcp发起连接
-            if let Some(ipv4_addr) = nat_info.local_tcp_ipv4addr() {
-                self.connect_tcp(buf, ipv4_addr)
-            }
-            for ip in &nat_info.public_ips {
-                let addr = SocketAddr::V4(SocketAddrV4::new(*ip, nat_info.tcp_port));
-                self.connect_tcp(buf, addr)
-            }
-        }
-        let channel_num = self.context.channel_num();
-        for index in 0..channel_num {
-            if let Some(ipv4_addr) = nat_info.local_udp_ipv4addr(index) {
-                if !self.nat_test.is_local_address(false, ipv4_addr) {
-                    let _ = self.context.send_main_udp(index, buf, ipv4_addr);
+            if self.punch_model.use_ipv4() {
+                if let Some(ipv4_addr) = nat_info.local_tcp_ipv4addr() {
+                    self.connect_tcp(buf, ipv4_addr)
+                }
+                for ip in &nat_info.public_ips {
+                    let addr = SocketAddr::V4(SocketAddrV4::new(*ip, nat_info.tcp_port));
+                    self.connect_tcp(buf, addr)
                 }
             }
         }
+        if !self.punch_model.use_udp() {
+            return Ok(());
+        }
+        let channel_num = self.context.channel_num();
+        let main_len = self.context.main_len();
 
-        if self.punch_model != PunchModel::IPv4 {
-            for index in 0..channel_num {
+        if self.punch_model.use_ipv6() {
+            for index in channel_num..main_len {
                 if let Some(ipv6_addr) = nat_info.local_udp_ipv6addr(index) {
                     if !self.nat_test.is_local_address(false, ipv6_addr) {
                         let rs = self.context.send_main_udp(index, buf, ipv6_addr);
-                        log::info!("发送到ipv6地址:{:?},rs={:?}", ipv6_addr, rs);
+                        log::info!("发送到ipv6地址:{:?},rs={:?} {}", ipv6_addr, rs, id);
                         if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
                             return Ok(());
                         }
@@ -291,6 +314,33 @@ impl Punch {
                 }
             }
         }
+        if !self.punch_model.use_ipv4() {
+            return Ok(());
+        }
+        for index in 0..channel_num {
+            if let Some(ipv4_addr) = nat_info.local_udp_ipv4addr(index) {
+                if !self.nat_test.is_local_address(false, ipv4_addr) {
+                    let _ = self.context.send_main_udp(index, buf, ipv4_addr);
+                }
+            }
+        }
+        // 可能是开放了端口的，需要打洞
+        for index in 0..channel_num {
+            for port in &nat_info.udp_ports {
+                if *port == 0 {
+                    continue;
+                }
+                for ip in &nat_info.public_ips {
+                    if ip.is_unspecified() {
+                        continue;
+                    }
+                    let addr = SocketAddrV4::new(*ip, *port);
+                    let _ = self.context.send_main_udp(index, buf, addr.into());
+                    thread::sleep(Duration::from_millis(3));
+                }
+            }
+        }
+
         match nat_info.nat_type {
             NatType::Symmetric => {
                 // 假设对方绑定n个端口，通过NAT对外映射出n个 公网ip:公网端口，自己随机尝试k次的情况下

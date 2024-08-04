@@ -12,6 +12,7 @@ use crate::channel::context::ChannelContext;
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
 use crate::channel::sender::IpPacketSender;
+use crate::channel::socket::LocalInterface;
 use crate::channel::{init_channel, init_context, Route, RouteKey};
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
@@ -29,7 +30,7 @@ use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
 use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::util::limit::TrafficMeterMultiAddress;
 use crate::util::{Scheduler, StopManager};
-use crate::{nat, VntCallback};
+use crate::{channel, nat, VntCallback};
 
 #[derive(Clone)]
 pub struct Vnt {
@@ -105,6 +106,7 @@ impl VntInner {
         } else {
             (None, None)
         };
+
         //服务端非对称加密
         #[cfg(feature = "server_encrypt")]
         let rsa_cipher: Arc<Mutex<Option<RsaCipher>>> = Arc::new(Mutex::new(None));
@@ -131,6 +133,23 @@ impl VntInner {
         //设备列表
         let device_map: Arc<Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>> =
             Arc::new(Mutex::new((0, HashMap::with_capacity(16))));
+        let local_ipv4 = if let Some(local_ipv4) = config.local_ipv4 {
+            Some(local_ipv4)
+        } else {
+            nat::local_ipv4()
+        };
+
+        let default_interface = if config.in_ips.is_empty() {
+            //没有改变路由，不需要绑定网卡
+            LocalInterface::default()
+        } else {
+            //vnt的流量都走这个接口
+            let default_interface =
+                channel::socket::get_best_interface(local_ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED))?;
+            log::info!("default_interface = {:?}", default_interface);
+            default_interface
+        };
+
         //基础信息
         let config_info = BaseConfigInfo::new(
             config.name.clone(),
@@ -149,6 +168,7 @@ impl VntInner {
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
             config.device_name.clone(),
             config.allow_wire_guard,
+            default_interface.clone(),
         );
         // 服务停止管理器
         let stop_manager = {
@@ -179,10 +199,10 @@ impl VntInner {
             config.protocol,
             config.packet_loss_rate,
             config.packet_delay,
+            default_interface,
             up_traffic_meter.clone(),
             down_traffic_meter.clone(),
         )?;
-        let local_ipv4 = nat::local_ipv4();
         let local_ipv6 = nat::local_ipv6();
         let udp_ports = context.main_local_udp_port()?;
         let tcp_port = tcp_listener.local_addr()?.port();
@@ -194,6 +214,7 @@ impl VntInner {
             local_ipv6,
             udp_ports,
             tcp_port,
+            config.local_ipv4.is_none(),
         );
         // 定时器
         let scheduler = Scheduler::new(stop_manager.clone())?;
@@ -266,9 +287,7 @@ impl VntInner {
         let punch = Punch::new(
             context.clone(),
             config.punch_model,
-            config.protocol.is_base_tcp(),
             connect_util.clone(),
-            external_route.clone(),
             nat_test.clone(),
             current_device.clone(),
         );

@@ -29,9 +29,13 @@ fn retrieve_nat_type0(
         .name("natTest".into())
         .spawn(move || {
             if nat_test.can_update() {
-                let local_ipv4 = nat::local_ipv4();
+                let local_ipv4 = if nat_test.update_local_ipv4 {
+                    nat::local_ipv4()
+                } else {
+                    None
+                };
                 let local_ipv6 = nat::local_ipv6();
-                match nat_test.re_test(local_ipv4, local_ipv6) {
+                match nat_test.re_test(local_ipv4, local_ipv6, context.default_interface()) {
                     Ok(nat_info) => {
                         log::info!("当前nat信息:{:?}", nat_info);
                         if let Err(e) = context.switch(nat_info.nat_type, &udp_socket_sender) {

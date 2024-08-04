@@ -105,12 +105,11 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
     ) -> anyhow::Result<()> {
         if !current_device.is_server_addr(route_key.addr) {
             //拦截不是服务端的流量
-            log::info!(
+            log::warn!(
                 "route_key={:?},不是来源于服务端地址{}",
                 route_key,
                 current_device.connect_server
             );
-            return Ok(());
         }
         context
             .route_table
@@ -386,9 +385,10 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                 } else {
                                     match tun::Device::new(device_fd as _) {
                                         Ok(device) => {
-                                            if let Err(e) =
-                                                self.tun_device_helper.start(Arc::new(device))
-                                            {
+                                            if let Err(e) = self.tun_device_helper.start(
+                                                Arc::new(device),
+                                                self.config_info.allow_wire_guard,
+                                            ) {
                                                 self.callback.error(ErrorInfo::new_msg(
                                                     ErrorType::Unknown,
                                                     format!("{:?}", e),

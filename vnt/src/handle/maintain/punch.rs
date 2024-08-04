@@ -175,7 +175,7 @@ fn punch_request(
     client_cipher: Cipher,
     count: usize,
     punch_record: Arc<Mutex<HashMap<Ipv4Addr, usize>>>,
-    mut last_punch_record: HashMap<Ipv4Addr, usize>,
+    mut last_punch_record: HashMap<Ipv4Addr, PunchRecordItem>,
 ) {
     let curr = current_device.load();
     let secs = if curr.status.online() {
@@ -213,6 +213,11 @@ fn punch_request(
         log::info!("定时任务停止");
     }
 }
+#[derive(Copy, Clone, Default)]
+struct PunchRecordItem {
+    pub punch_record: usize,
+    pub last_p2p_num: usize,
+}
 
 /// 随机对需要打洞的客户端发起打洞请求
 fn punch0(
@@ -222,7 +227,7 @@ fn punch0(
     current_device: CurrentDeviceInfo,
     client_cipher: &Cipher,
     punch_record: &Mutex<HashMap<Ipv4Addr, usize>>,
-    last_punch_record: &mut HashMap<Ipv4Addr, usize>,
+    last_punch_record: &mut HashMap<Ipv4Addr, PunchRecordItem>,
     total_count: usize,
 ) -> anyhow::Result<()> {
     let nat_info = nat_test.nat_info();
@@ -241,12 +246,17 @@ fn punch0(
         .lock()
         .1
         .values()
-        .filter(|info| !info.wireguard && info.status.is_online() && info.virtual_ip > current_ip)
+        .filter(|info| !info.wireguard && info.virtual_ip > current_ip)
         .cloned()
         .collect();
     list.shuffle(&mut rand::thread_rng());
     for info in list {
-        let punch_count = punch_record
+        if info.status.is_offline() {
+            // 客户端掉线了要重置打洞记录
+            punch_record.lock().remove(&info.virtual_ip);
+            continue;
+        }
+        let mut punch_count = punch_record
             .lock()
             .get(&info.virtual_ip)
             .cloned()
@@ -256,12 +266,11 @@ fn punch0(
         let p2p_num = context.route_table.p2p_num(&info.virtual_ip);
         let mut max_punch_interval = 50;
         if p2p_num > 0 {
-            if punch_count == 0 {
-                continue;
-            }
             if p2p_num >= context.channel_num() {
                 //通道数满足要求，不再打洞
-                punch_record.lock().remove(&info.virtual_ip);
+                if punch_count != 0 {
+                    punch_record.lock().remove(&info.virtual_ip);
+                }
                 continue;
             }
             //有p2p通道，但是通道数量不够，则继续打洞
@@ -269,13 +278,18 @@ fn punch0(
             max_punch_interval = 300;
         }
         // 能发起打洞的前提是自己空闲，这里会间隔5秒以上发起一次打洞，所以假定上一轮打洞已结束
-        let last_punch = last_punch_record
-            .get(&info.virtual_ip)
-            .cloned()
-            .unwrap_or(0);
+        let last_punch = last_punch_record.entry(info.virtual_ip).or_default();
+        if last_punch.last_p2p_num > p2p_num {
+            // 打的洞掉线了,需要重置重新打
+            punch_record.lock().remove(&info.virtual_ip);
+            punch_count = 0;
+        }
+
         // 梯度增加打洞时间间隔
-        if total_count > last_punch + punch_count.min(max_punch_interval) {
-            last_punch_record.insert(info.virtual_ip, total_count);
+        if total_count > last_punch.punch_record + punch_count.min(max_punch_interval) {
+            // 记录打洞周期，抑制下一次打洞，从而递减打洞频率
+            last_punch.punch_record = total_count;
+            last_punch.last_p2p_num = p2p_num;
             let packet = punch_packet(
                 client_cipher,
                 current_device.virtual_ip(),
