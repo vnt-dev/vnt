@@ -64,11 +64,23 @@ message PunchInfo {
     uint32 tcp_port = 11;
     repeated uint32 udp_ports = 12;
     repeated uint32 public_ports = 13;
+    uint32 public_tcp_port = 14;
+    PunchNatModel punch_model = 15;
 }
 enum PunchNatType {
     Symmetric = 0;
     Cone = 1;
 }
+enum PunchNatModel {
+    All = 0;
+    IPv4 = 1;
+    IPv6 = 2;
+    IPv4Tcp = 3;
+    IPv4Udp = 4;
+    IPv6Tcp = 5;
+    IPv6Udp = 6;
+}
+
 /// 向服务器上报客户端状态信息
 message ClientStatusInfo {
     fixed32 source = 1;

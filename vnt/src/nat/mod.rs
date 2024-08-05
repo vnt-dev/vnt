@@ -10,9 +10,8 @@ use parking_lot::Mutex;
 use rand::prelude::SliceRandom;
 use rand::Rng;
 
-use crate::channel::punch::{NatInfo, NatType};
+use crate::channel::punch::{NatInfo, NatType, PunchModel};
 use crate::channel::socket::LocalInterface;
-use crate::proto::message::PunchNatType;
 #[cfg(feature = "upnp")]
 use crate::util::UPnP;
 
@@ -120,24 +119,6 @@ pub struct NatTest {
     pub(crate) update_local_ipv4: bool,
 }
 
-impl From<NatType> for PunchNatType {
-    fn from(value: NatType) -> Self {
-        match value {
-            NatType::Symmetric => PunchNatType::Symmetric,
-            NatType::Cone => PunchNatType::Cone,
-        }
-    }
-}
-
-impl Into<NatType> for PunchNatType {
-    fn into(self) -> NatType {
-        match self {
-            PunchNatType::Symmetric => NatType::Symmetric,
-            PunchNatType::Cone => NatType::Cone,
-        }
-    }
-}
-
 impl NatTest {
     pub fn new(
         _channel_num: usize,
@@ -147,6 +128,7 @@ impl NatTest {
         udp_ports: Vec<u16>,
         tcp_port: u16,
         update_local_ipv4: bool,
+        punch_model: PunchModel,
     ) -> NatTest {
         let ports = vec![0; udp_ports.len()];
         let nat_info = NatInfo::new(
@@ -157,7 +139,9 @@ impl NatTest {
             ipv6,
             udp_ports.clone(),
             tcp_port,
+            0,
             NatType::Cone,
+            punch_model,
         );
         let info = Arc::new(Mutex::new(nat_info));
         #[cfg(feature = "upnp")]
@@ -256,6 +240,10 @@ impl NatTest {
     pub fn update_addr(&self, index: usize, ip: Ipv4Addr, port: u16) -> bool {
         let mut guard = self.info.lock();
         guard.update_addr(index, ip, port)
+    }
+    pub fn update_tcp_port(&self, port: u16) {
+        let mut guard = self.info.lock();
+        guard.update_tcp_port(port)
     }
     pub fn re_test(
         &self,

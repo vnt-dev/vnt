@@ -223,10 +223,10 @@ impl CurrentDeviceInfo {
         virtual_gateway: Ipv4Addr,
     ) {
         let broadcast_ip = (!u32::from_be_bytes(virtual_netmask.octets()))
-            | u32::from_be_bytes(virtual_gateway.octets());
+            | u32::from_be_bytes(virtual_ip.octets());
         let broadcast_ip = Ipv4Addr::from(broadcast_ip);
-        let virtual_network = u32::from_be_bytes(virtual_netmask.octets())
-            & u32::from_be_bytes(virtual_gateway.octets());
+        let virtual_network =
+            u32::from_be_bytes(virtual_netmask.octets()) & u32::from_be_bytes(virtual_ip.octets());
         let virtual_network = Ipv4Addr::from(virtual_network);
         self.virtual_ip = virtual_ip;
         self.virtual_netmask = virtual_netmask;

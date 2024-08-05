@@ -149,7 +149,7 @@ fn punch_start(
                 *v += 1;
                 *v
             } else {
-                guard.insert(peer_ip, 1);
+                guard.insert(peer_ip, 0);
                 0
             }
         };
@@ -326,6 +326,7 @@ fn punch_packet(
     punch_reply.public_port = nat_info.public_ports.get(0).map_or(0, |v| *v as u32);
     punch_reply.public_ports = nat_info.public_ports.iter().map(|e| *e as u32).collect();
     punch_reply.public_port_range = nat_info.public_port_range as u32;
+    punch_reply.public_tcp_port = nat_info.public_tcp_port as u32;
     punch_reply.local_ip = u32::from(nat_info.local_ipv4().unwrap_or(Ipv4Addr::UNSPECIFIED));
     punch_reply.local_port = nat_info.udp_ports[0] as u32;
     punch_reply.tcp_port = nat_info.tcp_port as u32;
@@ -335,6 +336,7 @@ fn punch_packet(
         punch_reply.ipv6 = ipv6.octets().to_vec();
     }
     punch_reply.nat_type = protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
+    punch_reply.punch_model = protobuf::EnumOrUnknown::new(nat_info.punch_model.into());
     log::info!("请求打洞={:?}", punch_reply);
     let bytes = punch_reply
         .write_to_bytes()

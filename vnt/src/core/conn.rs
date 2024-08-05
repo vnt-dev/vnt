@@ -215,6 +215,7 @@ impl VntInner {
             udp_ports,
             tcp_port,
             config.local_ipv4.is_none(),
+            config.punch_model,
         );
         // 定时器
         let scheduler = Scheduler::new(stop_manager.clone())?;

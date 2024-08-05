@@ -58,14 +58,16 @@ async fn connect_ws_handle<H>(
 ) where
     H: RecvChannelHandler,
 {
+    let mut index = 0;
     while let Some((data, url)) = receiver.recv().await {
         let recv_handler = recv_handler.clone();
         let context = context.clone();
         tokio::spawn(async move {
-            if let Err(e) = connect_ws(data, url, recv_handler, context).await {
+            if let Err(e) = connect_ws(data, url, recv_handler, context, index).await {
                 log::warn!("发送失败,ws链接终止:{:?}", e);
             }
         });
+        index += 1;
     }
 }
 const WS_ADDR: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
@@ -75,6 +77,7 @@ async fn connect_ws<H>(
     mut url: String,
     recv_handler: H,
     context: ChannelContext,
+    index: usize,
 ) -> anyhow::Result<()>
 where
     H: RecvChannelHandler,
@@ -114,10 +117,12 @@ where
     ws.send(Message::Binary(data)).await?;
     let (mut ws_write, ws_read) = ws.split();
     let (sender, mut receiver) = channel::<Vec<u8>>(100);
+    let route_key = RouteKey::new(ConnectProtocol::WS, index, WS_ADDR);
+
     context
         .packet_map
         .write()
-        .insert(WS_ADDR, PacketSender::new(sender));
+        .insert(route_key, PacketSender::new(sender));
     tokio::spawn(async move {
         while let Some(data) = receiver.recv().await {
             if let Err(e) = ws_write.send(Message::Binary(data)).await {
@@ -127,22 +132,22 @@ where
         }
         let _ = ws_write.close().await;
     });
-    if let Err(e) = ws_read_handle(ws_read, recv_handler, &context).await {
+    if let Err(e) = ws_read_handle(ws_read, recv_handler, &context, route_key).await {
         log::warn!("{:?}", e);
     }
-    context.packet_map.write().remove(&WS_ADDR);
+    context.packet_map.write().remove(&route_key);
     Ok(())
 }
 async fn ws_read_handle<H>(
     mut ws_read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     recv_handler: H,
     context: &ChannelContext,
+    route_key: RouteKey,
 ) -> anyhow::Result<()>
 where
     H: RecvChannelHandler,
 {
     let mut extend = [0; BUFFER_SIZE];
-    let route_key = RouteKey::new(ConnectProtocol::WS, 0, WS_ADDR);
     while let Some(msg) = ws_read.next().await {
         let msg = msg.context("Error during WebSocket ")?;
         match msg {

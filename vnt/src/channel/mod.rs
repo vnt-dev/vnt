@@ -179,7 +179,7 @@ pub struct RouteKey {
 }
 
 impl RouteKey {
-    pub(crate) fn new(protocol: ConnectProtocol, index: usize, addr: SocketAddr) -> Self {
+    pub(crate) const fn new(protocol: ConnectProtocol, index: usize, addr: SocketAddr) -> Self {
         Self {
             protocol,
             index,

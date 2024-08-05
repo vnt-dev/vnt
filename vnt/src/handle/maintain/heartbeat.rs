@@ -56,6 +56,7 @@ fn heartbeat0(
 ) {
     let gateway_ip = current_device.virtual_gateway;
     let src_ip = current_device.virtual_ip;
+    let channel_num = context.channel_num();
     // 可能服务器ip发生变化，导致发送失败
     let mut is_send_gateway = false;
     match heartbeat_packet_server(device_map, server_cipher, src_ip, gateway_ip) {
@@ -78,6 +79,10 @@ fn heartbeat0(
             }
             heartbeat_packet_server(device_map, server_cipher, src_ip, gateway_ip)
         } else {
+            if dest_ip < src_ip {
+                // 只向比自己大的发
+                continue;
+            }
             heartbeat_packet_client(client_cipher, src_ip, dest_ip)
         };
         let net_packet = match net_packet {
@@ -87,7 +92,12 @@ fn heartbeat0(
                 continue;
             }
         };
-        for route in routes {
+        for (index, route) in routes.iter().enumerate() {
+            if index >= channel_num + 1 {
+                // 多余的通道不再发送心跳包,让它自动过期
+                // 这里多留一个增加稳定性
+                break;
+            }
             if let Err(e) = context.send_by_key(&net_packet, route.route_key()) {
                 log::warn!("heartbeat err={:?}", e)
             }
