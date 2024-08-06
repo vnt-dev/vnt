@@ -62,6 +62,8 @@ pub fn create_tcp0(
     }
     if bind_port != 0 {
         socket.set_reuse_address(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
         if v4 {
             let addr: SocketAddr = format!("0.0.0.0:{}", bind_port).parse().unwrap();
             socket.bind(&addr.into())?;

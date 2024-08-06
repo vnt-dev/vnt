@@ -83,7 +83,7 @@ async fn connect_tcp_handle<H>(
         };
         tokio::spawn(async move {
             if let Err(e) = connect_tcp0(data, addr, recv_handler, context, bind_port).await {
-                log::warn!("发送失败,链接终止:{:?},{:?}", addr, e);
+                log::warn!("连接失败,链接终止:{:?},{:?}", addr, e);
             }
         });
     }
