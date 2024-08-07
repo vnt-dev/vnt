@@ -14,6 +14,7 @@ use tokio::sync::mpsc::{channel, Receiver};
 use crate::channel::context::ChannelContext;
 use crate::channel::handler::RecvChannelHandler;
 use crate::channel::sender::PacketSender;
+use crate::channel::socket::create_tcp0;
 use crate::channel::{ConnectProtocol, RouteKey, BUFFER_SIZE, TCP_MAX_PACKET_SIZE};
 use crate::util::StopManager;
 
@@ -99,11 +100,18 @@ async fn connect_tcp0<H>(
 where
     H: RecvChannelHandler,
 {
-    let mut stream = tokio::time::timeout(
-        Duration::from_secs(3),
-        crate::channel::socket::connect_tcp(addr, bind_port, context.default_interface()),
-    )
-    .await??;
+    let socket = if bind_port != 0 {
+        match create_tcp0(addr.is_ipv4(), bind_port, context.default_interface()) {
+            Ok(socket) => socket,
+            Err(e) => {
+                log::warn!("{:?}", e);
+                create_tcp0(addr.is_ipv4(), 0, context.default_interface())?
+            }
+        }
+    } else {
+        create_tcp0(addr.is_ipv4(), 0, context.default_interface())?
+    };
+    let mut stream = tokio::time::timeout(Duration::from_secs(3), socket.connect(addr)).await??;
     tcp_write(&mut stream, &data).await?;
 
     tcp_stream_handle(stream, addr, recv_handler, context).await;

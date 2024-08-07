@@ -262,9 +262,13 @@ pub(crate) fn init_context(
         let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)?;
         (socket, address)
     };
-    socket.set_reuse_address(true)?;
+    socket
+        .set_reuse_address(true)
+        .context("set_reuse_address")?;
     #[cfg(unix)]
-    socket.set_reuse_port(true)?;
+    if let Err(e) = socket.set_reuse_port(true) {
+        log::warn!("set_reuse_port {:?}", e)
+    }
     if let Err(e) = socket.bind(&address.into()) {
         if ports[0] == 0 {
             //端口可能冲突，则使用任意端口

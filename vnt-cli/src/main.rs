@@ -41,6 +41,7 @@ fn main0(config: Config, _show_cmd: bool) {
     let vnt_util = match Vnt::new(config, callback::VntHandler {}) {
         Ok(vnt) => vnt,
         Err(e) => {
+            log::error!("vnt create error {:?}", e);
             println!("error: {:?}", e);
             std::process::exit(1);
         }
