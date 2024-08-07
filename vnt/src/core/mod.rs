@@ -95,6 +95,7 @@ impl Config {
         local_ipv4: Option<Ipv4Addr>,
     ) -> anyhow::Result<Self> {
         #[cfg(windows)]
+        #[cfg(feature = "integrated_tun")]
         if !tap {
             if let Err(e) = tun::Device::check_tun_dll() {
                 log::warn!("校验平台dll {:?}", e);
