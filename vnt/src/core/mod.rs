@@ -94,6 +94,14 @@ impl Config {
         allow_wire_guard: bool,
         local_ipv4: Option<Ipv4Addr>,
     ) -> anyhow::Result<Self> {
+        #[cfg(windows)]
+        if !tap {
+            if let Err(e) = tun::Device::check_tun_dll() {
+                log::warn!("校验平台dll {:?}", e);
+                // Err(e)?;
+            }
+        }
+
         for x in stun_server.iter_mut() {
             if !x.contains(":") {
                 x.push_str(":3478");

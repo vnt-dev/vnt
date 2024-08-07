@@ -1,4 +1,5 @@
 use common::callback;
+use console::style;
 use vnt::core::{Config, Vnt};
 mod root_check;
 fn main() {
@@ -16,7 +17,7 @@ fn main() {
                 e,
                 std::env::args().collect::<Vec<String>>()
             );
-            println!("{}", e);
+            println!("{}", style(format!("Error {:?}", e)).red());
             return;
         }
     };

@@ -15,7 +15,7 @@ pub fn create_device(config: DeviceConfig) -> Result<Arc<Device>, ErrorInfo> {
         Ok(device) => device,
         Err(e) => {
             return Err(ErrorInfo::new_msg(
-                ErrorType::Unknown,
+                ErrorType::FailedToCrateDevice,
                 format!("create device {:?}", e),
             ));
         }

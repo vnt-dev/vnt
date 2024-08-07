@@ -16,6 +16,9 @@ impl Device {
             Ok(Device::Tun(tun::Device::new(name)?))
         }
     }
+    pub fn check_tun_dll() -> io::Result<()> {
+        crate::windows::check::check_win_tun_dll()
+    }
 }
 
 impl IFace for Device {

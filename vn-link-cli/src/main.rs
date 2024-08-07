@@ -17,7 +17,7 @@ fn main() {
                 e,
                 std::env::args().collect::<Vec<String>>()
             );
-            println!("{}", e);
+            println!("Error {:?}", e);
             return;
         }
     };
