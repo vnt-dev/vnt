@@ -98,7 +98,7 @@ impl Config {
         if !tap {
             if let Err(e) = tun::Device::check_tun_dll() {
                 log::warn!("校验平台dll {:?}", e);
-                // Err(e)?;
+                Err(e)?;
             }
         }
 
