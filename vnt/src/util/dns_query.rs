@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
 
+use crate::channel::socket::LocalInterface;
 use anyhow::Context;
 use dns_parser::{Builder, Packet, QueryClass, QueryType, RData, ResponseCode};
 
@@ -79,6 +80,7 @@ fn address_choose0(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
 pub fn dns_query_all(
     domain: &str,
     mut name_servers: Vec<String>,
+    default_interface: &LocalInterface,
 ) -> anyhow::Result<Vec<SocketAddr>> {
     match SocketAddr::from_str(domain) {
         Ok(addr) => Ok(vec![addr]),
@@ -102,7 +104,7 @@ pub fn dns_query_all(
             let mut err: Option<anyhow::Error> = None;
             for name_server in name_servers {
                 if let Some(domain) = txt_domain.as_ref() {
-                    match txt_dns(domain, name_server) {
+                    match txt_dns(domain, name_server, default_interface) {
                         Ok(addr) => {
                             if !addr.is_empty() {
                                 return Ok(addr);
@@ -127,12 +129,14 @@ pub fn dns_query_all(
                 let th1 = {
                     let host = host.to_string();
                     let name_server = name_server.clone();
-                    thread::spawn(move || a_dns(host, name_server))
+                    let default_interface = default_interface.clone();
+                    thread::spawn(move || a_dns(host, name_server, &default_interface))
                 };
                 let th2 = {
                     let host = host.to_string();
                     let name_server = name_server.clone();
-                    thread::spawn(move || aaaa_dns(host, name_server))
+                    let default_interface = default_interface.clone();
+                    thread::spawn(move || aaaa_dns(host, name_server, &default_interface))
                 };
                 let mut addr = Vec::new();
                 match th1.join().unwrap() {
@@ -230,9 +234,13 @@ fn query<'a>(
     Ok(pkt)
 }
 
-pub fn txt_dns(domain: &str, name_server: String) -> anyhow::Result<Vec<SocketAddr>> {
+pub fn txt_dns(
+    domain: &str,
+    name_server: String,
+    default_interface: &LocalInterface,
+) -> anyhow::Result<Vec<SocketAddr>> {
     let name_server: SocketAddr = name_server.parse()?;
-    let udp = bind_udp(name_server)?;
+    let udp = bind_udp(name_server, default_interface)?;
     let mut buf = [0; 65536];
     let message = query(&udp, domain, name_server, QueryType::TXT, &mut buf)?;
     let mut rs = Vec::new();
@@ -249,19 +257,28 @@ pub fn txt_dns(domain: &str, name_server: String) -> anyhow::Result<Vec<SocketAd
     Ok(rs)
 }
 
-fn bind_udp(name_server: SocketAddr) -> anyhow::Result<UdpSocket> {
-    let udp = if name_server.is_ipv4() {
-        UdpSocket::bind("0.0.0.0:0")?
+fn bind_udp(
+    name_server: SocketAddr,
+    default_interface: &LocalInterface,
+) -> anyhow::Result<UdpSocket> {
+    let addr: SocketAddr = if name_server.is_ipv4() {
+        "0.0.0.0:0".parse().unwrap()
     } else {
-        UdpSocket::bind("[::]:0")?
+        "[::]:0".parse().unwrap()
     };
-    udp.set_read_timeout(Some(Duration::from_millis(800)))?;
-    Ok(udp)
+    let socket = crate::channel::socket::bind_udp(addr, default_interface)?;
+    socket.set_nonblocking(false)?;
+    socket.set_read_timeout(Some(Duration::from_millis(800)))?;
+    Ok(socket.into())
 }
 
-pub fn a_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv4Addr>> {
+pub fn a_dns(
+    domain: String,
+    name_server: String,
+    default_interface: &LocalInterface,
+) -> anyhow::Result<Vec<Ipv4Addr>> {
     let name_server: SocketAddr = name_server.parse()?;
-    let udp = bind_udp(name_server)?;
+    let udp = bind_udp(name_server, default_interface)?;
     let mut buf = [0; 65536];
     let message = query(&udp, &domain, name_server, QueryType::A, &mut buf)?;
     let mut rs = Vec::new();
@@ -273,9 +290,13 @@ pub fn a_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv4Addr
     Ok(rs)
 }
 
-pub fn aaaa_dns(domain: String, name_server: String) -> anyhow::Result<Vec<Ipv6Addr>> {
+pub fn aaaa_dns(
+    domain: String,
+    name_server: String,
+    default_interface: &LocalInterface,
+) -> anyhow::Result<Vec<Ipv6Addr>> {
     let name_server: SocketAddr = name_server.parse()?;
-    let udp = bind_udp(name_server)?;
+    let udp = bind_udp(name_server, default_interface)?;
     let mut buf = [0; 65536];
     let message = query(&udp, &domain, name_server, QueryType::AAAA, &mut buf)?;
     let mut rs = Vec::new();

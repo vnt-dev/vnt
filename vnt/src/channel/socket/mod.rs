@@ -58,10 +58,14 @@ pub fn create_tcp0(
         )?
     };
     if v4 {
-        socket.set_ip_unicast_if(default_interface)?;
+        if let Err(e) = socket.set_ip_unicast_if(default_interface) {
+            log::warn!("set_ip_unicast_if {:?}", e)
+        }
     }
     if bind_port != 0 {
-        socket.set_reuse_address(true)?;
+        socket
+            .set_reuse_address(true)
+            .context("set_reuse_address")?;
         #[cfg(unix)]
         if let Err(e) = socket.set_reuse_port(true) {
             log::warn!("set_reuse_port {:?}", e)
@@ -90,7 +94,9 @@ pub fn bind_udp_ops(
             socket2::Type::DGRAM,
             Some(Protocol::UDP),
         )?;
-        socket.set_ip_unicast_if(default_interface)?;
+        if let Err(e) = socket.set_ip_unicast_if(default_interface) {
+            log::warn!("set_ip_unicast_if {:?}", e)
+        }
         socket
     } else {
         let socket = socket2::Socket::new(

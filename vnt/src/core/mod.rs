@@ -5,6 +5,7 @@ use std::str::FromStr;
 pub use conn::Vnt;
 
 use crate::channel::punch::PunchModel;
+use crate::channel::socket::LocalInterface;
 use crate::channel::{ConnectProtocol, UseChannelType};
 use crate::cipher::CipherModel;
 use crate::compression::Compressor;
@@ -53,6 +54,7 @@ pub struct Config {
     pub enable_traffic: bool,
     pub allow_wire_guard: bool,
     pub local_ipv4: Option<Ipv4Addr>,
+    pub local_interface: LocalInterface,
 }
 
 impl Config {
@@ -148,8 +150,11 @@ impl Config {
                 server_address_str = s.to_string();
                 protocol = ConnectProtocol::TCP;
             }
-            server_address =
-                address_choose(dns_query_all(&server_address_str, name_servers.clone())?)?;
+            server_address = address_choose(dns_query_all(
+                &server_address_str,
+                name_servers.clone(),
+                &LocalInterface::default(),
+            )?)?;
         }
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;
@@ -158,9 +163,11 @@ impl Config {
             *dest = *mask & *dest;
         }
         in_ips.sort_by(|(dest1, _, _), (dest2, _, _)| dest2.cmp(dest1));
-        if let Some(local_ip) = local_ipv4 {
-            let _ = crate::channel::socket::get_interface(local_ip)?;
-        }
+        let local_interface = if let Some(local_ip) = local_ipv4 {
+            crate::channel::socket::get_interface(local_ip)?
+        } else {
+            LocalInterface::default()
+        };
         Ok(Self {
             #[cfg(feature = "integrated_tun")]
             #[cfg(target_os = "windows")]
@@ -199,6 +206,7 @@ impl Config {
             enable_traffic,
             allow_wire_guard,
             local_ipv4,
+            local_interface,
         })
     }
 }

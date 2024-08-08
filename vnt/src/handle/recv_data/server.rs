@@ -355,7 +355,10 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                 target_os = "linux",
                                 target_os = "macos"
                             ))]
-                            match crate::tun_tap_device::create_device(device_config) {
+                            match crate::tun_tap_device::create_device(
+                                device_config,
+                                &self.callback,
+                            ) {
                                 Ok(device) => {
                                     use tun::device::IFace;
                                     let tun_info = crate::handle::callback::DeviceInfo::new(

@@ -52,7 +52,9 @@ impl IcmpProxy {
             .bind(&socket2::SockAddr::from(addr))
             .context("bind Socket ICMPV4 failed")?;
         icmp_socket.set_nonblocking(true)?;
-        icmp_socket.set_ip_unicast_if(default_interface)?;
+        if let Err(e) = icmp_socket.set_ip_unicast_if(default_interface) {
+            log::warn!("set_ip_unicast_if {:?}", e)
+        }
         let std_socket: std::net::UdpSocket = icmp_socket.into();
 
         let tokio_icmp_socket = UdpSocket::from_std(std_socket.try_clone()?)?;

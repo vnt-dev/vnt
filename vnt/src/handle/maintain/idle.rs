@@ -7,6 +7,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use crate::channel::context::ChannelContext;
 use crate::channel::idle::{Idle, IdleType};
 use crate::channel::sender::ConnectUtil;
+use crate::channel::socket::LocalInterface;
 use crate::channel::ConnectProtocol;
 use crate::handle::callback::{ConnectInfo, ErrorType};
 use crate::handle::handshaker::Handshake;
@@ -130,7 +131,8 @@ fn check_gateway_channel<Call: VntCallback>(
         let connect_protocol = context.main_protocol();
         if connect_protocol.is_transport() {
             // 传输层的协议需要探测服务器地址
-            current_device = domain_request0(current_device_info, config);
+            current_device =
+                domain_request0(current_device_info, config, context.default_interface());
         }
         //需要重连
         call.connect(ConnectInfo::new(*count, current_device.connect_server));
@@ -160,11 +162,16 @@ fn check_gateway_channel<Call: VntCallback>(
 pub fn domain_request0(
     current_device: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
+    default_interface: &LocalInterface,
 ) -> CurrentDeviceInfo {
     let mut current_dev = current_device.load();
 
     // 探测服务端地址变化
-    match dns_query_all(&config.server_addr, config.name_servers.clone()) {
+    match dns_query_all(
+        &config.server_addr,
+        config.name_servers.clone(),
+        default_interface,
+    ) {
         Ok(addrs) => {
             log::info!(
                 "domain {} dns {:?} addr {:?}",
