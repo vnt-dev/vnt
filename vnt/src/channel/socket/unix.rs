@@ -1,4 +1,7 @@
-use crate::channel::socket::{get_interface, LocalInterface, VntSocketTrait};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::channel::socket::get_interface;
+use crate::channel::socket::{LocalInterface, VntSocketTrait};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use anyhow::Context;
 use std::net::Ipv4Addr;
 
@@ -22,6 +25,12 @@ impl VntSocketTrait for socket2::Socket {
         Ok(())
     }
 }
+#[cfg(target_os = "android")]
+impl VntSocketTrait for socket2::Socket {
+    fn set_ip_unicast_if(&self, _interface: &LocalInterface) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn get_best_interface(dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
@@ -35,6 +44,6 @@ pub fn get_best_interface(dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
     Ok(LocalInterface::default())
 }
 #[cfg(target_os = "android")]
-pub fn get_best_interface(dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
+pub fn get_best_interface(_dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
     Ok(LocalInterface::default())
 }
