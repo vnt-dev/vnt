@@ -2195,6 +2195,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "common",
+ "console",
  "log",
  "rand",
  "signal-hook",

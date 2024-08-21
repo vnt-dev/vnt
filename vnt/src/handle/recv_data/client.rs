@@ -216,17 +216,13 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
         match ControlPacket::new(net_packet.transport_protocol(), net_packet.payload())? {
             ControlPacket::PingPacket(_) => {
                 let route = Route::from_default_rt(route_key, metric);
-                if context.route_table.add_route_if_absent(source, route)
-                    || net_packet.source() < current_device.virtual_ip
-                {
-                    //在路由表中，或者来源比自己小，就需要回复，注意不能调换顺序
-                    net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
-                    net_packet.set_source(current_device.virtual_ip);
-                    net_packet.set_destination(source);
-                    net_packet.first_set_ttl(MAX_TTL);
-                    self.client_cipher.encrypt_ipv4(&mut net_packet)?;
-                    context.send_by_key(&net_packet, route_key)?;
-                }
+                context.route_table.add_route_if_absent(source, route);
+                net_packet.set_transport_protocol(control_packet::Protocol::Pong.into());
+                net_packet.set_source(current_device.virtual_ip);
+                net_packet.set_destination(source);
+                net_packet.first_set_ttl(MAX_TTL);
+                self.client_cipher.encrypt_ipv4(&mut net_packet)?;
+                context.send_by_key(&net_packet, route_key)?;
             }
             ControlPacket::PongPacket(pong_packet) => {
                 let current_time = crate::handle::now_time() as u16;
@@ -272,7 +268,7 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                 {
                     return Ok(());
                 }
-                let route = Route::from_default_rt(route_key, 1);
+                let route = Route::from_default_rt(route_key, metric);
                 context.route_table.add_route_if_absent(source, route);
             }
             ControlPacket::AddrRequest => match route_key.addr.ip() {
@@ -318,6 +314,7 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                     .collect();
                 let local_ipv4 = Some(Ipv4Addr::from(punch_info.local_ip.to_be_bytes()));
                 let tcp_port = punch_info.tcp_port as u16;
+                let public_tcp_port = punch_info.public_tcp_port as u16;
                 let ipv6 = if punch_info.ipv6.len() == 16 {
                     let ipv6: [u8; 16] = punch_info.ipv6.try_into().unwrap();
                     Some(Ipv6Addr::from(ipv6))
@@ -340,7 +337,9 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                     ipv6,
                     punch_info.udp_ports.iter().map(|e| *e as u16).collect(),
                     tcp_port,
+                    public_tcp_port,
                     punch_info.nat_type.enum_value_or_default().into(),
+                    punch_info.punch_model.enum_value_or_default().into(),
                 );
                 {
                     let peer_nat_info = peer_nat_info.clone();
@@ -360,8 +359,11 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
                         nat_info.public_ports.iter().map(|e| *e as u32).collect();
                     punch_reply.public_port_range = nat_info.public_port_range as u32;
                     punch_reply.tcp_port = nat_info.tcp_port as u32;
+                    punch_reply.public_tcp_port = nat_info.public_tcp_port as u32;
                     punch_reply.nat_type =
                         protobuf::EnumOrUnknown::new(PunchNatType::from(nat_info.nat_type));
+                    punch_reply.punch_model =
+                        protobuf::EnumOrUnknown::new(nat_info.punch_model.into());
                     punch_reply.local_ip =
                         u32::from(nat_info.local_ipv4().unwrap_or(Ipv4Addr::UNSPECIFIED));
                     punch_reply.local_port = nat_info.udp_ports[0] as u32;

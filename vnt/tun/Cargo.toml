@@ -19,15 +19,16 @@ ioctl = { version = "0.8", package = "ioctl-sys" }
 [target.'cfg(target_os = "windows")'.dependencies]
 libloading = "0.8.0"
 widestring = "1.0.2"
-winapi = {version = "0.3",features = [
+winapi = { version = "0.3", features = [
     "errhandlingapi",
+    "libloaderapi",
     "combaseapi",
     "ioapiset",
     "winioctl",
     "setupapi",
     "synchapi",
     "netioapi",
-    "fileapi","handleapi","winerror","minwindef","ifdef","basetsd","winnt","winreg","winbase","minwinbase",
+    "fileapi", "handleapi", "winerror", "minwindef", "ifdef", "basetsd", "winnt", "winreg", "winbase", "minwinbase",
     "impl-default"
-]}
+] }
 

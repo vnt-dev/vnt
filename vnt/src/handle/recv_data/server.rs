@@ -151,6 +151,8 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
             let response = HandshakeResponse::parse_from_bytes(net_packet.payload())
                 .map_err(|e| anyhow!("HandshakeResponse {:?}", e))?;
             log::info!("握手响应:{:?},{}", route_key, response);
+            //设置为默认通道
+            context.set_default_route_key(route_key);
             //如果开启了加密，则发送加密握手请求
             #[cfg(feature = "server_encrypt")]
             if let Some(key) = self.server_cipher.key() {
@@ -211,7 +213,7 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
             let handshake_info = HandshakeInfo::new_no_secret(response.version);
             if self.callback.handshake(handshake_info) {
                 //没有加密，则发送注册请求
-                self.register(current_device, context)?;
+                self.register(current_device, context, route_key)?;
             }
 
             return Ok(());
@@ -295,6 +297,10 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                     let public_port = response.public_port as u16;
                     self.nat_test
                         .update_addr(route_key.index(), public_ip, public_port);
+                    if route_key.protocol().is_tcp() {
+                        log::info!("更新公网tcp端口 {public_port}");
+                        self.nat_test.update_tcp_port(public_port);
+                    }
                     let old = current_device;
                     let mut cur = *current_device;
                     loop {
@@ -349,7 +355,10 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                 target_os = "linux",
                                 target_os = "macos"
                             ))]
-                            match crate::tun_tap_device::create_device(device_config) {
+                            match crate::tun_tap_device::create_device(
+                                device_config,
+                                &self.callback,
+                            ) {
                                 Ok(device) => {
                                     use tun::device::IFace;
                                     let tun_info = crate::handle::callback::DeviceInfo::new(
@@ -379,7 +388,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                 let device_fd = self.callback.generate_tun(device_config);
                                 if device_fd == 0 {
                                     self.callback.error(ErrorInfo::new_msg(
-                                        ErrorType::Unknown,
+                                        ErrorType::FailedToCrateDevice,
                                         "device_fd == 0".into(),
                                     ));
                                 } else {
@@ -390,14 +399,14 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                                 self.config_info.allow_wire_guard,
                                             ) {
                                                 self.callback.error(ErrorInfo::new_msg(
-                                                    ErrorType::Unknown,
+                                                    ErrorType::FailedToCrateDevice,
                                                     format!("{:?}", e),
                                                 ));
                                             }
                                         }
                                         Err(e) => {
                                             self.callback.error(ErrorInfo::new_msg(
-                                                ErrorType::Unknown,
+                                                ErrorType::FailedToCrateDevice,
                                                 format!("{:?}", e),
                                             ));
                                         }
@@ -421,7 +430,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
             service_packet::Protocol::SecretHandshakeResponse => {
                 log::info!("SecretHandshakeResponse");
                 //加密握手结束，发送注册数据
-                self.register(current_device, context)?;
+                self.register(current_device, context, route_key)?;
             }
             _ => {
                 log::warn!(
@@ -466,11 +475,14 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
         &self,
         current_device: &CurrentDeviceInfo,
         context: &ChannelContext,
+        route_key: RouteKey,
     ) -> anyhow::Result<()> {
         if current_device.status.online() {
             log::info!("已连接的不需要注册，{:?}", self.config_info);
             return Ok(());
         }
+        //设置为默认通道
+        context.set_default_route_key(route_key);
         let token = self.config_info.token.clone();
         let device_id = self.config_info.device_id.clone();
         let name = self.config_info.name.clone();

@@ -3,6 +3,7 @@ use std::os::windows::process::CommandExt;
 use winapi::shared::minwindef::DWORD;
 use winapi::um::winbase::CREATE_NO_WINDOW;
 
+mod check;
 mod device;
 mod ffi;
 mod netsh;

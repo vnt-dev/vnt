@@ -154,6 +154,7 @@ impl Device {
 }
 fn hash_guid(input: &str) -> [u8; 16] {
     let mut hasher = sha2::Sha256::new();
+    hasher.update(input.as_bytes());
     hasher.update(b"VNT");
     hasher.update(input.as_bytes());
     hasher.update(b"2024");

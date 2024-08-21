@@ -302,7 +302,7 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
         } else {
             Compressor::None
         };
-        let config = match Config::new(
+        let config = Config::new(
             #[cfg(feature = "integrated_tun")]
             #[cfg(target_os = "windows")]
             tap,
@@ -337,13 +337,7 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
             !disable_stats,
             allow_wire_guard,
             local_ipv4,
-        ) {
-            Ok(config) => config,
-            Err(e) => {
-                println!("config error: {}", e);
-                std::process::exit(1);
-            }
-        };
+        )?;
         (config, vnt_mapping_list, cmd)
     };
     println!("version {}", vnt::VNT_VERSION);

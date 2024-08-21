@@ -60,6 +60,7 @@ impl ChannelContext {
             up_traffic_meter,
             down_traffic_meter,
             default_interface,
+            default_route_key: AtomicCell::default(),
         };
         Self {
             inner: Arc::new(inner),
@@ -86,7 +87,7 @@ pub struct ContextInner {
     // 对称网络增加的udp socket
     sub_udp_socket: RwLock<Vec<UdpSocket>>,
     // tcp数据发送器
-    pub(crate) packet_map: RwLock<FnvHashMap<SocketAddr, PacketSender>>,
+    pub(crate) packet_map: RwLock<FnvHashMap<RouteKey, PacketSender>>,
     // 路由信息
     pub route_table: RouteTable,
     // 使用什么协议连接服务器
@@ -98,6 +99,7 @@ pub struct ContextInner {
     pub(crate) up_traffic_meter: Option<TrafficMeterMultiAddress>,
     pub(crate) down_traffic_meter: Option<TrafficMeterMultiAddress>,
     default_interface: LocalInterface,
+    default_route_key: AtomicCell<Option<RouteKey>>,
 }
 
 impl ContextInner {
@@ -106,6 +108,9 @@ impl ContextInner {
     }
     pub fn default_interface(&self) -> &LocalInterface {
         &self.default_interface
+    }
+    pub fn set_default_route_key(&self, route_key: RouteKey) {
+        self.default_route_key.store(Some(route_key));
     }
     /// 通过sub_udp_socket是否为空来判断是否为锥形网络
     pub fn is_cone(&self) -> bool {
@@ -175,11 +180,14 @@ impl ContextInner {
         }
         Ok(ports)
     }
-    pub fn send_tcp(&self, buf: &[u8], addr: SocketAddr) -> io::Result<()> {
-        if let Some(tcp) = self.packet_map.read().get(&addr) {
+    pub fn send_tcp(&self, buf: &[u8], route_key: &RouteKey) -> io::Result<()> {
+        if let Some(tcp) = self.packet_map.read().get(route_key) {
             tcp.try_send(buf)
         } else {
-            Err(io::Error::from(io::ErrorKind::NotFound))
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("dest={:?}", route_key),
+            ))
         }
     }
     pub fn send_main_udp(&self, index: usize, buf: &[u8], addr: SocketAddr) -> io::Result<()> {
@@ -203,7 +211,14 @@ impl ContextInner {
                 self.send_main_udp(self.v4_len, buf.buffer(), addr)?
             }
         } else {
-            self.send_tcp(buf.buffer(), addr)?
+            if let Some(key) = self.default_route_key.load() {
+                self.send_tcp(buf.buffer(), &key)?
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("dest={:?}", addr),
+                ));
+            }
         }
         if let Some(up_traffic_meter) = &self.up_traffic_meter {
             up_traffic_meter.add_traffic(buf.destination(), buf.data_len());
@@ -300,7 +315,7 @@ impl ContextInner {
                 }
             }
             ConnectProtocol::TCP | ConnectProtocol::WS | ConnectProtocol::WSS => {
-                self.send_tcp(buf.buffer(), route_key.addr)?
+                self.send_tcp(buf.buffer(), &route_key)?
             }
         }
         if let Some(up_traffic_meter) = &self.up_traffic_meter {
@@ -376,18 +391,10 @@ impl RouteTable {
         let key = route.route_key();
         if only_if_absent {
             if let Some((_, list)) = self.route_table.read().get(&id) {
-                let mut p2p_num = 0;
                 for (x, _) in list {
-                    if x.is_p2p() {
-                        p2p_num += 1;
-                    }
                     if x.route_key() == key {
                         return true;
                     }
-                }
-                if !self.first_latency && p2p_num >= self.channel_num {
-                    // 非优先延迟的情况下，通道满了则不用再添加
-                    return false;
                 }
             }
         }
@@ -413,61 +420,42 @@ impl RouteTable {
             }
         }
         if exist {
-            // 这个排序还有待优化，因为后加入的大概率排最后，被直接淘汰的概率也大，可能导致更好的通道被移除了
             list.sort_by_key(|(k, _)| k.rt);
-            //如果延迟都稳定了，则去除多余通道
-            for (route, _) in list.iter() {
-                if route.rt == DEFAULT_RT {
-                    return true;
-                }
-            }
-            //延迟优先模式需要更多的通道探测延迟最低的路线
-            let limit_len = if self.first_latency {
-                self.channel_num + 2
-            } else {
-                self.channel_num
-            };
-            self.truncate_(list, limit_len);
         } else {
             if !self.first_latency {
                 if route.is_p2p() {
                     //非优先延迟的情况下 添加了直连的则排除非直连的
                     list.retain(|(k, _)| k.is_p2p());
                 }
-                if self.channel_num <= list.len() {
-                    return false;
-                }
             };
-            //增加路由表容量，避免波动
-            let limit_len = self.channel_num * 2;
             list.sort_by_key(|(k, _)| k.rt);
-            self.truncate_(list, limit_len);
             list.push((route, AtomicCell::new(Instant::now())));
         }
         return true;
     }
-    fn truncate_(&self, list: &mut Vec<(Route, AtomicCell<Instant>)>, len: usize) {
-        if list.len() <= len {
-            return;
-        }
-        if self.first_latency {
-            //找到第一个p2p通道
-            if let Some(index) =
-                list.iter()
-                    .enumerate()
-                    .find_map(|(index, (route, _))| if route.is_p2p() { Some(index) } else { None })
-            {
-                if index >= len {
-                    //保留第一个p2p通道
-                    let route = list.remove(index);
-                    list.truncate(len - 1);
-                    list.push(route);
-                    return;
-                }
-            }
-        }
-        list.truncate(len);
-    }
+    // 直接移除会导致通道不稳定，所以废弃这个方法，后面改用多余通道不发心跳包，从而让通道自动过期
+    // fn truncate_(&self, list: &mut Vec<(Route, AtomicCell<Instant>)>, len: usize) {
+    //     if list.len() <= len {
+    //         return;
+    //     }
+    //     if self.first_latency {
+    //         //找到第一个p2p通道
+    //         if let Some(index) =
+    //             list.iter()
+    //                 .enumerate()
+    //                 .find_map(|(index, (route, _))| if route.is_p2p() { Some(index) } else { None })
+    //         {
+    //             if index >= len {
+    //                 //保留第一个p2p通道
+    //                 let route = list.remove(index);
+    //                 list.truncate(len - 1);
+    //                 list.push(route);
+    //                 return;
+    //             }
+    //         }
+    //     }
+    //     list.truncate(len);
+    // }
     pub fn route(&self, id: &Ipv4Addr) -> Option<Vec<Route>> {
         if let Some((_, v)) = self.route_table.read().get(id) {
             Some(v.iter().map(|(i, _)| *i).collect())

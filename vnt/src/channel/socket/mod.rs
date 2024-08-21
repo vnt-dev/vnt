@@ -27,14 +27,21 @@ pub struct LocalInterface {
 
 pub async fn connect_tcp(
     addr: SocketAddr,
+    bind_port: u16,
     default_interface: &LocalInterface,
 ) -> anyhow::Result<tokio::net::TcpStream> {
-    let socket = create_tcp(addr.is_ipv4(), default_interface)?;
+    let socket = create_tcp0(addr.is_ipv4(), bind_port, default_interface)?;
     Ok(socket.connect(addr).await?)
 }
-
 pub fn create_tcp(
     v4: bool,
+    default_interface: &LocalInterface,
+) -> anyhow::Result<tokio::net::TcpSocket> {
+    create_tcp0(v4, 0, default_interface)
+}
+pub fn create_tcp0(
+    v4: bool,
+    bind_port: u16,
     default_interface: &LocalInterface,
 ) -> anyhow::Result<tokio::net::TcpSocket> {
     let socket = if v4 {
@@ -51,7 +58,26 @@ pub fn create_tcp(
         )?
     };
     if v4 {
-        socket.set_ip_unicast_if(default_interface)?;
+        if let Err(e) = socket.set_ip_unicast_if(default_interface) {
+            log::warn!("set_ip_unicast_if {:?}", e)
+        }
+    }
+    if bind_port != 0 {
+        socket
+            .set_reuse_address(true)
+            .context("set_reuse_address")?;
+        #[cfg(unix)]
+        if let Err(e) = socket.set_reuse_port(true) {
+            log::warn!("set_reuse_port {:?}", e)
+        }
+        if v4 {
+            let addr: SocketAddr = format!("0.0.0.0:{}", bind_port).parse().unwrap();
+            socket.bind(&addr.into())?;
+        } else {
+            socket.set_only_v6(true)?;
+            let addr: SocketAddr = format!("[::]:{}", bind_port).parse().unwrap();
+            socket.bind(&addr.into())?;
+        }
     }
     socket.set_nonblocking(true)?;
     socket.set_nodelay(true)?;
@@ -68,7 +94,9 @@ pub fn bind_udp_ops(
             socket2::Type::DGRAM,
             Some(Protocol::UDP),
         )?;
-        socket.set_ip_unicast_if(default_interface)?;
+        if let Err(e) = socket.set_ip_unicast_if(default_interface) {
+            log::warn!("set_ip_unicast_if {:?}", e)
+        }
         socket
     } else {
         let socket = socket2::Socket::new(

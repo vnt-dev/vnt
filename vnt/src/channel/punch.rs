@@ -14,16 +14,17 @@ use crate::channel::context::ChannelContext;
 use crate::channel::sender::ConnectUtil;
 use crate::handle::CurrentDeviceInfo;
 use crate::nat::{is_ipv4_global, NatTest};
+use crate::proto::message::{PunchNatModel, PunchNatType};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PunchModel {
+    All,
     IPv4,
     IPv6,
     IPv4Tcp,
     IPv4Udp,
     IPv6Tcp,
     IPv6Udp,
-    All,
 }
 
 impl PunchModel {
@@ -72,6 +73,33 @@ impl Default for PunchModel {
         PunchModel::All
     }
 }
+impl From<PunchModel> for PunchNatModel {
+    fn from(value: PunchModel) -> Self {
+        match value {
+            PunchModel::All => PunchNatModel::All,
+            PunchModel::IPv4 => PunchNatModel::IPv4,
+            PunchModel::IPv6 => PunchNatModel::IPv6,
+            PunchModel::IPv4Tcp => PunchNatModel::IPv4Tcp,
+            PunchModel::IPv4Udp => PunchNatModel::IPv4Udp,
+            PunchModel::IPv6Tcp => PunchNatModel::IPv6Tcp,
+            PunchModel::IPv6Udp => PunchNatModel::IPv6Udp,
+        }
+    }
+}
+
+impl Into<PunchModel> for PunchNatModel {
+    fn into(self) -> PunchModel {
+        match self {
+            PunchNatModel::All => PunchModel::All,
+            PunchNatModel::IPv4 => PunchModel::IPv4,
+            PunchNatModel::IPv6 => PunchModel::IPv6,
+            PunchNatModel::IPv4Tcp => PunchModel::IPv4Tcp,
+            PunchNatModel::IPv4Udp => PunchModel::IPv4Udp,
+            PunchNatModel::IPv6Tcp => PunchModel::IPv6Tcp,
+            PunchNatModel::IPv6Udp => PunchModel::IPv6Udp,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct NatInfo {
@@ -83,12 +111,37 @@ pub struct NatInfo {
     pub(crate) ipv6: Option<Ipv6Addr>,
     pub udp_ports: Vec<u16>,
     pub tcp_port: u16,
+    pub public_tcp_port: u16,
+    pub punch_model: PunchModel,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum NatType {
     Symmetric,
     Cone,
+}
+
+impl NatType {
+    pub fn is_cone(&self) -> bool {
+        self == &NatType::Cone
+    }
+}
+impl From<NatType> for PunchNatType {
+    fn from(value: NatType) -> Self {
+        match value {
+            NatType::Symmetric => PunchNatType::Symmetric,
+            NatType::Cone => PunchNatType::Cone,
+        }
+    }
+}
+
+impl Into<NatType> for PunchNatType {
+    fn into(self) -> NatType {
+        match self {
+            PunchNatType::Symmetric => NatType::Symmetric,
+            PunchNatType::Cone => NatType::Cone,
+        }
+    }
 }
 
 impl NatInfo {
@@ -100,7 +153,9 @@ impl NatInfo {
         mut ipv6: Option<Ipv6Addr>,
         udp_ports: Vec<u16>,
         tcp_port: u16,
+        public_tcp_port: u16,
         mut nat_type: NatType,
+        punch_model: PunchModel,
     ) -> Self {
         public_ips.retain(|ip| {
             !ip.is_multicast()
@@ -130,7 +185,9 @@ impl NatInfo {
             ipv6,
             udp_ports,
             tcp_port,
+            public_tcp_port,
             nat_type,
+            punch_model,
         }
     }
     pub fn update_addr(&mut self, index: usize, ip: Ipv4Addr, port: u16) -> bool {
@@ -144,7 +201,7 @@ impl NatInfo {
                 *public_port = port;
             }
         }
-        if crate::nat::is_ipv4_global(&ip) {
+        if is_ipv4_global(&ip) {
             if !self.public_ips.contains(&ip) {
                 self.public_ips.push(ip);
                 updated = true;
@@ -152,6 +209,9 @@ impl NatInfo {
             }
         }
         updated
+    }
+    pub fn update_tcp_port(&mut self, port: u16) {
+        self.public_tcp_port = port;
     }
     pub fn local_ipv4(&self) -> Option<Ipv4Addr> {
         self.local_ipv4
@@ -252,7 +312,10 @@ impl Punch {
         if self.nat_test.is_local_address(true, addr) {
             return;
         }
-        self.connect_util.try_connect_tcp(buf.to_vec(), addr);
+        if addr.ip().is_unspecified() || addr.port() == 0 {
+            return;
+        }
+        self.connect_util.try_connect_tcp_punch(buf.to_vec(), addr);
     }
     pub fn punch(
         &mut self,
@@ -277,44 +340,46 @@ impl Punch {
         nat_info.local_ipv4 = nat_info
             .local_ipv4
             .filter(|ip| device_info.not_in_network(*ip));
-
-        if punch_tcp && self.punch_model.use_tcp() && nat_info.tcp_port != 0 {
+        if punch_tcp && self.punch_model.use_tcp() && nat_info.punch_model.use_tcp() {
             //向tcp发起连接
-            if self.punch_model.use_ipv6() {
+            if self.punch_model.use_ipv6() && nat_info.punch_model.use_ipv6() {
                 if let Some(ipv6_addr) = nat_info.local_tcp_ipv6addr() {
                     self.connect_tcp(buf, ipv6_addr)
                 }
             }
-            if self.punch_model.use_ipv4() {
+            if self.punch_model.use_ipv4() && nat_info.punch_model.use_ipv4() {
                 if let Some(ipv4_addr) = nat_info.local_tcp_ipv4addr() {
                     self.connect_tcp(buf, ipv4_addr)
                 }
                 for ip in &nat_info.public_ips {
                     let addr = SocketAddr::V4(SocketAddrV4::new(*ip, nat_info.tcp_port));
-                    self.connect_tcp(buf, addr)
+                    self.connect_tcp(buf, addr);
+                }
+                if nat_info.nat_type.is_cone() && nat_info.public_tcp_port != 0 {
+                    for ip in &nat_info.public_ips {
+                        let addr = SocketAddr::V4(SocketAddrV4::new(*ip, nat_info.public_tcp_port));
+                        self.connect_tcp(buf, addr);
+                    }
                 }
             }
         }
-        if !self.punch_model.use_udp() {
+        if !self.punch_model.use_udp() || !nat_info.punch_model.use_udp() {
             return Ok(());
         }
         let channel_num = self.context.channel_num();
         let main_len = self.context.main_len();
 
-        if self.punch_model.use_ipv6() {
+        if self.punch_model.use_ipv6() && nat_info.punch_model.use_ipv6() {
             for index in channel_num..main_len {
                 if let Some(ipv6_addr) = nat_info.local_udp_ipv6addr(index) {
                     if !self.nat_test.is_local_address(false, ipv6_addr) {
                         let rs = self.context.send_main_udp(index, buf, ipv6_addr);
                         log::info!("发送到ipv6地址:{:?},rs={:?} {}", ipv6_addr, rs, id);
-                        if rs.is_ok() && self.punch_model == PunchModel::IPv6 {
-                            return Ok(());
-                        }
                     }
                 }
             }
         }
-        if !self.punch_model.use_ipv4() {
+        if !self.punch_model.use_ipv4() || !nat_info.punch_model.use_ipv4() {
             return Ok(());
         }
         for index in 0..channel_num {

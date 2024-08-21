@@ -37,7 +37,8 @@ impl VntCallback for VntHandler {
             | ErrorType::AddressExhausted
             | ErrorType::IpAlreadyExists
             | ErrorType::InvalidIp
-            | ErrorType::LocalIpExists => {
+            | ErrorType::LocalIpExists
+            | ErrorType::FailedToCrateDevice => {
                 self.stop();
             }
             _ => {}

@@ -239,13 +239,13 @@ impl PacketSender {
 
 #[derive(Clone)]
 pub struct ConnectUtil {
-    connect_tcp: Sender<(Vec<u8>, SocketAddr)>,
+    connect_tcp: Sender<(Vec<u8>, Option<u16>, SocketAddr)>,
     connect_ws: Sender<(Vec<u8>, String)>,
 }
 
 impl ConnectUtil {
     pub fn new(
-        connect_tcp: Sender<(Vec<u8>, SocketAddr)>,
+        connect_tcp: Sender<(Vec<u8>, Option<u16>, SocketAddr)>,
         connect_ws: Sender<(Vec<u8>, String)>,
     ) -> Self {
         Self {
@@ -254,7 +254,13 @@ impl ConnectUtil {
         }
     }
     pub fn try_connect_tcp(&self, buf: Vec<u8>, addr: SocketAddr) {
-        if self.connect_tcp.try_send((buf, addr)).is_err() {
+        if self.connect_tcp.try_send((buf, None, addr)).is_err() {
+            log::warn!("try_connect_tcp failed {}", addr);
+        }
+    }
+    pub fn try_connect_tcp_punch(&self, buf: Vec<u8>, addr: SocketAddr) {
+        // 打洞的连接可以绑定随机端口
+        if self.connect_tcp.try_send((buf, Some(0), addr)).is_err() {
             log::warn!("try_connect_tcp failed {}", addr);
         }
     }

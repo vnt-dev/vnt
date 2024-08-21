@@ -12,7 +12,6 @@ use crate::channel::context::ChannelContext;
 use crate::channel::idle::Idle;
 use crate::channel::punch::{NatInfo, Punch};
 use crate::channel::sender::IpPacketSender;
-use crate::channel::socket::LocalInterface;
 use crate::channel::{init_channel, init_context, Route, RouteKey};
 use crate::cipher::Cipher;
 #[cfg(feature = "server_encrypt")]
@@ -30,7 +29,7 @@ use crate::tun_tap_device::tun_create_helper::{DeviceAdapter, TunDeviceHelper};
 use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::util::limit::TrafficMeterMultiAddress;
 use crate::util::{Scheduler, StopManager};
-use crate::{channel, nat, VntCallback};
+use crate::{nat, VntCallback};
 
 #[derive(Clone)]
 pub struct Vnt {
@@ -138,17 +137,7 @@ impl VntInner {
         } else {
             nat::local_ipv4()
         };
-
-        let default_interface = if config.in_ips.is_empty() {
-            //没有改变路由，不需要绑定网卡
-            LocalInterface::default()
-        } else {
-            //vnt的流量都走这个接口
-            let default_interface =
-                channel::socket::get_best_interface(local_ipv4.unwrap_or(Ipv4Addr::UNSPECIFIED))?;
-            log::info!("default_interface = {:?}", default_interface);
-            default_interface
-        };
+        let default_interface = config.local_interface.clone();
 
         //基础信息
         let config_info = BaseConfigInfo::new(
@@ -215,6 +204,7 @@ impl VntInner {
             udp_ports,
             tcp_port,
             config.local_ipv4.is_none(),
+            config.punch_model,
         );
         // 定时器
         let scheduler = Scheduler::new(stop_manager.clone())?;

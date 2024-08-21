@@ -1,4 +1,5 @@
 use common::callback;
+use console::style;
 use vnt::core::{Config, Vnt};
 mod root_check;
 fn main() {
@@ -16,7 +17,7 @@ fn main() {
                 e,
                 std::env::args().collect::<Vec<String>>()
             );
-            println!("{}", e);
+            println!("{}", style(format!("Error {:?}", e)).red());
             return;
         }
     };
@@ -40,6 +41,7 @@ fn main0(config: Config, _show_cmd: bool) {
     let vnt_util = match Vnt::new(config, callback::VntHandler {}) {
         Ok(vnt) => vnt,
         Err(e) => {
+            log::error!("vnt create error {:?}", e);
             println!("error: {:?}", e);
             std::process::exit(1);
         }

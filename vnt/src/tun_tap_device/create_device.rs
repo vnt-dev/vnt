@@ -1,4 +1,4 @@
-use crate::{DeviceConfig, ErrorInfo, ErrorType};
+use crate::{DeviceConfig, ErrorInfo, ErrorType, VntCallback};
 use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -10,12 +10,15 @@ const DEFAULT_TUN_NAME: &str = "vnt-tun";
 #[cfg(target_os = "windows")]
 const DEFAULT_TAP_NAME: &str = "vnt-tap";
 
-pub fn create_device(config: DeviceConfig) -> Result<Arc<Device>, ErrorInfo> {
+pub fn create_device<Call: VntCallback>(
+    config: DeviceConfig,
+    call: &Call,
+) -> Result<Arc<Device>, ErrorInfo> {
     let device = match create_device0(&config) {
         Ok(device) => device,
         Err(e) => {
             return Err(ErrorInfo::new_msg(
-                ErrorType::Unknown,
+                ErrorType::FailedToCrateDevice,
                 format!("create device {:?}", e),
             ));
         }
@@ -44,7 +47,14 @@ pub fn create_device(config: DeviceConfig) -> Result<Arc<Device>, ErrorInfo> {
 
     for (dest, mask) in config.external_route {
         if let Err(e) = device.add_route(dest, mask, 1) {
-            log::warn!("添加路由失败 ={:?}", e);
+            log::warn!("添加路由失败,请检查-i参数是否和现有路由冲突 ={:?}", e);
+            call.error(ErrorInfo::new_msg(
+                ErrorType::Warn,
+                format!(
+                    "警告！ 添加路由失败,请检查-i参数是否和现有路由冲突 ={:?}",
+                    e
+                ),
+            ))
         }
     }
     Ok(device)

@@ -104,8 +104,8 @@ pub fn read_config(file_path: &str) -> anyhow::Result<(Config, Vec<String>, bool
     let file_conf = match serde_yaml::from_str::<FileConfig>(&conf) {
         Ok(val) => val,
         Err(e) => {
-            log::error!("{:?}", e);
-            return Err(anyhow!("{}", e));
+            log::error!("serde_yaml::from_str {:?}", e);
+            return Err(anyhow!("serde_yaml::from_str {:?}", e));
         }
     };
     if file_conf.token.is_empty() {
