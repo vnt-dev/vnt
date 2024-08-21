@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context};
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs,SocketAddr};
+use tokio::net::UdpSocket;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,9 +17,9 @@ use crate::util::UPnP;
 
 mod stun;
 
-pub fn local_ipv4_() -> io::Result<Ipv4Addr> {
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("8.8.8.8:80")?;
+pub async fn local_ipv4_() -> io::Result<Ipv4Addr> {
+    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    socket.connect("8.8.8.8:80").await?;
     let addr = socket.local_addr()?;
     match addr.ip() {
         IpAddr::V4(ip) => Ok(ip),
@@ -27,8 +27,8 @@ pub fn local_ipv4_() -> io::Result<Ipv4Addr> {
     }
 }
 
-pub fn local_ipv4() -> Option<Ipv4Addr> {
-    match local_ipv4_() {
+pub async fn local_ipv4() -> Option<Ipv4Addr> {
+    match local_ipv4_().await {
         Ok(ipv4) => Some(ipv4),
         Err(e) => {
             log::warn!("获取ipv4失败：{:?}", e);
@@ -37,9 +37,9 @@ pub fn local_ipv4() -> Option<Ipv4Addr> {
     }
 }
 
-pub fn local_ipv6_() -> io::Result<Ipv6Addr> {
-    let socket = UdpSocket::bind("[::]:0")?;
-    socket.connect("[2001:4860:4860:0000:0000:0000:0000:8888]:80")?;
+pub async fn local_ipv6_() -> io::Result<Ipv6Addr> {
+    let socket = UdpSocket::bind("[::]:0").await?;
+    socket.connect("[2001:4860:4860:0000:0000:0000:0000:8888]:80").await?;
     let addr = socket.local_addr()?;
     match addr.ip() {
         IpAddr::V4(_) => Ok(Ipv6Addr::UNSPECIFIED),
@@ -47,8 +47,8 @@ pub fn local_ipv6_() -> io::Result<Ipv6Addr> {
     }
 }
 
-pub fn local_ipv6() -> Option<Ipv6Addr> {
-    match local_ipv6_() {
+pub async fn local_ipv6() -> Option<Ipv6Addr> {
+    match local_ipv6_().await {
         Ok(ipv6) => {
             if is_ipv6_global(&ipv6) {
                 return Some(ipv6);
