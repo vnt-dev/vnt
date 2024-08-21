@@ -38,8 +38,8 @@ pub struct Vnt {
 
 impl Vnt {
     #[cfg(feature = "integrated_tun")]
-    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
-        let inner = Arc::new(VntInner::new(config, callback)?);
+    pub async fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
+        let inner = Arc::new(VntInner::new(config, callback).await?);
         Ok(Self { inner })
     }
     #[cfg(not(feature = "integrated_tun"))]
@@ -80,8 +80,8 @@ pub struct VntInner {
 
 impl VntInner {
     #[cfg(feature = "integrated_tun")]
-    pub fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
-        VntInner::new_device0(config, callback, DeviceAdapter::default())
+    pub async fn new<Call: VntCallback>(config: Config, callback: Call) -> anyhow::Result<Self> {
+        VntInner::new_device0(config, callback, DeviceAdapter::default()).await
     }
     #[cfg(not(feature = "integrated_tun"))]
     pub fn new_device<Call: VntCallback, Device: DeviceWrite>(
@@ -91,7 +91,7 @@ impl VntInner {
     ) -> anyhow::Result<Self> {
         VntInner::new_device0(config, callback, device)
     }
-    fn new_device0<Call: VntCallback, Device: DeviceWrite>(
+    async fn new_device0<Call: VntCallback, Device: DeviceWrite>(
         config: Config,
         callback: Call,
         device: Device,
@@ -135,7 +135,7 @@ impl VntInner {
         let local_ipv4 = if let Some(local_ipv4) = config.local_ipv4 {
             Some(local_ipv4)
         } else {
-            nat::local_ipv4()
+            nat::local_ipv4().await
         };
         let default_interface = config.local_interface.clone();
 
@@ -192,7 +192,7 @@ impl VntInner {
             up_traffic_meter.clone(),
             down_traffic_meter.clone(),
         )?;
-        let local_ipv6 = nat::local_ipv6();
+        let local_ipv6 = nat::local_ipv6().await;
         let udp_ports = context.main_local_udp_port()?;
         let tcp_port = tcp_listener.local_addr()?.port();
         //nat检测工具

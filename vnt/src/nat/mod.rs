@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Context};
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs,SocketAddr};
-use tokio::net::UdpSocket;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::net::UdpSocket;
 
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
@@ -39,7 +39,9 @@ pub async fn local_ipv4() -> Option<Ipv4Addr> {
 
 pub async fn local_ipv6_() -> io::Result<Ipv6Addr> {
     let socket = UdpSocket::bind("[::]:0").await?;
-    socket.connect("[2001:4860:4860:0000:0000:0000:0000:8888]:80").await?;
+    socket
+        .connect("[2001:4860:4860:0000:0000:0000:0000:8888]:80")
+        .await?;
     let addr = socket.local_addr()?;
     match addr.ip() {
         IpAddr::V4(_) => Ok(Ipv6Addr::UNSPECIFIED),
