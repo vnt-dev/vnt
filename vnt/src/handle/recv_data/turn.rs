@@ -14,9 +14,11 @@ impl TurnPacketHandler {
         Self {}
     }
 }
+use async_trait::async_trait;
 
+#[async_trait]
 impl PacketHandler for TurnPacketHandler {
-    fn handle(
+    async fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
         _extend: NetPacket<&mut [u8]>,

@@ -34,6 +34,8 @@ use crate::protocol::error_packet::InErrorPacket;
 use crate::protocol::{ip_turn_packet, service_packet, NetPacket, Protocol, MAX_TTL};
 use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::{proto, PeerClientInfo};
+use async_trait::async_trait;
+use tun2::AbstractDevice;
 
 /// 处理来源于服务端的包
 #[derive(Clone)]
@@ -94,8 +96,9 @@ impl<Call, Device> ServerPacketHandler<Call, Device> {
     }
 }
 
+#[async_trait]
 impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandler<Call, Device> {
-    fn handle(
+    async fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
         _extend: NetPacket<&mut [u8]>,
@@ -222,7 +225,8 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
         self.server_cipher.decrypt_ipv4(&mut net_packet)?;
         match net_packet.protocol() {
             Protocol::Service => {
-                self.service(context, current_device, net_packet, route_key)?;
+                self.service(context, current_device, net_packet, route_key)
+                    .await?;
             }
             Protocol::Error => {
                 self.error(context, current_device, net_packet, route_key)?;
@@ -265,7 +269,7 @@ impl<Call: VntCallback, Device: DeviceWrite> PacketHandler for ServerPacketHandl
 }
 
 impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
-    fn service(
+    async fn service(
         &self,
         context: &ChannelContext,
         current_device: &CurrentDeviceInfo,
@@ -355,20 +359,16 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                 target_os = "linux",
                                 target_os = "macos"
                             ))]
-                            match crate::tun_tap_device::create_device(
-                                device_config,
-                                &self.callback,
-                            ) {
+                            match crate::tun_tap_device::create_device(device_config).await {
                                 Ok(device) => {
-                                    use tun::device::IFace;
                                     let tun_info = crate::handle::callback::DeviceInfo::new(
-                                        device.name().unwrap_or("unknown".into()),
-                                        device.version().unwrap_or("unknown".into()),
+                                        device.tun_name().unwrap_or("unknown".into()),
+                                        None.unwrap_or("unknown".into()),
                                     );
                                     log::info!("tun信息{:?}", tun_info);
-                                    self.callback.create_tun(tun_info);
-                                    self.tun_device_helper
-                                        .start(device, self.config_info.allow_wire_guard)?;
+                                    // self.callback.create_tun(tun_info);
+                                    // self.tun_device_helper
+                                    //     .start(device, self.config_info.allow_wire_guard)?;
                                 }
                                 Err(e) => {
                                     log::error!("{:?}", e);

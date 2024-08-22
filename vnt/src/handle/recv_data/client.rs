@@ -69,9 +69,11 @@ impl<Device: DeviceWrite> ClientPacketHandler<Device> {
         }
     }
 }
+use async_trait::async_trait;
 
+#[async_trait]
 impl<Device: DeviceWrite> PacketHandler for ClientPacketHandler<Device> {
-    fn handle(
+    async fn handle(
         &self,
         mut net_packet: NetPacket<&mut [u8]>,
         mut extend: NetPacket<&mut [u8]>,

@@ -58,7 +58,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(
+    pub async fn new(
         #[cfg(feature = "integrated_tun")]
         #[cfg(target_os = "windows")]
         tap: bool,
@@ -150,11 +150,14 @@ impl Config {
                 server_address_str = s.to_string();
                 protocol = ConnectProtocol::TCP;
             }
-            server_address = address_choose(dns_query_all(
-                &server_address_str,
-                name_servers.clone(),
-                &LocalInterface::default(),
-            )?)?;
+            server_address = address_choose(
+                dns_query_all(
+                    &server_address_str,
+                    name_servers.clone(),
+                    &LocalInterface::default(),
+                )
+                .await?,
+            )?;
         }
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;

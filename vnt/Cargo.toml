@@ -7,6 +7,9 @@ edition = "2021"
 
 [dependencies]
 tun = { path = "tun", optional = true }
+tun2 = { version = "2", features = ["async"] }
+net-route = "0.4.4"
+async-trait = "0.1.81"
 packet = { path = "./packet" }
 bytes = "1.5.0"
 log = "0.4.17"

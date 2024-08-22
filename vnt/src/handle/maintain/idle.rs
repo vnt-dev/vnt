@@ -67,7 +67,7 @@ pub fn idle_gateway<Call: VntCallback>(
     }
 }
 
-fn idle_gateway0<Call: VntCallback>(
+async fn idle_gateway0<Call: VntCallback>(
     context: &ChannelContext,
     current_device: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
@@ -84,7 +84,9 @@ fn idle_gateway0<Call: VntCallback>(
         call,
         connect_count,
         handshake,
-    ) {
+    )
+    .await
+    {
         let cur = current_device.load();
         call.error(ErrorInfo::new_msg(
             ErrorType::Disconnect,
@@ -116,7 +118,7 @@ fn idle_route0<Call: VntCallback>(
     }
 }
 
-fn check_gateway_channel<Call: VntCallback>(
+async fn check_gateway_channel<Call: VntCallback>(
     context: &ChannelContext,
     current_device_info: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
@@ -132,7 +134,7 @@ fn check_gateway_channel<Call: VntCallback>(
         if connect_protocol.is_transport() {
             // 传输层的协议需要探测服务器地址
             current_device =
-                domain_request0(current_device_info, config, context.default_interface());
+                domain_request0(current_device_info, config, context.default_interface()).await;
         }
         //需要重连
         call.connect(ConnectInfo::new(*count, current_device.connect_server));
@@ -159,7 +161,7 @@ fn check_gateway_channel<Call: VntCallback>(
     Ok(())
 }
 
-pub fn domain_request0(
+pub async fn domain_request0(
     current_device: &AtomicCell<CurrentDeviceInfo>,
     config: &BaseConfigInfo,
     default_interface: &LocalInterface,
@@ -171,7 +173,9 @@ pub fn domain_request0(
         &config.server_addr,
         config.name_servers.clone(),
         default_interface,
-    ) {
+    )
+    .await
+    {
         Ok(addrs) => {
             log::info!(
                 "domain {} dns {:?} addr {:?}",

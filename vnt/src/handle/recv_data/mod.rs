@@ -39,9 +39,9 @@ pub struct RecvDataHandler<Call, Device> {
     server: ServerPacketHandler<Call, Device>,
     nat_test: NatTest,
 }
-
+#[async_trait]
 impl<Call: VntCallback, Device: DeviceWrite> RecvChannelHandler for RecvDataHandler<Call, Device> {
-    fn handle(
+    async fn handle(
         &self,
         buf: &mut [u8],
         extend: &mut [u8],
@@ -62,7 +62,7 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvChannelHandler for RecvDataHand
                 }
             }
         }
-        if let Err(e) = self.handle0(buf, extend, route_key, context) {
+        if let Err(e) = self.handle0(buf, extend, route_key, context).await {
             log::error!(
                 "[{}]-{:?}-{:?}",
                 thread::current().name().unwrap_or(""),
@@ -130,7 +130,7 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
             nat_test,
         }
     }
-    fn handle0(
+    async fn handle0(
         &self,
         buf: &mut [u8],
         extend: &mut [u8],
@@ -162,21 +162,27 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
                 //服务端-客户端包
                 self.server
                     .handle(net_packet, extend, route_key, context, &current_device)
+                    .await
             } else {
                 //客户端-客户端包
                 self.client
                     .handle(net_packet, extend, route_key, context, &current_device)
+                    .await
             }
         } else {
             //转发包
             self.turn
                 .handle(net_packet, extend, route_key, context, &current_device)
+                .await
         }
     }
 }
 
+use async_trait::async_trait;
+
+#[async_trait]
 pub trait PacketHandler {
-    fn handle(
+    async fn handle(
         &self,
         net_packet: NetPacket<&mut [u8]>,
         extend: NetPacket<&mut [u8]>,
