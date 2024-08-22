@@ -39,6 +39,7 @@ pub struct RecvDataHandler<Call, Device> {
     server: ServerPacketHandler<Call, Device>,
     nat_test: NatTest,
 }
+
 #[async_trait]
 impl<Call: VntCallback, Device: DeviceWrite> RecvChannelHandler for RecvDataHandler<Call, Device> {
     async fn handle(
@@ -161,19 +162,16 @@ impl<Call: VntCallback, Device: DeviceWrite> RecvDataHandler<Call, Device> {
             if net_packet.is_gateway() {
                 //服务端-客户端包
                 self.server
-                    .handle(net_packet, extend, route_key, context, &current_device)
-                    .await
+                    .handle(net_packet, extend, route_key, context, &current_device).await
             } else {
                 //客户端-客户端包
                 self.client
-                    .handle(net_packet, extend, route_key, context, &current_device)
-                    .await
+                    .handle(net_packet, extend, route_key, context, &current_device).await
             }
         } else {
             //转发包
             self.turn
-                .handle(net_packet, extend, route_key, context, &current_device)
-                .await
+                .handle(net_packet, extend, route_key, context, &current_device).await
         }
     }
 }
@@ -187,7 +185,7 @@ pub trait PacketHandler {
         net_packet: NetPacket<&mut [u8]>,
         extend: NetPacket<&mut [u8]>,
         route_key: RouteKey,
-        context: &ChannelContext,
-        current_device: &CurrentDeviceInfo,
+        context: & ChannelContext,
+        current_device: & CurrentDeviceInfo,
     ) -> anyhow::Result<()>;
 }
