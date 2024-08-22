@@ -1,9 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{io, thread};
+use tokio::net::UdpSocket;
 
 use crate::channel::socket::LocalInterface;
 use anyhow::Context;
@@ -27,7 +28,10 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
             available = addrs;
             history.borrow_mut().clear();
         }
-        let addr = address_choose0(available)?;
+        let addr = tokio::runtime::Handle::current().block_on(async move {
+            let addr = address_choose0(available).await?;
+            anyhow::Ok(addr)
+        })?;
         history
             .borrow_mut()
             .entry(addr)
@@ -39,45 +43,45 @@ pub fn address_choose(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
     })
 }
 
-/// 后续实现选择延迟最低的可用地址，需要服务端配合
-/// 现在是选择第一个地址，优先ipv6
-fn address_choose0(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
-    let v4: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv4()).copied().collect();
-    let v6: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv6()).copied().collect();
-    let check_addr = |addrs: &Vec<SocketAddr>| -> anyhow::Result<SocketAddr> {
-        let mut err = Vec::new();
-        if !addrs.is_empty() {
-            let udp = if addrs[0].is_ipv6() {
-                UdpSocket::bind("[::]:0")?
+async fn check_addr(addrs: &Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
+    let mut err = Vec::new();
+    if !addrs.is_empty() {
+        let udp = if addrs[0].is_ipv6() {
+            UdpSocket::bind("[::]:0").await?
+        } else {
+            UdpSocket::bind("0.0.0.0:0").await?
+        };
+        for addr in addrs {
+            if let Err(e) = udp.connect(addr).await {
+                err.push((*addr, e));
             } else {
-                UdpSocket::bind("0.0.0.0:0")?
-            };
-            for addr in addrs {
-                if let Err(e) = udp.connect(addr) {
-                    err.push((*addr, e));
-                } else {
-                    return Ok(*addr);
-                }
+                return Ok(*addr);
             }
         }
-        Err(anyhow::anyhow!("Unable to connect to address {:?}", err))
-    };
+    }
+    Err(anyhow::anyhow!("Unable to connect to address {:?}", err))
+}
+/// 后续实现选择延迟最低的可用地址，需要服务端配合
+/// 现在是选择第一个地址，优先ipv6
+async fn address_choose0(addrs: Vec<SocketAddr>) -> anyhow::Result<SocketAddr> {
+    let v4: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv4()).copied().collect();
+    let v6: Vec<SocketAddr> = addrs.iter().filter(|v| v.is_ipv6()).copied().collect();
     if v6.is_empty() {
-        return check_addr(&v4);
+        return check_addr(&v4).await;
     }
     if v4.is_empty() {
-        return check_addr(&v6);
+        return check_addr(&v6).await;
     }
-    match check_addr(&v6) {
+    match check_addr(&v6).await {
         Ok(addr) => Ok(addr),
-        Err(e1) => match check_addr(&v4) {
+        Err(e1) => match check_addr(&v4).await {
             Ok(addr) => Ok(addr),
             Err(e2) => Err(anyhow::anyhow!("{} , {}", e1, e2)),
         },
     }
 }
 
-pub fn dns_query_all(
+pub async fn dns_query_all(
     domain: &str,
     mut name_servers: Vec<String>,
     default_interface: &LocalInterface,
@@ -104,7 +108,7 @@ pub fn dns_query_all(
             let mut err: Option<anyhow::Error> = None;
             for name_server in name_servers {
                 if let Some(domain) = txt_domain.as_ref() {
-                    match txt_dns(domain, name_server, default_interface) {
+                    match txt_dns(domain, name_server, default_interface).await {
                         Ok(addr) => {
                             if !addr.is_empty() {
                                 return Ok(addr);
@@ -126,20 +130,21 @@ pub fn dns_query_all(
                 let host = &domain[..end_index];
                 let port = u16::from_str(&domain[end_index + 1..])
                     .with_context(|| format!("{:?} not port", domain))?;
-                let th1 = {
-                    let host = host.to_string();
-                    let name_server = name_server.clone();
-                    let default_interface = default_interface.clone();
-                    thread::spawn(move || a_dns(host, name_server, &default_interface))
-                };
-                let th2 = {
-                    let host = host.to_string();
-                    let name_server = name_server.clone();
-                    let default_interface = default_interface.clone();
-                    thread::spawn(move || aaaa_dns(host, name_server, &default_interface))
-                };
+                let host1 = host.to_string();
+                let name_server1 = name_server.clone();
+                let default_interface1 = default_interface.clone();
+                let th1 =
+                    tokio::spawn(
+                        async move { a_dns(host1, name_server1, &default_interface1).await },
+                    );
+                let host2 = host.to_string();
+                let name_server2 = name_server.clone();
+                let default_interface2 = default_interface.clone();
+                let th2 = tokio::spawn(async move {
+                    aaaa_dns(host2, name_server2, &default_interface2).await
+                });
                 let mut addr = Vec::new();
-                match th1.join().unwrap() {
+                match th1.await.unwrap() {
                     Ok(rs) => {
                         for ip in rs {
                             addr.push(SocketAddr::new(ip.into(), port));
@@ -149,7 +154,7 @@ pub fn dns_query_all(
                         err.replace(anyhow::anyhow!("{}", e));
                     }
                 }
-                match th2.join().unwrap() {
+                match th2.await.unwrap() {
                     Ok(rs) => {
                         for ip in rs {
                             addr.push(SocketAddr::new(ip.into(), port));
@@ -180,7 +185,7 @@ pub fn dns_query_all(
     }
 }
 
-fn query<'a>(
+async fn query<'a>(
     udp: &UdpSocket,
     domain: &str,
     name_server: SocketAddr,
@@ -192,12 +197,13 @@ fn query<'a>(
     let packet = builder.build().unwrap();
 
     udp.connect(name_server)
+        .await
         .with_context(|| format!("DNS {:?} error ", name_server))?;
     let mut count = 0;
     let len = loop {
-        udp.send(&packet)?;
+        udp.send(&packet).await?;
 
-        match udp.recv(buf) {
+        match udp.recv(buf).await {
             Ok(len) => {
                 break len;
             }
@@ -234,7 +240,7 @@ fn query<'a>(
     Ok(pkt)
 }
 
-pub fn txt_dns(
+pub async fn txt_dns(
     domain: &str,
     name_server: String,
     default_interface: &LocalInterface,
@@ -242,7 +248,7 @@ pub fn txt_dns(
     let name_server: SocketAddr = name_server.parse()?;
     let udp = bind_udp(name_server, default_interface)?;
     let mut buf = [0; 65536];
-    let message = query(&udp, domain, name_server, QueryType::TXT, &mut buf)?;
+    let message = query(&udp, domain, name_server, QueryType::TXT, &mut buf).await?;
     let mut rs = Vec::new();
     for record in message.answers {
         if let RData::TXT(txt) = record.data {
@@ -269,10 +275,10 @@ fn bind_udp(
     let socket = crate::channel::socket::bind_udp(addr, default_interface)?;
     socket.set_nonblocking(false)?;
     socket.set_read_timeout(Some(Duration::from_millis(800)))?;
-    Ok(socket.into())
+    Ok(UdpSocket::from_std(socket.into())?)
 }
 
-pub fn a_dns(
+pub async fn a_dns(
     domain: String,
     name_server: String,
     default_interface: &LocalInterface,
@@ -280,7 +286,7 @@ pub fn a_dns(
     let name_server: SocketAddr = name_server.parse()?;
     let udp = bind_udp(name_server, default_interface)?;
     let mut buf = [0; 65536];
-    let message = query(&udp, &domain, name_server, QueryType::A, &mut buf)?;
+    let message = query(&udp, &domain, name_server, QueryType::A, &mut buf).await?;
     let mut rs = Vec::new();
     for record in message.answers {
         if let RData::A(a) = record.data {
@@ -290,7 +296,7 @@ pub fn a_dns(
     Ok(rs)
 }
 
-pub fn aaaa_dns(
+pub async fn aaaa_dns(
     domain: String,
     name_server: String,
     default_interface: &LocalInterface,
@@ -298,7 +304,7 @@ pub fn aaaa_dns(
     let name_server: SocketAddr = name_server.parse()?;
     let udp = bind_udp(name_server, default_interface)?;
     let mut buf = [0; 65536];
-    let message = query(&udp, &domain, name_server, QueryType::AAAA, &mut buf)?;
+    let message = query(&udp, &domain, name_server, QueryType::AAAA, &mut buf).await?;
     let mut rs = Vec::new();
     for record in message.answers {
         if let RData::AAAA(a) = record.data {
