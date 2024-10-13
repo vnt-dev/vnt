@@ -165,7 +165,7 @@ impl Config {
         in_ips.sort_by(|(dest1, _, _), (dest2, _, _)| dest2.cmp(dest1));
         let (local_interface, local_ipv4) = if let Some(local_dev) = local_dev {
             let (default_interface, ip) = crate::channel::socket::get_interface(local_dev)?;
-            log::info!("default_interface = {:?}", default_interface);
+            log::info!("default_interface = {:?} local_ip= {ip}", default_interface);
             (default_interface, Some(ip))
         } else {
             (LocalInterface::default(), None)
