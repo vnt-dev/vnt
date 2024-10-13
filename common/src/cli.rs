@@ -76,7 +76,7 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
     opts.optmulti("", "vnt-mapping", "vnt-mapping", "<mapping>");
     opts.optopt("f", "", "配置文件", "<conf>");
     opts.optopt("", "compressor", "压缩算法", "<lz4>");
-    opts.optopt("", "local-ipv4", "指定本地ipv4网卡IP", "<IP>");
+    opts.optopt("", "local-dev", "指定本地ipv4网卡名称", "<NAME>");
     opts.optflag("", "disable-stats", "关闭流量统计");
     opts.optflag("", "allow-wg", "允许接入WireGuard");
     //"后台运行时,查看其他设备列表"
@@ -284,15 +284,8 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = matches.opt_strs("mapping");
         let vnt_mapping_list = matches.opt_strs("vnt-mapping");
-        let local_ipv4: Option<String> = matches.opt_get("local-ipv4").unwrap();
-        let local_ipv4 = local_ipv4
-            .map(|v| Ipv4Addr::from_str(&v).expect(&format!("'--local-ipv4 {}' error", v)));
-        if let Some(local_ipv4) = local_ipv4 {
-            if local_ipv4.is_unspecified() || local_ipv4.is_broadcast() || local_ipv4.is_multicast()
-            {
-                return Err(anyhow::anyhow!("'--local-ipv4 {}' invalid", local_ipv4));
-            }
-        }
+        let local_dev: Option<String> = matches.opt_get("local-dev").unwrap();
+
         let disable_stats = matches.opt_present("disable-stats");
         let allow_wire_guard = matches.opt_present("allow-wg");
         let compressor = if let Some(compressor) = matches.opt_str("compressor").as_ref() {
@@ -336,7 +329,7 @@ pub fn parse_args_config() -> anyhow::Result<Option<(Config, Vec<String>, bool)>
             compressor,
             !disable_stats,
             allow_wire_guard,
-            local_ipv4,
+            local_dev,
         )?;
         (config, vnt_mapping_list, cmd)
     };
@@ -383,7 +376,7 @@ fn get_description(key: &str, language: &str) -> String {
         ("--compressor-lz4 <lz4>", ("启用压缩,可选值lz4,例如 --compressor lz4", "Enable compression, option lz4, e.g., --compressor lz4")),
         ("--compressor-zstd <zstd>", ("启用压缩,可选值zstd<,level>,level为压缩级别,例如 --compressor zstd,10", "Enable compression, options zstd<,level>, level is compression level, e.g., --compressor zstd,10")),
         ("--vnt-mapping <x>", ("vnt地址映射,例如 --vnt-mapping tcp:80-10.26.0.10:80 映射目标是vnt网络或其子网中的设备", "VNT address mapping, e.g., --vnt-mapping tcp:80-10.26.0.10:80 maps to a device in VNT network or its subnet")),
-        ("--local-ipv4", ("本地出口网卡的ipv4地址", "IPv4 address of local export network card")),
+        ("--local-dev", ("本地出口网卡的名称", "name of local export network card")),
         ("--disable-stats", ("关闭流量统计", "Disable traffic statistics")),
         ("--allow-wg", ("允许接入WireGuard客户端", "Allow access to WireGuard client")),
         ("--list", ("后台运行时,查看其他设备列表", "View list of other devices when running in background")),
@@ -572,8 +565,8 @@ fn print_usage(program: &str, _opts: Options) {
         green(get_description("--vnt-mapping <x>", &language).to_string())
     );
     println!(
-        "  --local-ipv4 <IP>   {}",
-        get_description("--local-ipv4", &language)
+        "  --local-dev <NAME>  {}",
+        get_description("--local-dev", &language)
     );
     println!(
         "  --disable-stats     {}",

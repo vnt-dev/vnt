@@ -2190,7 +2190,7 @@ dependencies = [
 
 [[package]]
 name = "vnt-cli"
-version = "1.2.13"
+version = "1.2.14"
 dependencies = [
  "anyhow",
  "chrono",
