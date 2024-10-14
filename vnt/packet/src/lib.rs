@@ -71,14 +71,12 @@ unsigned short getChecksum(unsigned short * iphead, int count)
 pub fn cal_checksum(buffer: &[u8]) -> u16 {
     use std::io::Cursor;
     let mut sum = 0;
-    let length = buffer.len();
     let mut buffer = Cursor::new(buffer);
     while let Ok(value) = buffer.read_u16::<BigEndian>() {
         sum += u32::from(value);
     }
-    if length & 1 == 1 {
-        //奇数,说明还有一位,不足的补0
-        sum += u32c(buffer.read_u8().unwrap(), 0);
+    if let Ok(l) = buffer.read_u8() {
+        sum += u32c(l, 0);
     }
     while sum >> 16 != 0 {
         sum = (sum & 0xffff) + (sum >> 16);
@@ -119,9 +117,8 @@ pub fn ipv4_cal_checksum(
     while let Ok(value) = buffer.read_u16::<BigEndian>() {
         sum += u32::from(value);
     }
-    if length & 1 == 1 {
-        //奇数,说明还有一位
-        sum += u32c(buffer.read_u8().unwrap(), 0);
+    if let Ok(l) = buffer.read_u8() {
+        sum += u32c(l, 0);
     }
     while sum >> 16 != 0 {
         sum = (sum & 0xffff) + (sum >> 16);
