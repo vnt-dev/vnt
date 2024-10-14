@@ -86,7 +86,7 @@ jobs:
       OS: ${{ matrix.OS }}
       FEATURES: ${{ matrix.FEATURES }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Init submodules
         uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
@@ -221,7 +221,7 @@ jobs:
           cd ./artifacts
           tar -czf vnt-$TARGET-$TAG.tar.gz *
       - name: Archive artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: vnt-cli
           path: |
@@ -233,7 +233,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: vnt-cli
           path: ./artifacts

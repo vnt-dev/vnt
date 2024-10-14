@@ -1,9 +1,6 @@
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use crate::channel::socket::get_interface;
 use crate::channel::socket::{LocalInterface, VntSocketTrait};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use anyhow::Context;
-use std::net::Ipv4Addr;
 
 #[cfg(target_os = "linux")]
 impl VntSocketTrait for socket2::Socket {
@@ -32,18 +29,18 @@ impl VntSocketTrait for socket2::Socket {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub fn get_best_interface(dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
-    match get_interface(dest_ip) {
-        Ok(iface) => return Ok(iface),
-        Err(e) => {
-            log::warn!("not find interface e={:?},ip={}", e, dest_ip);
-        }
-    }
-    // 应该再查路由表找到默认路由的
-    Ok(LocalInterface::default())
-}
-#[cfg(target_os = "android")]
-pub fn get_best_interface(_dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
-    Ok(LocalInterface::default())
-}
+// #[cfg(any(target_os = "linux", target_os = "macos"))]
+// pub fn get_best_interface(dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
+//     match get_interface(dest_ip) {
+//         Ok(iface) => return Ok(iface),
+//         Err(e) => {
+//             log::warn!("not find interface e={:?},ip={}", e, dest_ip);
+//         }
+//     }
+//     // 应该再查路由表找到默认路由的
+//     Ok(LocalInterface::default())
+// }
+// #[cfg(target_os = "android")]
+// pub fn get_best_interface(_dest_ip: Ipv4Addr) -> anyhow::Result<LocalInterface> {
+//     Ok(LocalInterface::default())
+// }

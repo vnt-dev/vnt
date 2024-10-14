@@ -94,7 +94,7 @@ impl Config {
         enable_traffic: bool,
         // 允许传递wg流量
         allow_wire_guard: bool,
-        local_ipv4: Option<Ipv4Addr>,
+        local_dev: Option<String>,
     ) -> anyhow::Result<Self> {
         #[cfg(windows)]
         #[cfg(feature = "integrated_tun")]
@@ -163,12 +163,12 @@ impl Config {
             *dest = *mask & *dest;
         }
         in_ips.sort_by(|(dest1, _, _), (dest2, _, _)| dest2.cmp(dest1));
-        let local_interface = if let Some(local_ip) = local_ipv4 {
-            let default_interface = crate::channel::socket::get_interface(local_ip)?;
-            log::info!("default_interface = {:?}", default_interface);
-            default_interface
+        let (local_interface, local_ipv4) = if let Some(local_dev) = local_dev {
+            let (default_interface, ip) = crate::channel::socket::get_interface(local_dev)?;
+            log::info!("default_interface = {:?} local_ip= {ip}", default_interface);
+            (default_interface, Some(ip))
         } else {
-            LocalInterface::default()
+            (LocalInterface::default(), None)
         };
         Ok(Self {
             #[cfg(feature = "integrated_tun")]
