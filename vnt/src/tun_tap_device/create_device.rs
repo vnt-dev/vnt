@@ -63,18 +63,15 @@ fn create_device0(config: &DeviceConfig) -> io::Result<Arc<Device>> {
         .up();
     #[cfg(target_os = "windows")]
     {
-        let default_name = if config.tap {
-            tun_config.layer(tun_rs::Layer::L2);
-            DEFAULT_TAP_NAME
-        } else {
-            DEFAULT_TUN_NAME
-        };
         tun_config.name(
             config
                 .device_name
                 .clone()
-                .unwrap_or(default_name.to_string()),
+                .unwrap_or(DEFAULT_TUN_NAME.to_string()),
         );
+        tun_config.platform_config(|v| {
+            v.metric(0).ring_capacity(4 * 1024 * 1024);
+        })
     }
 
     #[cfg(target_os = "linux")]
