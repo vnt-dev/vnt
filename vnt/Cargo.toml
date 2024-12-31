@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tun = { path = "tun", optional = true }
+tun-rs = { version = "1.5.0", optional = true,features = ["experimental"] }
 packet = { path = "./packet" }
 bytes = "1.5.0"
 log = "0.4.17"
@@ -81,7 +81,7 @@ ip_proxy = []
 port_mapping = []
 lz4_compress = ["lz4_flex"]
 zstd_compress = ["zstd"]
-integrated_tun = ["tun"]
+integrated_tun = ["tun-rs"]
 upnp = ["igd"]
 ws = ["tokio-tungstenite"]
 wss = ["ws", "tokio-tungstenite/rustls-tls-native-roots", "tokio-tungstenite/rustls-tls-webpki-roots", "rustls"]

@@ -3,12 +3,6 @@ use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
-use crossbeam_utils::atomic::AtomicCell;
-use parking_lot::Mutex;
-
-use tun::device::IFace;
-use tun::Device;
-
 use crate::channel::context::ChannelContext;
 use crate::cipher::Cipher;
 use crate::compression::Compressor;
@@ -19,6 +13,9 @@ use crate::handle::{CurrentDeviceInfo, PeerDeviceInfo};
 use crate::ip_proxy::IpProxyMap;
 use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::util::StopManager;
+use crossbeam_utils::atomic::AtomicCell;
+use parking_lot::Mutex;
+use tun_rs::platform::Device;
 
 #[repr(transparent)]
 #[derive(Clone, Default)]
@@ -41,7 +38,7 @@ impl DeviceWrite for DeviceAdapter {
     #[inline]
     fn write(&self, buf: &[u8]) -> io::Result<usize> {
         if let Some(tun) = self.tun.lock().as_ref() {
-            tun.write(buf)
+            tun.send(buf)
         } else {
             Err(io::Error::new(io::ErrorKind::NotFound, "not tun device"))
         }

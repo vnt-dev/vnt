@@ -1,19 +1,11 @@
 pub mod tun_handler;
 
-#[cfg(unix)]
-mod unix;
-
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use std::sync::Arc;
-#[cfg(unix)]
-pub(crate) use unix::*;
+mod platform;
 
-#[cfg(target_os = "windows")]
-mod windows;
-
-#[cfg(target_os = "windows")]
-pub(crate) use windows::*;
+pub(crate) use platform::*;
 
 /// 仅仅是停止tun，不停止vnt
 #[derive(Clone, Default)]

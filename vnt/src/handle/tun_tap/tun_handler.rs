@@ -1,16 +1,14 @@
 use crossbeam_utils::atomic::AtomicCell;
+use packet::icmp::icmp::IcmpPacket;
+use packet::icmp::Kind;
+use packet::ip::ipv4::packet::IpV4Packet;
+use packet::ip::ipv4::protocol::Protocol;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::{io, thread};
-
-use packet::icmp::icmp::IcmpPacket;
-use packet::icmp::Kind;
-use packet::ip::ipv4::packet::IpV4Packet;
-use packet::ip::ipv4::protocol::Protocol;
-use tun::device::IFace;
-use tun::Device;
+use tun_rs::platform::Device;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::sender::{send_to_wg, send_to_wg_broadcast};
@@ -38,7 +36,7 @@ fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyho
             ipv4_packet.set_source_ip(ipv4_packet.destination_ip());
             ipv4_packet.set_destination_ip(src);
             ipv4_packet.update_checksum();
-            device_writer.write(ipv4_packet.buffer)?;
+            device_writer.send(ipv4_packet.buffer)?;
         }
     }
     Ok(())

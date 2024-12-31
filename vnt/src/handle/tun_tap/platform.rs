@@ -13,8 +13,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use tun::device::IFace;
-use tun::Device;
+use tun_rs::platform::Device;
 
 pub(crate) fn start_simple(
     stop_manager: StopManager,
@@ -85,8 +84,7 @@ fn start_simple0(
     let mut buf = [0; BUFFER_SIZE];
     let mut extend = [0; BUFFER_SIZE];
     loop {
-        let len = device.read(&mut buf[12..])? + 12;
-        //单线程的
+        let len = device.recv(&mut buf[12..])? + 12;
         // buf是重复利用的，需要重置头部
         buf[..12].fill(0);
         match crate::handle::tun_tap::tun_handler::handle(
