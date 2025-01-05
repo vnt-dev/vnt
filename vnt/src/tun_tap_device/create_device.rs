@@ -8,8 +8,6 @@ use crate::{DeviceConfig, ErrorInfo, ErrorType, VntCallback};
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 const DEFAULT_TUN_NAME: &str = "vnt-tun";
-#[cfg(target_os = "windows")]
-const DEFAULT_TAP_NAME: &str = "vnt-tap";
 
 pub fn create_device<Call: VntCallback>(
     config: DeviceConfig,
@@ -71,7 +69,7 @@ fn create_device0(config: &DeviceConfig) -> io::Result<Arc<Device>> {
         );
         tun_config.platform_config(|v| {
             v.metric(0).ring_capacity(4 * 1024 * 1024);
-        })
+        });
     }
 
     #[cfg(target_os = "linux")]
