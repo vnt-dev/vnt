@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "1.2.15"
+version = "1.2.16"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2240,7 +2240,7 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 
 [[package]]
 name = "vn-link"
-version = "1.2.15"
+version = "1.2.16"
 dependencies = [
  "anyhow",
  "crossbeam-utils",
@@ -2253,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "vn-link-cli"
-version = "1.2.15"
+version = "1.2.16"
 dependencies = [
  "common",
  "log",
@@ -2263,7 +2263,7 @@ dependencies = [
 
 [[package]]
 name = "vnt"
-version = "1.2.15"
+version = "1.2.16"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2312,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "vnt-cli"
-version = "1.2.15"
+version = "1.2.16"
 dependencies = [
  "anyhow",
  "chrono",
