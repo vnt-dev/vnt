@@ -59,14 +59,19 @@ fn create_device0(config: &DeviceConfig) -> io::Result<Arc<Device>> {
     tun_config
         .address_with_prefix(config.virtual_ip, netmask.count_ones() as u8)
         .up();
+
+    match &config.device_name {
+        None => {
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            tun_config.name(DEFAULT_TUN_NAME);
+        }
+        Some(name) => {
+            tun_config.name(name);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
-        tun_config.name(
-            config
-                .device_name
-                .clone()
-                .unwrap_or(DEFAULT_TUN_NAME.to_string()),
-        );
         tun_config.platform_config(|v| {
             v.metric(0).ring_capacity(4 * 1024 * 1024);
         });
