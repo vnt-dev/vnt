@@ -2083,9 +2083,9 @@ dependencies = [
 
 [[package]]
 name = "tun-rs"
-version = "1.5.0"
+version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53141e64197ff7e758b8152615e50bb4a3b18c970738876e7906d31f242c7d6e"
+checksum = "57cff936a4d3a03480e462b2b384dabd5baf64794f10f172965b18e0223d5fc7"
 dependencies = [
  "bitflags 2.6.0",
  "byteorder",
@@ -2102,9 +2102,9 @@ dependencies = [
  "nix 0.29.0",
  "scopeguard",
  "thiserror 2.0.9",
+ "widestring",
  "windows-sys 0.59.0",
  "winreg",
- "wintun-bindings",
 ]
 
 [[package]]
@@ -2408,6 +2408,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "widestring"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
+
+[[package]]
 name = "wildmatch"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2594,24 +2600,11 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "winreg"
-version = "0.52.0"
+version = "0.55.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
+checksum = "cb5a765337c50e9ec252c2069be9bf91c7df47afb103b642ba3a53bf8101be97"
 dependencies = [
  "cfg-if",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "wintun-bindings"
-version = "0.7.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e35d3911efde5ee25586385204127ff6a3f251477dcdd3b222775aaa4d95977"
-dependencies = [
- "c2rust-bitfields",
- "libloading",
- "log",
- "thiserror 2.0.9",
  "windows-sys 0.59.0",
 ]
 

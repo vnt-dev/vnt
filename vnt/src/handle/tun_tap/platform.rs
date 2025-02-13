@@ -13,12 +13,12 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use tun_rs::platform::Device;
+use tun_rs::SyncDevice;
 
 pub(crate) fn start_simple(
     stop_manager: StopManager,
     context: &ChannelContext,
-    device: Arc<Device>,
+    device: Arc<SyncDevice>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
@@ -71,7 +71,7 @@ pub(crate) fn start_simple(
 
 fn start_simple0(
     context: &ChannelContext,
-    device: Arc<Device>,
+    device: Arc<SyncDevice>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,

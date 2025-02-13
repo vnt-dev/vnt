@@ -12,8 +12,6 @@ use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
 use parking_lot::Mutex;
 use protobuf::Message;
-#[cfg(feature = "integrated_tun")]
-use tun_rs::AbstractDevice;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::{Route, RouteKey};

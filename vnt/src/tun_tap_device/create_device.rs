@@ -1,8 +1,7 @@
 use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use tun_rs::platform::Device;
-use tun_rs::AbstractDevice;
+use tun_rs::SyncDevice;
 
 use crate::{DeviceConfig, ErrorInfo, ErrorType, VntCallback};
 
@@ -12,7 +11,7 @@ const DEFAULT_TUN_NAME: &str = "vnt-tun";
 pub fn create_device<Call: VntCallback>(
     config: DeviceConfig,
     call: &Call,
-) -> Result<Arc<Device>, ErrorInfo> {
+) -> Result<Arc<SyncDevice>, ErrorInfo> {
     let device = match create_device0(&config) {
         Ok(device) => device,
         Err(e) => {
@@ -53,28 +52,25 @@ pub fn create_device<Call: VntCallback>(
     Ok(device)
 }
 
-fn create_device0(config: &DeviceConfig) -> io::Result<Arc<Device>> {
-    let mut tun_config = tun_rs::Configuration::default();
-    let netmask = u32::from_be_bytes(config.virtual_netmask.octets());
-    tun_config
-        .address_with_prefix(config.virtual_ip, netmask.count_ones() as u8)
-        .up();
+fn create_device0(config: &DeviceConfig) -> io::Result<Arc<SyncDevice>> {
+    let mut tun_builder = tun_rs::DeviceBuilder::default();
+    tun_builder = tun_builder.ipv4(config.virtual_ip, config.virtual_netmask, None);
 
     match &config.device_name {
         None => {
             #[cfg(any(target_os = "windows", target_os = "linux"))]
-            tun_config.name(DEFAULT_TUN_NAME);
+            {
+                tun_builder = tun_builder.name(DEFAULT_TUN_NAME);
+            }
         }
         Some(name) => {
-            tun_config.name(name);
+            tun_builder = tun_builder.name(name);
         }
     }
 
     #[cfg(target_os = "windows")]
     {
-        tun_config.platform_config(|v| {
-            v.metric(0).ring_capacity(4 * 1024 * 1024);
-        });
+        tun_builder = tun_builder.metric(0).ring_capacity(4 * 1024 * 1024);
     }
 
     #[cfg(target_os = "linux")]
@@ -88,8 +84,7 @@ fn create_device0(config: &DeviceConfig) -> io::Result<Arc<Device>> {
         }
     }
 
-    tun_config.mtu(config.mtu as u16);
-    let device = tun_rs::create(&tun_config)?;
+    let device = tun_builder.mtu(config.mtu as u16).build_sync()?;
     Ok(Arc::new(device))
 }
 

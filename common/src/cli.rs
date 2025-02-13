@@ -511,7 +511,7 @@ fn print_usage(program: &str, _opts: Options) {
         "  --use-channel <p2p> {}",
         get_description("--use-channel <p2p>", &language)
     );
-    #[cfg(not(feature = "vn-link-model"))]
+    #[cfg(feature = "integrated_tun")]
     println!(
         "  --nic <tun0>        {}",
         get_description("--nic <tun0>", &language)

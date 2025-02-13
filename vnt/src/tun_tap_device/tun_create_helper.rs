@@ -15,16 +15,16 @@ use crate::tun_tap_device::vnt_device::DeviceWrite;
 use crate::util::StopManager;
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
-use tun_rs::platform::Device;
+use tun_rs::SyncDevice;
 
 #[repr(transparent)]
 #[derive(Clone, Default)]
 pub struct DeviceAdapter {
-    tun: Arc<Mutex<Option<Arc<Device>>>>,
+    tun: Arc<Mutex<Option<Arc<SyncDevice>>>>,
 }
 
 impl DeviceAdapter {
-    pub fn insert(&self, device: Arc<Device>) {
+    pub fn insert(&self, device: Arc<SyncDevice>) {
         let r = self.tun.lock().replace(device);
         assert!(r.is_none());
     }
@@ -116,7 +116,7 @@ impl TunDeviceHelper {
         }
     }
     /// 要保证先stop 再start
-    pub fn start(&self, device: Arc<Device>, allow_wire_guard: bool) -> io::Result<()> {
+    pub fn start(&self, device: Arc<SyncDevice>, allow_wire_guard: bool) -> io::Result<()> {
         self.device_adapter.insert(device.clone());
         let device_stop = DeviceStop::default();
         let s = self.device_stop.lock().replace(device_stop.clone());
