@@ -1,6 +1,6 @@
 [package]
 name = "common"
-version = "1.2.14"
+version = "1.2.16"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

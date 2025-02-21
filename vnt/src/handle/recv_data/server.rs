@@ -7,12 +7,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossbeam_utils::atomic::AtomicCell;
-use parking_lot::Mutex;
-use protobuf::Message;
-
 use packet::icmp::{icmp, Kind};
 use packet::ip::ipv4;
 use packet::ip::ipv4::packet::IpV4Packet;
+use parking_lot::Mutex;
+use protobuf::Message;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::{Route, RouteKey};
@@ -360,10 +359,9 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                 &self.callback,
                             ) {
                                 Ok(device) => {
-                                    use tun::device::IFace;
                                     let tun_info = crate::handle::callback::DeviceInfo::new(
                                         device.name().unwrap_or("unknown".into()),
-                                        device.version().unwrap_or("unknown".into()),
+                                        "".into(),
                                     );
                                     log::info!("tun信息{:?}", tun_info);
                                     self.callback.create_tun(tun_info);
@@ -392,7 +390,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                         "device_fd == 0".into(),
                                     ));
                                 } else {
-                                    match tun::Device::new(device_fd as _) {
+                                    match tun_rs::platform::Device::from_fd(device_fd as _) {
                                         Ok(device) => {
                                             if let Err(e) = self.tun_device_helper.start(
                                                 Arc::new(device),

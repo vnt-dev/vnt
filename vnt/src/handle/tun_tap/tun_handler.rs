@@ -1,16 +1,14 @@
 use crossbeam_utils::atomic::AtomicCell;
+use packet::icmp::icmp::IcmpPacket;
+use packet::icmp::Kind;
+use packet::ip::ipv4::packet::IpV4Packet;
+use packet::ip::ipv4::protocol::Protocol;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::{io, thread};
-
-use packet::icmp::icmp::IcmpPacket;
-use packet::icmp::Kind;
-use packet::ip::ipv4::packet::IpV4Packet;
-use packet::ip::ipv4::protocol::Protocol;
-use tun::device::IFace;
-use tun::Device;
+use tun_rs::SyncDevice;
 
 use crate::channel::context::ChannelContext;
 use crate::channel::sender::{send_to_wg, send_to_wg_broadcast};
@@ -28,7 +26,7 @@ use crate::protocol::body::ENCRYPTION_RESERVED;
 use crate::protocol::ip_turn_packet::BroadcastPacket;
 use crate::protocol::{ip_turn_packet, NetPacket, MAX_TTL};
 use crate::util::StopManager;
-fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
+fn icmp(device_writer: &SyncDevice, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyhow::Result<()> {
     if ipv4_packet.protocol() == Protocol::Icmp {
         let mut icmp = IcmpPacket::new(ipv4_packet.payload_mut())?;
         if icmp.kind() == Kind::EchoRequest {
@@ -38,7 +36,7 @@ fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyho
             ipv4_packet.set_source_ip(ipv4_packet.destination_ip());
             ipv4_packet.set_destination_ip(src);
             ipv4_packet.update_checksum();
-            device_writer.write(ipv4_packet.buffer)?;
+            device_writer.send(ipv4_packet.buffer)?;
         }
     }
     Ok(())
@@ -47,7 +45,7 @@ fn icmp(device_writer: &Device, mut ipv4_packet: IpV4Packet<&mut [u8]>) -> anyho
 pub fn start(
     stop_manager: StopManager,
     context: ChannelContext,
-    device: Arc<Device>,
+    device: Arc<SyncDevice>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
@@ -160,7 +158,7 @@ pub(crate) fn handle(
     buf: &mut [u8],
     data_len: usize, //数据总长度=12+ip包长度
     extend: &mut [u8],
-    device_writer: &Device,
+    device_writer: &SyncDevice,
     current_device: CurrentDeviceInfo,
     ip_route: &ExternalRoute,
     #[cfg(feature = "ip_proxy")] proxy_map: &Option<IpProxyMap>,

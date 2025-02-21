@@ -86,7 +86,7 @@ jobs:
       OS: ${{ matrix.OS }}
       FEATURES: ${{ matrix.FEATURES }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Init submodules
         uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
@@ -220,12 +220,14 @@ jobs:
           mv ./README ./artifacts/README.txt
           cd ./artifacts
           tar -czf vnt-$TARGET-$TAG.tar.gz *
+          mkdir upload_file
+          mv vnt-$TARGET-$TAG.tar.gz ./upload_file/
       - name: Archive artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: vnt-cli
+          name: vnt-cli-${{ matrix.TARGET }}
           path: |
-            ./artifacts
+            ./artifacts/upload_file
   # deploys to github releases on tag
   deploy:
     if: startsWith(github.ref, 'refs/tags/')
@@ -233,9 +235,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: vnt-cli
           path: ./artifacts
       - name: List
         run: find ./artifacts
@@ -243,7 +244,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.YOURTOKEN }}
-          file: ./artifacts/*.tar.gz
+          file: ./artifacts/**/*.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
           file_glob: true

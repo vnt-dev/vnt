@@ -1,6 +1,6 @@
 [package]
 name = "vn-link"
-version = "1.2.14"
+version = "1.2.16"
 edition = "2021"
 
 [dependencies]
