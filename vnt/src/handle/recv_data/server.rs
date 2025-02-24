@@ -390,7 +390,7 @@ impl<Call: VntCallback, Device: DeviceWrite> ServerPacketHandler<Call, Device> {
                                         "device_fd == 0".into(),
                                     ));
                                 } else {
-                                    match tun_rs::platform::Device::from_fd(device_fd as _) {
+                                    match tun_rs::SyncDevice::from_fd(device_fd as _) {
                                         Ok(device) => {
                                             if let Err(e) = self.tun_device_helper.start(
                                                 Arc::new(device),
