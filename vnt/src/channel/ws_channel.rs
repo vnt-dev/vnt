@@ -103,7 +103,16 @@ where
                             if let Ok(redirect) = v.to_str() {
                                 log::info!("url重定向响应头 {:?}", res.headers());
                                 log::info!("url重定向地址 {}", redirect);
-                                url = redirect.to_string();
+                                // 替换协议前缀
+                                if redirect.starts_with("http://") {
+                                    url = redirect.replacen("http://", "ws://", 1);
+                                } else if redirect.starts_with("https://") {
+                                    url = redirect.replacen("https://", "wss://", 1);
+                                } else {
+                                    url = redirect.to_string();
+                                }
+                                println!("Location：{}", url);
+                                log::info!("修改后的重定向地址: {}", url);
                                 continue;
                             }
                         }
