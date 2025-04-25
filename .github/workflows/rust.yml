@@ -7,7 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-
+permissions:
+  contents: write
 defaults:
   run:
     # necessary for windows
@@ -41,7 +42,7 @@ jobs:
         include:
           - TARGET: i686-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
-            FEATURES: default
+            FEATURES: ring-cipher,openssl-vendored,wss
           - TARGET: x86_64-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
             FEATURES: ring-cipher,wss
@@ -90,7 +91,7 @@ jobs:
       - name: Init submodules
         uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -112,7 +113,8 @@ jobs:
             #  curl -s musl.cc | grep mipsel
             case $TARGET in 
               mipsel-unknown-linux-musl)
-                MUSL_URI=mipsel-linux-musl-cross
+                MUSL_URI=mipsel-linux-muslsf-cross
+                URL=mipsel-linux-muslsf
                 ;;
               aarch64-unknown-linux-musl)
                 MUSL_URI=aarch64-linux-musl-cross
@@ -130,28 +132,37 @@ jobs:
                 MUSL_URI=arm-linux-musleabi-cross
                 ;;        
               mips-unknown-linux-musl)
-                MUSL_URI=mips-linux-musl-cross
+                MUSL_URI=mips-linux-muslsf-cross
+                URL=mips-linux-muslsf
+                ;;
+              i686-unknown-linux-musl)
+                MUSL_URI=i686-linux-musl-cross
                 ;;
             esac
           
-            if [[ $TARGET =~ ^mips.*$ ]]; then
-              # mips平台使用1.71.1版本
-              rustup install 1.71.1
-              rustup default 1.71.1  
-            else
-              rustup install 1.77
-              rustup default 1.77
-            fi
-          
             if [  -n "$MUSL_URI" ]; then
-              mkdir -p ./musl_gcc 
-              wget -c https://musl.cc/$MUSL_URI.tgz -P ./musl_gcc/
-              tar zxf ./musl_gcc/$MUSL_URI.tgz -C ./musl_gcc/
-              sudo ln -s $(pwd)/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
+              mkdir -p /opt/musl_gcc 
+              wget -c https://musl.cc/$MUSL_URI.tgz -P /opt/musl_gcc/
+              tar zxf /opt/musl_gcc/$MUSL_URI.tgz -C /opt/musl_gcc/
+              sudo ln -s /opt/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
             fi
           else
-            rustup install 1.77
-            rustup default 1.77 
+              rustup install 1.77
+              rustup default 1.77
+          fi
+          if [[ $TARGET =~ ^mips.*$ ]]; then
+              # mips平台使用nightly版本
+              cd /opt/musl_gcc/${URL}-cross/lib/gcc/${URL}/11.2.1
+              cp libgcc_eh.a libunwind.a
+              rustup toolchain install nightly-x86_64-unknown-linux-gnu
+              rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+              RUST_LIB_SRC=$HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/
+              if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then 
+                 cp -f $RUST_LIB_SRC/library/Cargo.lock $RUST_LIB_SRC/Cargo.lock
+              fi 
+          else
+              rustup install 1.77
+              rustup default 1.77
           fi
           rustup -V
           
@@ -175,11 +186,17 @@ jobs:
           linker = "arm-linux-musleabi-gcc"
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
           [target.mipsel-unknown-linux-musl]
-          linker = "mipsel-linux-musl-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          linker = "mipsel-linux-muslsf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/mipsel-linux-muslsf/lib",
+          "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/lib/gcc/mipsel-linux-muslsf/11.2.1"]
           [target.mips-unknown-linux-musl]
-          linker = "mips-linux-musl-gcc"
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          linker = "mips-linux-muslsf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/mips-linux-muslsf/lib",
+          "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/lib/gcc/mips-linux-muslsf/11.2.1"]
           [target.x86_64-pc-windows-msvc]
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]    
           [target.i686-pc-windows-msvc]
@@ -189,14 +206,26 @@ jobs:
           [target.aarch64-apple-darwin]
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]     
           [target.i686-unknown-linux-musl]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]    
+          linker = "i686-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]   
           EOF
       - name: Install rust target
+        if: ${{ ! startsWith(matrix.TARGET, 'mips') }}
         run: rustup target add $TARGET
       - name: Run build vn-link-cli
-        run: cargo build --package vn-link-cli --release --verbose --target $TARGET --features $FEATURES
+        run: |
+          if [[ $TARGET =~ ^mips.*$ ]]; then
+            cargo +nightly build --package vn-link-cli --release --verbose --target $TARGET -Z build-std=std,panic_abort --features $FEATURES
+          else
+            cargo build --package vn-link-cli --release --verbose --target $TARGET --features $FEATURES
+          fi
       - name: Run build vnt-cli
-        run: cargo build --package vnt-cli --release --verbose --target $TARGET --features $FEATURES
+        run: |
+          if [[ $TARGET =~ ^mips.*$ ]]; then
+            cargo +nightly build --package vnt-cli --release --verbose --target $TARGET -Z build-std=std,panic_abort --features $FEATURES
+          else
+            cargo build --package vnt-cli --release --verbose --target $TARGET --features $FEATURES
+          fi
       - name: List target
         run: find ./target
       - name: Compress
@@ -243,7 +272,7 @@ jobs:
       - name: Release
         uses: svenstaro/upload-release-action@v2
         with:
-          repo_token: ${{ secrets.YOURTOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./artifacts/**/*.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
