@@ -7,14 +7,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-
+permissions:
+  contents: write
 defaults:
   run:
     # necessary for windows
     shell: bash
-permissions:
-  contents: write
-  packages: write
 
 jobs:
   #  test:
@@ -44,7 +42,7 @@ jobs:
         include:
           - TARGET: i686-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
-            FEATURES: default
+            FEATURES: ring-cipher,openssl-vendored,wss
           - TARGET: x86_64-unknown-linux-musl # test in an alpine container on a mac
             OS: ubuntu-latest
             FEATURES: ring-cipher,wss
@@ -81,11 +79,6 @@ jobs:
           - TARGET: mips-unknown-linux-musl # openwrt
             OS: ubuntu-latest
             FEATURES: ring-cipher,wss
-#          - TARGET: x86_64-unknown-freebsd
-#            OS: ubuntu-latest
-#            ARTIFACT_NAME: freebsd-13.2-x86_64
-#            FEATURES: default
-#            BSD_VERSION: 13.2
     # needs: test
     runs-on: ${{ matrix.OS }}
     env:
@@ -98,7 +91,7 @@ jobs:
       - name: Init submodules
         uses: snickerbockers/submodules-init@v4
       - name: Cargo cache
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -109,38 +102,7 @@ jobs:
         run: echo OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl >> $GITHUB_ENV
       - name: List
         run: find ./
-      - name: Build NetLink X86_64-FreeBSD
-        uses: cross-platform-actions/action@v0.23.0
-        if: ${{ endsWith(matrix.TARGET, 'freebsd') }}
-        env:
-          TARGET: ${{ matrix.TARGET }}
-        with:
-          operating_system: freebsd
-          environment_variables: TARGET
-          architecture: x86-64
-          version: ${{ matrix.BSD_VERSION }}
-          shell: bash
-          memory: 5G
-          cpu_count: 4
-          run: |
-            uname -a
-            echo $SHELL
-            pwd
-            ls -lah
-            whoami
-            env | sort
-            sudo pkg install -y git protobuf
-            curl --proto 'https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
-            rustup set auto-self-update disable
-            rustup install 1.77
-            rustup default 1.77
-            export CC=clang
-            export CXX=clang++
-            export CARGO_TERM_COLOR=always
-            cargo build --release --verbose --target $TARGET
       - name: Install and configure dependencies
-        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') }}
         run: |
           # dependencies are only needed on ubuntu as that's the only place where
           # we make cross-compilation
@@ -162,7 +124,7 @@ jobs:
                 ;;    
               armv7-unknown-linux-musleabi)
                 MUSL_URI=armv7m-linux-musleabi-cross
-                ;; 
+                ;;   
               arm-unknown-linux-musleabihf)
                 MUSL_URI=arm-linux-musleabihf-cross
                 ;;    
@@ -173,28 +135,34 @@ jobs:
                 MUSL_URI=mips-linux-muslsf-cross
                 URL=mips-linux-muslsf
                 ;;
+              i686-unknown-linux-musl)
+                MUSL_URI=i686-linux-musl-cross
+                ;;
             esac
-
+          
             if [  -n "$MUSL_URI" ]; then
               mkdir -p /opt/musl_gcc 
               wget -c https://musl.cc/$MUSL_URI.tgz -P /opt/musl_gcc/
               tar zxf /opt/musl_gcc/$MUSL_URI.tgz -C /opt/musl_gcc/
               sudo ln -s /opt/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
             fi
+          else
+              rustup install 1.77
+              rustup default 1.77
           fi
           if [[ $TARGET =~ ^mips.*$ ]]; then
-            cd /opt/musl_gcc/${URL}-cross/lib/gcc/${URL}/11.2.1
-            cp libgcc_eh.a libunwind.a
-            rustup toolchain install nightly-x86_64-unknown-linux-gnu
-            rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
-            RUST_LIB_SRC=$HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/
-            if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then 
-               cp -f $RUST_LIB_SRC/library/Cargo.lock $RUST_LIB_SRC/Cargo.lock
-            fi
-          elif [[ $OS =~ ^windows.*$ ]]; then
-            # Windows 平台使用 1.77 版本
-            rustup install 1.77.0
-            rustup default 1.77.0
+              # mips平台使用nightly版本
+              cd /opt/musl_gcc/${URL}-cross/lib/gcc/${URL}/11.2.1
+              cp libgcc_eh.a libunwind.a
+              rustup toolchain install nightly-x86_64-unknown-linux-gnu
+              rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+              RUST_LIB_SRC=$HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/
+              if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then 
+                 cp -f $RUST_LIB_SRC/library/Cargo.lock $RUST_LIB_SRC/Cargo.lock
+              fi 
+          else
+              rustup install 1.77
+              rustup default 1.77
           fi
           rustup -V
           
@@ -238,13 +206,13 @@ jobs:
           [target.aarch64-apple-darwin]
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]     
           [target.i686-unknown-linux-musl]
-          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]    
+          linker = "i686-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]   
           EOF
       - name: Install rust target
-        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') &&  ! startsWith(matrix.TARGET, 'mips') }}
+        if: ${{ ! startsWith(matrix.TARGET, 'mips') }}
         run: rustup target add $TARGET
       - name: Run build vn-link-cli
-        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') }}
         run: |
           if [[ $TARGET =~ ^mips.*$ ]]; then
             cargo +nightly build --package vn-link-cli --release --verbose --target $TARGET -Z build-std=std,panic_abort --features $FEATURES
@@ -252,7 +220,6 @@ jobs:
             cargo build --package vn-link-cli --release --verbose --target $TARGET --features $FEATURES
           fi
       - name: Run build vnt-cli
-        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') }}
         run: |
           if [[ $TARGET =~ ^mips.*$ ]]; then
             cargo +nightly build --package vnt-cli --release --verbose --target $TARGET -Z build-std=std,panic_abort --features $FEATURES
@@ -305,7 +272,7 @@ jobs:
       - name: Release
         uses: svenstaro/upload-release-action@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN  }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./artifacts/**/*.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
