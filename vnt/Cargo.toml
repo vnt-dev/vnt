@@ -31,6 +31,7 @@ rsa = { version = "0.9.2", features = [], optional = true }
 spki = { version = "0.7.2", features = ["fingerprint", "alloc", "base64"], optional = true }
 openssl-sys = { git = "https://github.com/vnt-dev/rust-openssl", optional = true }
 libsm = { git = "https://github.com/vnt-dev/libsm", optional = true }
+http_req = { git = "https://github.com/lmq8267/http_req.git", default-features = false, features = ["rust-tls"] }
 
 mio = { version = "=0.8.11", features = ["os-poll", "net", "os-ext"] }
 crossbeam-queue = "0.3.11"
