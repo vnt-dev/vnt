@@ -112,7 +112,7 @@ where
                                     url = redirect.to_string();
                                 }
                                 println!("Location：{}", url);
-                                log::info!("最终地址: {}", url);
+                                log::info!("修改后的重定向地址: {}", url);
                                 continue;
                             }
                         }
