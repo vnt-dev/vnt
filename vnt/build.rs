@@ -1,9 +1,6 @@
 use cfg_aliases::cfg_aliases;
 
 fn main() {
-    #[cfg(target_os = "windows")] 
-    thunk::thunk();
-    
     cfg_aliases! {
         cipher: {
             any(feature = "aes_gcm",
