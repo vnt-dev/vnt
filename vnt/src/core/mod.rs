@@ -147,24 +147,22 @@ impl Config {
                 &LocalInterface::default(),
             );
             match address_result {
-                Ok(address) => {
-                    match address_choose(address) {
-                        Ok(resolved_address) => {
-                            server_address = resolved_address; 
-                        }
-                        Err(e) => {
-                            log::error!("Failed to choose address: {}", e);
-                            println!("Failed to choose address: {}", e);
-                        }
+                Ok(address) => match address_choose(address) {
+                    Ok(resolved_address) => {
+                        server_address = resolved_address;
                     }
-                }
+                    Err(e) => {
+                        log::error!("Failed to choose address: {}", e);
+                        println!("Failed to choose address: {}", e);
+                    }
+                },
                 Err(e) => {
                     log::error!("DNS query failed: {}", e);
                     println!("DNS query failed: {}", e);
                 }
             }
         }
-        
+
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;
 
