@@ -146,9 +146,6 @@ jobs:
               tar zxf /opt/musl_gcc/$MUSL_URI.tgz -C /opt/musl_gcc/
               sudo ln -s /opt/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
             fi
-          else
-              rustup install 1.77
-              rustup default 1.77
           fi
           if [[ $TARGET =~ ^mips.*$ ]]; then
               # mips平台使用nightly版本
@@ -160,9 +157,6 @@ jobs:
               if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then 
                  cp -f $RUST_LIB_SRC/library/Cargo.lock $RUST_LIB_SRC/Cargo.lock
               fi 
-          else
-              rustup install 1.77
-              rustup default 1.77
           fi
           rustup -V
           
