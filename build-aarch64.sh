@@ -32,7 +32,7 @@ usage() {
 
 # 检查依赖
 check_dependencies() {
-    local toolchain_path="/home/zkteco/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu"
+    local toolchain_path="/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu"
 
     if [ ! -d "$toolchain_path" ]; then
         echo -e "${RED}错误: 交叉编译工具链不存在: $toolchain_path${NC}"
