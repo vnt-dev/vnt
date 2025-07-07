@@ -45,24 +45,63 @@ check_dependencies() {
     fi
 }
 
+# 生成 Cargo 配置文件
+generate_cargo_config() {
+    echo -e "${GREEN}生成 Cargo 配置文件...${NC}"
+
+    # 创建 .cargo 目录
+    mkdir -p .cargo
+
+    # 生成 config.toml
+    cat > .cargo/config.toml << 'EOF'
+[target.aarch64-unknown-linux-gnu]
+linker = "/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-gcc"
+ar = "/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-ar"
+rustflags = ["-C", "link-arg=-s"]
+
+[env]
+BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu = "--sysroot=/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/aarch64-linux-gnu/libc"
+LIBCLANG_PATH = "/usr/lib/llvm-10/lib"
+
+[profile.release]
+opt-level = "z"          # 优化大小而非速度
+lto = true               # 启用链接时优化
+codegen-units = 1        # 减少代码生成单元以获得更好的优化
+panic = "abort"          # 使用 abort 而非 unwind 减小大小
+strip = true             # 剥离符号表和调试信息
+EOF
+
+    echo -e "${GREEN}Cargo 配置文件已生成 (启用大小优化)${NC}"
+}
+
 # 设置环境变量
 setup_env() {
     export LIBCLANG_PATH="/usr/lib/llvm-10/lib"
-    export CC_aarch64_unknown_linux_gnu="/home/zkteco/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-gcc"
-    export AR_aarch64_unknown_linux_gnu="/home/zkteco/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-ar"
-    export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu="--sysroot=/home/zkteco/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/aarch64-linux-gnu/libc"
+    export CC_aarch64_unknown_linux_gnu="/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-gcc"
+    export AR_aarch64_unknown_linux_gnu="/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-ar"
+    export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu="--sysroot=/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/aarch64-linux-gnu/libc"
+
+    # 验证环境变量设置
+    echo "环境变量设置："
+    echo "  LIBCLANG_PATH: $LIBCLANG_PATH"
+    echo "  CC_aarch64_unknown_linux_gnu: $CC_aarch64_unknown_linux_gnu"
+    echo "  AR_aarch64_unknown_linux_gnu: $AR_aarch64_unknown_linux_gnu"
 }
 
 # 编译函数
 build_package() {
     local package=$1
     echo -e "${GREEN}正在编译 $package...${NC}"
+
     cargo build --package "$package" --release --target aarch64-unknown-linux-gnu
 
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}$package 编译成功！${NC}"
-        ls -la "target/aarch64-unknown-linux-gnu/release/$package"
-        file "target/aarch64-unknown-linux-gnu/release/$package"
+
+        # 显示文件信息
+        local binary_path="target/aarch64-unknown-linux-gnu/release/$package"
+        ls -la "$binary_path"
+        file "$binary_path"
     else
         echo -e "${RED}$package 编译失败！${NC}"
         exit 1
@@ -99,6 +138,7 @@ done
 echo -e "${GREEN}VNT 项目 aarch64 交叉编译${NC}"
 
 check_dependencies
+generate_cargo_config
 setup_env
 
 if [ "$CLEAN" = true ]; then
