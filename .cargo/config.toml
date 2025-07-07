@@ -1,0 +1,6 @@
+[target.aarch64-unknown-linux-gnu]
+linker = "/home/zkteco/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-gcc"
+
+[env]
+CC_aarch64_unknown_linux_gnu = "/home/zkteco/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-gcc"
+AR_aarch64_unknown_linux_gnu = "/home/zkteco/gcc-10.2.1-20210303-sigmastar-glibc-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-ar"
