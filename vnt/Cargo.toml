@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tun-rs = { version = "2", optional = true, features = ["async"] }
+tun-rs = { version = "2.5.0", optional = true, features = ["interruptible"] }
 packet = { path = "./packet" }
 bytes = "1.5.0"
 log = "0.4.17"
@@ -38,7 +38,7 @@ crossbeam-queue = "0.3.11"
 anyhow = "1.0.82"
 dns-parser = "0.8.0"
 
-tokio = { version = "1.37.0", features = ["full"] }
+tokio = { version = "1.46.1", features = ["full"] }
 
 lz4_flex = { version = "0.11", default-features = false, optional = true }
 zstd = { version = "0.13.1", optional = true }
@@ -54,7 +54,7 @@ futures-util = "0.3.30"
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.55.0"
 libloading = "0.8.0"
-windows-sys = { version = "0.59.0", features = ["Win32_Foundation",
+windows-sys = { version = "0.60.2", features = ["Win32_Foundation",
     "Win32_NetworkManagement",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
