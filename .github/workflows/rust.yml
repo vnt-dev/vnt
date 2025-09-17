@@ -19,9 +19,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - TARGET: i686-unknown-linux-musl
-          #   OS: ubuntu-latest
-          #   FEATURES: ring-cipher,openssl-vendored,wss
+          - TARGET: i686-unknown-linux-musl
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,openssl-vendored,wss
           - TARGET: x86_64-unknown-linux-musl
             OS: ubuntu-latest
             FEATURES: ring-cipher,wss
