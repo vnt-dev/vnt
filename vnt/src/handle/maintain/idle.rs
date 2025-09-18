@@ -50,7 +50,7 @@ pub fn idle_gateway<Call: VntCallback>(
         &mut connect_count,
         &handshake,
     );
-    let rs = scheduler.timeout(Duration::from_secs(5), move |s| {
+    let rs = scheduler.timeout(Duration::from_secs(8), move |s| {
         idle_gateway(
             s,
             context,

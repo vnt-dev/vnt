@@ -313,7 +313,7 @@ impl VntInner {
             let client_cipher = client_cipher.clone();
             let server_cipher = server_cipher.clone();
             //延迟启动
-            scheduler.timeout(Duration::from_secs(3), move |scheduler| {
+            scheduler.timeout(Duration::from_secs(1), move |scheduler| {
                 start(
                     scheduler,
                     context,
