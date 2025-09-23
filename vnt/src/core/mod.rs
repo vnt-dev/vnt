@@ -141,12 +141,28 @@ impl Config {
                 server_address_str = s.to_string();
                 protocol = ConnectProtocol::TCP;
             }
-            server_address = address_choose(dns_query_all(
+            let address_result = dns_query_all(
                 &server_address_str,
                 name_servers.clone(),
                 &LocalInterface::default(),
-            )?)?;
+            );
+            match address_result {
+                Ok(address) => match address_choose(address) {
+                    Ok(resolved_address) => {
+                        server_address = resolved_address;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to choose address: {}", e);
+                        println!("Failed to choose address: {}", e);
+                    }
+                },
+                Err(e) => {
+                    log::error!("DNS query failed: {}", e);
+                    println!("DNS query failed: {}", e);
+                }
+            }
         }
+
         #[cfg(feature = "port_mapping")]
         let port_mapping_list = crate::port_mapping::convert(port_mapping_list)?;
 

@@ -220,8 +220,9 @@ jobs:
           else
             cargo build --package vnt-cli --release --target $TARGET --features $FEATURES
           fi
-
-      - name: Compress artifacts
+      - name: List target
+        run: find ./target
+      - name: Compress
         run: |
           mkdir -p ./artifacts
           if [[ $OS =~ ^windows.*$ ]]; then
@@ -259,7 +260,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
-
+      - name: List
+        run: find ./artifacts
       - name: Release
         uses: svenstaro/upload-release-action@v2
         with:

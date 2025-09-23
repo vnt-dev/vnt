@@ -19,6 +19,7 @@ signal-hook = "0.3.17"
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3.9", features = ["handleapi", "processthreadsapi", "winnt", "securitybaseapi", "impl-default"] }
 
+
 [features]
 default = ["default-feature"]
 default-feature = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "ip_proxy", "port_mapping", "log", "command", "file_config", "lz4", "ws"]
@@ -45,3 +46,6 @@ file_config = ["common/file_config"]
 [build-dependencies]
 rand = "0.8.5"
 chrono = "0.4.23"
+
+[target.'cfg(windows)'.build-dependencies]
+thunk-rs = { version = "0.3.3", features = ["win7"] }

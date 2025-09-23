@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use tun_rs::SyncDevice;
+use tun_rs::{InterruptEvent, SyncDevice};
 
 pub(crate) fn start_simple(
     stop_manager: StopManager,
@@ -29,10 +29,11 @@ pub(crate) fn start_simple(
     device_stop: DeviceStop,
     allow_wire_guard: bool,
 ) -> anyhow::Result<()> {
+    let event = Arc::new(InterruptEvent::new()?);
     let worker = {
-        let device = device.clone();
+        let event = event.clone();
         stop_manager.add_listener("tun_device".into(), move || {
-            if let Err(e) = device.shutdown() {
+            if let Err(e) = event.trigger() {
                 log::warn!("{:?}", e);
             }
         })?
@@ -50,6 +51,7 @@ pub(crate) fn start_simple(
     if let Err(e) = start_simple0(
         context,
         device,
+        event,
         current_device,
         ip_route,
         #[cfg(feature = "ip_proxy")]
@@ -72,6 +74,7 @@ pub(crate) fn start_simple(
 fn start_simple0(
     context: &ChannelContext,
     device: Arc<SyncDevice>,
+    event: Arc<InterruptEvent>,
     current_device: Arc<AtomicCell<CurrentDeviceInfo>>,
     ip_route: ExternalRoute,
     #[cfg(feature = "ip_proxy")] ip_proxy_map: Option<IpProxyMap>,
@@ -84,7 +87,7 @@ fn start_simple0(
     let mut buf = [0; BUFFER_SIZE];
     let mut extend = [0; BUFFER_SIZE];
     loop {
-        let len = device.recv(&mut buf[12..])? + 12;
+        let len = device.recv_intr(&mut buf[12..],&event)? + 12;
         // buf是重复利用的，需要重置头部
         buf[..12].fill(0);
         match crate::handle::tun_tap::tun_handler::handle(
