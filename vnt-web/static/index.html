@@ -1,0 +1,2884 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>VNT Dashboard</title>
+    <link rel="icon"
+          href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='0' y='0' width='64' height='64' rx='16' fill='%230f172a'/%3E%3Cpath d='M16 20 L32 48 L48 20' fill='none' stroke='%233b82f6' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='20' r='6' fill='%2360a5fa'/%3E%3Ccircle cx='48' cy='20' r='6' fill='%2360a5fa'/%3E%3Ccircle cx='32' cy='48' r='6' fill='%2322c55e'/%3E%3C/svg%3E"
+          type="image/svg+xml">
+    <script src="tailwindcss3.4.17.js.gz"></script>
+    <script src="vue.global.prod.js.gz"></script>
+    <script src="vue-router.global.prod.js.gz"></script>
+
+    <style>
+        [v-cloak] {
+            display: none;
+        }
+
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+        }
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .input-dark {
+            background-color: #1e293b;
+            border-color: #334155;
+            color: white;
+        }
+
+        .input-dark:focus {
+            border-color: #3b82f6;
+            outline: none;
+            ring: 2px;
+        }
+
+        /* Tooltip CSS (保留用于表格内的静态 tooltip) */
+        .tooltip {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .tooltip .tooltip-text {
+            visibility: hidden;
+            width: 140px;
+            background-color: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 6px 4px;
+            position: absolute;
+            z-index: 10;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 12px;
+            pointer-events: none;
+            border: 1px solid #475569;
+        }
+
+        .tooltip .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: rgba(0, 0, 0, 0.9) transparent transparent transparent;
+        }
+
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* 路由切换动画 */
+        .fade-enter-active,
+        .fade-leave-active {
+            transition: opacity 0.2s ease;
+        }
+
+        .fade-enter-from,
+        .fade-leave-to {
+            opacity: 0;
+        }
+
+        /* 自定义滚动条样式 */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(71, 85, 105, 0.8);
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(100, 116, 139, 0.9);
+        }
+
+        /* Firefox 滚动条样式 */
+        .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(71, 85, 105, 0.8) rgba(15, 23, 42, 0.5);
+        }
+    </style>
+</head>
+<body class="h-screen overflow-hidden flex flex-col font-sans">
+<div id="app" v-cloak class="flex h-full">
+    <!-- 侧边栏 -->
+    <aside
+            class="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0"
+    >
+        <div
+                class="p-6 flex items-center justify-center border-b border-slate-800"
+        >
+            <h1 class="text-2xl font-bold text-blue-500 tracking-wider">
+                VNT<span class="text-slate-400 text-sm ml-2">Web</span>
+            </h1>
+        </div>
+
+        <nav class="flex-1 p-4 space-y-2">
+            <!-- 使用 router-link 和 v-slot 自定义渲染按钮 -->
+            <router-link
+                    to="/general"
+                    custom
+                    v-slot="{ navigate, isActive }"
+            >
+                <button
+                        @click="navigate"
+                        :class="navClass(isActive)"
+                        class="w-full flex items-center p-3 rounded-lg transition-all duration-200"
+                >
+                    <svg
+                            class="w-5 h-5 mr-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                    >
+                        <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
+                        ></path>
+                    </svg>
+                    通用
+                </button>
+            </router-link>
+
+            <router-link
+                    to="/config"
+                    custom
+                    v-slot="{ navigate, isActive }"
+            >
+                <button
+                        @click="navigate"
+                        :class="navClass(isActive)"
+                        class="w-full flex items-center p-3 rounded-lg transition-all duration-200"
+                >
+                    <svg
+                            class="w-5 h-5 mr-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                    >
+                        <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                        ></path>
+                        <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                        ></path>
+                    </svg>
+                    配置
+                </button>
+            </router-link>
+
+            <router-link
+                    to="/peers"
+                    custom
+                    v-slot="{ navigate, isActive }"
+            >
+                <button
+                        @click="navigate"
+                        :class="navClass(isActive)"
+                        class="w-full flex items-center p-3 rounded-lg transition-all duration-200"
+                >
+                    <svg
+                            class="w-5 h-5 mr-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                    >
+                        <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+                        ></path>
+                    </svg>
+                    设备列表
+                </button>
+            </router-link>
+
+            <router-link
+                    to="/routes"
+                    custom
+                    v-slot="{ navigate, isActive }"
+            >
+                <button
+                        @click="navigate"
+                        :class="navClass(isActive)"
+                        class="w-full flex items-center p-3 rounded-lg transition-all duration-200"
+                >
+                    <svg
+                            class="w-5 h-5 mr-3"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                    >
+                        <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 01-.806-.98l-3.747-1.874O12 7m3 13V7m-3 0l3 3"
+                        ></path>
+                    </svg>
+                    路由
+                </button>
+            </router-link>
+        </nav>
+
+        <div class="p-4 text-xs text-slate-500 text-center">
+            Client: v{{ info.version }}
+        </div>
+    </aside>
+
+    <main
+            class="flex-1 flex flex-col bg-slate-900/50 relative overflow-hidden"
+    >
+        <!-- Header -->
+        <header
+                class="h-16 glass-panel border-b border-slate-700 flex items-center justify-between px-8 z-10 shrink-0"
+        >
+            <div class="flex items-center space-x-6">
+                <div
+                        class="flex items-center space-x-2 bg-slate-800 rounded-full px-3 py-1 border border-slate-700"
+                >
+                            <span
+                                    class="w-2.5 h-2.5 rounded-full"
+                                    :class="info.status === 'running' ? 'bg-green-500 animate-pulse' : (info.status === 'starting' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500')"
+                            ></span>
+                    <span class="text-sm font-medium"
+                    >{{ info.status === 'running' ? '已运行' :
+                                (info.status === 'starting' ? '启动中...' :
+                                '未启动') }}</span
+                    >
+                </div>
+
+                <div
+                        v-if="info.status === 'running'"
+                        class="flex items-center space-x-2 bg-slate-800 rounded-full px-3 py-1 border border-slate-700"
+                        :title="serverStatusText"
+                >
+                    <svg
+                            class="w-4 h-4"
+                            :class="isServerConnected ? 'text-green-400' : 'text-red-400'"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                    >
+                        <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                        ></path>
+                    </svg>
+                    <span
+                            class="text-sm font-medium"
+                            :class="isServerConnected ? 'text-green-400' : 'text-red-400'"
+                    >服务器: {{ isServerConnected ? '已连接' :
+                                '未连接' }}</span
+                    >
+                </div>
+
+                <div
+                        v-if="info.ip"
+                        class="flex items-center space-x-2 text-slate-300"
+                >
+                            <span
+                                    class="font-mono text-blue-400 font-bold bg-blue-900/20 px-2 py-0.5 rounded"
+                            >{{ info.ip }}</span
+                            >
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-2 text-slate-400">
+                <span class="text-sm">设备:</span>
+                <span class="font-bold text-white"
+                >{{ info.name || '' }}</span
+                >
+                <span
+                        class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-500"
+                        title="Device ID"
+                >{{ info.device_id.substring(0, 8) }}...</span
+                >
+            </div>
+        </header>
+
+        <!-- Router View with Transition -->
+        <div class="flex-1 overflow-auto scrollbar-hide p-8 relative">
+            <router-view v-slot="{ Component }">
+                <transition name="fade" mode="out-in">
+                    <component :is="Component"/>
+                </transition>
+            </router-view>
+        </div>
+
+        <!-- 启动日志弹窗 (Global) -->
+        <div
+                v-if="showStartLog"
+                class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+        >
+            <div
+                    class="bg-slate-900/95 border border-slate-700 rounded-xl w-full max-w-2xl flex flex-col shadow-2xl overflow-hidden"
+            >
+                <div
+                        class="px-6 py-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50"
+                >
+                    <div class="flex items-center space-x-3">
+                        <div
+                                v-if="startStatus === 'starting'"
+                                class="w-3 h-3 bg-blue-500 rounded-full animate-ping"
+                        ></div>
+                        <div
+                                v-else-if="startStatus === 'running'"
+                                class="w-3 h-3 bg-green-500 rounded-full"
+                        ></div>
+                        <div
+                                v-else
+                                class="w-3 h-3 bg-red-500 rounded-full"
+                        ></div>
+                        <h3 class="text-lg font-bold text-white">
+                            {{ startStatus === 'starting' ?
+                            '正在启动组网...' : (startStatus ===
+                            'running' ? '启动成功' : '启动失败') }}
+                        </h3>
+                    </div>
+                    <span
+                            class="text-xs font-mono text-slate-500 uppercase tracking-widest"
+                    >{{ startStatus }}</span
+                    >
+                </div>
+                <div
+                        ref="logContainer"
+                        class="flex-1 p-6 h-80 overflow-y-auto scrollbar-hide font-mono text-sm space-y-2 bg-black/20"
+                >
+                    <div
+                            v-for="(log, idx) in startLogs"
+                            :key="idx"
+                            class="flex space-x-3 animate-in fade-in slide-in-from-left-2"
+                    >
+                        <span class="text-blue-500 shrink-0">>>></span>
+                        <span class="text-slate-300 break-all"
+                        >{{ log }}</span
+                        >
+                    </div>
+                    <div
+                            v-if="startStatus === 'starting'"
+                            class="text-blue-400 animate-pulse italic mt-4"
+                    >
+                        等待后续步骤...
+                    </div>
+                    <div
+                            v-if="startStatus === 'stopped' && startLogs.length > 0"
+                            class="p-3 bg-red-900/20 border border-red-900/50 rounded-lg text-red-400 mt-4"
+                    >
+                        <strong>启动失败：</strong>
+                        请检查配置或网络连接。
+                    </div>
+                </div>
+                <div
+                        class="p-4 border-t border-slate-700 flex justify-end space-x-3 bg-slate-800/50"
+                >
+                    <button
+                            v-if="startStatus === 'starting'"
+                            @click="cancelStart"
+                            class="px-6 py-2 bg-slate-700 hover:bg-red-600 text-white rounded-lg transition-colors font-medium"
+                    >
+                        取消组网
+                    </button>
+                    <button
+                            v-if="startStatus === 'stopped' || startStatus === 'running'"
+                            @click="showStartLog = false"
+                            class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium"
+                    >
+                        关闭窗口
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tooltip (Global Teleport) -->
+        <teleport to="body">
+            <div
+                    v-if="tooltipState.show"
+                    :style="{ top: tooltipState.y + 'px', left: tooltipState.x + 'px' }"
+                    class="fixed z-[9999] transform -translate-x-1/2 mt-1"
+                    @mouseenter="onTooltipEnter"
+                    @mouseleave="onTooltipLeave"
+            >
+                <div
+                        class="w-auto min-w-[260px] max-w-[320px] text-left p-4 bg-slate-800 border border-slate-600 shadow-2xl rounded-lg text-sm text-slate-200"
+                >
+                    <div
+                            class="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-800 border-t border-l border-slate-600 transform rotate-45"
+                    ></div>
+                    <div
+                            class="flex justify-between items-center border-b border-slate-600 pb-2 mb-2 relative z-10"
+                    >
+                                <span
+                                        class="text-slate-400 text-xs uppercase font-bold"
+                                >NAT Type</span
+                                >
+                        <span
+                                class="text-green-400 font-bold bg-green-900/30 px-2 py-0.5 rounded text-xs border border-green-800"
+                        >{{ tooltipState.info.nat_type }}</span
+                        >
+                    </div>
+                    <div
+                            v-if="tooltipState.info.public_ips && tooltipState.info.public_ips.length > 0"
+                            class="mb-3 relative z-10"
+                    >
+                                <span class="text-slate-400 text-xs block mb-1"
+                                >Public IPv4:</span
+                                >
+                        <div class="flex flex-wrap gap-1">
+                                    <span
+                                            v-for="pip in tooltipState.info.public_ips"
+                                            :key="pip"
+                                            class="text-xs bg-slate-700 text-slate-200 px-1.5 py-0.5 rounded border border-slate-600"
+                                    >{{ pip }}</span
+                                    >
+                        </div>
+                    </div>
+                    <div
+                            v-if="tooltipState.info.ipv6"
+                            class="relative z-10"
+                    >
+                                <span class="text-slate-400 text-xs block mb-1"
+                                >IPv6:</span
+                                >
+                        <div
+                                class="text-slate-200 text-xs break-all whitespace-normal leading-relaxed bg-slate-900/50 p-1.5 rounded border border-slate-700/50"
+                        >
+                            {{ tooltipState.info.ipv6 }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </teleport>
+    </main>
+</div>
+
+<!-- ================= TEMPLATES ================= -->
+
+<!-- 1. General (通用) -->
+<template id="tpl-general">
+    <div class="space-y-6 max-w-5xl mx-auto">
+        <div class="glass-panel rounded-xl p-6 shadow-lg">
+            <h2
+                    class="text-xl font-bold mb-6 text-white border-l-4 border-blue-500 pl-3"
+            >
+                运行控制
+            </h2>
+            <div class="flex items-end space-x-4">
+                <div class="flex-1">
+                    <label
+                            class="block text-sm font-medium text-slate-400 mb-2"
+                    >选择配置</label
+                    >
+                    <select
+                            v-model="localSelectedConfig"
+                            :disabled="info.status === 'starting'"
+                            class="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <option value="" disabled>请选择配置...</option>
+                        <option
+                                v-for="cfg in configList"
+                                :key="cfg.file_name"
+                                :value="cfg.file_name"
+                        >
+                            {{ cfg.config_name || cfg.file_name }}
+                        </option>
+                    </select>
+                </div>
+                <button
+                        v-if="info.status === 'running'"
+                        @click="handleRestart"
+                        :disabled="loading || !localSelectedConfig"
+                        class="px-6 py-2.5 rounded-lg font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center disabled:opacity-50 disabled:cursor-not-allowed bg-blue-500 hover:bg-blue-600"
+                >
+                    <span v-if="loading" class="mr-2 animate-spin">⟳</span>
+                    重启
+                </button>
+                <button
+                        @click="handleToggle"
+                        :disabled="loading || (!localSelectedConfig && info.status !== 'running' && info.status !== 'starting')"
+                        :class="(info.status === 'running' || info.status === 'starting') ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'"
+                        class="px-8 py-2.5 rounded-lg font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                            <span v-if="loading" class="mr-2 animate-spin"
+                            >⟳</span
+                            >
+                    {{ (info.status === 'running' || info.status ===
+                    'starting') ? '停止运行' : '启动运行' }}
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <div
+                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-blue-500"
+            >
+                        <span class="text-slate-400 text-sm mb-1"
+                        >在线设备</span
+                        >
+                <span class="text-3xl font-bold text-blue-400"
+                >{{ info.online_client_num }}</span
+                >
+            </div>
+            <div
+                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-green-500"
+            >
+                        <span class="text-slate-400 text-sm mb-1"
+                        >直连设备</span
+                        >
+                <span class="text-3xl font-bold text-green-400"
+                >{{ info.direct_client_num }}</span
+                >
+            </div>
+            <div
+                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-slate-500"
+            >
+                        <span class="text-slate-400 text-sm mb-1"
+                        >离线设备</span
+                        >
+                <span class="text-3xl font-bold text-slate-400"
+                >{{ info.offline_client_num }}</span
+                >
+            </div>
+            <div
+                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-yellow-500"
+            >
+                        <span class="text-slate-400 text-sm mb-1"
+                        >当前配置</span
+                        >
+                <span
+                        class="text-lg font-medium text-yellow-400 truncate w-full text-center px-2"
+                        :title="info.current_config_file"
+                >
+                            {{ info.current_config_name || '-' }}
+                        </span>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl p-6 shadow-lg">
+            <h2 class="text-lg font-bold mb-4 text-white">网络详情</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div
+                        class="flex justify-between border-b border-slate-700 pb-2"
+                >
+                    <span class="text-slate-400">虚拟 IP / 掩码</span>
+                    <span class="font-mono text-white"
+                    >{{ info.ip || '-' }} / {{ info.prefix_len ||
+                                '-' }}</span
+                    >
+                </div>
+                <div
+                        class="flex justify-between border-b border-slate-700 pb-2"
+                >
+                    <span class="text-slate-400">网关</span>
+                    <span class="font-mono text-white"
+                    >{{ info.gateway || '-' }}</span
+                    >
+                </div>
+                <div
+                        class="flex justify-between border-b border-slate-700 pb-2"
+                >
+                    <span class="text-slate-400">网络编号</span>
+                    <span class="font-mono text-white"
+                    >{{ info.network_code || '-' }}</span
+                    >
+                </div>
+                <div
+                        class="flex justify-between border-b border-slate-700 pb-2"
+                >
+                    <span class="text-slate-400">MTU</span>
+                    <span class="font-mono text-white"
+                    >{{ info.mtu || '' }}</span
+                    >
+                </div>
+                <div
+                        class="flex justify-between border-b border-slate-700 pb-2"
+                >
+                    <span class="text-slate-400">NAT 类型</span>
+                    <span class="font-mono text-blue-300"
+                    >{{ info.nat_type || 'Unknown' }}</span
+                    >
+                </div>
+                <div
+                        class="flex justify-between border-b border-slate-700 pb-2"
+                >
+                    <span class="text-slate-400">Public IPv6</span>
+                    <span
+                            class="font-mono text-white truncate max-w-[200px]"
+                            :title="info.public_ipv6"
+                    >{{ info.public_ipv6 || '-' }}</span
+                    >
+                </div>
+            </div>
+            <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
+                    <span class="w-2 h-2 rounded-full" :class="info.encrypt ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="text-sm text-slate-300">加密</span>
+                </div>
+                <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
+                    <span class="w-2 h-2 rounded-full" :class="info.compress ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="text-sm text-slate-300">压缩</span>
+                </div>
+                <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
+                    <span class="w-2 h-2 rounded-full" :class="info.fec ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="text-sm text-slate-300">FEC纠错</span>
+                </div>
+                <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
+                    <span class="w-2 h-2 rounded-full" :class="info.rtx ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="text-sm text-slate-300">QUIC传输</span>
+                </div>
+            </div>
+            <div class="mt-4">
+                        <span class="text-slate-400 text-sm block mb-2"
+                        >Public IPv4s</span
+                        >
+                <div class="flex flex-wrap gap-2">
+                            <span
+                                    v-for="pip in info.public_ipv4s"
+                                    :key="pip"
+                                    class="px-2 py-1 bg-slate-800 rounded text-xs font-mono text-green-300 border border-slate-600"
+                            >{{ pip }}</span
+                            >
+                    <span
+                            v-if="!info.public_ipv4s || info.public_ipv4s.length === 0"
+                            class="text-slate-600 text-xs"
+                    >无</span
+                    >
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl p-6 shadow-lg">
+            <h2 class="text-lg font-bold mb-4 text-white">
+                服务器连接列表
+            </h2>
+            <div
+                    class="overflow-auto max-h-[400px] custom-scrollbar rounded-lg border border-slate-700"
+            >
+                <table class="min-w-full divide-y divide-slate-700">
+                    <thead class="bg-slate-800">
+                    <tr>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            地址
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            状态
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            延迟
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            版本
+                        </th>
+                    </tr>
+                    </thead>
+                    <tbody
+                            class="divide-y divide-slate-700 bg-slate-900/30"
+                    >
+                    <tr
+                            v-for="(server, idx) in info.server_info"
+                            :key="idx"
+                    >
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm text-slate-300 font-mono"
+                        >
+                            {{ server.server }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                                        <span
+                                                :class="server.connected ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'"
+                                                class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                                        >
+                                            {{ server.connected ? '已连接' :
+                                            '未连接' }}
+                                        </span>
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm text-slate-400"
+                        >
+                            {{ server.server_rtt ? server.server_rtt
+                            + ' ms' : '-' }}
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm text-slate-400"
+                        >
+                            {{ server.server_version || '-' }}
+                        </td>
+                    </tr>
+                    <tr
+                            v-if="!info.server_info || info.server_info.length === 0"
+                    >
+                        <td
+                                colspan="4"
+                                class="px-6 py-4 text-center text-slate-500"
+                        >
+                            暂无数据
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- 2. Config (配置) -->
+<template id="tpl-config">
+    <div class="space-y-6 max-w-5xl mx-auto h-full flex flex-col">
+        <div class="flex justify-between items-center">
+            <h2 class="text-2xl font-bold text-white">配置管理</h2>
+            <button
+                    @click="openEditor(null)"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center transition-colors"
+            >
+                <svg
+                        class="w-4 h-4 mr-2"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                >
+                    <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M12 4v16m8-8H4"
+                    ></path>
+                </svg>
+                新建配置
+            </button>
+        </div>
+
+        <div
+                class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+        >
+            <div
+                    v-for="cfg in configList"
+                    :key="cfg.file_name"
+                    :class="{'ring-2 ring-green-500 bg-slate-800/80': info.current_config_file === cfg.file_name, 'bg-slate-800/40 hover:bg-slate-800/60': info.current_config_file !== cfg.file_name}"
+                    class="rounded-xl p-5 border border-slate-700 transition-all cursor-pointer group relative overflow-hidden flex flex-col justify-between min-h-[140px]"
+                    @click="openEditor(cfg.file_name)"
+            >
+                <div
+                        v-if="info.current_config_file === cfg.file_name"
+                        class="absolute top-0 right-0 bg-green-500 text-white text-xs px-2 py-1 rounded-bl"
+                >
+                    Running
+                </div>
+                <div class="flex items-start">
+                    <div
+                            class="p-2 rounded bg-blue-500/10 text-blue-400 mr-3 mt-1"
+                    >
+                        <svg
+                                class="w-6 h-6"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                        >
+                            <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                            ></path>
+                        </svg>
+                    </div>
+                    <div class="overflow-hidden">
+                        <h3
+                                class="font-bold text-lg text-white truncate"
+                                :title="cfg.config_name"
+                        >
+                            {{ cfg.config_name || 'Unnamed' }}
+                        </h3>
+                        <p
+                                class="text-xs text-slate-500 font-mono truncate"
+                                :title="cfg.file_name"
+                        >
+                            {{ cfg.file_name }}
+                        </p>
+                    </div>
+                </div>
+                <div
+                        class="mt-4 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                    <button
+                            @click.stop="openEditor(cfg.file_name)"
+                            class="text-blue-400 hover:text-blue-300 text-sm mr-4"
+                    >
+                        编辑
+                    </button>
+                    <button
+                            @click.stop="deleteConfig(cfg.file_name)"
+                            class="text-red-400 hover:text-red-300 text-sm"
+                    >
+                        删除
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 编辑器 Modal -->
+        <div
+                v-if="showEditor"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+        >
+            <div
+                    class="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-6xl h-[85vh] flex flex-col shadow-2xl"
+            >
+                <!-- Header -->
+                <div class="flex justify-between items-center p-4 border-b border-slate-700 bg-slate-800/50">
+                    <h3 class="text-lg font-bold text-white">
+                        {{ editorMode === 'new' ? '新建配置' : '编辑配置' }}
+                    </h3>
+                    <div class="flex items-center space-x-4">
+                        <!-- 模式切换按钮 -->
+                        <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-600">
+                            <button
+                                    @click="switchToFormMode"
+                                    :class="editMode === 'form' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'"
+                                    class="px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center"
+                            >
+                                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                表单模式
+                            </button>
+                            <button
+                                    @click="switchToTomlMode"
+                                    :class="editMode === 'toml' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'"
+                                    class="px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center"
+                            >
+                                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                                </svg>
+                                TOML模式
+                            </button>
+                        </div>
+                        <div class="text-sm text-slate-500 font-mono" v-if="editorFileName">
+                            {{ editorFileName }}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Content -->
+                <div class="flex-1 overflow-hidden">
+                    <!-- 表单模式 -->
+                    <div v-show="editMode === 'form'" class="h-full overflow-y-auto scrollbar-hide p-6">
+                        <div class="max-w-4xl mx-auto space-y-6">
+                            <!-- 基础配置 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-blue-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>
+                                    基础配置
+                                </h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">配置名称</label>
+                                        <input v-model="formData.config_name" type="text" placeholder="例如: 我的VPN配置"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                                            网络编号 <span class="text-red-400">*</span>
+                                        </label>
+                                        <input v-model="formData.network_code" type="text" placeholder="例如: my_network" required
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                </div>
+                                <div class="mt-4">
+                                    <label class="block text-sm font-medium text-slate-300 mb-2">
+                                        服务器地址 <span class="text-red-400">*</span>
+                                        <span class="text-xs text-slate-500 ml-2">支持 quic:// tcp:// wss:// dynamic://</span>
+                                    </label>
+                                    <div class="space-y-2">
+                                        <div v-for="(server, idx) in formData.server" :key="idx" class="flex space-x-2">
+                                            <input v-model="formData.server[idx]" type="text" placeholder="例如: quic://1.2.3.4:29872"
+                                                   class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                            <button @click="formData.server.splice(idx, 1)" v-if="formData.server.length > 1"
+                                                    class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                        <button @click="formData.server.push('')"
+                                                class="w-full px-3 py-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 rounded-lg transition-colors text-sm flex items-center justify-center">
+                                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                                            </svg>
+                                            添加服务器
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 网络设置 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-green-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
+                                    </svg>
+                                    网络设置
+                                </h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                                            自定义虚拟IP
+                                            <span class="text-xs text-slate-500 ml-1">(可选)</span>
+                                        </label>
+                                        <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">MTU</label>
+                                        <input v-model.number="formData.mtu" type="number" placeholder="1380"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 传输优化 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-purple-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>
+                                    传输优化
+                                </h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
+                                        <div class="flex-1">
+                                            <div class="text-sm font-medium text-white">QUIC传输优化</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">重传丢包</div>
+                                        </div>
+                                        <input v-model="formData.rtx" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
+                                    </label>
+                                    <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
+                                        <div class="flex-1">
+                                            <div class="text-sm font-medium text-white">FEC前向纠错</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">损失部分带宽提升稳定性</div>
+                                        </div>
+                                        <input v-model="formData.fec" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
+                                    </label>
+                                    <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
+                                        <div class="flex-1">
+                                            <div class="text-sm font-medium text-white">LZ4压缩</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">减少传输数据量</div>
+                                        </div>
+                                        <input v-model="formData.compress" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
+                                    </label>
+                                    <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
+                                        <div class="flex-1">
+                                            <div class="text-sm font-medium text-white">关闭P2P打洞</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">仅通过服务器中转</div>
+                                        </div>
+                                        <input v-model="formData.no_punch" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 安全配置 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-red-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                                    </svg>
+                                    安全配置
+                                </h4>
+                                <div class="space-y-4">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-slate-300 mb-2">组网加密密码(连接公共服务器时建议填写，同一组网密码需要相同)</label>
+                                            <input v-model="formData.password" type="password" placeholder="留空则不加密"
+                                                   class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-slate-300 mb-2">服务端证书校验模式</label>
+                                            <select v-model="formData.cert_mode"
+                                                    class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                                <option value="skip">跳过验证 (默认)</option>
+                                                <option value="standard">系统证书验证</option>
+                                                <option value="finger">证书指纹验证</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div v-if="formData.cert_mode === 'finger'" class="animate-in fade-in slide-in-from-top-2">
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                                            证书指纹
+                                            <span class="text-xs text-slate-500 ml-1">(服务端启动时日志会输出指纹)</span>
+                                        </label>
+                                        <input v-model="formData.fingerprint" type="text" placeholder="例如: 3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- NAT与路由 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-yellow-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-1.447-.894L15 9m0 0V7m0 2v6"></path>
+                                    </svg>
+                                    NAT与路由 (点对网)
+                                </h4>
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                                            入栈网段
+                                            <span class="text-xs text-slate-500 ml-1">格式: CIDR,目标IP</span>
+                                        </label>
+                                        <div class="space-y-2">
+                                            <div v-for="(item, idx) in formData.input" :key="idx" class="flex space-x-2">
+                                                <input v-model="formData.input[idx]" type="text" placeholder="例如: 192.168.0.0/24,10.26.0.2"
+                                                       class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                                                <button @click="formData.input.splice(idx, 1)"
+                                                        class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
+                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <button @click="formData.input.push('')"
+                                                    class="w-full px-3 py-1.5 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 rounded-lg transition-colors text-sm">
+                                                + 添加入栈网段
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                                            出栈网段
+                                            <span class="text-xs text-slate-500 ml-1">格式: CIDR (允许转发的网段)</span>
+                                        </label>
+                                        <div class="space-y-2">
+                                            <div v-for="(item, idx) in formData.output" :key="idx" class="flex space-x-2">
+                                                <input v-model="formData.output[idx]" type="text" placeholder="例如: 0.0.0.0/0"
+                                                       class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                                                <button @click="formData.output.splice(idx, 1)"
+                                                        class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
+                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <button @click="formData.output.push('')"
+                                                    class="w-full px-3 py-1.5 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 rounded-lg transition-colors text-sm">
+                                                + 添加出栈网段
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
+                                            <div class="flex-1">
+                                                <div class="text-sm font-medium text-white">关闭内置NAT</div>
+                                                <div class="text-xs text-slate-400 mt-0.5">使用系统网卡转发</div>
+                                            </div>
+                                            <input v-model="formData.no_nat" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
+                                        </label>
+                                        <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
+                                            <div class="flex-1">
+                                                <div class="text-sm font-medium text-white">关闭TUN网卡</div>
+                                                <div class="text-xs text-slate-400 mt-0.5">仅作流量出口或端口映射</div>
+                                            </div>
+                                            <input v-model="formData.no_tun" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 端口映射 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-orange-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                    </svg>
+                                    端口映射
+                                </h4>
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">
+                                            映射规则
+                                            <span class="text-xs text-slate-500 ml-1">格式: 协议://监听地址-虚拟IP-目标地址</span>
+                                        </label>
+                                        <div class="space-y-2">
+                                            <div v-for="(item, idx) in formData.port_mapping" :key="idx" class="flex space-x-2">
+                                                <input v-model="formData.port_mapping[idx]" type="text" placeholder="例如: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"
+                                                       class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-mono">
+                                                <button @click="formData.port_mapping.splice(idx, 1)"
+                                                        class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
+                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <button @click="formData.port_mapping.push('')"
+                                                    class="w-full px-3 py-1.5 bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 rounded-lg transition-colors text-sm">
+                                                + 添加映射规则
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
+                                        <div class="flex-1">
+                                            <div class="text-sm font-medium text-white">允许作为映射出口</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板</div>
+                                        </div>
+                                        <input v-model="formData.allow_mapping" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 设备配置 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-cyan-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                    </svg>
+                                    设备配置
+                                </h4>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">设备名称</label>
+                                        <input v-model="formData.device_name" type="text" placeholder="默认为主机名"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">设备ID</label>
+                                        <input v-model="formData.device_id" type="text" placeholder="自动生成"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">虚拟网卡名</label>
+                                        <input v-model="formData.tun_name" type="text" placeholder="默认为vnt-tun"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- STUN配置 -->
+                            <div class="glass-panel rounded-lg p-5 border border-slate-700">
+                                <h4 class="text-md font-bold text-pink-400 mb-4 flex items-center">
+                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    STUN配置 (高级)
+                                </h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">UDP STUN服务器</label>
+                                        <div class="space-y-2">
+                                            <div v-for="(item, idx) in formData.udp_stun" :key="idx" class="flex space-x-2">
+                                                <input v-model="formData.udp_stun[idx]" type="text" placeholder="例如: stun.l.google.com:19302"
+                                                       class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                                                <button @click="formData.udp_stun.splice(idx, 1)"
+                                                        class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
+                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <button @click="formData.udp_stun.push('')"
+                                                    class="w-full px-3 py-1.5 bg-pink-600/20 hover:bg-pink-600/40 text-pink-400 rounded-lg transition-colors text-sm">
+                                                + 添加UDP STUN
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">TCP STUN服务器</label>
+                                        <div class="space-y-2">
+                                            <div v-for="(item, idx) in formData.tcp_stun" :key="idx" class="flex space-x-2">
+                                                <input v-model="formData.tcp_stun[idx]" type="text" placeholder="例如: stun.nextcloud.com:443"
+                                                       class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                                                <button @click="formData.tcp_stun.splice(idx, 1)"
+                                                        class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
+                                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <button @click="formData.tcp_stun.push('')"
+                                                    class="w-full px-3 py-1.5 bg-pink-600/20 hover:bg-pink-600/40 text-pink-400 rounded-lg transition-colors text-sm">
+                                                + 添加TCP STUN
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TOML模式 -->
+                    <div v-show="editMode === 'toml'" class="h-full">
+                        <textarea
+                                v-model="editorContent"
+                                class="w-full h-full bg-[#1e1e1e] text-[#d4d4d4] font-mono p-4 resize-none focus:outline-none text-sm"
+                                spellcheck="false"
+                                placeholder="# 在此处输入 TOML 配置..."
+                        ></textarea>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="p-4 border-t border-slate-700 flex justify-between items-center bg-slate-800/50">
+                    <div class="text-xs text-slate-500">
+                        <span v-if="editMode === 'form'">填写完成后保存即可生成配置文件</span>
+                        <span v-else>* 请使用标准 TOML 格式</span>
+                    </div>
+                    <div class="space-x-3">
+                        <button
+                                @click="showEditor = false"
+                                class="px-4 py-2 rounded text-slate-300 hover:text-white transition-colors"
+                        >
+                            取消
+                        </button>
+                        <button
+                                @click="saveConfig"
+                                class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium shadow-lg transition-colors"
+                        >
+                            保存配置
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- 3. Peers (设备列表) -->
+<template id="tpl-peers">
+    <div class="max-w-7xl mx-auto">
+        <div class="glass-panel rounded-xl shadow-lg overflow-hidden">
+            <div
+                    class="px-6 py-4 border-b border-slate-700 flex justify-between items-center"
+            >
+                <h2 class="text-xl font-bold text-white">设备列表</h2>
+                <div class="flex space-x-4 text-sm text-slate-400">
+                            <span
+                            >Online:
+                                <span class="text-white"
+                                >{{ peers.filter(p => p.online).length
+                                    }}</span
+                                ></span
+                            >
+                    <span
+                    >Total:
+                                <span class="text-white"
+                                >{{ peers.length }}</span
+                                ></span
+                    >
+                </div>
+            </div>
+            <div class="overflow-auto max-h-[600px] custom-scrollbar">
+                <table class="min-w-full divide-y divide-slate-700">
+                    <thead class="bg-slate-800">
+                    <tr>
+                        <th class="w-8 px-2 py-3"></th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            IP地址
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            名称
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            版本
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            状态
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            模式
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            延迟
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            丢包率
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            流量
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
+                        >
+                            最后在线
+                        </th>
+                    </tr>
+                    </thead>
+                    <tbody
+                            class="divide-y divide-slate-700 bg-slate-900/30"
+                    >
+                    <template v-for="peer in peers" :key="peer.ip">
+                    <tr class="hover:bg-slate-800/50 transition-colors">
+                        <td class="px-2 py-4 text-center cursor-pointer select-none" @click="toggleExpand(peer.ip)">
+                            <svg class="w-4 h-4 text-slate-500 transition-transform duration-200 inline-block" :class="{ 'rotate-90': expandedPeers[peer.ip] }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap font-mono text-sm text-blue-300"
+                        >
+                                        <span
+                                                class="border-b border-dotted border-blue-500/50 pb-0.5 cursor-help"
+                                                @mouseenter="showPeerTooltip($event, peer)"
+                                                @mouseleave="hidePeerTooltip"
+                                        >
+                                            {{ peer.ip }}
+                                        </span>
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm text-slate-300"
+                        >
+                            {{ peer.name || '-' }}
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-xs text-slate-500"
+                        >
+                            {{ peer.version || '-' }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center space-x-2">
+                                <span
+                                        :class="peer.online ? 'bg-green-900 text-green-300' : 'bg-slate-700 text-slate-400'"
+                                        class="px-2 py-0.5 text-xs rounded-full font-medium"
+                                >{{ peer.online ? 'Online' : 'Offline' }}</span>
+                                <!-- 加密状态图标 -->
+                                <div v-if="peer.online && peer.key_equal === 1" class="tooltip">
+                                    <svg
+                                            class="w-4 h-4 text-green-400"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                    >
+                                        <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                                        ></path>
+                                    </svg>
+                                    <span class="tooltip-text">双方加密传输</span>
+                                </div>
+                                <div v-else-if="peer.online && peer.key_equal === 2" class="tooltip">
+                                    <svg
+                                            class="w-4 h-4 text-yellow-400"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                    >
+                                        <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"
+                                        ></path>
+                                    </svg>
+                                    <span class="tooltip-text">双方未加密</span>
+                                </div>
+                                <div v-else-if="peer.online && [3,4,5].includes(peer.key_equal)" class="tooltip cursor-help group">
+                                    <svg
+                                            class="w-4 h-4 text-red-500"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                    >
+                                        <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                                        ></path>
+                                    </svg>
+                                    <span class="tooltip-text">{{ peer.key_equal === 3 ? '己方加密对方未加密' : peer.key_equal === 4 ? '己方未加密对方加密' : peer.key_equal === 5 ? '密钥不一致' : '未知错误' }}</span>
+                                </div>
+                            </div>
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm"
+                        >
+                                        <span
+                                                v-if="peer.online && peer.route"
+                                                :class="getRouteModeClass(peer.route)"
+                                        >{{ getRouteModeText(peer.route) }}</span
+                                        >
+                            <span v-else-if="peer.online" class="text-yellow-400">服务器中继</span>
+                            <span v-else class="text-slate-600"
+                            >-</span
+                            >
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm text-slate-400"
+                        >
+                            {{ peer.route ? peer.route.rtt + ' ms' : '-' }}
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm"
+                        >
+                            <span v-if="peer.packet_loss"
+                                  :class="peer.packet_loss.loss_rate > 10 ? 'text-red-400' : peer.packet_loss.loss_rate > 5 ? 'text-yellow-400' : 'text-green-400'"
+                                  :title="'Sent: ' + peer.packet_loss.sent + ', Received: ' + peer.packet_loss.received"
+                            >{{ peer.packet_loss.loss_rate.toFixed(1) }}%</span>
+                            <span v-else class="text-slate-600">-</span>
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-xs"
+                        >
+                            <div v-if="peer.traffic" class="leading-relaxed">
+                                <div class="text-green-400">↑ {{ formatBytes(peer.traffic.tx_bytes) }} ({{ formatSpeed(peer.traffic.tx_speed) }})</div>
+                                <div class="text-blue-400">↓ {{ formatBytes(peer.traffic.rx_bytes) }} ({{ formatSpeed(peer.traffic.rx_speed) }})</div>
+                            </div>
+                            <span v-else class="text-slate-600">-</span>
+                        </td>
+                        <td
+                                class="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-mono text-xs"
+                        >
+                            {{ formatTime(peer.last_connected_time)
+                            }}
+                        </td>
+                    </tr>
+                    <tr v-if="expandedPeers[peer.ip]">
+                        <td :colspan="10" class="p-0">
+                            <div class="px-4 py-3 bg-slate-950/60 border-t border-slate-700/50">
+                                <div class="flex items-center space-x-4 mb-2 text-xs text-slate-400">
+                                    <span class="flex items-center"><span class="inline-block w-3 h-0.5 bg-green-400 mr-1"></span>上传速度</span>
+                                    <span class="flex items-center"><span class="inline-block w-3 h-0.5 bg-blue-400 mr-1"></span>下载速度</span>
+                                    <span class="ml-auto" :id="'chart-max-' + peer.ip.replaceAll('.', '-')"></span>
+                                </div>
+                                <canvas :id="'chart-' + peer.ip.replaceAll('.', '-')" style="width:100%;height:150px;display:block;" class="rounded"></canvas>
+                            </div>
+                        </td>
+                    </tr>
+                    </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- 4. Routes (路由) -->
+<template id="tpl-routes">
+    <div class="max-w-6xl mx-auto">
+        <div class="glass-panel rounded-xl shadow-lg overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-700">
+                <h2 class="text-xl font-bold text-white">路由表</h2>
+            </div>
+            <div class="overflow-auto max-h-[600px] custom-scrollbar">
+                <table class="min-w-full divide-y divide-slate-700">
+                    <thead class="bg-slate-800">
+                    <tr>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            目标节点IP
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            目标网络
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            跳数
+                        </th>
+                        <th
+                                class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
+                        >
+                            延迟
+                        </th>
+                    </tr>
+                    </thead>
+                    <tbody
+                            class="divide-y divide-slate-700 bg-slate-900/30"
+                    >
+                    <template v-for="item in routes" :key="item.ip">
+                        <tr
+                                v-for="(route, rIdx) in item.routes"
+                                :key="rIdx"
+                                class="hover:bg-slate-800/50"
+                        >
+                            <td
+                                    class="px-6 py-4 whitespace-nowrap font-mono text-sm text-blue-300"
+                                    v-if="rIdx===0"
+                                    :rowspan="item.routes.length"
+                            >
+                                {{ item.ip }}
+                            </td>
+                            <td
+                                    class="px-6 py-4 whitespace-nowrap font-mono text-sm text-yellow-300"
+                            >
+                                {{ route.addr }}
+                            </td>
+                            <td
+                                    class="px-6 py-4 whitespace-nowrap text-sm text-slate-400"
+                            >
+                                {{ route.metric }}
+                            </td>
+                            <td
+                                    class="px-6 py-4 whitespace-nowrap text-sm text-slate-400"
+                            >
+                                {{ route.rtt }} ms
+                            </td>
+                        </tr>
+                    </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script>
+    const {
+        createApp,
+        ref,
+        reactive,
+        onMounted,
+        onUnmounted,
+        computed,
+        watch,
+        nextTick,
+        inject,
+        provide,
+    } = Vue;
+    const {createRouter, createWebHashHistory} = VueRouter;
+
+    const API_BASE = "";
+
+    // 格式化时间工具
+    const formatTime = (timestamp) => {
+        if (!timestamp) return "-";
+        const date = new Date(timestamp * 1000);
+        const pad = (n) => (n < 10 ? "0" + n : n);
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    };
+
+    // 格式化字节数
+    const formatBytes = (bytes) => {
+        if (bytes === 0 || bytes === undefined || bytes === null) return "0B";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0;
+        let value = bytes;
+        while (value >= 1024 && i < units.length - 1) {
+            value /= 1024;
+            i++;
+        }
+        return i === 0 ? value + units[i] : value.toFixed(2) + units[i];
+    };
+
+    // 格式化速度（字节/秒）
+    const formatSpeed = (bytesPerSecond) => {
+        if (bytesPerSecond === 0 || bytesPerSecond === undefined || bytesPerSecond === null) return "0B/s";
+        const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+        let i = 0;
+        let value = bytesPerSecond;
+        while (value >= 1024 && i < units.length - 1) {
+            value /= 1024;
+            i++;
+        }
+        return i === 0 ? value + units[i] : value.toFixed(2) + units[i];
+    };
+
+    // --- 组件定义 ---
+
+    const GeneralView = {
+        template: "#tpl-general",
+        setup() {
+            const info = inject("info");
+            const configList = inject("configList");
+            const toggleVnt = inject("toggleVnt");
+            const restartVnt = inject("restartVnt");
+            const loading = inject("loading");
+            const localSelectedConfig = ref("");
+
+            // 同步当前配置
+            watch(
+                () => info.value.current_config_file,
+                (newVal) => {
+                    if (
+                        (info.value.status === "running" ||
+                            info.value.status === "starting") &&
+                        newVal
+                    ) {
+                        localSelectedConfig.value = newVal;
+                    }
+                },
+                {immediate: true},
+            );
+
+            const handleToggle = () => {
+                // 如果是启动，且有本地选择的配置，传递给 toggle
+                if (
+                    info.value.status !== "running" &&
+                    info.value.status !== "starting"
+                ) {
+                    toggleVnt(localSelectedConfig.value);
+                } else {
+                    toggleVnt(null);
+                }
+            };
+
+            const handleRestart = () => {
+                if (localSelectedConfig.value) {
+                    restartVnt(localSelectedConfig.value);
+                }
+            };
+
+            return {
+                info,
+                configList,
+                localSelectedConfig,
+                loading,
+                handleToggle,
+                handleRestart,
+            };
+        },
+    };
+
+    const ConfigView = {
+        template: "#tpl-config",
+        setup() {
+            const info = inject("info");
+            const configList = inject("configList");
+            const fetchConfigList = inject("fetchConfigList");
+
+            // 编辑器状态
+            const showEditor = ref(false);
+            const editorContent = ref("");
+            const editorFileName = ref("");
+            const editorMode = ref("new");
+            const editMode = ref("form"); // 'form' 或 'toml'
+            const originalToml = ref(""); // 保存原始TOML内容（包含用户注释）
+            const hasTomlChanges = ref(false); // 标记TOML是否被修改过
+            const hasFormChanges = ref(false); // 标记表单是否被修改过
+            const isParsingToml = ref(false); // 标记是否正在解析TOML（用于避免触发watch）
+
+            // 表单数据
+            const formData = ref({
+                config_name: "",
+                network_code: "",
+                server: [""],
+                ip: "",
+                mtu: null,
+                rtx: false,
+                fec: false,
+                compress: false,
+                no_punch: false,
+                input: [],
+                output: [],
+                no_nat: false,
+                no_tun: false,
+                port_mapping: [],
+                allow_mapping: false,
+                device_name: "",
+                device_id: "",
+                tun_name: "",
+                password: "",
+                cert_mode: "skip",
+                fingerprint: "",
+                udp_stun: [],
+                tcp_stun: []
+            });
+
+            // 从TOML解析到表单
+            const parseTomlToForm = (toml) => {
+                const data = {
+                    config_name: "",
+                    network_code: "",
+                    server: [""],
+                    ip: "",
+                    mtu: null,
+                    rtx: false,
+                    fec: false,
+                    compress: false,
+                    no_punch: false,
+                    input: [],
+                    output: [],
+                    no_nat: false,
+                    no_tun: false,
+                    port_mapping: [],
+                    allow_mapping: false,
+                    device_name: "",
+                    device_id: "",
+                    tun_name: "",
+                    password: "",
+                    cert_mode: "skip",
+                    fingerprint: "",
+                    udp_stun: [],
+                    tcp_stun: []
+                };
+
+                const lines = toml.split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed.startsWith('#')) continue;
+
+                    if (trimmed.includes('config_name')) {
+                        const match = trimmed.match(/config_name\s*=\s*"([^"]*)"/);
+                        if (match) data.config_name = match[1];
+                    } else if (trimmed.includes('network_code')) {
+                        const match = trimmed.match(/network_code\s*=\s*"([^"]*)"/);
+                        if (match) data.network_code = match[1];
+                    } else if (trimmed.startsWith('server')) {
+                        const match = trimmed.match(/server\s*=\s*\[(.*)\]/);
+                        if (match) {
+                            const items = match[1].match(/"([^"]*)"/g);
+                            if (items) data.server = items.map(s => s.replace(/"/g, ''));
+                        }
+                    } else if (trimmed.includes('ip =')) {
+                        const match = trimmed.match(/ip\s*=\s*"([^"]*)"/);
+                        if (match) data.ip = match[1];
+                    } else if (trimmed.includes('mtu =')) {
+                        const match = trimmed.match(/mtu\s*=\s*(\d+)/);
+                        if (match) data.mtu = parseInt(match[1]);
+                    } else if (trimmed.match(/^rtx\s*=/)) {
+                        data.rtx = trimmed.includes('true');
+                    } else if (trimmed.match(/^fec\s*=/)) {
+                        data.fec = trimmed.includes('true');
+                    } else if (trimmed.match(/^compress\s*=/)) {
+                        data.compress = trimmed.includes('true');
+                    } else if (trimmed.match(/^no_punch\s*=/)) {
+                        data.no_punch = trimmed.includes('true');
+                    } else if (trimmed.startsWith('input')) {
+                        const match = trimmed.match(/input\s*=\s*\[(.*)\]/);
+                        if (match) {
+                            const items = match[1].match(/"([^"]*)"/g);
+                            if (items) data.input = items.map(s => s.replace(/"/g, ''));
+                        }
+                    } else if (trimmed.startsWith('output')) {
+                        const match = trimmed.match(/output\s*=\s*\[(.*)\]/);
+                        if (match) {
+                            const items = match[1].match(/"([^"]*)"/g);
+                            if (items) data.output = items.map(s => s.replace(/"/g, ''));
+                        }
+                    } else if (trimmed.match(/^no_nat\s*=/)) {
+                        data.no_nat = trimmed.includes('true');
+                    } else if (trimmed.match(/^no_tun\s*=/)) {
+                        data.no_tun = trimmed.includes('true');
+                    } else if (trimmed.startsWith('port_mapping')) {
+                        const match = trimmed.match(/port_mapping\s*=\s*\[(.*)\]/);
+                        if (match) {
+                            const items = match[1].match(/"([^"]*)"/g);
+                            if (items) data.port_mapping = items.map(s => s.replace(/"/g, ''));
+                        }
+                    } else if (trimmed.match(/^allow_mapping\s*=/)) {
+                        data.allow_mapping = trimmed.includes('true');
+                    } else if (trimmed.includes('device_name')) {
+                        const match = trimmed.match(/device_name\s*=\s*"([^"]*)"/);
+                        if (match) data.device_name = match[1];
+                    } else if (trimmed.includes('device_id')) {
+                        const match = trimmed.match(/device_id\s*=\s*"([^"]*)"/);
+                        if (match) data.device_id = match[1];
+                    } else if (trimmed.includes('tun_name')) {
+                        const match = trimmed.match(/tun_name\s*=\s*"([^"]*)"/);
+                        if (match) data.tun_name = match[1];
+                    } else if (trimmed.includes('password =')) {
+                        const match = trimmed.match(/password\s*=\s*"([^"]*)"/);
+                        if (match) data.password = match[1];
+                    } else if (trimmed.includes('cert_mode')) {
+                        const match = trimmed.match(/cert_mode\s*=\s*"([^"]*)"/);
+                        if (match) {
+                            const value = match[1];
+                            if (value.startsWith('finger:')) {
+                                data.cert_mode = 'finger';
+                                data.fingerprint = value.substring(7); // 去掉 "finger:" 前缀
+                            } else {
+                                data.cert_mode = value;
+                            }
+                        }
+                    } else if (trimmed.startsWith('udp_stun')) {
+                        const match = trimmed.match(/udp_stun\s*=\s*\[(.*)\]/);
+                        if (match) {
+                            const items = match[1].match(/"([^"]*)"/g);
+                            if (items) data.udp_stun = items.map(s => s.replace(/"/g, ''));
+                        }
+                    } else if (trimmed.startsWith('tcp_stun')) {
+                        const match = trimmed.match(/tcp_stun\s*=\s*\[(.*)\]/);
+                        if (match) {
+                            const items = match[1].match(/"([^"]*)"/g);
+                            if (items) data.tcp_stun = items.map(s => s.replace(/"/g, ''));
+                        }
+                    }
+                }
+
+                return data;
+            };
+
+            // 从表单生成TOML
+            const formToToml = () => {
+                let toml = '';
+
+                if (formData.value.config_name) {
+                    toml += `# 配置名称\nconfig_name = "${formData.value.config_name}"\n`;
+                }
+
+                toml += '\n# --- 网络配置 ---\n';
+                toml += '# 网络编号，相同网络编号的会组在同一个虚拟网 (必填)\n';
+                toml += `network_code = "${formData.value.network_code}"\n\n`;
+
+                const servers = formData.value.server.filter(s => s.trim());
+                if (servers.length > 0) {
+                    toml += '# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)\n';
+                    toml += '# dynamic 协议使用dns txt解析记录值\n';
+                    toml += `server = [${servers.map(s => `"${s}"`).join(', ')}]\n`;
+                }
+
+                if (formData.value.ip) {
+                    toml += '\n# 自定义虚拟 IP (可选)\n';
+                    toml += `ip = "${formData.value.ip}"\n`;
+                }
+
+                if (formData.value.rtx) {
+                    toml += '\n# 是否启用quic优化传输 (默认 false)\n';
+                    toml += '# 开启后传输过程几乎不会丢包，但是延迟可能会有波动\n';
+                    toml += 'rtx = true\n';
+                }
+
+                if (formData.value.fec) {
+                    toml += '\n# 是否启用 FEC 前向纠错 (默认 false)\n';
+                    toml += '# 开启后可以减少丢包率，损失带宽但是延迟比较稳定，带宽充足时可以使用此功能\n';
+                    toml += 'fec = true\n';
+                }
+
+                if (formData.value.no_punch) {
+                    toml += '\n# 是否关闭 P2P 打洞 (默认 false)\n';
+                    toml += 'no_punch = true\n';
+                }
+
+                if (formData.value.compress) {
+                    toml += '\n# 是否启用 LZ4 压缩 (默认 false)\n';
+                    toml += 'compress = true\n';
+                }
+
+                const inputs = formData.value.input.filter(s => s.trim());
+                if (inputs.length > 0) {
+                    toml += '\n# 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点\n';
+                    toml += '# 例如192.168.0.0/24,10.26.0.2 表示将192.168.0.0/24网段的数据转发到10.26.0.2\n';
+                    toml += `input = [${inputs.map(s => `"${s}"`).join(', ')}]\n`;
+                }
+
+                const outputs = formData.value.output.filter(s => s.trim());
+                if (outputs.length > 0) {
+                    toml += '\n# 出栈允许网段，用于点对网，允许指定网段的转发\n';
+                    toml += `output = [${outputs.map(s => `"${s}"`).join(', ')}]\n`;
+                }
+
+                if (formData.value.no_nat) {
+                    toml += '\n# 是否关闭内置子网NAT，关闭后需要配置网卡转发，否则无法使用点对网\n';
+                    toml += '# 通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好\n';
+                    toml += 'no_nat = true\n';
+                }
+
+                if (formData.value.no_tun) {
+                    toml += '\n# 是否关闭TUN虚拟网卡，关闭后只能充当流量出口或者进行端口映射，关闭后无需管理员权限\n';
+                    toml += 'no_tun = true\n';
+                }
+
+                const portMappings = formData.value.port_mapping.filter(s => s.trim());
+                if (portMappings.length > 0) {
+                    toml += '\n# 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址\n';
+                    toml += '# 端口映射用于在本地监听指定端口，并将收到的网络流量经由指定虚拟节点转发到目标地址\n';
+                    toml += '# 例如: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80 表示将本地tcp的81端口的数据转发到10.0.0.2:80\n';
+                    toml += '# 例如: tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到192.168.1.10:80\n';
+                    toml += '# 例如: tcp://0.0.0.0:81-10.0.0.2-anyonehost:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到anyonehost:80\n';
+                    toml += `port_mapping = [${portMappings.map(s => `"${s}"`).join(', ')}]\n`;
+                }
+
+                if (formData.value.allow_mapping) {
+                    toml += '\n# 是否允许作为端口映射出口，开启后其他设备才可使用本设备的ip为"目标虚拟IP"\n';
+                    toml += '# 开启后虚拟网络其他设备可以使用此设备当跳板访问其他网络\n';
+                    toml += 'allow_mapping = true\n';
+                }
+
+                if (formData.value.mtu) {
+                    toml += '\n# MTU 设置\n';
+                    toml += `mtu = ${formData.value.mtu}\n`;
+                }
+
+                toml += '\n# --- 设备配置 ---\n';
+                if (formData.value.device_name) {
+                    toml += '\n# 设备名称 (可选，默认读取本机 hostname)\n';
+                    toml += `device_name = "${formData.value.device_name}"\n`;
+                }
+                if (formData.value.device_id) {
+                    toml += '\n# 设备 ID (可选，不填自动生成，不同设备ID不能相同)\n';
+                    toml += `device_id = "${formData.value.device_id}"\n`;
+                }
+                if (formData.value.tun_name) {
+                    toml += '\n# 虚拟网卡名称\n';
+                    toml += `tun_name = "${formData.value.tun_name}"\n`;
+                }
+
+                toml += '\n# --- 安全配置 ---\n';
+                if (formData.value.password) {
+                    toml += '\n# 组网加密密码 (可选)\n';
+                    toml += `password = "${formData.value.password}"\n`;
+                }
+                if (formData.value.cert_mode && formData.value.cert_mode !== 'skip') {
+                    toml += '\n# 证书校验方式：\n';
+                    toml += '#   skip     跳过验证（默认）\n';
+                    toml += '#   standard 使用系统证书验证\n';
+                    toml += '#   finger   使用证书指纹验证，服务端启动时日志会输出指纹\n';
+                    if (formData.value.cert_mode === 'finger' && formData.value.fingerprint) {
+                        toml += `cert_mode = "finger:${formData.value.fingerprint}"\n`;
+                    } else {
+                        toml += `cert_mode = "${formData.value.cert_mode}"\n`;
+                    }
+                }
+
+                const udpStuns = formData.value.udp_stun.filter(s => s.trim());
+                if (udpStuns.length > 0) {
+                    toml += '\n# 自定义UDP STUN地址，不设置则用默认stun\n';
+                    toml += `udp_stun = [${udpStuns.map(s => `"${s}"`).join(', ')}]\n`;
+                }
+
+                const tcpStuns = formData.value.tcp_stun.filter(s => s.trim());
+                if (tcpStuns.length > 0) {
+                    toml += '\n# 自定义TCP STUN地址，不设置则用默认stun\n';
+                    toml += `tcp_stun = [${tcpStuns.map(s => `"${s}"`).join(', ')}]\n`;
+                }
+
+                return toml;
+            };
+
+            // 切换到表单模式
+            const switchToFormMode = () => {
+                if (editMode.value === 'toml') {
+                    editMode.value = 'form';
+                    // 从TOML解析到表单
+                    isParsingToml.value = true;
+                    formData.value = parseTomlToForm(editorContent.value);
+                    nextTick(() => {
+                        isParsingToml.value = false;
+                    });
+                } else {
+                    editMode.value = 'form';
+                }
+            };
+
+            // 切换到TOML模式
+            const switchToTomlMode = () => {
+                if (editMode.value === 'form') {
+                    // 如果表单被修改过，生成新的TOML
+                    if (hasFormChanges.value) {
+                        editorContent.value = formToToml();
+                        // 重置标记，因为表单修改已经应用到TOML了
+                        hasFormChanges.value = false;
+                    } else if (originalToml.value && !hasTomlChanges.value) {
+                        // 如果表单没被修改，且TOML也没被修改，使用原始TOML（保留用户注释）
+                        editorContent.value = originalToml.value;
+                    } else {
+                        // 其他情况生成新的TOML
+                        editorContent.value = formToToml();
+                    }
+                }
+                editMode.value = 'toml';
+            };
+
+            // 监听TOML内容变化（只在TOML模式下）
+            watch(editorContent, (newVal, oldVal) => {
+                if (editMode.value === 'toml' && oldVal !== undefined) {
+                    hasTomlChanges.value = true;
+                }
+            });
+
+            // 监听表单数据变化
+            watch(formData, () => {
+                if (editMode.value === 'form' && showEditor.value && !isParsingToml.value) {
+                    hasFormChanges.value = true;
+                }
+            }, { deep: true });
+
+            const openEditor = async (fileName) => {
+                editorFileName.value = fileName || "";
+                editorMode.value = fileName ? "edit" : "new";
+                editMode.value = "form"; // 默认表单模式
+                hasTomlChanges.value = false; // 重置TOML修改标记
+                hasFormChanges.value = false; // 重置表单修改标记
+
+                if (fileName) {
+                    try {
+                        const res = await fetch(
+                            `${API_BASE}/api/config?file_name=${fileName}`,
+                        );
+                        const json = await res.json();
+                        if (json.code === 0) {
+                            editorContent.value = json.data;
+                            originalToml.value = json.data; // 保存原始TOML
+                            isParsingToml.value = true;
+                            formData.value = parseTomlToForm(json.data);
+                            nextTick(() => {
+                                isParsingToml.value = false;
+                            });
+                            showEditor.value = true;
+                        } else alert("获取配置失败: " + json.msg);
+                    } catch (e) {
+                        alert("网络错误");
+                    }
+                } else {
+                    // 新建配置，初始化表单
+                    originalToml.value = ""; // 新建时清空原始TOML
+                    formData.value = {
+                        config_name: "",
+                        network_code: "",
+                        server: [""],
+                        ip: "",
+                        mtu: null,
+                        rtx: false,
+                        fec: false,
+                        compress: false,
+                        no_punch: false,
+                        input: [],
+                        output: [],
+                        no_nat: false,
+                        no_tun: false,
+                        port_mapping: [],
+                        allow_mapping: false,
+                        device_name: "",
+                        device_id: "",
+                        tun_name: "",
+                        password: "",
+                        cert_mode: "skip",
+                        fingerprint: "",
+                        udp_stun: [],
+                        tcp_stun: []
+                    };
+                    editorContent.value = `# config_name = "配置名称"
+# --- 网络配置 ---
+# 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
+network_code = "your_network_code"
+
+# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)
+# dynamic 协议使用dns txt解析记录值
+server = ["quic://1.2.3.4:29872"]
+
+# ===简单使用以下参数可以不动===
+
+# 自定义虚拟 IP (可选)
+# ip = "10.10.0.2"
+
+# 是否启用quic优化传输 (默认 false,设置为true时开启)
+# 开启后传输过程几乎不会丢包，但是延迟会有波动
+# rtx = false
+
+# 是否启用 FEC 前向纠错，损失一定带宽来提升网络稳定性(默认 false,设置为true时开启)
+# 开启后可以减少丢包率，损失带宽但是延迟比较稳定，带宽充足时可以使用此功能
+# fec = false
+
+# 是否关闭 P2P 打洞 (默认 false,设置为true时关闭)
+# no_punch = false
+
+# 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
+# compress = false
+
+# 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点
+# input = ["192.168.0.0/24,10.26.0.2", "192.168.1.0/24,10.26.0.3"]
+
+# 出栈允许网段，用于点对网，允许指定网段的转发
+# output = ["0.0.0.0/0"]
+
+# 是否关闭内置子网NAT，关闭(设为true)后需要配置网卡转发，否则无法使用点对网。通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好
+# no_nat = false
+
+# 是否关闭TUN虚拟网卡，关闭(设为true)后只能充当流量出口或者进行端口映射，关闭后无需管理员权限
+# no_tun = false
+
+# 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址
+# 端口映射用于在本地监听指定端口，并将收到的网络流量经由指定虚拟节点转发到目标地址，从而实现跨网络或内网服务访问
+# 例如 port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"]
+# tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80 则表示将本地tcp的81端口的数据转发到10.0.0.2:80
+# tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到192.168.1.10:80
+# tcp://0.0.0.0:81-10.0.0.2-anyonehost:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到anyonehost:80
+# port_mapping = []
+
+# 是否允许作为端口映射出口，开启(设置为true)后其他设备才可使用本设备的ip为"目标虚拟IP"
+# 开启后虚拟网络其他设备可以使用此设备当跳板访问其他网络
+# allow_mapping = false
+
+# MTU 设置
+# mtu = 1400
+
+# --- 设备配置 ---
+
+# 设备名称 (可选，默认读取本机 hostname)
+# device_name = "my-device"
+
+# 设备 ID (可选，不填自动生成，不同设备ID不能相同)
+# device_id = "device-id-xxxx"
+
+# 虚拟网卡名称
+# tun_name = "vnt-tun"
+
+# --- 安全配置 ---
+
+# 加密密码 (可选)
+# password = "123456"
+
+# 证书校验方式：
+#   skip     跳过验证（默认）
+#   standard 使用系统证书验证
+#   finger   使用证书指纹验证，服务端启动时日志会输出指纹，
+#            例如 finger:3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1
+# cert_mode = "skip"
+
+# --- 其他配置 ---
+# 自定义stun地址，分别用于udp打洞和tcp打洞，需要单独配置，不设置则用默认stun
+# udp_stun = ["stun.chat.bilibili.com"]
+# tcp_stun = ["stun.nextcloud.com:443"]`;
+                    showEditor.value = true;
+                }
+            };
+
+            const saveConfig = async () => {
+                try {
+                    // 如果是表单模式，先转换为TOML
+                    let configContent = editorContent.value;
+                    if (editMode.value === 'form') {
+                        // 验证必填项
+                        if (!formData.value.network_code.trim()) {
+                            alert('请填写网络编号');
+                            return;
+                        }
+                        const servers = formData.value.server.filter(s => s.trim());
+                        if (servers.length === 0) {
+                            alert('请至少填写一个服务器地址');
+                            return;
+                        }
+                        configContent = formToToml();
+                    }
+
+                    const payload = {
+                        file_name: editorFileName.value || null,
+                        config: configContent,
+                    };
+                    const res = await fetch(`${API_BASE}/api/config`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify(payload),
+                    });
+                    const json = await res.json();
+                    if (json.code === 0) {
+                        showEditor.value = false;
+                        fetchConfigList();
+                    } else alert("保存失败: " + json.msg);
+                } catch (e) {
+                    alert("保存失败: " + e.message);
+                }
+            };
+
+            const deleteConfig = async (fileName) => {
+                if (!confirm(`确定要删除配置 ${fileName} 吗?`)) return;
+                try {
+                    const res = await fetch(
+                        `${API_BASE}/api/config?file_name=${fileName}`,
+                        {method: "DELETE"},
+                    );
+                    const json = await res.json();
+                    if (json.code === 0) fetchConfigList();
+                    else alert(json.msg);
+                } catch (e) {
+                    alert(e.message);
+                }
+            };
+
+            return {
+                info,
+                configList,
+                showEditor,
+                editorContent,
+                editorFileName,
+                editorMode,
+                editMode,
+                formData,
+                openEditor,
+                saveConfig,
+                deleteConfig,
+                switchToFormMode,
+                switchToTomlMode,
+            };
+        },
+    };
+
+    const PeersView = {
+        template: "#tpl-peers",
+        setup() {
+            const peers = ref([]);
+            const info = inject("info");
+            const isPageVisible = inject("isPageVisible");
+            const showTooltipGlobal = inject("showPeerTooltip");
+            const hideTooltipGlobal = inject("hidePeerTooltip");
+            let timer = null;
+            // 记录上次流量数据和时间，用于前端计算网速
+            let lastTrafficMap = {};
+            let lastFetchTime = 0;
+            // 展开状态和网速历史
+            const expandedPeers = reactive({});
+            const speedHistoryMap = {};
+            const HISTORY_SIZE = 60;
+
+            const toggleExpand = (ip) => {
+                expandedPeers[ip] = !expandedPeers[ip];
+                if (expandedPeers[ip]) {
+                    nextTick(() => drawChart(ip));
+                }
+            };
+
+            const drawChart = (ip) => {
+                const canvasId = 'chart-' + ip.replaceAll('.', '-');
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const history = speedHistoryMap[ip];
+                const txArr = history ? history.tx : [];
+                const rxArr = history ? history.rx : [];
+
+                // 高清适配
+                const dpr = window.devicePixelRatio || 1;
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                ctx.scale(dpr, dpr);
+                const w = rect.width;
+                const h = rect.height;
+
+                const padTop = 8, padBottom = 4, padLeft = 0, padRight = 0;
+                const chartW = w - padLeft - padRight;
+                const chartH = h - padTop - padBottom;
+
+                // 背景
+                ctx.fillStyle = '#0c1222';
+                ctx.fillRect(0, 0, w, h);
+
+                // 计算Y轴最大值
+                const allValues = [...txArr, ...rxArr];
+                let maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
+                if (maxVal < 1024) maxVal = 1024; // 最小1KB
+                // 向上取整到合适的刻度
+                const niceMax = niceNumber(maxVal);
+
+                // 更新最大值标签
+                const maxLabel = document.getElementById('chart-max-' + ip.replaceAll('.', '-'));
+                if (maxLabel) maxLabel.textContent = '峰值: ' + formatSpeed(niceMax);
+
+                // 网格线
+                const gridLines = 4;
+                ctx.strokeStyle = 'rgba(71, 85, 105, 0.3)';
+                ctx.lineWidth = 1;
+                for (let i = 0; i <= gridLines; i++) {
+                    const y = padTop + (chartH / gridLines) * i;
+                    ctx.beginPath();
+                    ctx.moveTo(padLeft, y);
+                    ctx.lineTo(padLeft + chartW, y);
+                    ctx.stroke();
+                }
+                // 垂直网格线
+                const vLines = 6;
+                for (let i = 0; i <= vLines; i++) {
+                    const x = padLeft + (chartW / vLines) * i;
+                    ctx.beginPath();
+                    ctx.moveTo(x, padTop);
+                    ctx.lineTo(x, padTop + chartH);
+                    ctx.stroke();
+                }
+
+                // 绘制曲线
+                const drawLine = (data, strokeColor, fillColor) => {
+                    if (data.length < 2) return;
+                    const step = chartW / (HISTORY_SIZE - 1);
+                    const offset = HISTORY_SIZE - data.length;
+
+                    // 填充区域
+                    ctx.beginPath();
+                    ctx.moveTo(padLeft + offset * step, padTop + chartH);
+                    for (let i = 0; i < data.length; i++) {
+                        const x = padLeft + (offset + i) * step;
+                        const y = padTop + chartH - (data[i] / niceMax) * chartH;
+                        if (i === 0) ctx.lineTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.lineTo(padLeft + (offset + data.length - 1) * step, padTop + chartH);
+                    ctx.closePath();
+                    ctx.fillStyle = fillColor;
+                    ctx.fill();
+
+                    // 线条
+                    ctx.beginPath();
+                    for (let i = 0; i < data.length; i++) {
+                        const x = padLeft + (offset + i) * step;
+                        const y = padTop + chartH - (data[i] / niceMax) * chartH;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.strokeStyle = strokeColor;
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                };
+
+                drawLine(rxArr, '#60a5fa', 'rgba(96, 165, 250, 0.15)');
+                drawLine(txArr, '#4ade80', 'rgba(74, 222, 128, 0.15)');
+            };
+
+            // 将数值取整到适合的刻度
+            const niceNumber = (val) => {
+                const units = [
+                    1024,             // 1KB
+                    10 * 1024,        // 10KB
+                    100 * 1024,       // 100KB
+                    1024 * 1024,      // 1MB
+                    10 * 1024 * 1024, // 10MB
+                    100 * 1024 * 1024,// 100MB
+                    1024 * 1024 * 1024,// 1GB
+                ];
+                for (const u of units) {
+                    if (val <= u) return u;
+                }
+                return Math.ceil(val / (1024 * 1024 * 1024)) * 1024 * 1024 * 1024;
+            };
+
+            const fetchPeers = async () => {
+                if (info.value.status !== "running") {
+                    peers.value = [];
+                    lastTrafficMap = {};
+                    lastFetchTime = 0;
+                    return;
+                }
+                try {
+                    const res = await fetch(`${API_BASE}/api/peers`);
+                    const json = await res.json();
+                    if (json.code === 0) {
+                        const now = Date.now();
+                        const list = json.data || [];
+                        const elapsed = lastFetchTime > 0 ? (now - lastFetchTime) / 1000 : 0;
+                        const newTrafficMap = {};
+                        for (const peer of list) {
+                            if (peer.traffic) {
+                                const key = peer.ip;
+                                const prev = lastTrafficMap[key];
+                                if (prev && elapsed > 0) {
+                                    const txDiff = Math.max(0, peer.traffic.tx_bytes - prev.tx_bytes);
+                                    const rxDiff = Math.max(0, peer.traffic.rx_bytes - prev.rx_bytes);
+                                    peer.traffic.tx_speed = Math.round(txDiff / elapsed);
+                                    peer.traffic.rx_speed = Math.round(rxDiff / elapsed);
+                                } else {
+                                    peer.traffic.tx_speed = 0;
+                                    peer.traffic.rx_speed = 0;
+                                }
+                                newTrafficMap[key] = { tx_bytes: peer.traffic.tx_bytes, rx_bytes: peer.traffic.rx_bytes };
+                                // 记录速度历史
+                                if (!speedHistoryMap[key]) speedHistoryMap[key] = { tx: [], rx: [] };
+                                speedHistoryMap[key].tx.push(peer.traffic.tx_speed);
+                                speedHistoryMap[key].rx.push(peer.traffic.rx_speed);
+                                if (speedHistoryMap[key].tx.length > HISTORY_SIZE) {
+                                    speedHistoryMap[key].tx.shift();
+                                    speedHistoryMap[key].rx.shift();
+                                }
+                            }
+                        }
+                        lastTrafficMap = newTrafficMap;
+                        lastFetchTime = now;
+                        peers.value = list;
+                        // 重绘所有展开的图表
+                        nextTick(() => {
+                            for (const ip in expandedPeers) {
+                                if (expandedPeers[ip]) drawChart(ip);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            };
+
+            onMounted(() => {
+                fetchPeers();
+                timer = setInterval(() => {
+                    if (isPageVisible.value) fetchPeers();
+                }, 3000);
+            });
+
+            onUnmounted(() => {
+                if (timer) clearInterval(timer);
+            });
+
+            // 监听 status 变化，当变为 running 时立即获取数据
+            watch(() => info.value.status, (newStatus) => {
+                if (newStatus === "running") {
+                    fetchPeers();
+                }
+            });
+
+            const getRouteModeClass = (route) => {
+                // route 包含 addr, protocol, metric, rtt
+                // 判断是否直连：metric === 1
+                const isDirect = route.metric === 1;
+
+                if (isDirect) {
+                    return 'text-purple-400 font-medium';  // 直连 - 紫色
+                } else {
+                    return 'text-blue-400';  // 客户端中继 - 蓝色
+                }
+            };
+
+            const getRouteModeText = (route) => {
+                const isDirect = route.metric === 1;
+                const isTcp = route.protocol.includes('Tcp');
+
+                if (isDirect) {
+                    return isTcp ? '打洞TCP直连' : '打洞UDP直连';
+                } else {
+                    return isTcp ? '客户端TCP中继' : '客户端UDP中继';
+                }
+            };
+
+            return {
+                peers,
+                expandedPeers,
+                toggleExpand,
+                formatTime,
+                formatBytes,
+                formatSpeed,
+                getRouteModeClass,
+                getRouteModeText,
+                showPeerTooltip: showTooltipGlobal,
+                hidePeerTooltip: hideTooltipGlobal,
+            };
+        },
+    };
+
+    const RoutesView = {
+        template: "#tpl-routes",
+        setup() {
+            const routes = ref([]);
+            const info = inject("info");
+            const isPageVisible = inject("isPageVisible");
+            let timer = null;
+
+            const fetchRoutes = async () => {
+                if (info.value.status !== "running") {
+                    routes.value = [];
+                    return;
+                }
+                try {
+                    const res = await fetch(`${API_BASE}/api/routes`);
+                    const json = await res.json();
+                    if (json.code === 0) routes.value = json.data || [];
+                } catch (e) {
+                    console.error(e);
+                }
+            };
+
+            onMounted(() => {
+                fetchRoutes();
+                timer = setInterval(() => {
+                    if (isPageVisible.value) fetchRoutes();
+                }, 3000);
+            });
+
+            onUnmounted(() => {
+                if (timer) clearInterval(timer);
+            });
+
+            // 监听 status 变化，当变为 running 时立即获取数据
+            watch(() => info.value.status, (newStatus) => {
+                if (newStatus === "running") {
+                    fetchRoutes();
+                }
+            });
+
+            return {routes};
+        },
+    };
+
+    // --- 路由配置 ---
+
+    const routes = [
+        {path: "/", redirect: "/general"},
+        {path: "/general", component: GeneralView},
+        {path: "/config", component: ConfigView},
+        {path: "/peers", component: PeersView},
+        {path: "/routes", component: RoutesView},
+    ];
+
+    const router = createRouter({
+        history: createWebHashHistory(),
+        routes,
+    });
+
+    // --- 主应用 ---
+
+    createApp({
+        setup() {
+            const info = ref({
+                status: "stopped",
+                ip: "",
+                name: "",
+                device_id: "",
+                version: "",
+                server_info: [],
+                online_client_num: 0,
+                direct_client_num: 0,
+                offline_client_num: 0,
+                current_config_file: null,
+                current_config_name: null,
+            });
+            const configList = ref([]);
+            const loading = ref(false);
+
+            // 启动日志相关
+            const showStartLog = ref(false);
+            const startLogs = ref([]);
+            const startStatus = ref("stopped");
+            const logContainer = ref(null);
+            let statusInterval = null;
+            let infoTimer = null;
+
+            // Tooltip 相关
+            const tooltipState = ref({
+                show: false,
+                x: 0,
+                y: 0,
+                info: null,
+            });
+            let tooltipHideTimer = null;
+            const showPeerTooltip = (event, peer) => {
+                if (!peer.nat_info) return;
+                if (tooltipHideTimer) {
+                    clearTimeout(tooltipHideTimer);
+                    tooltipHideTimer = null;
+                }
+                const rect =
+                    event.currentTarget.getBoundingClientRect();
+                tooltipState.value = {
+                    show: true,
+                    x: rect.left + rect.width / 2,
+                    y: rect.bottom + 10,
+                    info: peer.nat_info,
+                };
+            };
+            const hidePeerTooltip = () => {
+                tooltipHideTimer = setTimeout(() => {
+                    tooltipState.value.show = false;
+                }, 100);
+            };
+            const onTooltipEnter = () => {
+                if (tooltipHideTimer) {
+                    clearTimeout(tooltipHideTimer);
+                    tooltipHideTimer = null;
+                }
+            };
+            const onTooltipLeave = () => {
+                tooltipState.value.show = false;
+            };
+
+            // 计算属性
+            const isServerConnected = computed(
+                () =>
+                    info.value.server_info &&
+                    info.value.server_info.some((s) => s.connected),
+            );
+            const serverStatusText = computed(() => {
+                if (
+                    !info.value.server_info ||
+                    !info.value.server_info.length
+                )
+                    return "未配置服务器";
+                return `${info.value.server_info.filter((s) => s.connected).length} / ${info.value.server_info.length} 已连接`;
+            });
+
+            // 基础 API
+            const fetchInfo = async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/info`);
+                    const json = await res.json();
+                    if (json.code === 0) info.value = json.data;
+                } catch (e) {
+                    console.error("Fetch info error", e);
+                }
+            };
+
+            const fetchConfigList = async () => {
+                try {
+                    const res = await fetch(
+                        `${API_BASE}/api/config/list`,
+                    );
+                    const json = await res.json();
+                    if (json.code === 0) configList.value = json.data;
+                } catch (e) {
+                    console.error("Fetch list error", e);
+                }
+            };
+
+            // 启动流程控制
+            const pollStartStatus = async () => {
+                try {
+                    const res = await fetch(
+                        `${API_BASE}/api/start/status`,
+                    );
+                    const json = await res.json();
+                    if (json.code === 0) {
+                        startLogs.value = json.data.logs || [];
+                        startStatus.value = json.data.status;
+                        nextTick(() => {
+                            if (logContainer.value)
+                                logContainer.value.scrollTop =
+                                    logContainer.value.scrollHeight;
+                        });
+
+                        if (startStatus.value === "running") {
+                            stopPolling();
+                            fetchInfo();
+                            showStartLog.value = false;
+                        } else if (
+                            startStatus.value === "stopped" &&
+                            startLogs.value.length > 0
+                        ) {
+                            stopPolling();
+                            fetchInfo();
+                        }
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            };
+
+            const stopPolling = () => {
+                if (statusInterval) {
+                    clearInterval(statusInterval);
+                    statusInterval = null;
+                }
+            };
+            const startPolling = () => {
+                stopPolling();
+                statusInterval = setInterval(pollStartStatus, 1000);
+                pollStartStatus();
+            };
+
+            const openStartingModal = () => {
+                startLogs.value = [];
+                startStatus.value = "starting";
+                showStartLog.value = true;
+                startPolling();
+            };
+
+            const toggleVnt = async (selectedFile) => {
+                if (loading.value) return;
+
+                // 停止逻辑
+                if (
+                    info.value.status === "running" ||
+                    info.value.status === "starting"
+                ) {
+                    loading.value = true;
+                    await fetch(`${API_BASE}/api/stop`, {
+                        method: "POST",
+                    });
+                    loading.value = false;
+                    stopPolling();
+                    showStartLog.value = false;
+                    fetchInfo();
+                    return;
+                }
+
+                // 启动逻辑
+                if (!selectedFile) {
+                    alert("请先选择一个配置");
+                    return;
+                }
+                loading.value = true;
+                try {
+                    const res = await fetch(`${API_BASE}/api/start`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            file_name: selectedFile,
+                        }),
+                    });
+                    const json = await res.json();
+                    loading.value = false;
+                    if (json.code !== 0) {
+                        alert("启动失败: " + json.msg);
+                        return;
+                    }
+                    openStartingModal();
+                } catch (e) {
+                    loading.value = false;
+                    alert("网络请求失败: " + e.message);
+                }
+            };
+
+            const cancelStart = async () => {
+                stopPolling();
+                try {
+                    await fetch(`${API_BASE}/api/stop`, {
+                        method: "POST",
+                    });
+                    startLogs.value.push("启动已手动取消");
+                } catch (e) {
+                }
+                startStatus.value = "stopped";
+                fetchInfo();
+            };
+
+            const restartVnt = async (selectedFile) => {
+                if (loading.value) return;
+                if (!selectedFile) {
+                    alert("请先选择一个配置");
+                    return;
+                }
+                loading.value = true;
+                try {
+                    const res = await fetch(`${API_BASE}/api/restart`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            file_name: selectedFile,
+                        }),
+                    });
+                    const json = await res.json();
+                    loading.value = false;
+                    if (json.code !== 0) {
+                        alert("重启失败: " + json.msg);
+                        return;
+                    }
+                    openStartingModal();
+                } catch (e) {
+                    loading.value = false;
+                    alert("网络请求失败: " + e.message);
+                }
+            };
+
+            // 导航辅助
+            const navClass = (isActive) =>
+                isActive
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30"
+                    : "text-slate-400 hover:bg-slate-800 hover:text-white";
+
+            // 页面可见性处理
+            const isPageVisible = ref(!document.hidden);
+            const visibilityHandler = () => {
+                isPageVisible.value = !document.hidden;
+            };
+
+            // 依赖注入
+            provide("info", info);
+            provide("isPageVisible", isPageVisible);
+            provide("configList", configList);
+            provide("fetchConfigList", fetchConfigList);
+            provide("toggleVnt", toggleVnt);
+            provide("restartVnt", restartVnt);
+            provide("loading", loading);
+            provide("showPeerTooltip", showPeerTooltip);
+            provide("hidePeerTooltip", hidePeerTooltip);
+
+            onMounted(async () => {
+                document.addEventListener(
+                    "visibilitychange",
+                    visibilityHandler,
+                );
+                await fetchInfo();
+                fetchConfigList();
+                if (info.value.status === "starting")
+                    openStartingModal();
+
+                // 全局轮询 info (状态/IP等)
+                infoTimer = setInterval(() => {
+                    if (info.value.status !== "running") return;
+                    if (isPageVisible.value) fetchInfo();
+                }, 3000);
+            });
+
+            onUnmounted(() => {
+                document.removeEventListener(
+                    "visibilitychange",
+                    visibilityHandler,
+                );
+                stopPolling();
+                if (infoTimer) clearInterval(infoTimer);
+            });
+
+            return {
+                info,
+                isServerConnected,
+                serverStatusText,
+                navClass,
+                showStartLog,
+                startStatus,
+                startLogs,
+                logContainer,
+                cancelStart,
+                tooltipState,
+                onTooltipEnter,
+                onTooltipLeave,
+            };
+        },
+    })
+        .use(router)
+        .mount("#app");
+</script>
+</body>
+</html>

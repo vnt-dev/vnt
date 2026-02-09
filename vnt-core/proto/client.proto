@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package protocol.client;
+
+message QuicProxyHandshake{
+  oneof handshake{
+    TcpProxyHandshake tcp = 1;
+    IpProxyHandshake ip = 2;
+    PortProxyHandshake tcp_port_mapping = 3;
+    PortProxyHandshake udp_port_mapping = 4;
+  }
+
+}
+
+
+message TcpProxyHandshake{
+  fixed32 src_ip = 1;
+  uint32 src_port = 2;
+  fixed32 dst_ip = 3;
+  uint32 dst_port = 4;
+}
+message PortProxyHandshake{
+  string src_ip = 1;
+  uint32 src_port = 2;
+  string dst_host = 3;
+  uint32 dst_port = 4;
+}
+
+message IpProxyHandshake{
+  uint32 ip_next_header_protocol = 1;
+  fixed32 src_ip = 2;
+  fixed32 dst_ip = 3;
+}
+
+enum NatType {
+  NAT_TYPE_CONE = 0;
+  NAT_TYPE_SYMMETRIC = 1;
+}
+message NatInfo {
+
+  NatType nat_type = 1;
+
+  repeated fixed32 public_ips = 2;
+
+  repeated uint32 public_udp_ports = 3;
+
+  uint32 public_port_range = 4;
+
+  repeated fixed32 local_ipv4s = 5;
+
+  optional bytes ipv6 = 6;
+
+  repeated uint32 local_udp_ports = 7;
+
+  uint32 local_tcp_port = 8;
+
+  uint32 public_tcp_port = 9;
+}
+
+message PunchInfo{
+  NatInfo nat_info = 1;
+}

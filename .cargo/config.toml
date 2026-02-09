@@ -1,0 +1,22 @@
+[build]
+# target = ["x86_64-unknown-linux-musl"]
+# target = ["x86_64-unknown-linux-gnu"]
+# target = ["aarch64-linux-android"]
+# target = ["x86_64-linux-android"]
+# target = ["aarch64-apple-ios"]
+# target = ["x86_64-apple-ios"]
+# target = ["x86_64-pc-windows-msvc"]
+# target = ["x86_64-apple-darwin"]
+# target = ["x86_64-unknown-freebsd"]
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static", "-C", "strip=symbols"]
+
+[target.mipsel-unknown-linux-musl]
+linker = "mipsel-linux-muslsf-gcc"
+rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
+    "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+    "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/mipsel-linux-muslsf/lib",
+    "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/lib/gcc/mipsel-linux-muslsf/11.2.1"]
+

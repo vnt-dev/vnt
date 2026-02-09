@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package protocol.local_ipc;
+
+message IpcRequest{
+  oneof ipc_cmd{
+    AppInfoCMD app_info = 1;
+    ClientIpsCMD client_ips = 2;
+    ClientListCMD client_list = 3;
+    AllRouteCMD all_route = 4;
+  }
+}
+message AppInfoCMD{
+
+}
+message ClientIpsCMD{
+
+}
+message ClientListCMD{
+
+}
+message AllRouteCMD{
+
+}
+
+
+message IpcResponse{
+  oneof response_payload{
+    AppInfo app_info = 1;
+    ClientIpList client_ips = 2;
+    ClientInfoList client_list = 3;
+    ClientRouteList all_route = 4;
+  }
+}
+
+message AppInfo{
+  repeated ServerInfo server_info = 1;
+  string name = 3;
+  string version = 4;
+  optional uint32 ip = 5;
+  uint32 online_client_num = 6;
+  uint32 offline_client_num = 7;
+  uint32 direct_client_num = 8;
+  string device_id = 11;
+  optional string nat_type = 12;
+  repeated string public_ipv4s = 13;
+  optional string public_ipv6 = 14;
+}
+
+message ServerInfo{
+  string server = 1;
+  bool connected = 2;
+  optional uint32 server_rtt = 3;
+  optional int64 last_connected_time = 4;
+}
+
+message ClientInfoList{
+  repeated ClientInfoItem items = 1;
+}
+
+message ClientInfoItem{
+  uint32 ip = 1;
+  string name = 2;
+  string version = 3;
+  bool online = 4;
+  bool is_direct = 5;
+  int64 last_connected_time = 6;
+  optional uint32 rtt = 7;
+  bool key_equal = 8;
+  optional PacketLoss packet_loss = 9;
+}
+
+message PacketLoss{
+  uint64 sent = 1;
+  uint64 received = 2;
+  double loss_rate = 3;
+}
+
+message ClientRouteList{
+  repeated ClientRouteItem items = 1;
+}
+
+message ClientRouteItem{
+  uint32 ip = 1;
+  repeated Route route_list = 2;
+}
+
+message Route{
+  string addr = 1;
+  uint32 metric = 2;
+  uint32 rtt = 3;
+}
+
+message ClientIpList{
+  repeated ClientIpItem items = 1;
+}
+
+message ClientIpItem{
+  uint32 ip = 1;
+  bool online = 2;
+  bool is_direct = 3;
+  optional uint32 rtt = 4;
+}

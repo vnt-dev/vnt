@@ -1,0 +1,20 @@
+[package]
+name = "vnt-ipc"
+version = "2.0.0"
+edition = "2024"
+
+[dependencies]
+
+vnt-core = { path = "../vnt-core" }
+anyhow = "1.0.100"
+futures = "0.3.31"
+prost = "0.14.1"
+tokio = "1.48.0"
+tokio-util = "0.7.17"
+log = "0.4.29"
+console = "0.16.2"
+time = "0.3.44"
+cli-table = "0.5.0"
+
+[build-dependencies]
+prost-build = "0.14"

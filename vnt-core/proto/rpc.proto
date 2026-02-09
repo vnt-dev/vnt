@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package protocol.rpc;
+
+message RpcMessageRequest{
+  uint64 id = 1;
+  oneof rpc_req_payload{
+    ClientListRequest client_list_req = 2;
+  }
+}
+
+message ClientListRequest{
+
+}
+
+
+
+message RpcMessageResponse{
+  uint64 id = 1;
+  oneof rpc_res_payload{
+    ClientListResponse client_list_res = 2;
+  }
+}
+
+message ClientInfo{
+  string name = 1;
+  string version = 2;
+  fixed32 ip = 3;
+  optional string key_sign = 4;
+  bool online = 5;
+  int64 last_connected_time = 6;
+  string id = 7;
+}
+
+message ClientListResponse{
+  repeated ClientInfo list = 1;
+}

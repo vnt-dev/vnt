@@ -1,11 +1,55 @@
+[package]
+name = "vnt2"
+version = "2.0.0"
+edition = "2024"
+
+[dependencies]
+vnt-ipc = { path = "vnt-ipc", optional = true }
+vnt-web = { path = "vnt-web", optional = true }
+clap = { version = "4.5", features = ["derive"] }
+
+tokio = { version = "1", features = ["full"] }
+
+
+log = "0.4"
+log4rs = "1.4"
+
+serde = { version = "1.0.228", features = ["derive"] }
+anyhow = "1.0.100"
+toml = "0.9.8"
+hostname = "0.4.2"
+ipnet = { version = "2.11", features = ["serde"] }
+
+route_manager = "0.2.11"
+
+[features]
+default = []
+vnt-ipc = ["dep:vnt-ipc"]
+vnt-web = ["dep:vnt-web"]
+
+[[bin]]
+name = "vnt2_cli"
+path = "src/main_cli.rs"
+required-features = ["vnt-ipc"]
+
+[[bin]]
+name = "vnt2_ctrl"
+path = "src/main_ctrl.rs"
+required-features = ["vnt-ipc"]
+
+[[bin]]
+name = "vnt2_web"
+path = "src/main_web.rs"
+required-features = ["vnt-web"]
+
 [workspace]
-members = ["vnt", "common", "vnt-cli", "vn-link", "vn-link-cli"]
+members = ["vnt-web", "vnt-ipc", "vnt-core"]
 
 [profile.release]
 opt-level = 'z'
 debug = 0
 debug-assertions = false
-strip = "debuginfo"
+strip = true
 lto = true
 panic = 'abort'
 incremental = false
