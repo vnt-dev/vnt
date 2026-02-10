@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package protocol.control_message;
+
+enum RegistrationMode {
+  NORMAL = 0;
+  PRE_REGISTER = 1;
+}
+
+message RegRequestMsg {
+  string network_code = 1;
+  string device_id = 2;
+  optional fixed32 ip = 3;
+  string name = 4;
+  string version = 5;
+  optional string key_sign = 6;
+  bool ip_variable = 7;
+  fixed32 server_id = 8;
+  RegistrationMode registration_mode = 9;
+}
+
+
+message RegResponseMsg {
+  fixed32 ip = 1;
+  uint32 prefix_len = 2;
+  fixed32 gateway = 3;
+  string server_version = 4;
+}
+
+message ConfirmRegMsg {
+}
+
+message ConfirmRegResponseMsg {
+  bool success = 1;
+}
+
+message ErrorResponseMsg {
+  uint32 code = 1;
+  string message = 2;
+}
+
+message RequestMessage{
+  oneof request_payload{
+    RegRequestMsg reg = 1;
+    ConfirmRegMsg confirm_reg = 2;
+  }
+}
+message ResponseMessage{
+  oneof response_payload{
+    RegResponseMsg reg = 1;
+    ErrorResponseMsg error = 2;
+    ConfirmRegResponseMsg confirm_reg = 3;
+  }
+}
+
+message SelectiveBroadcast {
+  repeated fixed32 ips = 1;
+  bytes data = 2;
+}
+
+message ClientSimpleInfo{
+  fixed32 ip = 1;
+  bool online = 2;
+}
+
+message ClientSimpleInfoList{
+  uint64 data_version = 1;
+  repeated ClientSimpleInfo list = 2;
+  bool is_all = 3;
+  int64 time = 4;
+}
+

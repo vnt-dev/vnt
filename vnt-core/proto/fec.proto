@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package protocol.fec;
+
+message FecPacket {
+    uint64 group_id = 1;              // FEC 组号（按目标IP分组）
+    uint32 packet_index = 2;          // 包在组内的序号（0-based）
+    bytes payload = 3;
+    optional ParityData parity_data = 4;
+}
+
+
+
+// 冗余包（携带FEC恢复所需的元数据）
+message ParityData {
+    uint32 data_shards = 1;           // 原始包数量
+    uint32 parity_shards = 2;         // 冗余包数量
+}
