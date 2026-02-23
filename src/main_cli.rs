@@ -1,11 +1,13 @@
-use anyhow::Context;
-use args_config::{build_config_from_args_and_file, Args, FileConfig};
+use anyhow::{Context, bail};
+use args_config::{Args, FileConfig, build_config_from_args_and_file};
 use route_manager::Route;
 use std::path::Path;
 use vnt_ipc as vnt_core;
 
 use vnt_core::core::NetworkManager;
 use vnt_core::utils::task_control::TaskGroupManager;
+use vnt_ipc::core::RegisterResponse;
+
 pub mod args_config;
 
 #[cfg(windows)]
@@ -83,8 +85,25 @@ async fn main0() -> anyhow::Result<()> {
     let mut network_manager = NetworkManager::create_network(Box::new(config), task_group)
         .await
         .context("create network")?;
-    let reg_msg = network_manager.register().await.context("register")?;
-
+    let reg_msg = loop {
+        let reg_msg = match network_manager.register().await {
+            Ok(rs) => rs,
+            Err(e) => {
+                log::error!("Register failed: {:?}", e);
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+        match reg_msg {
+            RegisterResponse::Success(reg_msg) => {
+                break reg_msg;
+            }
+            RegisterResponse::Failed(e) => {
+                log::error!("Register failed: {:?}", e);
+                bail!("注册失败：{}", e.message)
+            }
+        }
+    };
     if !network_manager.is_no_tun() {
         log::info!("启动网络：{}/{}", reg_msg.ip, reg_msg.prefix_len);
         network_manager.start_tun().await.context("start tun")?;

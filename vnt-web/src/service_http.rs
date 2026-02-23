@@ -1,5 +1,5 @@
 use crate::defer;
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::IntoResponse;
@@ -26,7 +26,7 @@ use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 use vnt_core::api::VntApi;
 use vnt_core::context::config::Config as CoreConfig;
-use vnt_core::core::{DEFAULT_MTU, NetworkManager};
+use vnt_core::core::{DEFAULT_MTU, NetworkManager, RegisterResponse};
 use vnt_core::nat::NetInput;
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
@@ -536,9 +536,10 @@ async fn start_vnt_network(
     task_group: vnt_core::utils::task_control::TaskGroup,
     task_group_guard: vnt_core::utils::task_control::TaskGroupGuard,
 ) -> anyhow::Result<()> {
-    let mut network_manager = NetworkManager::create_network(Box::new(core_config), task_group.clone())
-        .await
-        .map_err(|e| anyhow!("Create network failed: {:?}", e))?;
+    let mut network_manager =
+        NetworkManager::create_network(Box::new(core_config), task_group.clone())
+            .await
+            .map_err(|e| anyhow!("Create network failed: {:?}", e))?;
 
     let vnt_api = network_manager.vnt_api();
 
@@ -562,11 +563,26 @@ async fn start_vnt_network(
     state.record_log("连接服务器，执行注册");
     log::info!("Registering with server");
 
-    let reg_msg = network_manager
-        .register()
-        .await
-        .context("Registration failed")?;
-
+    let reg_msg = loop {
+        let reg_msg = match network_manager.register().await {
+            Ok(rs) => rs,
+            Err(e) => {
+                log::error!("Register failed: {:?}", e);
+                state.record_log(format!("注册失败:{},5秒后重试", e));
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+        match reg_msg {
+            RegisterResponse::Success(reg_msg) => {
+                break reg_msg;
+            }
+            RegisterResponse::Failed(e) => {
+                log::error!("Register failed: {:?}", e);
+                bail!("注册失败：{}", e.message)
+            }
+        }
+    };
     state.record_log(format!("注册成功 {}/{}", reg_msg.ip, reg_msg.prefix_len));
     log::info!("Network Started: {}/{}", reg_msg.ip, reg_msg.prefix_len);
     if !network_manager.is_no_tun() {

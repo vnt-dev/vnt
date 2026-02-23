@@ -6,7 +6,7 @@ use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::fec::FecDecoder;
 use crate::protocol::control_message::{
-    ConfirmRegResponseMsg, RegResponseMsg, RegistrationMode, RequestMessage, ResponseMessage,
+    ConfirmRegResponseMsg, RegistrationMode, RequestMessage, ResponseMessage,
 };
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
 use crate::tunnel_core::server::inbound::ServerTurnInboundHandler;
@@ -117,9 +117,7 @@ impl ServerTurnManager {
         let request_msg = RequestMessage::Reg(reg_msg);
         let encoded = request_msg.encode();
 
-        self.transport_client
-            .send(encoded.freeze())
-            .await?;
+        self.transport_client.send(encoded.freeze()).await?;
         let buf = self
             .transport_client
             .next_timeout(Duration::from_secs(10))
@@ -164,8 +162,7 @@ impl ServerTurnManager {
         config: Box<InboundHandlerConfig>,
         initial_response: NetworkAddr,
     ) {
-        let  data_handler =
-            ServerTurnInboundHandler::new(self.server_id, initial_response, config);
+        let data_handler = ServerTurnInboundHandler::new(self.server_id, initial_response, config);
         let task_group_ = task_group.clone();
         let Some(mut receiver) = self.receiver.take() else {
             unreachable!()
@@ -212,10 +209,7 @@ impl ServerTurnManager {
                 log::info!("已连接服务器:{}", self.config.server_addr);
                 data_handler.handle_connected();
 
-                if let Err(e) = self
-                    .data_handle_loop(&mut receiver, &data_handler)
-                    .await
-                {
+                if let Err(e) = self.data_handle_loop(&mut receiver, &data_handler).await {
                     log::error!("Error on data_handle_loop: {:?}", e);
                 }
                 already_connected = false;
@@ -271,7 +265,7 @@ impl ServerTurnManager {
 /// 4. Return the registration response
 pub async fn coordinated_registration(
     managers: &mut Vec<ServerTurnManager>,
-) -> anyhow::Result<RegResponseMsg> {
+) -> anyhow::Result<ResponseMessage> {
     if managers.is_empty() {
         bail!("No servers to register");
     }
@@ -287,7 +281,10 @@ pub async fn coordinated_registration(
 
     let ip = match &first_response {
         ResponseMessage::Reg(reg) => reg.ip,
-        ResponseMessage::Error(e) => bail!("First server registration failed: {}", e.message),
+        ResponseMessage::Error(e) => {
+            log::info!("First server registration failed: {}", e.message);
+            return Ok(first_response);
+        }
         _ => bail!("Unexpected response from first server"),
     };
     log::info!("Got IP {} from first server", ip);
@@ -313,7 +310,8 @@ pub async fn coordinated_registration(
                     log::info!("Server {} pre-registered successfully", i + 1);
                 }
                 Ok(ResponseMessage::Error(e)) => {
-                    bail!("Server {} registration failed: {}", i + 1, e.message)
+                    log::info!("Server {} registration failed: {}", i + 1, e.message);
+                    return Ok(ResponseMessage::Error(e.clone()));
                 }
                 Err(e) => bail!("Server {} registration failed: {}", i + 1, e),
                 _ => bail!("Unexpected response from server {}", i + 1),
@@ -339,8 +337,5 @@ pub async fn coordinated_registration(
 
     log::info!("Coordinated registration completed successfully");
     // Return first server's response (contains IP info)
-    match first_response {
-        ResponseMessage::Reg(reg) => Ok(reg),
-        _ => unreachable!(),
-    }
+    Ok(first_response)
 }
