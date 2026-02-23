@@ -18,7 +18,9 @@ impl PacketCrypto {
 
     pub(crate) fn new_from_str(s: Option<&str>) -> Self {
         Self {
-            crypto: s.map(chacha20_poly1305::PacketCrypto::new_from_str).map(Arc::new),
+            crypto: s
+                .map(chacha20_poly1305::PacketCrypto::new_from_str)
+                .map(Arc::new),
         }
     }
     pub(crate) fn encrypt_reserve(&self) -> usize {

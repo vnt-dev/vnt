@@ -76,7 +76,7 @@ impl ServerTurnInboundHandler {
     }
 
     pub async fn handle_server_data(
-        & self,
+        &self,
         transport_client: &mut TransportClient,
         network_addr: NetworkAddr,
         data: TransmissionBytes,
@@ -254,7 +254,7 @@ impl ServerTurnInboundHandler {
                     net_packet.set_payload(&bytes_mut)?;
                     self.packet_crypto.encrypt_in_place(&mut net_packet)?;
                     transport_client.send_turn(net_packet).await?;
-                }else{
+                } else {
                     log::info!("限制打洞频率")
                 }
             }

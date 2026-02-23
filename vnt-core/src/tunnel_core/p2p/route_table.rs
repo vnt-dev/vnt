@@ -1,10 +1,9 @@
 use parking_lot::{Mutex, RwLock};
-use rust_p2p_core::route::{RouteKey, DEFAULT_RTT};
+use rust_p2p_core::route::{DEFAULT_RTT, RouteKey};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Instant;
-
 
 #[derive(Copy, Clone, Debug)]
 pub struct Route {

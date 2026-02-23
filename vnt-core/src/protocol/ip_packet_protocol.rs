@@ -225,7 +225,7 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
         self.header_mut().set_msg_type(msg_type.into());
     }
 
-    pub fn decr_ttl(&mut self){
+    pub fn decr_ttl(&mut self) {
         self.header_mut().decr_ttl()
     }
 
