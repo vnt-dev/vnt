@@ -591,7 +591,7 @@ async fn start_vnt_network(
 
         state.record_log("创建 TUN 虚拟网卡成功，设置 IP");
         network_manager
-            .set_network_ip(reg_msg.ip, reg_msg.prefix_len)
+            .set_tun_network_ip(reg_msg.ip, reg_msg.prefix_len)
             .await?;
         state.record_log("设置 IP 成功");
 

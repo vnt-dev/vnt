@@ -324,7 +324,7 @@ impl NetworkManager {
             .await
     }
     #[cfg(not(target_os = "android"))]
-    pub async fn set_network_ip(&self, ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<()> {
+    pub async fn set_tun_network_ip(&self, ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<()> {
         self.device_io_manager.set_network(ip, prefix_len).await?;
         Ok(())
     }

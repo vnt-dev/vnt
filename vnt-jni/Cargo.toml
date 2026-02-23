@@ -1,0 +1,21 @@
+[package]
+name = "vnt-jni"
+version = "2.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+vnt-core = { path = "../vnt-core" }
+
+jni = "0.21"
+tokio = { version = "1", features = ["full"] }
+parking_lot = "0.12"
+log = "0.4"
+anyhow = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ipnet = { version = "2.11", features = ["serde"] }
+lazy_static = "1.5"
+hostname = "0.4.2"

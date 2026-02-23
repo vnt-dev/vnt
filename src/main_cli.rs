@@ -108,7 +108,7 @@ async fn main0() -> anyhow::Result<()> {
         log::info!("启动网络：{}/{}", reg_msg.ip, reg_msg.prefix_len);
         network_manager.start_tun().await.context("start tun")?;
         network_manager
-            .set_network_ip(reg_msg.ip, reg_msg.prefix_len)
+            .set_tun_network_ip(reg_msg.ip, reg_msg.prefix_len)
             .await
             .context("set network ip")?;
         if !sub_input.is_empty() {

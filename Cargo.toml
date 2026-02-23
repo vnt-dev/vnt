@@ -43,7 +43,7 @@ path = "src/main_web.rs"
 required-features = ["vnt-web"]
 
 [workspace]
-members = ["vnt-web", "vnt-ipc", "vnt-core"]
+members = ["vnt-web", "vnt-ipc", "vnt-core", "vnt-jni"]
 
 [profile.release]
 opt-level = 'z'
