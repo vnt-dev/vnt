@@ -67,14 +67,26 @@ impl VntApi {
     pub fn peer_nat_info(&self, ip: &Ipv4Addr) -> Option<NatInfo> {
         self.app_state.get_peer_info(ip).and_then(|v| v.nat_info)
     }
+    /// 获取指定 IP 的聚合丢包信息（所有路由合并）
     pub fn packet_loss_info(&self, ip: &Ipv4Addr) -> Option<PacketLossInfo> {
-        self.app_state.packet_loss_stats.get_loss_info(ip)
+        self.app_state
+            .packet_loss_stats
+            .get_aggregated_loss_info(ip)
+    }
+    /// 获取指定 IP 的所有路由的丢包信息
+    pub fn packet_loss_info_by_routes(&self, ip: &Ipv4Addr) -> Vec<PacketLossInfo> {
+        self.app_state.packet_loss_stats.get_loss_info_by_ip(ip)
     }
     pub fn all_packet_loss_info(&self) -> Vec<PacketLossInfo> {
         self.app_state.packet_loss_stats.get_all_loss_info()
     }
     pub fn reset_packet_loss(&self, ip: &Ipv4Addr) {
-        self.app_state.packet_loss_stats.reset(ip)
+        // 重置该 IP 的所有路由统计
+        for info in self.app_state.packet_loss_stats.get_loss_info_by_ip(ip) {
+            if let Some(route_key) = info.route_key {
+                self.app_state.packet_loss_stats.reset(ip, &route_key);
+            }
+        }
     }
     pub fn reset_all_packet_loss(&self) {
         self.app_state.packet_loss_stats.reset_all()

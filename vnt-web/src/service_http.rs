@@ -295,6 +295,7 @@ struct HttpRouteDetail {
     protocol: String,
     metric: u8,
     rtt: u32,
+    loss_rate: u16,
 }
 
 #[derive(Serialize)]
@@ -1032,6 +1033,7 @@ async fn get_peers(State(state): State<HttpAppState>) -> Json<ApiResponse<Vec<Ht
             protocol: route.route_key().protocol().to_string(),
             metric: route.metric(),
             rtt: route.rtt(),
+            loss_rate: route.loss_rate(),
         })
     };
 
@@ -1114,6 +1116,7 @@ async fn get_routes(State(state): State<HttpAppState>) -> Json<ApiResponse<Vec<H
                     protocol: v.route_key().protocol().to_string(),
                     metric: v.metric(),
                     rtt: v.rtt(),
+                    loss_rate: v.loss_rate(),
                 })
                 .collect(),
         })

@@ -201,11 +201,17 @@ impl P2pInboundHandler {
                     let time = i64::from_be_bytes(net_packet.payload()[..8].try_into()?);
                     let now = crate::utils::time::now_ts_ms();
                     if now >= time {
+                        // 记录接收并获取丢包率
+                        let loss_rate_f64 = self
+                            .packet_loss_stats
+                            .record_received(ctx.src_ip, route_key);
+                        // 转换为万分率
+                        let loss_rate = (loss_rate_f64 * 10000.0).round() as u16;
+
                         self.route_table.add_route(
                             ctx.src_ip,
-                            Route::from(route_key, metric, (now - time) as _),
+                            Route::from_with_loss(route_key, metric, (now - time) as _, loss_rate),
                         );
-                        self.packet_loss_stats.record_received(ctx.src_ip);
                     }
                 }
             }

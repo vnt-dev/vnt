@@ -8,6 +8,7 @@ use crate::tunnel_core::server::transport::config::ProtocolAddress;
 use ipnet::Ipv4Net;
 use parking_lot::{Mutex, RwLock};
 use rust_p2p_core::nat::NatInfo;
+use rust_p2p_core::route::RouteKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -108,45 +109,55 @@ impl TrafficStats {
 
 #[derive(Clone, Default)]
 pub struct PacketLossStats {
-    inner: Arc<RwLock<HashMap<Ipv4Addr, Arc<Mutex<PingStats>>>>>,
+    inner: Arc<RwLock<HashMap<(Ipv4Addr, RouteKey), Arc<Mutex<PingStats>>>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PacketLossInfo {
     pub ip: Ipv4Addr,
+    #[serde(skip)]
+    pub route_key: Option<RouteKey>,
     pub sent: u64,
     pub received: u64,
     pub loss_rate: f64,
 }
 
 impl PacketLossStats {
-    fn get_or_create(&self, ip: Ipv4Addr) -> Arc<Mutex<PingStats>> {
+    fn get_or_create(&self, ip: Ipv4Addr, route_key: RouteKey) -> Arc<Mutex<PingStats>> {
         {
             let read = self.inner.read();
-            if let Some(stats) = read.get(&ip) {
+            if let Some(stats) = read.get(&(ip, route_key)) {
                 return stats.clone();
             }
         }
         let mut write = self.inner.write();
         write
-            .entry(ip)
+            .entry((ip, route_key))
             .or_insert_with(|| Arc::new(Mutex::new(PingStats::default())))
             .clone()
     }
 
-    pub fn record_sent(&self, ip: Ipv4Addr) {
-        let stats = self.get_or_create(ip);
+    pub fn record_sent(&self, ip: Ipv4Addr, route_key: RouteKey) {
+        let stats = self.get_or_create(ip, route_key);
         stats.lock().sent += 1;
     }
 
-    pub fn record_received(&self, ip: Ipv4Addr) {
-        let stats = self.get_or_create(ip);
-        stats.lock().received += 1;
+    pub fn record_received(&self, ip: Ipv4Addr, route_key: RouteKey) -> f64 {
+        let stats = self.get_or_create(ip, route_key);
+        let mut guard = stats.lock();
+        guard.received += 1;
+
+        // 计算并返回丢包率
+        if guard.sent > 0 {
+            1.0 - (guard.received as f64 / guard.sent as f64)
+        } else {
+            0.0
+        }
     }
 
-    pub fn get_loss_info(&self, ip: &Ipv4Addr) -> Option<PacketLossInfo> {
+    pub fn get_loss_info(&self, ip: &Ipv4Addr, route_key: &RouteKey) -> Option<PacketLossInfo> {
         let read = self.inner.read();
-        read.get(ip).map(|stats| {
+        read.get(&(*ip, *route_key)).map(|stats| {
             let guard = stats.lock();
             let loss_rate = if guard.sent > 0 {
                 1.0 - (guard.received as f64 / guard.sent as f64)
@@ -155,6 +166,7 @@ impl PacketLossStats {
             };
             PacketLossInfo {
                 ip: *ip,
+                route_key: Some(*route_key),
                 sent: guard.sent,
                 received: guard.received,
                 loss_rate,
@@ -162,10 +174,12 @@ impl PacketLossStats {
         })
     }
 
-    pub fn get_all_loss_info(&self) -> Vec<PacketLossInfo> {
+    /// 获取指定 IP 的所有路由的丢包信息
+    pub fn get_loss_info_by_ip(&self, ip: &Ipv4Addr) -> Vec<PacketLossInfo> {
         let read = self.inner.read();
         read.iter()
-            .map(|(ip, stats)| {
+            .filter(|((addr, _), _)| addr == ip)
+            .map(|((addr, route_key), stats)| {
                 let guard = stats.lock();
                 let loss_rate = if guard.sent > 0 {
                     1.0 - (guard.received as f64 / guard.sent as f64)
@@ -173,7 +187,8 @@ impl PacketLossStats {
                     0.0
                 };
                 PacketLossInfo {
-                    ip: *ip,
+                    ip: *addr,
+                    route_key: Some(*route_key),
                     sent: guard.sent,
                     received: guard.received,
                     loss_rate,
@@ -182,9 +197,64 @@ impl PacketLossStats {
             .collect()
     }
 
-    pub fn reset(&self, ip: &Ipv4Addr) {
+    /// 获取指定 IP 的聚合丢包信息（所有路由合并）
+    pub fn get_aggregated_loss_info(&self, ip: &Ipv4Addr) -> Option<PacketLossInfo> {
         let read = self.inner.read();
-        if let Some(stats) = read.get(ip) {
+        let mut total_sent = 0u64;
+        let mut total_received = 0u64;
+        let mut found = false;
+
+        for ((addr, _), stats) in read.iter() {
+            if addr == ip {
+                found = true;
+                let guard = stats.lock();
+                total_sent += guard.sent;
+                total_received += guard.received;
+            }
+        }
+
+        if found {
+            let loss_rate = if total_sent > 0 {
+                1.0 - (total_received as f64 / total_sent as f64)
+            } else {
+                0.0
+            };
+            Some(PacketLossInfo {
+                ip: *ip,
+                route_key: None,
+                sent: total_sent,
+                received: total_received,
+                loss_rate,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn get_all_loss_info(&self) -> Vec<PacketLossInfo> {
+        let read = self.inner.read();
+        read.iter()
+            .map(|((ip, route_key), stats)| {
+                let guard = stats.lock();
+                let loss_rate = if guard.sent > 0 {
+                    1.0 - (guard.received as f64 / guard.sent as f64)
+                } else {
+                    0.0
+                };
+                PacketLossInfo {
+                    ip: *ip,
+                    route_key: Some(*route_key),
+                    sent: guard.sent,
+                    received: guard.received,
+                    loss_rate,
+                }
+            })
+            .collect()
+    }
+
+    pub fn reset(&self, ip: &Ipv4Addr, route_key: &RouteKey) {
+        let read = self.inner.read();
+        if let Some(stats) = read.get(&(*ip, *route_key)) {
             *stats.lock() = PingStats::default();
         }
     }

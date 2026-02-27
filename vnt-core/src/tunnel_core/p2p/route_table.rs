@@ -10,6 +10,8 @@ pub struct Route {
     route_key: RouteKey,
     metric: u8,
     rtt: u32,
+    /// 丢包率，万分率（0-10000，10000 表示 100% 丢包）
+    loss_rate: u16,
 }
 impl Route {
     pub fn from(route_key: RouteKey, metric: u8, rtt: u32) -> Self {
@@ -17,6 +19,15 @@ impl Route {
             route_key,
             metric,
             rtt,
+            loss_rate: 0,
+        }
+    }
+    pub fn from_with_loss(route_key: RouteKey, metric: u8, rtt: u32, loss_rate: u16) -> Self {
+        Self {
+            route_key,
+            metric,
+            rtt,
+            loss_rate,
         }
     }
     pub fn from_default_rt(route_key: RouteKey, metric: u8) -> Self {
@@ -24,6 +35,7 @@ impl Route {
             route_key,
             metric,
             rtt: DEFAULT_RTT,
+            loss_rate: 0,
         }
     }
     pub fn route_key(&self) -> RouteKey {
@@ -38,6 +50,9 @@ impl Route {
     }
     pub fn metric(&self) -> u8 {
         self.metric
+    }
+    pub fn loss_rate(&self) -> u16 {
+        self.loss_rate
     }
 }
 

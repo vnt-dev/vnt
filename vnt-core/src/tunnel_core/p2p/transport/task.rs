@@ -133,12 +133,9 @@ pub async fn ping_all(
                 ping.set_dest_id(id.into());
                 ping.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())
                     .unwrap();
-                if socket_manager
-                    .send_to(ping, &route.route_key())
-                    .await
-                    .is_ok()
-                {
-                    packet_loss_stats.record_sent(id);
+                let route_key = route.route_key();
+                if socket_manager.send_to(ping, &route_key).await.is_ok() {
+                    packet_loss_stats.record_sent(id, route_key);
                 }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
