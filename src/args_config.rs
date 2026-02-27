@@ -35,6 +35,7 @@ pub struct FileConfig {
     pub cert_mode: Option<String>,
     pub udp_stun: Option<Vec<String>>,
     pub tcp_stun: Option<Vec<String>>,
+    pub tunnel_port: Option<u16>,
 }
 
 impl FileConfig {
@@ -144,6 +145,9 @@ pub struct Args {
     /// 控制端口，设置0时禁用控制服务
     #[clap(long)]
     pub ctrl_port: Option<u16>,
+    /// 隧道端口，用于P2P通信
+    #[clap(long)]
+    pub tunnel_port: Option<u16>,
     /// 读取配置文件
     #[arg(long)]
     pub conf: Option<PathBuf>,
@@ -253,6 +257,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         allow_port_mapping: args.allow_mapping || file.allow_mapping.unwrap_or(false),
         udp_stun,
         tcp_stun,
+        tunnel_port: args.tunnel_port.or(file.tunnel_port),
     };
 
     let ctrl_config = CtrlConfig {
@@ -349,6 +354,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         allow_port_mapping: file.allow_mapping.unwrap_or(false),
         udp_stun,
         tcp_stun,
+        tunnel_port: file.tunnel_port,
     };
     let ctrl_config = CtrlConfig {
         ctrl_port: file.ctrl_port,
@@ -423,6 +429,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 控制服务的 tcp 端口
 # ctrl_port = 11233
+
+# 隧道端口，用于P2P通信 (默认为0，自动分配)
+# tunnel_port = 0
 
 # MTU 设置
 # mtu = 1400

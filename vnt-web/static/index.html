@@ -985,6 +985,11 @@
                                         <input v-model.number="formData.mtu" type="number" placeholder="1380"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">隧道端口</label>
+                                        <input v-model.number="formData.tunnel_port" type="number" placeholder="0 (自动分配)"
+                                               class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                    </div>
                                 </div>
                             </div>
 
@@ -1742,7 +1747,8 @@
                 cert_mode: "skip",
                 fingerprint: "",
                 udp_stun: [],
-                tcp_stun: []
+                tcp_stun: [],
+                tunnel_port: null
             });
 
             // 从TOML解析到表单
@@ -1770,7 +1776,8 @@
                     cert_mode: "skip",
                     fingerprint: "",
                     udp_stun: [],
-                    tcp_stun: []
+                    tcp_stun: [],
+                    tunnel_port: null
                 };
 
                 const lines = toml.split('\n');
@@ -2106,7 +2113,8 @@
                         cert_mode: "skip",
                         fingerprint: "",
                         udp_stun: [],
-                        tcp_stun: []
+                        tcp_stun: [],
+                        tunnel_port: null
                     };
                     editorContent.value = `# config_name = "配置名称"
 # --- 网络配置 ---

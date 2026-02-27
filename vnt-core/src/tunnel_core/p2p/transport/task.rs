@@ -23,14 +23,18 @@ pub async fn init_tunnel(
     app_state: AppState,
     tunnel_to_server: ServerOutbound,
     packet_crypto: PacketCrypto,
+    tunnel_port: Option<u16>,
 ) -> anyhow::Result<(Puncher, P2pOutbound, P2pTask)> {
+    let tunnel_port = tunnel_port.unwrap_or(0);
     let udp_config = rust_p2p_core::tunnel::config::UdpTunnelConfig::default()
         .set_main_udp_count(2)
-        .set_sub_udp_count(82);
+        .set_sub_udp_count(82)
+        .set_simple_udp_port(tunnel_port);
     let tcp_config = rust_p2p_core::tunnel::config::TcpTunnelConfig::new(Box::new(
         rust_p2p_core::tunnel::tcp::LengthPrefixedInitCodec,
     ))
-    .set_tcp_multiplexing_limit(2);
+    .set_tcp_multiplexing_limit(2)
+    .set_tcp_port(tunnel_port);
     let config = rust_p2p_core::tunnel::config::TunnelConfig::empty()
         .set_udp_tunnel_config(udp_config)
         .set_tcp_tunnel_config(tcp_config);

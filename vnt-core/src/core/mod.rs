@@ -74,6 +74,7 @@ impl NetworkManager {
                 app_state.clone(),
                 tunnel_to_server.clone(),
                 packet_crypto.clone(),
+                config.tunnel_port,
             )
             .await?;
 

@@ -71,10 +71,7 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeInit(
 
 /// 销毁JNI模块
 #[no_mangle]
-pub extern "system" fn Java_com_vnt_VntManager_nativeDestroy(
-    _env: JNIEnv,
-    _class: JClass,
-) {
+pub extern "system" fn Java_com_vnt_VntManager_nativeDestroy(_env: JNIEnv, _class: JClass) {
     let mut state = GLOBAL_STATE.lock();
     *state = None;
 }
@@ -88,14 +85,10 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
 ) -> jlong {
     let result: anyhow::Result<i64> = (|| {
         let mut global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_mut()
-            .context("VNT not initialized")?;
+        let state = global_state.as_mut().context("VNT not initialized")?;
 
         // 解析配置JSON
-        let config_str: String = env
-            .get_string(&config_json)?
-            .into();
+        let config_str: String = env.get_string(&config_json)?.into();
         let config = parse_config_from_json(&config_str)?;
 
         // 创建任务组
@@ -117,7 +110,9 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
         state.next_id += 1;
 
         // 保存实例
-        state.network_managers.insert(id, Arc::new(Mutex::new(Some(network_manager))));
+        state
+            .network_managers
+            .insert(id, Arc::new(Mutex::new(Some(network_manager))));
         state.task_group_managers.insert(id, task_group_manager);
 
         Ok(id)
@@ -142,9 +137,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeRegister<'local>(
     let result: anyhow::Result<String> = (|| {
         let (network_manager_arc, runtime) = {
             let mut global_state = GLOBAL_STATE.lock();
-            let state = global_state
-                .as_mut()
-                .context("VNT not initialized")?;
+            let state = global_state.as_mut().context("VNT not initialized")?;
 
             let network_manager_arc = state
                 .network_managers
@@ -162,9 +155,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeRegister<'local>(
                 .as_mut()
                 .context("Network manager already destroyed")?;
 
-            runtime.block_on(async {
-                manager.register().await
-            })?
+            runtime.block_on(async { manager.register().await })?
         };
 
         match response {
@@ -211,9 +202,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStartTun(
     let result: anyhow::Result<()> = (|| {
         let (network_manager_arc, runtime) = {
             let mut global_state = GLOBAL_STATE.lock();
-            let state = global_state
-                .as_mut()
-                .context("VNT not initialized")?;
+            let state = global_state.as_mut().context("VNT not initialized")?;
 
             let network_manager_arc = state
                 .network_managers
@@ -233,17 +222,13 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStartTun(
         #[cfg(unix)]
         {
             let tun_fd = if tun_fd < 0 { None } else { Some(tun_fd) };
-            runtime.block_on(async {
-                manager.start_tun_fd(tun_fd).await
-            })?;
+            runtime.block_on(async { manager.start_tun_fd(tun_fd).await })?;
         }
 
         #[cfg(not(unix))]
         {
             let _ = tun_fd; // 避免未使用警告
-            runtime.block_on(async {
-                manager.start_tun().await
-            })?;
+            runtime.block_on(async { manager.start_tun().await })?;
         }
 
         Ok(())
@@ -270,9 +255,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeSetNetworkIp<'local>(
     let result: anyhow::Result<()> = (|| {
         let (network_manager_arc, runtime) = {
             let mut global_state = GLOBAL_STATE.lock();
-            let state = global_state
-                .as_mut()
-                .context("VNT not initialized")?;
+            let state = global_state.as_mut().context("VNT not initialized")?;
 
             let network_manager_arc = state
                 .network_managers
@@ -285,8 +268,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeSetNetworkIp<'local>(
         };
 
         let ip_str: String = env.get_string(&ip)?.into();
-        let ip_addr: Ipv4Addr = ip_str.parse()
-            .context("Invalid IP address")?;
+        let ip_addr: Ipv4Addr = ip_str.parse().context("Invalid IP address")?;
 
         let manager_lock = network_manager_arc.lock();
         let manager = manager_lock
@@ -295,9 +277,8 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeSetNetworkIp<'local>(
 
         #[cfg(not(target_os = "android"))]
         {
-            runtime.block_on(async {
-                manager.set_tun_network_ip(ip_addr, prefix_len as u8).await
-            })?;
+            runtime
+                .block_on(async { manager.set_tun_network_ip(ip_addr, prefix_len as u8).await })?;
         }
 
         #[cfg(target_os = "android")]
@@ -327,9 +308,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeGetApi(
 ) -> jlong {
     let result: anyhow::Result<i64> = (|| {
         let mut global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_mut()
-            .context("VNT not initialized")?;
+        let state = global_state.as_mut().context("VNT not initialized")?;
 
         let network_manager_arc = state
             .network_managers
@@ -367,9 +346,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeIsNoTun(
 ) -> jboolean {
     let result: anyhow::Result<bool> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let network_manager_arc = state
             .network_managers
@@ -386,7 +363,13 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeIsNoTun(
     })();
 
     match result {
-        Ok(is_no_tun) => if is_no_tun { 1 } else { 0 },
+        Ok(is_no_tun) => {
+            if is_no_tun {
+                1
+            } else {
+                0
+            }
+        }
         Err(e) => {
             let _ = env.throw(format!("Failed to check no_tun: {:?}", e));
             0
@@ -403,9 +386,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
 ) -> jboolean {
     let result: anyhow::Result<()> = (|| {
         let mut global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_mut()
-            .context("VNT not initialized")?;
+        let state = global_state.as_mut().context("VNT not initialized")?;
 
         // 停止任务组
         if let Some(task_group_manager) = state.task_group_managers.get(&handle) {
@@ -440,9 +421,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -483,9 +462,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetNetwork<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -526,9 +503,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetNatInfo<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -568,9 +543,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetServerList<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -615,9 +588,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetRouteTable<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -671,9 +642,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeIsDirect<'local>(
 ) -> jboolean {
     let result: anyhow::Result<bool> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -681,14 +650,19 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeIsDirect<'local>(
             .context("Invalid API handle")?;
 
         let ip_str: String = env.get_string(&ip)?.into();
-        let ip_addr: Ipv4Addr = ip_str.parse()
-            .context("Invalid IP address")?;
+        let ip_addr: Ipv4Addr = ip_str.parse().context("Invalid IP address")?;
 
         Ok(api.is_direct(&ip_addr))
     })();
 
     match result {
-        Ok(is_direct) => if is_direct { 1 } else { 0 },
+        Ok(is_direct) => {
+            if is_direct {
+                1
+            } else {
+                0
+            }
+        }
         Err(e) => {
             let _ = env.throw(format!("Failed to check direct: {:?}", e));
             0
@@ -706,9 +680,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetPeerNatInfo<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -716,8 +688,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetPeerNatInfo<'local>(
             .context("Invalid API handle")?;
 
         let ip_str: String = env.get_string(&ip)?.into();
-        let ip_addr: Ipv4Addr = ip_str.parse()
-            .context("Invalid IP address")?;
+        let ip_addr: Ipv4Addr = ip_str.parse().context("Invalid IP address")?;
 
         if let Some(nat_info) = api.peer_nat_info(&ip_addr) {
             let json = serde_json::json!({
@@ -753,9 +724,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetPacketLoss<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -763,8 +732,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetPacketLoss<'local>(
             .context("Invalid API handle")?;
 
         let ip_str: String = env.get_string(&ip)?.into();
-        let ip_addr: Ipv4Addr = ip_str.parse()
-            .context("Invalid IP address")?;
+        let ip_addr: Ipv4Addr = ip_str.parse().context("Invalid IP address")?;
 
         if let Some(loss_info) = api.packet_loss_info(&ip_addr) {
             let json = serde_json::json!({
@@ -801,9 +769,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetTrafficInfo<'local>(
 ) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let global_state = GLOBAL_STATE.lock();
-        let state = global_state
-            .as_ref()
-            .context("VNT not initialized")?;
+        let state = global_state.as_ref().context("VNT not initialized")?;
 
         let api = state
             .vnt_apis
@@ -811,8 +777,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetTrafficInfo<'local>(
             .context("Invalid API handle")?;
 
         let ip_str: String = env.get_string(&ip)?.into();
-        let ip_addr: Ipv4Addr = ip_str.parse()
-            .context("Invalid IP address")?;
+        let ip_addr: Ipv4Addr = ip_str.parse().context("Invalid IP address")?;
 
         if let Some(traffic_info) = api.traffic_info(&ip_addr) {
             let json = serde_json::json!({
@@ -884,6 +849,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         udp_stun: Vec<String>,
         #[serde(default)]
         tcp_stun: Vec<String>,
+        #[serde(default)]
+        tunnel_port: Option<u16>,
     }
 
     let cfg: ConfigJson = serde_json::from_str(json_str)?;
@@ -962,5 +929,6 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         udp_stun,
         tcp_stun,
         fec: cfg.fec,
+        tunnel_port: cfg.tunnel_port,
     })
 }

@@ -195,6 +195,7 @@ pub struct StartConfig {
     pub udp_stun: Vec<String>,
     #[serde(default)]
     pub tcp_stun: Vec<String>,
+    pub tunnel_port: Option<u16>,
 }
 
 #[derive(Deserialize)]
@@ -955,6 +956,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         udp_stun,
         tcp_stun,
         fec: cfg.fec,
+        tunnel_port: cfg.tunnel_port,
     })
 }
 

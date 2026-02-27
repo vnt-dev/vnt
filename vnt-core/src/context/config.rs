@@ -37,6 +37,7 @@ pub struct Config {
     pub allow_port_mapping: bool,
     pub udp_stun: Vec<String>,
     pub tcp_stun: Vec<String>,
+    pub tunnel_port: Option<u16>,
 }
 impl Config {
     pub fn check(&self) -> anyhow::Result<()> {
