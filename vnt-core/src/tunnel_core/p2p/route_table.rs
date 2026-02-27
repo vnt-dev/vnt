@@ -12,30 +12,41 @@ pub struct Route {
     rtt: u32,
     /// 丢包率，万分率（0-10000，10000 表示 100% 丢包）
     loss_rate: u16,
+    /// 路由评分
+    score: u32,
 }
 impl Route {
     pub fn from(route_key: RouteKey, metric: u8, rtt: u32) -> Self {
+        let is_relay = metric > 1;
+        let score = get_channel_score(rtt, 0, is_relay);
         Self {
             route_key,
             metric,
             rtt,
             loss_rate: 0,
+            score,
         }
     }
     pub fn from_with_loss(route_key: RouteKey, metric: u8, rtt: u32, loss_rate: u16) -> Self {
+        let is_relay = metric > 1;
+        let score = get_channel_score(rtt, loss_rate as u32, is_relay);
         Self {
             route_key,
             metric,
             rtt,
             loss_rate,
+            score,
         }
     }
     pub fn from_default_rt(route_key: RouteKey, metric: u8) -> Self {
+        let is_relay = metric > 1;
+        let score = get_channel_score(DEFAULT_RTT, 0, is_relay);
         Self {
             route_key,
             metric,
             rtt: DEFAULT_RTT,
             loss_rate: 0,
+            score,
         }
     }
     pub fn route_key(&self) -> RouteKey {
@@ -54,6 +65,35 @@ impl Route {
     pub fn loss_rate(&self) -> u16 {
         self.loss_rate
     }
+    pub fn score(&self) -> u32 {
+        self.score
+    }
+}
+
+/// 计算路由评分
+///
+/// # 参数
+/// - `rtt`: 往返时延（毫秒）
+/// - `loss_v`: 丢包率（万分率，0-10000）
+/// - `is_relay`: 是否为中继路由
+///
+/// # 返回
+/// 评分值，越高表示路由质量越好
+pub fn get_channel_score(rtt: u32, loss_v: u32, is_relay: bool) -> u32 {
+    let rtt = rtt.max(1);
+    let loss_v = loss_v.min(10000);
+
+    // 权重配置
+    let weight = if is_relay { 100 } else { 120 };
+    let k_adj = 10; // 丢包惩罚系数
+
+    // 分子：代表"有效做功"的放大值
+    let numerator = weight * (10000 - loss_v) * 100;
+
+    // 分母：代表"链路阻力"
+    let denominator = rtt * (10000 + loss_v * k_adj);
+
+    numerator / denominator
 }
 
 #[derive(Clone)]
@@ -212,27 +252,27 @@ impl RouteTableInner {
 
         let list = guard.entry(id).or_insert_with(|| Vec::with_capacity(6));
 
-        // 如果路由已存��，更新并重新排序
+        // 如果路由已存在，更新并重新排序
         if let Some(idx) = list.iter().position(|v| v.route_key() == key) {
             list[idx] = route;
-            // 向前冒泡（如果 RTT 更小）
+            // 向前冒泡（如果评分更高）
             let mut i = idx;
-            while i > 0 && list[i].rtt() < list[i - 1].rtt() {
+            while i > 0 && list[i].score() > list[i - 1].score() {
                 list.swap(i, i - 1);
                 i -= 1;
             }
-            // 向后冒泡（如果 RTT 更大）
-            while i + 1 < list.len() && list[i].rtt() > list[i + 1].rtt() {
+            // 向后冒泡（如果评分更低）
+            while i + 1 < list.len() && list[i].score() < list[i + 1].score() {
                 list.swap(i, i + 1);
                 i += 1;
             }
             return;
         }
 
-        // 插入新路由，保持按 RTT 排序
+        // 插入新路由，保持按评分降序排序（评分高的在前）
         let mut pos = list.len();
         for (i, r) in list.iter().enumerate() {
-            if route.rtt() < r.rtt() {
+            if route.score() > r.score() {
                 pos = i;
                 break;
             }
