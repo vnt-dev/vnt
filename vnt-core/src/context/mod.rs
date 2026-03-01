@@ -259,6 +259,18 @@ impl PacketLossStats {
         }
     }
 
+    pub fn remove(&self, ip: &Ipv4Addr, route_key: &RouteKey) {
+        let mut write = self.inner.write();
+        write.remove(&(*ip, *route_key));
+    }
+
+    pub fn remove_batch(&self, keys: &[(Ipv4Addr, RouteKey)]) {
+        let mut write = self.inner.write();
+        for key in keys {
+            write.remove(key);
+        }
+    }
+
     pub fn reset_all(&self) {
         let read = self.inner.read();
         for stats in read.values() {

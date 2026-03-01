@@ -56,7 +56,10 @@ pub async fn init_tunnel(
     ));
     task_group.spawn(query_tcp_public_addr_loop(app_state.clone(), manager));
 
-    task_group.spawn(route_timeout_task(route_table.clone()));
+    task_group.spawn(route_timeout_task(
+        route_table.clone(),
+        app_state.packet_loss_stats.clone(),
+    ));
     let app_state_for_punch = app_state.clone();
     let punch_ctx = PunchTaskContext {
         network: app_state.network.clone(),
@@ -142,11 +145,17 @@ pub async fn ping_all(
         }
     }
 }
-pub async fn route_timeout_task(route_table: RouteTable) {
+pub async fn route_timeout_task(
+    route_table: RouteTable,
+    packet_loss_stats: PacketLossStats,
+) {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let expired_time = std::time::Instant::now() - Duration::from_secs(10);
-        route_table.remove_oldest_route(expired_time);
+        let removed_keys = route_table.remove_oldest_route(expired_time);
+        if !removed_keys.is_empty() {
+            packet_loss_stats.remove_batch(&removed_keys);
+        }
     }
 }
 

@@ -207,8 +207,8 @@ impl RouteTable {
     }
 
     /// 移除过期的路由
-    pub fn remove_oldest_route(&self, expired_time: Instant) {
-        self.inner.remove_oldest_route(expired_time);
+    pub fn remove_oldest_route(&self, expired_time: Instant) -> Vec<(Ipv4Addr, RouteKey)> {
+        self.inner.remove_oldest_route(expired_time)
     }
 }
 
@@ -280,7 +280,7 @@ impl RouteTableInner {
         list.insert(pos, route);
     }
 
-    fn remove_oldest_route(&self, expired_time: Instant) {
+    fn remove_oldest_route(&self, expired_time: Instant) -> Vec<(Ipv4Addr, RouteKey)> {
         let mut expired_keys = Vec::new();
         {
             let mut time_map = self.route_key_time.lock();
@@ -295,25 +295,27 @@ impl RouteTableInner {
         }
 
         if expired_keys.is_empty() {
-            return;
+            return expired_keys;
         }
 
         let mut table = self.route_table.write();
         let mut owner_map = self.route_key_owner.lock();
 
-        for (id, route_key) in expired_keys {
-            if let Some(list) = table.get_mut(&id) {
-                list.retain(|r| r.route_key() != route_key);
+        for (id, route_key) in &expired_keys {
+            if let Some(list) = table.get_mut(id) {
+                list.retain(|r| r.route_key() != *route_key);
                 if list.is_empty() {
-                    table.remove(&id);
+                    table.remove(id);
                 }
             }
 
-            if let Some(owner_id) = owner_map.get(&route_key) {
-                if *owner_id == id {
-                    owner_map.remove(&route_key);
+            if let Some(owner_id) = owner_map.get(route_key) {
+                if *owner_id == *id {
+                    owner_map.remove(route_key);
                 }
             }
         }
+
+        expired_keys
     }
 }
