@@ -261,6 +261,30 @@ impl P2pInboundHandler {
             }
             MsgType::PingTurn => {}
             MsgType::PongTurn => {}
+            MsgType::RelayProbe => {
+                let metric = ctx.max_ttl - ctx.ttl;
+                self.route_table
+                    .add_route_if_absent(ctx.src_ip, Route::from_default_rt(route_key, metric));
+                let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+                    HEAD_LENGTH,
+                    self.packet_crypto.encrypt_reserve(),
+                ))?;
+                packet.set_msg_type(MsgType::RelayProbeReply);
+                packet.set_ttl(1);
+                packet.set_src_id(ctx.dest_ip.into());
+                packet.set_dest_id(ctx.src_ip.into());
+                self.packet_crypto.encrypt_in_place(&mut packet)?;
+                tunnel
+                    .send_to(packet.into_bytes().into_buffer(), route_key.addr())
+                    .await?;
+            }
+            MsgType::RelayProbeReply => {
+                let metric = ctx.max_ttl - ctx.ttl;
+                self.route_table.add_route(
+                    ctx.src_ip,
+                    Route::from_default_rt(route_key, metric),
+                );
+            }
             _ => {}
         }
         Ok(())

@@ -240,23 +240,21 @@ pub async fn relay_probe_task(
             };
 
             for (relay_ip, route_key) in selected_peers {
-                // 构造Ping消息，目标是target_ip，但发送给relay_ip
-                let Ok(mut ping) = NetPacket::new(TransmissionBytes::zeroed_size(
-                    HEAD_LENGTH + 8,
+                // 构造RelayProbe消息，目标是target_ip，但发送给relay_ip
+                let Ok(mut probe) = NetPacket::new(TransmissionBytes::zeroed_size(
+                    HEAD_LENGTH,
                     socket_manager.encrypt_reserve(),
                 )) else {
                     continue;
                 };
 
-                ping.set_msg_type(MsgType::Ping);
-                ping.set_ttl(2); // TTL设为2，允许中继一次
-                ping.set_src_id(src.into());
-                ping.set_dest_id((*target_ip).into());
-                ping.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())
-                    .unwrap();
+                probe.set_msg_type(MsgType::RelayProbe);
+                probe.set_ttl(2); // TTL设为2，允许中继一次
+                probe.set_src_id(src.into());
+                probe.set_dest_id((*target_ip).into());
 
                 // 发送给已打洞的客户端，让它中继到目标
-                if let Err(e) = socket_manager.send_to(ping, &route_key).await {
+                if let Err(e) = socket_manager.send_to(probe, &route_key).await {
                     log::debug!(
                         "Failed to send relay probe to {} for target {}: {:?}",
                         relay_ip,

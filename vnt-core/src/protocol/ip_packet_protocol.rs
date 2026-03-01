@@ -106,6 +106,8 @@ pub enum MsgType {
     RpcRes = 15,
 
     Quic = 17,
+    RelayProbe = 18,
+    RelayProbeReply = 19,
 }
 impl From<MsgType> for u8 {
     fn from(val: MsgType) -> Self {
@@ -138,7 +140,9 @@ impl TryFrom<u8> for MsgType {
             14 => MsgType::RpcReq,
             15 => MsgType::RpcRes,
 
+            16 => MsgType::RelayProbe,
             17 => MsgType::Quic,
+            18 => MsgType::RelayProbeReply,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
