@@ -1,0 +1,282 @@
+name: Rust
+
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    # necessary for windows
+    shell: bash
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.TARGET }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - TARGET: x86_64-unknown-linux-musl
+            OS: ubuntu-latest
+          - TARGET: aarch64-unknown-linux-musl
+            OS: ubuntu-latest
+          - TARGET: armv7-unknown-linux-musleabihf
+            OS: ubuntu-latest
+          - TARGET: armv7-unknown-linux-musleabi
+            OS: ubuntu-latest
+          - TARGET: arm-unknown-linux-musleabihf
+            OS: ubuntu-latest
+          - TARGET: arm-unknown-linux-musleabi
+            OS: ubuntu-latest
+          - TARGET: x86_64-apple-darwin
+            OS: macos-latest
+          - TARGET: aarch64-apple-darwin
+            OS: macos-latest
+          - TARGET: i686-pc-windows-msvc
+            OS: windows-latest
+          - TARGET: x86_64-pc-windows-msvc
+            OS: windows-latest
+          - TARGET: aarch64-pc-windows-msvc
+            OS: windows-latest
+          - TARGET: mipsel-unknown-linux-musl
+            OS: ubuntu-latest
+          - TARGET: mips-unknown-linux-musl
+            OS: ubuntu-latest
+          - TARGET: x86_64-unknown-freebsd
+            OS: ubuntu-latest
+            ARTIFACT_NAME: freebsd-13.2-x86_64
+            BSD_VERSION: 13.2
+    runs-on: ${{ matrix.OS }}
+    env:
+      NAME: Vnt
+      TARGET: ${{ matrix.TARGET }}
+      OS: ${{ matrix.OS }}
+      FEATURES: ${{ matrix.FEATURES }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Init submodules
+        run: git submodule update --init --recursive --remote && git submodule status
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ./target
+          key: build-cargo-registry-${{matrix.TARGET}}
+      - name: Install Protobuf (MacOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install Protobuf (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc
+      - name: Use strawberry perl
+        if: startsWith(matrix.os, 'windows')
+        run: echo OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl >> $GITHUB_ENV
+      - name: List
+        run: find ./
+      - name: Build Vnt X86_64-FreeBSD
+        uses: cross-platform-actions/action@v0.23.0
+        if: ${{ endsWith(matrix.TARGET, 'freebsd') }}
+        env:
+          TARGET: ${{ matrix.TARGET }}
+        with:
+          operating_system: freebsd
+          environment_variables: TARGET
+          architecture: x86-64
+          version: ${{ matrix.BSD_VERSION }}
+          shell: bash
+          memory: 5G
+          cpu_count: 4
+          run: |
+            uname -a
+            echo $SHELL
+            pwd
+            ls -lah
+            whoami
+            env | sort
+            sudo pkg install -y git protobuf llvm15
+            curl --proto 'https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            export CC=clang
+            export CXX=clang++
+            export CARGO_TERM_COLOR=always
+            cargo build --release --verbose --bin vnt2_web --features vnt-web --target $TARGET
+            cargo build --release --verbose --bin vnt2_cli --features vnt-ipc --target $TARGET
+            cargo build --release --verbose --bin vnt2_ctrl --features vnt-ipc --target $TARGET
+      - name: Install and configure dependencies
+        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') }}
+        run: |
+          # dependencies are only needed on ubuntu as that's the only place where
+          # we make cross-compilation
+          
+          if [[ $OS =~ ^ubuntu.*$ ]]; then
+            sudo apt-get update && sudo apt-get install protobuf-compiler clang llvm libc6-dev-i386 crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools libboost-all-dev libc6-dev -y
+            #  curl -s musl.cc | grep mipsel
+            case $TARGET in 
+              mipsel-unknown-linux-musl)
+                MUSL_URI=mipsel-linux-muslsf-cross
+                URL=mipsel-linux-muslsf
+                ;;
+              aarch64-unknown-linux-musl)
+                MUSL_URI=aarch64-linux-musl-cross
+                ;;
+              armv7-unknown-linux-musleabihf)
+                MUSL_URI=armv7l-linux-musleabihf-cross
+                ;;    
+              armv7-unknown-linux-musleabi)
+                MUSL_URI=armv7m-linux-musleabi-cross
+                ;; 
+              arm-unknown-linux-musleabihf)
+                MUSL_URI=arm-linux-musleabihf-cross
+                ;;    
+              arm-unknown-linux-musleabi)
+                MUSL_URI=arm-linux-musleabi-cross
+                ;;        
+              mips-unknown-linux-musl)
+                MUSL_URI=mips-linux-muslsf-cross
+                URL=mips-linux-muslsf
+                ;;
+            esac
+          
+          
+            if [  -n "$MUSL_URI" ]; then
+              mkdir -p ./musl_gcc 
+              wget -c https://github.com/rustp2p/musl-cross/releases/download/0.0.1/$MUSL_URI.tgz -P /opt/musl_gcc/
+              tar zxf /opt/musl_gcc/$MUSL_URI.tgz -C /opt/musl_gcc/
+              sudo ln -s /opt/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
+            fi
+          fi
+          if [[ $TARGET =~ ^mips.*$ ]]; then
+            cd /opt/musl_gcc/${URL}-cross/lib/gcc/${URL}/11.2.1
+            cp libgcc_eh.a libunwind.a
+            rustup toolchain install nightly-x86_64-unknown-linux-gnu
+            rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+            RUST_LIB_SRC=$HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/
+            if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then 
+               cp -f $RUST_LIB_SRC/library/Cargo.lock $RUST_LIB_SRC/Cargo.lock
+            fi
+          fi
+          rustup -V
+          
+          # some additional configuration for cross-compilation on linux
+          cat >>~/.cargo/config.toml <<EOF
+          [target.x86_64-unknown-linux-musl]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.aarch64-unknown-linux-musl]
+          linker = "aarch64-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.armv7-unknown-linux-musleabihf]
+          linker = "armv7l-linux-musleabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.armv7-unknown-linux-musleabi]
+          linker = "armv7m-linux-musleabi-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.arm-unknown-linux-musleabihf]
+          linker = "arm-linux-musleabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]   
+          [target.arm-unknown-linux-musleabi]
+          linker = "arm-linux-musleabi-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.mipsel-unknown-linux-musl]
+          linker = "mipsel-linux-muslsf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/mipsel-linux-muslsf/lib",
+          "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/lib/gcc/mipsel-linux-muslsf/11.2.1"]
+          [target.mips-unknown-linux-musl]
+          linker = "mips-linux-muslsf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/mips-linux-muslsf/lib",
+          "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/lib/gcc/mips-linux-muslsf/11.2.1"]
+          [target.x86_64-pc-windows-msvc]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]    
+          [target.i686-pc-windows-msvc]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]      
+          [target.x86_64-apple-darwin]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"] 
+          [target.aarch64-apple-darwin]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]     
+          [target.i686-unknown-linux-musl]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]    
+          [target.i686-unknown-linux-gnu]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]   
+          EOF
+      - name: Install rust target
+        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') &&  ! startsWith(matrix.TARGET, 'mips') }}
+        run: rustup target add $TARGET
+      - name: Run build Vnt
+        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') }}
+        run: |
+          if [[ $TARGET =~ ^mips.*$ ]]; then
+            cargo +nightly build --release --verbose --target $TARGET -Z build-std=std,panic_abort --bin vnt2_web --features vnt-web
+            cargo +nightly build --release --verbose --target $TARGET -Z build-std=std,panic_abort --bin vnt2_cli --features vnt-ipc
+            cargo +nightly build --release --verbose --target $TARGET -Z build-std=std,panic_abort --bin vnt2_ctrl --features vnt-ipc
+          else
+            cargo build --release --verbose --target $TARGET --bin vnt2_web --features vnt-web
+            cargo build --release --verbose --target $TARGET --bin vnt2_cli --features vnt-ipc
+            cargo build --release --verbose --target $TARGET --bin vnt2_ctrl --features vnt-ipc
+          fi
+          ldd ./target/$TARGET/release/vnt2_web || true
+          file ./target/$TARGET/release/vnt2_web || true
+      - name: List target
+        run: find ./target
+      - name: Package
+        run: |
+          mkdir -p ./artifacts
+          mkdir -p ./package
+          if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
+            TAG=$GITHUB_REF_NAME
+          else
+            TAG=$GITHUB_SHA
+          fi
+          ZIP_NAME="vnt2-${TARGET}-${TAG}.zip"
+
+          if [[ $OS =~ ^windows.*$ ]]; then
+              cp ./target/$TARGET/release/vnt2_web.exe ./package/
+              cp ./target/$TARGET/release/vnt2_cli.exe ./package/
+              cp ./target/$TARGET/release/vnt2_ctrl.exe ./package/
+              cd ./package
+              7z a -tzip "../artifacts/$ZIP_NAME" ./*
+          else
+              cp ./target/$TARGET/release/vnt2_web ./package/
+              cp ./target/$TARGET/release/vnt2_cli ./package/
+              cp ./target/$TARGET/release/vnt2_ctrl ./package/
+              cd ./package
+              zip "../artifacts/$ZIP_NAME" ./*
+          fi
+      - name: List target Vnt
+        run: find ./artifacts
+      - name: Archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vnt-${{ matrix.TARGET }}
+          path: |
+            ./artifacts/*
+  # deploys to github releases on tag
+  deploy:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+      - name: List
+        run: find ./artifacts
+      - name: Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN  }}
+          file: ./artifacts/*/*.zip
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
