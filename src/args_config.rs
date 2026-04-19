@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+﻿use anyhow::anyhow;
 use clap::Parser;
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
@@ -84,10 +84,10 @@ impl FileConfig {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// 服务器地址 例如 `-s quic://127.0.0.1:29872`, 支持quic/tcp/wss/dynamic
+    /// 鏈嶅姟鍣ㄥ湴鍧€ 渚嬪 `-s quic://127.0.0.1:29872`, 鏀寔quic/tcp/wss/dynamic
     #[clap(short, long)]
     pub server: Vec<ProtocolAddress>,
-    /// 网络编号，相同编号的会组同一个局域网
+    /// 缃戠粶缂栧彿锛岀浉鍚岀紪鍙风殑浼氱粍鍚屼竴涓眬鍩熺綉
     #[clap(short, long)]
     pub network_code: Option<String>,
     #[clap(short = 'k', long, hide = true)]
@@ -95,67 +95,67 @@ pub struct Args {
     /// Network join secret used for registration validation
     #[clap(long)]
     pub network_secret: Option<String>,
-    /// 自定义虚拟IP
+    /// 鑷畾涔夎櫄鎷烮P
     #[clap(long)]
     pub ip: Option<Ipv4Addr>,
-    /// 启用加密，设置加密密码
+    /// 鍚敤鍔犲瘑锛岃缃姞瀵嗗瘑鐮?
     #[clap(short, long)]
     pub password: Option<String>,
-    /// 启用quic优化传输
+    /// 鍚敤quic浼樺寲浼犺緭
     #[clap(long)]
     pub rtx: bool,
-    /// 启用压缩 (LZ4)
+    /// 鍚敤鍘嬬缉 (LZ4)
     #[clap(short = 'z', long)]
     pub compress: bool,
-    /// 启用 FEC 前向纠错，损失一定带宽来提升网络稳定性
+    /// 鍚敤 FEC 鍓嶅悜绾犻敊锛屾崯澶变竴瀹氬甫瀹芥潵鎻愬崌缃戠粶绋冲畾鎬?
     #[clap(long)]
     pub fec: bool,
-    /// 入栈监听网段
+    /// 鍏ユ爤鐩戝惉缃戞
     #[clap(short, long)]
     pub input: Vec<NetInput>,
-    /// 出栈允许网段
+    /// 鍑烘爤鍏佽缃戞
     #[clap(short, long)]
     pub output: Vec<Ipv4Net>,
-    /// 自定义设备名称
+    /// 鑷畾涔夎澶囧悕绉?
     #[clap(long, alias = "name")]
     pub device_name: Option<String>,
-    /// 设备id
+    /// 璁惧id
     #[clap(long, alias = "id")]
     pub device_id: Option<String>,
-    /// 关闭打洞
+    /// 鍏抽棴鎵撴礊
     #[clap(long)]
     pub no_punch: bool,
-    /// 服务端证书验证
+    /// 鏈嶅姟绔瘉涔﹂獙璇?
     #[clap(long)]
     pub cert_mode: Option<CertValidationMode>,
-    /// 虚拟网卡名称
+    /// 铏氭嫙缃戝崱鍚嶇О
     #[clap(long)]
     pub tun_name: Option<String>,
-    /// 关闭内置子网NAT
+    /// 鍏抽棴鍐呯疆瀛愮綉NAT
     #[clap(long)]
     pub no_nat: bool,
-    /// 禁用tun，禁用后只能充当流量出口或者进行端口映射，无需管理员权限
+    /// 绂佺敤tun锛岀鐢ㄥ悗鍙兘鍏呭綋娴侀噺鍑哄彛鎴栬€呰繘琛岀鍙ｆ槧灏勶紝鏃犻渶绠＄悊鍛樻潈闄?
     #[clap(long)]
     pub no_tun: bool,
-    /// 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址
+    /// 绔彛鏄犲皠锛屾牸寮忎负锛氬崗璁?//鏈湴鐩戝惉鍦板潃-鐩爣铏氭嫙IP-鐩爣鏄犲皠鍦板潃
     #[clap(long)]
     pub port_mapping: Vec<PortMapping>,
-    /// 是否允许作为端口映射出口，开启后其他设备才可使用本设备的ip为"目标虚拟IP"
+    /// 鏄惁鍏佽浣滀负绔彛鏄犲皠鍑哄彛锛屽紑鍚悗鍏朵粬璁惧鎵嶅彲浣跨敤鏈澶囩殑ip涓?鐩爣铏氭嫙IP"
     #[clap(long)]
     pub allow_mapping: bool,
-    /// 设置mtu
+    /// 璁剧疆mtu
     #[clap(long)]
     pub mtu: Option<u16>,
-    /// 控制端口，设置0时禁用控制服务
+    /// 鎺у埗绔彛锛岃缃?鏃剁鐢ㄦ帶鍒舵湇鍔?
     #[clap(long)]
     pub ctrl_port: Option<u16>,
-    /// 隧道端口，用于P2P通信
+    /// 闅ч亾绔彛锛岀敤浜嶱2P閫氫俊
     #[clap(long)]
     pub tunnel_port: Option<u16>,
-    /// 读取配置文件
+    /// 璇诲彇閰嶇疆鏂囦欢
     #[arg(long)]
     pub conf: Option<PathBuf>,
-    /// 输出配置文件示例
+    /// 杈撳嚭閰嶇疆鏂囦欢绀轰緥
     #[clap(long)]
     pub conf_example: bool,
 }
@@ -382,107 +382,121 @@ impl FileConfig {
 
         let example = format!(
             r#"# ==================================
-# VNT 配置文件示例（程序版本 v{version}）
+# VNT example config (v{version})
+# Fields marked as Required have no default value.
 # ==================================
 
-# --- 网络配置 ---
-# 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
+# --- Required ---
+
+# Virtual network identifier. Required. Default: none.
 network_code = "your_network_code"
 
-# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)
-# dynamic 协议使用dns txt解析记录值
+# Server addresses. Required. Default: none.
+# Supported schemes: quic://, tcp://, wss://, dynamic://
+# If the scheme is omitted, tcp:// is used.
 server = ["quic://1.2.3.4:29872"]
 
-# ===简单使用以下参数可以不动===
+# --- Common optional fields ---
 
-# 自定义虚拟 IP (可选)
+# Virtual IP. Default: auto-assigned by the server.
 # ip = "10.10.0.2"
 
-# 是否启用quic优化传输 (默认 false,设置为true时开启)
+# Enable QUIC optimized transport. Default: false.
 # rtx = false
 
-# 是否启用 FEC 前向纠错，损失一定带宽来提升网络稳定性(默认 false,设置为true时开启)
+# Enable forward error correction. Default: false.
 # fec = false
 
-# 是否关闭 P2P 打洞 (默认 false,设置为true时关闭)
+# Disable P2P hole punching. Default: false.
 # no_punch = false
 
-# 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
+# Enable LZ4 compression. Default: false.
 # compress = false
 
-# 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点
+# Route subnet traffic to a virtual peer. Default: [].
+# Format: "CIDR,target_virtual_ip"
 # input = ["192.168.0.0/24,10.26.0.2", "192.168.1.0/24,10.26.0.3"]
 
-# 出栈允许网段，用于点对网，允许指定网段的转发
+# Allow this node to forward traffic to these destination subnets. Default: [].
 # output = ["0.0.0.0/0"]
 
-# 是否关闭内置子网NAT，关闭(设为true)后需要配置网卡转发，否则无法使用点对网。通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好
+# Disable built-in subnet NAT. Default: false.
 # no_nat = false
 
-# 是否关闭TUN虚拟网卡，关闭(设为true)后只能充当流量出口或者进行端口映射，关闭后无需管理员权限
+# Disable TUN device creation. Default: false.
 # no_tun = false
 
-# 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址
-# 端口映射用于在本地监听指定端口，并将收到的网络流量经由指定虚拟节点转发到目标地址，从而实现跨网络或内网服务访问
-# 例如 port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"]
-# tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80 则表示将本地tcp的81端口的数据转发到10.0.0.2:80
-# tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到192.168.1.10:80
-# tcp://0.0.0.0:81-10.0.0.2-anyonehost:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到anyonehost:80
+# Port mapping rules. Default: [].
+# Format: "tcp://listen_addr-virtual_target_ip-dst_host:dst_port"
+# Example:
+# port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"]
+# port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80"]
+# port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-anyonehost:80"]
 # port_mapping = []
 
-# 是否允许作为端口映射出口，开启(设置为true)后其他设备才可使用本设备的ip为"目标虚拟IP"
-# 开启后虚拟网络其他设备可以使用此设备当跳板访问其他网络
+# Allow other peers to use this node as a port-mapping egress. Default: false.
 # allow_mapping = false
 
-# 控制服务的 tcp 端口
+# Local IPC control port for CLI mode. Default: 11233.
+# If 11233 is occupied, a random free port is chosen automatically.
+# Set to 0 to disable the local IPC server.
 # ctrl_port = 11233
 
-# 隧道端口，用于P2P通信 (默认为0，自动分配)
+# Local P2P tunnel port. Default: 0 (auto-assign).
 # tunnel_port = 0
 
-# MTU 设置
-# mtu = 1400
+# MTU. Default: 1380. Maximum: 1500.
+# mtu = 1380
 
-# --- 设备配置 ---
+# --- Device identity ---
 
-# 设备名称 (可选，默认读取本机 hostname)
+# Device name. Default: local hostname.
 # device_name = "my-device"
 
-# 设备 ID (可选，不填自动生成，不同设备ID不能相同)
+# Device ID. Default: auto-generated from the local machine.
 # device_id = "device-id-xxxx"
 
-# 虚拟网卡名称
+# TUN interface name. Default: OS/runtime chosen.
 # tun_name = "vnt-tun"
 
-# --- 安全配置 ---
+# --- Security ---
 
-# 加密密码 (可选)
-# Join secret for server-side admission control (optional)
+# Join secret used for server-side admission control. Default: none.
 # network_secret = "replace_with_a_long_random_secret"
 
-# Data-plane packet encryption password (optional)
+# Payload encryption password. Default: none.
 # password = "123456"
 
-# 证书校验方式：
-#   skip     跳过验证（默认）
-#   standard 使用系统证书验证
-#   finger   使用证书指纹验证，服务端启动时日志会输出指纹，
-#            例如 finger:3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1
+# Server certificate validation mode. Default: "skip".
+# Options:
+#   "skip"               - no certificate validation
+#   "standard"           - validate against system root CAs
+#   "finger:<sha256hex>" - pin by certificate fingerprint
 # cert_mode = "skip"
 
-# --- 其他配置 ---
-# 自定义stun地址，分别用于udp打洞和tcp打洞，需要单独配置，不设置则用默认stun
+# --- STUN ---
+
+# UDP STUN servers. Default: built-in list.
+# Built-in default:
+# ["stun.miwifi.com:3478", "stun.chat.bilibili.com:3478", "stun.l.google.com:19302"]
+# If a host has no port, :3478 is appended automatically.
 # udp_stun = ["stun.chat.bilibili.com"]
+
+# TCP STUN servers. Default: built-in list.
+# Built-in default:
+# ["stun.flashdance.cx:3478", "stun.sipnet.net:3478", "stun.nextcloud.com:443"]
+# If a host has no port, :3478 is appended automatically.
 # tcp_stun = ["stun.nextcloud.com:443"]
 "#,
             version = VERSION
         );
-        println!("--- 示例配置文件内容 ---\n{}", example);
+        println!("--- 绀轰緥閰嶇疆鏂囦欢鍐呭 ---\n{}", example);
         if let Some(p) = path {
             std::fs::write(p, &example)?;
-            println!("示例配置文件已写入 {}", p.display());
+            println!("绀轰緥閰嶇疆鏂囦欢宸插啓鍏?{}", p.display());
         }
 
         Ok(())
     }
 }
+

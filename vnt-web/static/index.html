@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8"/>
@@ -48,7 +48,7 @@
             ring: 2px;
         }
 
-        /* Tooltip CSS (保留用于表格内的静态 tooltip) */
+        /* Tooltip CSS (淇濈暀鐢ㄤ簬琛ㄦ牸鍐呯殑闈欐€?tooltip) */
         .tooltip {
             position: relative;
             display: inline-flex;
@@ -92,7 +92,7 @@
             opacity: 1;
         }
 
-        /* 路由切换动画 */
+        /* 璺敱鍒囨崲鍔ㄧ敾 */
         .fade-enter-active,
         .fade-leave-active {
             transition: opacity 0.2s ease;
@@ -103,7 +103,7 @@
             opacity: 0;
         }
 
-        /* 自定义滚动条样式 */
+        /* 鑷畾涔夋粴鍔ㄦ潯鏍峰紡 */
         .custom-scrollbar::-webkit-scrollbar {
             width: 8px;
             height: 8px;
@@ -124,7 +124,7 @@
             background: rgba(100, 116, 139, 0.9);
         }
 
-        /* Firefox 滚动条样式 */
+        /* Firefox 婊氬姩鏉℃牱寮?*/
         .custom-scrollbar {
             scrollbar-width: thin;
             scrollbar-color: rgba(71, 85, 105, 0.8) rgba(15, 23, 42, 0.5);
@@ -133,7 +133,7 @@
 </head>
 <body class="h-screen overflow-hidden flex flex-col font-sans">
 <div id="app" v-cloak class="flex h-full">
-    <!-- 侧边栏 -->
+    <!-- 渚ц竟鏍?-->
     <aside
             class="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0"
     >
@@ -146,7 +146,7 @@
         </div>
 
         <nav class="flex-1 p-4 space-y-2">
-            <!-- 使用 router-link 和 v-slot 自定义渲染按钮 -->
+            <!-- 浣跨敤 router-link 鍜?v-slot 鑷畾涔夋覆鏌撴寜閽?-->
             <router-link
                     to="/general"
                     custom
@@ -170,7 +170,7 @@
                                 d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
                         ></path>
                     </svg>
-                    通用
+                    閫氱敤
                 </button>
             </router-link>
 
@@ -203,7 +203,7 @@
                                 d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
                         ></path>
                     </svg>
-                    配置
+                    閰嶇疆
                 </button>
             </router-link>
 
@@ -230,7 +230,7 @@
                                 d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
                         ></path>
                     </svg>
-                    设备列表
+                    璁惧鍒楄〃
                 </button>
             </router-link>
 
@@ -257,7 +257,7 @@
                                 d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 01-.806-.98l-3.747-1.874O12 7m3 13V7m-3 0l3 3"
                         ></path>
                     </svg>
-                    路由
+                    璺敱
                 </button>
             </router-link>
         </nav>
@@ -283,9 +283,9 @@
                                     :class="info.status === 'running' ? 'bg-green-500 animate-pulse' : (info.status === 'starting' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500')"
                             ></span>
                     <span class="text-sm font-medium"
-                    >{{ info.status === 'running' ? '已运行' :
-                                (info.status === 'starting' ? '启动中...' :
-                                '未启动') }}</span
+                    >{{ info.status === 'running' ? '宸茶繍琛? :
+                                (info.status === 'starting' ? '鍚姩涓?..' :
+                                '鏈惎鍔?) }}</span
                     >
                 </div>
 
@@ -311,8 +311,8 @@
                     <span
                             class="text-sm font-medium"
                             :class="isServerConnected ? 'text-green-400' : 'text-red-400'"
-                    >服务器: {{ isServerConnected ? '已连接' :
-                                '未连接' }}</span
+                    >鏈嶅姟鍣? {{ isServerConnected ? '宸茶繛鎺? :
+                                '鏈繛鎺? }}</span
                     >
                 </div>
 
@@ -328,7 +328,7 @@
             </div>
 
             <div class="flex items-center space-x-2 text-slate-400">
-                <span class="text-sm">设备:</span>
+                <span class="text-sm">璁惧:</span>
                 <span class="font-bold text-white"
                 >{{ info.name || '' }}</span
                 >
@@ -349,7 +349,7 @@
             </router-view>
         </div>
 
-        <!-- 启动日志弹窗 (Global) -->
+        <!-- 鍚姩鏃ュ織寮圭獥 (Global) -->
         <div
                 v-if="showStartLog"
                 class="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
@@ -375,8 +375,8 @@
                         ></div>
                         <h3 class="text-lg font-bold text-white">
                             {{ startStatus === 'starting' ?
-                            '正在启动组网...' : (startStatus ===
-                            'running' ? '启动成功' : '启动失败') }}
+                            '姝ｅ湪鍚姩缁勭綉...' : (startStatus ===
+                            'running' ? '鍚姩鎴愬姛' : '鍚姩澶辫触') }}
                         </h3>
                     </div>
                     <span
@@ -402,14 +402,14 @@
                             v-if="startStatus === 'starting'"
                             class="text-blue-400 animate-pulse italic mt-4"
                     >
-                        等待后续步骤...
+                        绛夊緟鍚庣画姝ラ...
                     </div>
                     <div
                             v-if="startStatus === 'stopped' && startLogs.length > 0"
                             class="p-3 bg-red-900/20 border border-red-900/50 rounded-lg text-red-400 mt-4"
                     >
-                        <strong>启动失败：</strong>
-                        请检查配置或网络连接。
+                        <strong>鍚姩澶辫触锛?/strong>
+                        璇锋鏌ラ厤缃垨缃戠粶杩炴帴銆?
                     </div>
                 </div>
                 <div
@@ -420,14 +420,14 @@
                             @click="cancelStart"
                             class="px-6 py-2 bg-slate-700 hover:bg-red-600 text-white rounded-lg transition-colors font-medium"
                     >
-                        取消组网
+                        鍙栨秷缁勭綉
                     </button>
                     <button
                             v-if="startStatus === 'stopped' || startStatus === 'running'"
                             @click="showStartLog = false"
                             class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium"
                     >
-                        关闭窗口
+                        鍏抽棴绐楀彛
                     </button>
                 </div>
             </div>
@@ -497,27 +497,27 @@
 
 <!-- ================= TEMPLATES ================= -->
 
-<!-- 1. General (通用) -->
+<!-- 1. General (閫氱敤) -->
 <template id="tpl-general">
     <div class="space-y-6 max-w-5xl mx-auto">
         <div class="glass-panel rounded-xl p-6 shadow-lg">
             <h2
                     class="text-xl font-bold mb-6 text-white border-l-4 border-blue-500 pl-3"
             >
-                运行控制
+                杩愯鎺у埗
             </h2>
             <div class="flex items-end space-x-4">
                 <div class="flex-1">
                     <label
                             class="block text-sm font-medium text-slate-400 mb-2"
-                    >选择配置</label
+                    >閫夋嫨閰嶇疆</label
                     >
                     <select
                             v-model="localSelectedConfig"
                             :disabled="info.status === 'starting'"
                             class="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        <option value="" disabled>请选择配置...</option>
+                        <option value="" disabled>璇烽€夋嫨閰嶇疆...</option>
                         <option
                                 v-for="cfg in configList"
                                 :key="cfg.file_name"
@@ -533,8 +533,8 @@
                         :disabled="loading || !localSelectedConfig"
                         class="px-6 py-2.5 rounded-lg font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center disabled:opacity-50 disabled:cursor-not-allowed bg-blue-500 hover:bg-blue-600"
                 >
-                    <span v-if="loading" class="mr-2 animate-spin">⟳</span>
-                    重启
+                    <span v-if="loading" class="mr-2 animate-spin">鉄?/span>
+                    閲嶅惎
                 </button>
                 <button
                         @click="handleToggle"
@@ -543,10 +543,10 @@
                         class="px-8 py-2.5 rounded-lg font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                             <span v-if="loading" class="mr-2 animate-spin"
-                            >⟳</span
+                            >鉄?/span
                             >
                     {{ (info.status === 'running' || info.status ===
-                    'starting') ? '停止运行' : '启动运行' }}
+                    'starting') ? '鍋滄杩愯' : '鍚姩杩愯' }}
                 </button>
             </div>
         </div>
@@ -556,7 +556,7 @@
                     class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-blue-500"
             >
                         <span class="text-slate-400 text-sm mb-1"
-                        >在线设备</span
+                        >鍦ㄧ嚎璁惧</span
                         >
                 <span class="text-3xl font-bold text-blue-400"
                 >{{ info.online_client_num }}</span
@@ -566,7 +566,7 @@
                     class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-green-500"
             >
                         <span class="text-slate-400 text-sm mb-1"
-                        >直连设备</span
+                        >鐩磋繛璁惧</span
                         >
                 <span class="text-3xl font-bold text-green-400"
                 >{{ info.direct_client_num }}</span
@@ -576,7 +576,7 @@
                     class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-slate-500"
             >
                         <span class="text-slate-400 text-sm mb-1"
-                        >离线设备</span
+                        >绂荤嚎璁惧</span
                         >
                 <span class="text-3xl font-bold text-slate-400"
                 >{{ info.offline_client_num }}</span
@@ -586,7 +586,7 @@
                     class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-yellow-500"
             >
                         <span class="text-slate-400 text-sm mb-1"
-                        >当前配置</span
+                        >褰撳墠閰嶇疆</span
                         >
                 <span
                         class="text-lg font-medium text-yellow-400 truncate w-full text-center px-2"
@@ -598,12 +598,12 @@
         </div>
 
         <div class="glass-panel rounded-xl p-6 shadow-lg">
-            <h2 class="text-lg font-bold mb-4 text-white">网络详情</h2>
+            <h2 class="text-lg font-bold mb-4 text-white">缃戠粶璇︽儏</h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div
                         class="flex justify-between border-b border-slate-700 pb-2"
                 >
-                    <span class="text-slate-400">虚拟 IP / 掩码</span>
+                    <span class="text-slate-400">铏氭嫙 IP / 鎺╃爜</span>
                     <span class="font-mono text-white"
                     >{{ info.ip || '-' }} / {{ info.prefix_len ||
                                 '-' }}</span
@@ -612,7 +612,7 @@
                 <div
                         class="flex justify-between border-b border-slate-700 pb-2"
                 >
-                    <span class="text-slate-400">网关</span>
+                    <span class="text-slate-400">缃戝叧</span>
                     <span class="font-mono text-white"
                     >{{ info.gateway || '-' }}</span
                     >
@@ -620,7 +620,7 @@
                 <div
                         class="flex justify-between border-b border-slate-700 pb-2"
                 >
-                    <span class="text-slate-400">网络编号</span>
+                    <span class="text-slate-400">缃戠粶缂栧彿</span>
                     <span class="font-mono text-white"
                     >{{ info.network_code || '-' }}</span
                     >
@@ -636,7 +636,7 @@
                 <div
                         class="flex justify-between border-b border-slate-700 pb-2"
                 >
-                    <span class="text-slate-400">NAT 类型</span>
+                    <span class="text-slate-400">NAT 绫诲瀷</span>
                     <span class="font-mono text-blue-300"
                     >{{ info.nat_type || 'Unknown' }}</span
                     >
@@ -655,19 +655,19 @@
             <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
                     <span class="w-2 h-2 rounded-full" :class="info.encrypt ? 'bg-green-500' : 'bg-slate-600'"></span>
-                    <span class="text-sm text-slate-300">加密</span>
+                    <span class="text-sm text-slate-300">鍔犲瘑</span>
                 </div>
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
                     <span class="w-2 h-2 rounded-full" :class="info.compress ? 'bg-green-500' : 'bg-slate-600'"></span>
-                    <span class="text-sm text-slate-300">压缩</span>
+                    <span class="text-sm text-slate-300">鍘嬬缉</span>
                 </div>
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
                     <span class="w-2 h-2 rounded-full" :class="info.fec ? 'bg-green-500' : 'bg-slate-600'"></span>
-                    <span class="text-sm text-slate-300">FEC纠错</span>
+                    <span class="text-sm text-slate-300">FEC绾犻敊</span>
                 </div>
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
                     <span class="w-2 h-2 rounded-full" :class="info.rtx ? 'bg-green-500' : 'bg-slate-600'"></span>
-                    <span class="text-sm text-slate-300">QUIC传输</span>
+                    <span class="text-sm text-slate-300">QUIC浼犺緭</span>
                 </div>
             </div>
             <div class="mt-4">
@@ -684,7 +684,7 @@
                     <span
                             v-if="!info.public_ipv4s || info.public_ipv4s.length === 0"
                             class="text-slate-600 text-xs"
-                    >无</span
+                    >鏃?/span
                     >
                 </div>
             </div>
@@ -692,7 +692,7 @@
 
         <div class="glass-panel rounded-xl p-6 shadow-lg">
             <h2 class="text-lg font-bold mb-4 text-white">
-                服务器连接列表
+                鏈嶅姟鍣ㄨ繛鎺ュ垪琛?
             </h2>
             <div
                     class="overflow-auto max-h-[400px] custom-scrollbar rounded-lg border border-slate-700"
@@ -703,22 +703,22 @@
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            地址
+                            鍦板潃
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            状态
+                            鐘舵€?
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            延迟
+                            寤惰繜
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            版本
+                            鐗堟湰
                         </th>
                     </tr>
                     </thead>
@@ -739,8 +739,8 @@
                                                 :class="server.connected ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'"
                                                 class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
                                         >
-                                            {{ server.connected ? '已连接' :
-                                            '未连接' }}
+                                            {{ server.connected ? '宸茶繛鎺? :
+                                            '鏈繛鎺? }}
                                         </span>
                         </td>
                         <td
@@ -762,7 +762,7 @@
                                 colspan="4"
                                 class="px-6 py-4 text-center text-slate-500"
                         >
-                            暂无数据
+                            鏆傛棤鏁版嵁
                         </td>
                     </tr>
                     </tbody>
@@ -772,11 +772,11 @@
     </div>
 </template>
 
-<!-- 2. Config (配置) -->
+<!-- 2. Config (閰嶇疆) -->
 <template id="tpl-config">
     <div class="space-y-6 max-w-5xl mx-auto h-full flex flex-col">
         <div class="flex justify-between items-center">
-            <h2 class="text-2xl font-bold text-white">配置管理</h2>
+            <h2 class="text-2xl font-bold text-white">閰嶇疆绠＄悊</h2>
             <button
                     @click="openEditor(null)"
                     class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center transition-colors"
@@ -794,7 +794,7 @@
                             d="M12 4v16m8-8H4"
                     ></path>
                 </svg>
-                新建配置
+                鏂板缓閰嶇疆
             </button>
         </div>
 
@@ -854,19 +854,19 @@
                             @click.stop="openEditor(cfg.file_name)"
                             class="text-blue-400 hover:text-blue-300 text-sm mr-4"
                     >
-                        编辑
+                        缂栬緫
                     </button>
                     <button
                             @click.stop="deleteConfig(cfg.file_name)"
                             class="text-red-400 hover:text-red-300 text-sm"
                     >
-                        删除
+                        鍒犻櫎
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- 编辑器 Modal -->
+        <!-- 缂栬緫鍣?Modal -->
         <div
                 v-if="showEditor"
                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
@@ -877,10 +877,10 @@
                 <!-- Header -->
                 <div class="flex justify-between items-center p-4 border-b border-slate-700 bg-slate-800/50">
                     <h3 class="text-lg font-bold text-white">
-                        {{ editorMode === 'new' ? '新建配置' : '编辑配置' }}
+                        {{ editorMode === 'new' ? '鏂板缓閰嶇疆' : '缂栬緫閰嶇疆' }}
                     </h3>
                     <div class="flex items-center space-x-4">
-                        <!-- 模式切换按钮 -->
+                        <!-- 妯″紡鍒囨崲鎸夐挳 -->
                         <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-600">
                             <button
                                     @click="switchToFormMode"
@@ -890,7 +890,7 @@
                                 <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                                 </svg>
-                                表单模式
+                                琛ㄥ崟妯″紡
                             </button>
                             <button
                                     @click="switchToTomlMode"
@@ -900,7 +900,7 @@
                                 <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
                                 </svg>
-                                TOML模式
+                                TOML妯″紡
                             </button>
                         </div>
                         <div class="text-sm text-slate-500 font-mono" v-if="editorFileName">
@@ -911,39 +911,39 @@
 
                 <!-- Content -->
                 <div class="flex-1 overflow-hidden">
-                    <!-- 表单模式 -->
+                    <!-- 琛ㄥ崟妯″紡 -->
                     <div v-show="editMode === 'form'" class="h-full overflow-y-auto scrollbar-hide p-6">
                         <div class="max-w-4xl mx-auto space-y-6">
-                            <!-- 基础配置 -->
+                            <!-- 鍩虹閰嶇疆 -->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-blue-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                                     </svg>
-                                    基础配置
+                                    鍩虹閰嶇疆
                                 </h4>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-300 mb-2">配置名称</label>
-                                        <input v-model="formData.config_name" type="text" placeholder="例如: 我的VPN配置"
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">閰嶇疆鍚嶇О</label>
+                                        <input v-model="formData.config_name" type="text" placeholder="渚嬪: 鎴戠殑VPN閰嶇疆"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                     <div>
                                         <label class="block text-sm font-medium text-slate-300 mb-2">
-                                            网络编号 <span class="text-red-400">*</span>
+                                            缃戠粶缂栧彿 <span class="text-red-400">*</span>
                                         </label>
-                                        <input v-model="formData.network_code" type="text" placeholder="例如: my_network" required
+                                        <input v-model="formData.network_code" type="text" placeholder="渚嬪: my_network" required
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                 </div>
                                 <div class="mt-4">
                                     <label class="block text-sm font-medium text-slate-300 mb-2">
-                                        服务器地址 <span class="text-red-400">*</span>
-                                        <span class="text-xs text-slate-500 ml-2">支持 quic:// tcp:// wss:// dynamic://</span>
+                                        鏈嶅姟鍣ㄥ湴鍧€ <span class="text-red-400">*</span>
+                                        <span class="text-xs text-slate-500 ml-2">鏀寔 quic:// tcp:// wss:// dynamic://</span>
                                     </label>
                                     <div class="space-y-2">
                                         <div v-for="(server, idx) in formData.server" :key="idx" class="flex space-x-2">
-                                            <input v-model="formData.server[idx]" type="text" placeholder="例如: quic://1.2.3.4:29872"
+                                            <input v-model="formData.server[idx]" type="text" placeholder="渚嬪: quic://1.2.3.4:29872"
                                                    class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                             <button @click="formData.server.splice(idx, 1)" v-if="formData.server.length > 1"
                                                     class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
@@ -957,27 +957,27 @@
                                             <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                                             </svg>
-                                            添加服务器
+                                            娣诲姞鏈嶅姟鍣?
                                         </button>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- 网络设置 -->
+                            <!-- 缃戠粶璁剧疆 -->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-green-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
                                     </svg>
-                                    网络设置
+                                    缃戠粶璁剧疆
                                 </h4>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
                                         <label class="block text-sm font-medium text-slate-300 mb-2">
-                                            自定义虚拟IP
-                                            <span class="text-xs text-slate-500 ml-1">(可选)</span>
+                                            鑷畾涔夎櫄鎷烮P
+                                            <span class="text-xs text-slate-500 ml-1">(鍙€?</span>
                                         </label>
-                                        <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2"
+                                        <input v-model="formData.ip" type="text" placeholder="渚嬪: 10.26.0.2"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                     <div>
@@ -986,109 +986,109 @@
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-300 mb-2">隧道端口</label>
-                                        <input v-model.number="formData.tunnel_port" type="number" placeholder="0 (自动分配)"
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">闅ч亾绔彛</label>
+                                        <input v-model.number="formData.tunnel_port" type="number" placeholder="0 (鑷姩鍒嗛厤)"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- 传输优化 -->
+                            <!-- 浼犺緭浼樺寲 -->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-purple-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                                     </svg>
-                                    传输优化
+                                    浼犺緭浼樺寲
                                 </h4>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
                                         <div class="flex-1">
-                                            <div class="text-sm font-medium text-white">QUIC传输优化</div>
-                                            <div class="text-xs text-slate-400 mt-0.5">重传丢包</div>
+                                            <div class="text-sm font-medium text-white">QUIC浼犺緭浼樺寲</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">閲嶄紶涓㈠寘</div>
                                         </div>
                                         <input v-model="formData.rtx" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
                                     </label>
                                     <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
                                         <div class="flex-1">
-                                            <div class="text-sm font-medium text-white">FEC前向纠错</div>
-                                            <div class="text-xs text-slate-400 mt-0.5">损失部分带宽提升稳定性</div>
+                                            <div class="text-sm font-medium text-white">FEC鍓嶅悜绾犻敊</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">鎹熷け閮ㄥ垎甯﹀鎻愬崌绋冲畾鎬?/div>
                                         </div>
                                         <input v-model="formData.fec" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
                                     </label>
                                     <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
                                         <div class="flex-1">
-                                            <div class="text-sm font-medium text-white">LZ4压缩</div>
-                                            <div class="text-xs text-slate-400 mt-0.5">减少传输数据量</div>
+                                            <div class="text-sm font-medium text-white">LZ4鍘嬬缉</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">鍑忓皯浼犺緭鏁版嵁閲?/div>
                                         </div>
                                         <input v-model="formData.compress" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
                                     </label>
                                     <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
                                         <div class="flex-1">
-                                            <div class="text-sm font-medium text-white">关闭P2P打洞</div>
-                                            <div class="text-xs text-slate-400 mt-0.5">仅通过服务器中转</div>
+                                            <div class="text-sm font-medium text-white">鍏抽棴P2P鎵撴礊</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">浠呴€氳繃鏈嶅姟鍣ㄤ腑杞?/div>
                                         </div>
                                         <input v-model="formData.no_punch" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
                                     </label>
                                 </div>
                             </div>
 
-                            <!-- 安全配置 -->
+                            <!-- 瀹夊叏閰嶇疆 -->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-red-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
                                     </svg>
-                                    安全配置
+                                    瀹夊叏閰嶇疆
                                 </h4>
                                 <div class="space-y-4">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
-                                            <label class="block text-sm font-medium text-slate-300 mb-2">入网验证密钥</label>
-                                            <input v-model="formData.network_secret" type="password" placeholder="建议使用长随机密钥"
+                                            <label class="block text-sm font-medium text-slate-300 mb-2">鍏ョ綉楠岃瘉瀵嗛挜</label>
+                                            <input v-model="formData.network_secret" type="password" placeholder="寤鸿浣跨敤闀块殢鏈哄瘑閽?
                                                    class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4">
-                                            <label class="block text-sm font-medium text-slate-300 mb-2">数据包加密口令</label>
-                                            <input v-model="formData.password" type="password" placeholder="留空则不加密数据"
+                                            <label class="block text-sm font-medium text-slate-300 mb-2">鏁版嵁鍖呭姞瀵嗗彛浠?/label>
+                                            <input v-model="formData.password" type="password" placeholder="鐣欑┖鍒欎笉鍔犲瘑鏁版嵁"
                                                    class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                         </div>
                                         <div>
-                                            <label class="block text-sm font-medium text-slate-300 mb-2">服务端证书校验模式</label>
+                                            <label class="block text-sm font-medium text-slate-300 mb-2">鏈嶅姟绔瘉涔︽牎楠屾ā寮?/label>
                                             <select v-model="formData.cert_mode"
                                                     class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                                                <option value="skip">跳过验证 (默认)</option>
-                                                <option value="standard">系统证书验证</option>
-                                                <option value="finger">证书指纹验证</option>
+                                                <option value="skip">璺宠繃楠岃瘉 (榛樿)</option>
+                                                <option value="standard">绯荤粺璇佷功楠岃瘉</option>
+                                                <option value="finger">璇佷功鎸囩汗楠岃瘉</option>
                                             </select>
                                         </div>
                                     </div>
                                     <div v-if="formData.cert_mode === 'finger'" class="animate-in fade-in slide-in-from-top-2">
                                         <label class="block text-sm font-medium text-slate-300 mb-2">
-                                            证书指纹
-                                            <span class="text-xs text-slate-500 ml-1">(服务端启动时日志会输出指纹)</span>
+                                            璇佷功鎸囩汗
+                                            <span class="text-xs text-slate-500 ml-1">(鏈嶅姟绔惎鍔ㄦ椂鏃ュ織浼氳緭鍑烘寚绾?</span>
                                         </label>
-                                        <input v-model="formData.fingerprint" type="text" placeholder="例如: 3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1"
+                                        <input v-model="formData.fingerprint" type="text" placeholder="渚嬪: 3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm">
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- NAT与路由 -->
+                            <!-- NAT涓庤矾鐢?-->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-yellow-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-1.447-.894L15 9m0 0V7m0 2v6"></path>
                                     </svg>
-                                    NAT与路由 (点对网)
+                                    NAT涓庤矾鐢?(鐐瑰缃?
                                 </h4>
                                 <div class="space-y-4">
                                     <div>
                                         <label class="block text-sm font-medium text-slate-300 mb-2">
-                                            入栈网段
-                                            <span class="text-xs text-slate-500 ml-1">格式: CIDR,目标IP</span>
+                                            鍏ユ爤缃戞
+                                            <span class="text-xs text-slate-500 ml-1">鏍煎紡: CIDR,鐩爣IP</span>
                                         </label>
                                         <div class="space-y-2">
                                             <div v-for="(item, idx) in formData.input" :key="idx" class="flex space-x-2">
-                                                <input v-model="formData.input[idx]" type="text" placeholder="例如: 192.168.0.0/24,10.26.0.2"
+                                                <input v-model="formData.input[idx]" type="text" placeholder="渚嬪: 192.168.0.0/24,10.26.0.2"
                                                        class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
                                                 <button @click="formData.input.splice(idx, 1)"
                                                         class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
@@ -1099,18 +1099,18 @@
                                             </div>
                                             <button @click="formData.input.push('')"
                                                     class="w-full px-3 py-1.5 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 rounded-lg transition-colors text-sm">
-                                                + 添加入栈网段
+                                                + 娣诲姞鍏ユ爤缃戞
                                             </button>
                                         </div>
                                     </div>
                                     <div>
                                         <label class="block text-sm font-medium text-slate-300 mb-2">
-                                            出栈网段
-                                            <span class="text-xs text-slate-500 ml-1">格式: CIDR (允许转发的网段)</span>
+                                            鍑烘爤缃戞
+                                            <span class="text-xs text-slate-500 ml-1">鏍煎紡: CIDR (鍏佽杞彂鐨勭綉娈?</span>
                                         </label>
                                         <div class="space-y-2">
                                             <div v-for="(item, idx) in formData.output" :key="idx" class="flex space-x-2">
-                                                <input v-model="formData.output[idx]" type="text" placeholder="例如: 0.0.0.0/0"
+                                                <input v-model="formData.output[idx]" type="text" placeholder="渚嬪: 0.0.0.0/0"
                                                        class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
                                                 <button @click="formData.output.splice(idx, 1)"
                                                         class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
@@ -1121,22 +1121,22 @@
                                             </div>
                                             <button @click="formData.output.push('')"
                                                     class="w-full px-3 py-1.5 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 rounded-lg transition-colors text-sm">
-                                                + 添加出栈网段
+                                                + 娣诲姞鍑烘爤缃戞
                                             </button>
                                         </div>
                                     </div>
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
                                             <div class="flex-1">
-                                                <div class="text-sm font-medium text-white">关闭内置NAT</div>
-                                                <div class="text-xs text-slate-400 mt-0.5">使用系统网卡转发</div>
+                                                <div class="text-sm font-medium text-white">鍏抽棴鍐呯疆NAT</div>
+                                                <div class="text-xs text-slate-400 mt-0.5">浣跨敤绯荤粺缃戝崱杞彂</div>
                                             </div>
                                             <input v-model="formData.no_nat" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
                                         </label>
                                         <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
                                             <div class="flex-1">
-                                                <div class="text-sm font-medium text-white">关闭TUN网卡</div>
-                                                <div class="text-xs text-slate-400 mt-0.5">仅作流量出口或端口映射</div>
+                                                <div class="text-sm font-medium text-white">鍏抽棴TUN缃戝崱</div>
+                                                <div class="text-xs text-slate-400 mt-0.5">浠呬綔娴侀噺鍑哄彛鎴栫鍙ｆ槧灏?/div>
                                             </div>
                                             <input v-model="formData.no_tun" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
                                         </label>
@@ -1144,23 +1144,23 @@
                                 </div>
                             </div>
 
-                            <!-- 端口映射 -->
+                            <!-- 绔彛鏄犲皠 -->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-orange-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                                     </svg>
-                                    端口映射
+                                    绔彛鏄犲皠
                                 </h4>
                                 <div class="space-y-4">
                                     <div>
                                         <label class="block text-sm font-medium text-slate-300 mb-2">
-                                            映射规则
-                                            <span class="text-xs text-slate-500 ml-1">格式: 协议://监听地址-虚拟IP-目标地址</span>
+                                            鏄犲皠瑙勫垯
+                                            <span class="text-xs text-slate-500 ml-1">鏍煎紡: 鍗忚://鐩戝惉鍦板潃-铏氭嫙IP-鐩爣鍦板潃</span>
                                         </label>
                                         <div class="space-y-2">
                                             <div v-for="(item, idx) in formData.port_mapping" :key="idx" class="flex space-x-2">
-                                                <input v-model="formData.port_mapping[idx]" type="text" placeholder="例如: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"
+                                                <input v-model="formData.port_mapping[idx]" type="text" placeholder="渚嬪: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"
                                                        class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-mono">
                                                 <button @click="formData.port_mapping.splice(idx, 1)"
                                                         class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
@@ -1171,61 +1171,61 @@
                                             </div>
                                             <button @click="formData.port_mapping.push('')"
                                                     class="w-full px-3 py-1.5 bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 rounded-lg transition-colors text-sm">
-                                                + 添加映射规则
+                                                + 娣诲姞鏄犲皠瑙勫垯
                                             </button>
                                         </div>
                                     </div>
                                     <label class="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors">
                                         <div class="flex-1">
-                                            <div class="text-sm font-medium text-white">允许作为映射出口</div>
-                                            <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板</div>
+                                            <div class="text-sm font-medium text-white">鍏佽浣滀负鏄犲皠鍑哄彛</div>
+                                            <div class="text-xs text-slate-400 mt-0.5">鍏佽鍏朵粬璁惧浣跨敤鏈満浣滆烦鏉?/div>
                                         </div>
                                         <input v-model="formData.allow_mapping" type="checkbox" class="w-5 h-5 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500">
                                     </label>
                                 </div>
                             </div>
 
-                            <!-- 设备配置 -->
+                            <!-- 璁惧閰嶇疆 -->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-cyan-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                                     </svg>
-                                    设备配置
+                                    璁惧閰嶇疆
                                 </h4>
                                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-300 mb-2">设备名称</label>
-                                        <input v-model="formData.device_name" type="text" placeholder="默认为主机名"
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">璁惧鍚嶇О</label>
+                                        <input v-model="formData.device_name" type="text" placeholder="榛樿涓轰富鏈哄悕"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-300 mb-2">设备ID</label>
-                                        <input v-model="formData.device_id" type="text" placeholder="自动生成"
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">璁惧ID</label>
+                                        <input v-model="formData.device_id" type="text" placeholder="鑷姩鐢熸垚"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-300 mb-2">虚拟网卡名</label>
-                                        <input v-model="formData.tun_name" type="text" placeholder="默认为vnt-tun"
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">铏氭嫙缃戝崱鍚?/label>
+                                        <input v-model="formData.tun_name" type="text" placeholder="榛樿涓簐nt-tun"
                                                class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- STUN配置 -->
+                            <!-- STUN閰嶇疆 -->
                             <div class="glass-panel rounded-lg p-5 border border-slate-700">
                                 <h4 class="text-md font-bold text-pink-400 mb-4 flex items-center">
                                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                     </svg>
-                                    STUN配置 (高级)
+                                    STUN閰嶇疆 (楂樼骇)
                                 </h4>
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-300 mb-2">UDP STUN服务器</label>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">UDP STUN鏈嶅姟鍣?/label>
                                         <div class="space-y-2">
                                             <div v-for="(item, idx) in formData.udp_stun" :key="idx" class="flex space-x-2">
-                                                <input v-model="formData.udp_stun[idx]" type="text" placeholder="例如: stun.l.google.com:19302"
+                                                <input v-model="formData.udp_stun[idx]" type="text" placeholder="渚嬪: stun.l.google.com:19302"
                                                        class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
                                                 <button @click="formData.udp_stun.splice(idx, 1)"
                                                         class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
@@ -1236,15 +1236,15 @@
                                             </div>
                                             <button @click="formData.udp_stun.push('')"
                                                     class="w-full px-3 py-1.5 bg-pink-600/20 hover:bg-pink-600/40 text-pink-400 rounded-lg transition-colors text-sm">
-                                                + 添加UDP STUN
+                                                + 娣诲姞UDP STUN
                                             </button>
                                         </div>
                                     </div>
                                     <div>
-                                        <label class="block text-sm font-medium text-slate-300 mb-2">TCP STUN服务器</label>
+                                        <label class="block text-sm font-medium text-slate-300 mb-2">TCP STUN鏈嶅姟鍣?/label>
                                         <div class="space-y-2">
                                             <div v-for="(item, idx) in formData.tcp_stun" :key="idx" class="flex space-x-2">
-                                                <input v-model="formData.tcp_stun[idx]" type="text" placeholder="例如: stun.nextcloud.com:443"
+                                                <input v-model="formData.tcp_stun[idx]" type="text" placeholder="渚嬪: stun.nextcloud.com:443"
                                                        class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
                                                 <button @click="formData.tcp_stun.splice(idx, 1)"
                                                         class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg transition-colors">
@@ -1255,7 +1255,7 @@
                                             </div>
                                             <button @click="formData.tcp_stun.push('')"
                                                     class="w-full px-3 py-1.5 bg-pink-600/20 hover:bg-pink-600/40 text-pink-400 rounded-lg transition-colors text-sm">
-                                                + 添加TCP STUN
+                                                + 娣诲姞TCP STUN
                                             </button>
                                         </div>
                                     </div>
@@ -1264,13 +1264,13 @@
                         </div>
                     </div>
 
-                    <!-- TOML模式 -->
+                    <!-- TOML妯″紡 -->
                     <div v-show="editMode === 'toml'" class="h-full">
                         <textarea
                                 v-model="editorContent"
                                 class="w-full h-full bg-[#1e1e1e] text-[#d4d4d4] font-mono p-4 resize-none focus:outline-none text-sm"
                                 spellcheck="false"
-                                placeholder="# 在此处输入 TOML 配置..."
+                                placeholder="# 鍦ㄦ澶勮緭鍏?TOML 閰嶇疆..."
                         ></textarea>
                     </div>
                 </div>
@@ -1278,21 +1278,21 @@
                 <!-- Footer -->
                 <div class="p-4 border-t border-slate-700 flex justify-between items-center bg-slate-800/50">
                     <div class="text-xs text-slate-500">
-                        <span v-if="editMode === 'form'">填写完成后保存即可生成配置文件</span>
-                        <span v-else>* 请使用标准 TOML 格式</span>
+                        <span v-if="editMode === 'form'">濉啓瀹屾垚鍚庝繚瀛樺嵆鍙敓鎴愰厤缃枃浠?/span>
+                        <span v-else>* 璇蜂娇鐢ㄦ爣鍑?TOML 鏍煎紡</span>
                     </div>
                     <div class="space-x-3">
                         <button
                                 @click="showEditor = false"
                                 class="px-4 py-2 rounded text-slate-300 hover:text-white transition-colors"
                         >
-                            取消
+                            鍙栨秷
                         </button>
                         <button
                                 @click="saveConfig"
                                 class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium shadow-lg transition-colors"
                         >
-                            保存配置
+                            淇濆瓨閰嶇疆
                         </button>
                     </div>
                 </div>
@@ -1301,14 +1301,14 @@
     </div>
 </template>
 
-<!-- 3. Peers (设备列表) -->
+<!-- 3. Peers (璁惧鍒楄〃) -->
 <template id="tpl-peers">
     <div class="max-w-7xl mx-auto">
         <div class="glass-panel rounded-xl shadow-lg overflow-hidden">
             <div
                     class="px-6 py-4 border-b border-slate-700 flex justify-between items-center"
             >
-                <h2 class="text-xl font-bold text-white">设备列表</h2>
+                <h2 class="text-xl font-bold text-white">璁惧鍒楄〃</h2>
                 <div class="flex space-x-4 text-sm text-slate-400">
                             <span
                             >Online:
@@ -1333,47 +1333,47 @@
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            IP地址
+                            IP鍦板潃
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            名称
+                            鍚嶇О
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            版本
+                            鐗堟湰
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            状态
+                            鐘舵€?
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            模式
+                            妯″紡
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            延迟
+                            寤惰繜
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            丢包率
+                            涓㈠寘鐜?
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            流量
+                            娴侀噺
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 tracking-wider"
                         >
-                            最后在线
+                            鏈€鍚庡湪绾?
                         </th>
                     </tr>
                     </thead>
@@ -1414,7 +1414,7 @@
                                         :class="peer.online ? 'bg-green-900 text-green-300' : 'bg-slate-700 text-slate-400'"
                                         class="px-2 py-0.5 text-xs rounded-full font-medium"
                                 >{{ peer.online ? 'Online' : 'Offline' }}</span>
-                                <!-- 加密状态图标 -->
+                                <!-- 鍔犲瘑鐘舵€佸浘鏍?-->
                                 <div v-if="peer.online && peer.key_equal === 1" class="tooltip">
                                     <svg
                                             class="w-4 h-4 text-green-400"
@@ -1429,7 +1429,7 @@
                                                 d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
                                         ></path>
                                     </svg>
-                                    <span class="tooltip-text">双方加密传输</span>
+                                    <span class="tooltip-text">鍙屾柟鍔犲瘑浼犺緭</span>
                                 </div>
                                 <div v-else-if="peer.online && peer.key_equal === 2" class="tooltip">
                                     <svg
@@ -1445,7 +1445,7 @@
                                                 d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"
                                         ></path>
                                     </svg>
-                                    <span class="tooltip-text">双方未加密</span>
+                                    <span class="tooltip-text">鍙屾柟鏈姞瀵?/span>
                                 </div>
                                 <div v-else-if="peer.online && [3,4,5].includes(peer.key_equal)" class="tooltip cursor-help group">
                                     <svg
@@ -1461,7 +1461,7 @@
                                                 d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                                         ></path>
                                     </svg>
-                                    <span class="tooltip-text">{{ peer.key_equal === 3 ? '己方加密对方未加密' : peer.key_equal === 4 ? '己方未加密对方加密' : peer.key_equal === 5 ? '密钥不一致' : '未知错误' }}</span>
+                                    <span class="tooltip-text">{{ peer.key_equal === 3 ? '宸辨柟鍔犲瘑瀵规柟鏈姞瀵? : peer.key_equal === 4 ? '宸辨柟鏈姞瀵嗗鏂瑰姞瀵? : peer.key_equal === 5 ? '瀵嗛挜涓嶄竴鑷? : '鏈煡閿欒' }}</span>
                                 </div>
                             </div>
                         </td>
@@ -1473,7 +1473,7 @@
                                                 :class="getRouteModeClass(peer.route)"
                                         >{{ getRouteModeText(peer.route) }}</span
                                         >
-                            <span v-else-if="peer.online" class="text-yellow-400">服务器中继</span>
+                            <span v-else-if="peer.online" class="text-yellow-400">鏈嶅姟鍣ㄤ腑缁?/span>
                             <span v-else class="text-slate-600"
                             >-</span
                             >
@@ -1496,8 +1496,8 @@
                                 class="px-6 py-4 whitespace-nowrap text-xs"
                         >
                             <div v-if="peer.traffic" class="leading-relaxed">
-                                <div class="text-green-400">↑ {{ formatBytes(peer.traffic.tx_bytes) }} ({{ formatSpeed(peer.traffic.tx_speed) }})</div>
-                                <div class="text-blue-400">↓ {{ formatBytes(peer.traffic.rx_bytes) }} ({{ formatSpeed(peer.traffic.rx_speed) }})</div>
+                                <div class="text-green-400">鈫?{{ formatBytes(peer.traffic.tx_bytes) }} ({{ formatSpeed(peer.traffic.tx_speed) }})</div>
+                                <div class="text-blue-400">鈫?{{ formatBytes(peer.traffic.rx_bytes) }} ({{ formatSpeed(peer.traffic.rx_speed) }})</div>
                             </div>
                             <span v-else class="text-slate-600">-</span>
                         </td>
@@ -1512,8 +1512,8 @@
                         <td :colspan="10" class="p-0">
                             <div class="px-4 py-3 bg-slate-950/60 border-t border-slate-700/50">
                                 <div class="flex items-center space-x-4 mb-2 text-xs text-slate-400">
-                                    <span class="flex items-center"><span class="inline-block w-3 h-0.5 bg-green-400 mr-1"></span>上传速度</span>
-                                    <span class="flex items-center"><span class="inline-block w-3 h-0.5 bg-blue-400 mr-1"></span>下载速度</span>
+                                    <span class="flex items-center"><span class="inline-block w-3 h-0.5 bg-green-400 mr-1"></span>涓婁紶閫熷害</span>
+                                    <span class="flex items-center"><span class="inline-block w-3 h-0.5 bg-blue-400 mr-1"></span>涓嬭浇閫熷害</span>
                                     <span class="ml-auto" :id="'chart-max-' + peer.ip.replaceAll('.', '-')"></span>
                                 </div>
                                 <canvas :id="'chart-' + peer.ip.replaceAll('.', '-')" style="width:100%;height:150px;display:block;" class="rounded"></canvas>
@@ -1528,12 +1528,12 @@
     </div>
 </template>
 
-<!-- 4. Routes (路由) -->
+<!-- 4. Routes (璺敱) -->
 <template id="tpl-routes">
     <div class="max-w-6xl mx-auto">
         <div class="glass-panel rounded-xl shadow-lg overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-700">
-                <h2 class="text-xl font-bold text-white">路由表</h2>
+                <h2 class="text-xl font-bold text-white">璺敱琛?/h2>
             </div>
             <div class="overflow-auto max-h-[600px] custom-scrollbar">
                 <table class="min-w-full divide-y divide-slate-700">
@@ -1542,22 +1542,22 @@
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            目标节点IP
+                            鐩爣鑺傜偣IP
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            目标网络
+                            鐩爣缃戠粶
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            跳数
+                            璺虫暟
                         </th>
                         <th
                                 class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider"
                         >
-                            延迟
+                            寤惰繜
                         </th>
                     </tr>
                     </thead>
@@ -1618,7 +1618,7 @@
 
     const API_BASE = "";
 
-    // 格式化时间工具
+    // 鏍煎紡鍖栨椂闂村伐鍏?
     const formatTime = (timestamp) => {
         if (!timestamp) return "-";
         const date = new Date(timestamp * 1000);
@@ -1626,7 +1626,7 @@
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
     };
 
-    // 格式化字节数
+    // 鏍煎紡鍖栧瓧鑺傛暟
     const formatBytes = (bytes) => {
         if (bytes === 0 || bytes === undefined || bytes === null) return "0B";
         const units = ["B", "KB", "MB", "GB", "TB"];
@@ -1639,7 +1639,7 @@
         return i === 0 ? value + units[i] : value.toFixed(2) + units[i];
     };
 
-    // 格式化速度（字节/秒）
+    // 鏍煎紡鍖栭€熷害锛堝瓧鑺?绉掞級
     const formatSpeed = (bytesPerSecond) => {
         if (bytesPerSecond === 0 || bytesPerSecond === undefined || bytesPerSecond === null) return "0B/s";
         const units = ["B/s", "KB/s", "MB/s", "GB/s"];
@@ -1652,7 +1652,7 @@
         return i === 0 ? value + units[i] : value.toFixed(2) + units[i];
     };
 
-    // --- 组件定义 ---
+    // --- 缁勪欢瀹氫箟 ---
 
     const GeneralView = {
         template: "#tpl-general",
@@ -1664,7 +1664,7 @@
             const loading = inject("loading");
             const localSelectedConfig = ref("");
 
-            // 同步当前配置
+            // 鍚屾褰撳墠閰嶇疆
             watch(
                 () => info.value.current_config_file,
                 (newVal) => {
@@ -1680,7 +1680,7 @@
             );
 
             const handleToggle = () => {
-                // 如果是启动，且有本地选择的配置，传递给 toggle
+                // 濡傛灉鏄惎鍔紝涓旀湁鏈湴閫夋嫨鐨勯厤缃紝浼犻€掔粰 toggle
                 if (
                     info.value.status !== "running" &&
                     info.value.status !== "starting"
@@ -1715,18 +1715,18 @@
             const configList = inject("configList");
             const fetchConfigList = inject("fetchConfigList");
 
-            // 编辑器状态
+            // 缂栬緫鍣ㄧ姸鎬?
             const showEditor = ref(false);
             const editorContent = ref("");
             const editorFileName = ref("");
             const editorMode = ref("new");
-            const editMode = ref("form"); // 'form' 或 'toml'
-            const originalToml = ref(""); // 保存原始TOML内容（包含用户注释）
-            const hasTomlChanges = ref(false); // 标记TOML是否被修改过
-            const hasFormChanges = ref(false); // 标记表单是否被修改过
-            const isParsingToml = ref(false); // 标记是否正在解析TOML（用于避免触发watch）
+            const editMode = ref("form"); // 'form' 鎴?'toml'
+            const originalToml = ref(""); // 淇濆瓨鍘熷TOML鍐呭锛堝寘鍚敤鎴锋敞閲婏級
+            const hasTomlChanges = ref(false); // 鏍囪TOML鏄惁琚慨鏀硅繃
+            const hasFormChanges = ref(false); // 鏍囪琛ㄥ崟鏄惁琚慨鏀硅繃
+            const isParsingToml = ref(false); // 鏍囪鏄惁姝ｅ湪瑙ｆ瀽TOML锛堢敤浜庨伩鍏嶈Е鍙憌atch锛?
 
-            // 表单数据
+            // 琛ㄥ崟鏁版嵁
             const formData = ref({
                 config_name: "",
                 network_code: "",
@@ -1755,7 +1755,7 @@
                 tunnel_port: null
             });
 
-            // 从TOML解析到表单
+            // 浠嶵OML瑙ｆ瀽鍒拌〃鍗?
             const parseTomlToForm = (toml) => {
                 const data = {
                     config_name: "",
@@ -1861,7 +1861,7 @@
                             const value = match[1];
                             if (value.startsWith('finger:')) {
                                 data.cert_mode = 'finger';
-                                data.fingerprint = value.substring(7); // 去掉 "finger:" 前缀
+                                data.fingerprint = value.substring(7); // 鍘绘帀 "finger:" 鍓嶇紑
                             } else {
                                 data.cert_mode = value;
                             }
@@ -1884,112 +1884,112 @@
                 return data;
             };
 
-            // 从表单生成TOML
+            // 浠庤〃鍗曠敓鎴怲OML
             const formToToml = () => {
                 let toml = '';
 
                 if (formData.value.config_name) {
-                    toml += `# 配置名称\nconfig_name = "${formData.value.config_name}"\n`;
+                    toml += `# 閰嶇疆鍚嶇О\nconfig_name = "${formData.value.config_name}"\n`;
                 }
 
-                toml += '\n# --- 网络配置 ---\n';
-                toml += '# 网络编号，相同网络编号的会组在同一个虚拟网 (必填)\n';
+                toml += '\n# --- 缃戠粶閰嶇疆 ---\n';
+                toml += '# 缃戠粶缂栧彿锛岀浉鍚岀綉缁滅紪鍙风殑浼氱粍鍦ㄥ悓涓€涓櫄鎷熺綉 (蹇呭～)\n';
                 toml += `network_code = "${formData.value.network_code}"\n\n`;
 
                 const servers = formData.value.server.filter(s => s.trim());
                 if (servers.length > 0) {
-                    toml += '# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)\n';
-                    toml += '# dynamic 协议使用dns txt解析记录值\n';
+                    toml += '# 鏈嶅姟鍣ㄥ湴鍧€鍒楄〃(鏀寔 quic / tcp / wss / dynamic) (蹇呭～)\n';
+                    toml += '# dynamic 鍗忚浣跨敤dns txt瑙ｆ瀽璁板綍鍊糪n';
                     toml += `server = [${servers.map(s => `"${s}"`).join(', ')}]\n`;
                 }
 
                 if (formData.value.ip) {
-                    toml += '\n# 自定义虚拟 IP (可选)\n';
+                    toml += '\n# 鑷畾涔夎櫄鎷?IP (鍙€?\n';
                     toml += `ip = "${formData.value.ip}"\n`;
                 }
 
                 if (formData.value.rtx) {
-                    toml += '\n# 是否启用quic优化传输 (默认 false)\n';
-                    toml += '# 开启后传输过程几乎不会丢包，但是延迟可能会有波动\n';
+                    toml += '\n# 鏄惁鍚敤quic浼樺寲浼犺緭 (榛樿 false)\n';
+                    toml += '# 寮€鍚悗浼犺緭杩囩▼鍑犱箮涓嶄細涓㈠寘锛屼絾鏄欢杩熷彲鑳戒細鏈夋尝鍔╘n';
                     toml += 'rtx = true\n';
                 }
 
                 if (formData.value.fec) {
-                    toml += '\n# 是否启用 FEC 前向纠错 (默认 false)\n';
-                    toml += '# 开启后可以减少丢包率，损失带宽但是延迟比较稳定，带宽充足时可以使用此功能\n';
+                    toml += '\n# 鏄惁鍚敤 FEC 鍓嶅悜绾犻敊 (榛樿 false)\n';
+                    toml += '# 寮€鍚悗鍙互鍑忓皯涓㈠寘鐜囷紝鎹熷け甯﹀浣嗘槸寤惰繜姣旇緝绋冲畾锛屽甫瀹藉厖瓒虫椂鍙互浣跨敤姝ゅ姛鑳絓n';
                     toml += 'fec = true\n';
                 }
 
                 if (formData.value.no_punch) {
-                    toml += '\n# 是否关闭 P2P 打洞 (默认 false)\n';
+                    toml += '\n# 鏄惁鍏抽棴 P2P 鎵撴礊 (榛樿 false)\n';
                     toml += 'no_punch = true\n';
                 }
 
                 if (formData.value.compress) {
-                    toml += '\n# 是否启用 LZ4 压缩 (默认 false)\n';
+                    toml += '\n# 鏄惁鍚敤 LZ4 鍘嬬缉 (榛樿 false)\n';
                     toml += 'compress = true\n';
                 }
 
                 const inputs = formData.value.input.filter(s => s.trim());
                 if (inputs.length > 0) {
-                    toml += '\n# 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点\n';
-                    toml += '# 例如192.168.0.0/24,10.26.0.2 表示将192.168.0.0/24网段的数据转发到10.26.0.2\n';
+                    toml += '\n# 鍏ユ爤鐩戝惉缃戞 (閫楀彿鍒嗛殧鐨?CIDR 鍜岀洰鏍?IP)锛岀敤浜庣偣瀵圭綉锛屽皢鎸囧畾缃戞鐨勬祦閲忓彂閫佸埌鐩爣鑺傜偣\n';
+                    toml += '# 渚嬪192.168.0.0/24,10.26.0.2 琛ㄧず灏?92.168.0.0/24缃戞鐨勬暟鎹浆鍙戝埌10.26.0.2\n';
                     toml += `input = [${inputs.map(s => `"${s}"`).join(', ')}]\n`;
                 }
 
                 const outputs = formData.value.output.filter(s => s.trim());
                 if (outputs.length > 0) {
-                    toml += '\n# 出栈允许网段，用于点对网，允许指定网段的转发\n';
+                    toml += '\n# 鍑烘爤鍏佽缃戞锛岀敤浜庣偣瀵圭綉锛屽厑璁告寚瀹氱綉娈电殑杞彂\n';
                     toml += `output = [${outputs.map(s => `"${s}"`).join(', ')}]\n`;
                 }
 
                 if (formData.value.no_nat) {
-                    toml += '\n# 是否关闭内置子网NAT，关闭后需要配置网卡转发，否则无法使用点对网\n';
-                    toml += '# 通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好\n';
+                    toml += '\n# 鏄惁鍏抽棴鍐呯疆瀛愮綉NAT锛屽叧闂悗闇€瑕侀厤缃綉鍗¤浆鍙戯紝鍚﹀垯鏃犳硶浣跨敤鐐瑰缃慭n';
+                    toml += '# 閫氬父鍏抽棴鍐呯疆瀛愮綉NAT锛屼娇鐢ㄧ郴缁熺殑缃戝崱杞彂锛岀偣瀵圭綉鎬ц兘浼氭洿濂絓n';
                     toml += 'no_nat = true\n';
                 }
 
                 if (formData.value.no_tun) {
-                    toml += '\n# 是否关闭TUN虚拟网卡，关闭后只能充当流量出口或者进行端口映射，关闭后无需管理员权限\n';
+                    toml += '\n# 鏄惁鍏抽棴TUN铏氭嫙缃戝崱锛屽叧闂悗鍙兘鍏呭綋娴侀噺鍑哄彛鎴栬€呰繘琛岀鍙ｆ槧灏勶紝鍏抽棴鍚庢棤闇€绠＄悊鍛樻潈闄怽n';
                     toml += 'no_tun = true\n';
                 }
 
                 const portMappings = formData.value.port_mapping.filter(s => s.trim());
                 if (portMappings.length > 0) {
-                    toml += '\n# 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址\n';
-                    toml += '# 端口映射用于在本地监听指定端口，并将收到的网络流量经由指定虚拟节点转发到目标地址\n';
-                    toml += '# 例如: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80 表示将本地tcp的81端口的数据转发到10.0.0.2:80\n';
-                    toml += '# 例如: tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到192.168.1.10:80\n';
-                    toml += '# 例如: tcp://0.0.0.0:81-10.0.0.2-anyonehost:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到anyonehost:80\n';
+                    toml += '\n# 绔彛鏄犲皠锛屾牸寮忎负锛氬崗璁?//鏈湴鐩戝惉鍦板潃-鐩爣铏氭嫙IP-鐩爣鏄犲皠鍦板潃\n';
+                    toml += '# 绔彛鏄犲皠鐢ㄤ簬鍦ㄦ湰鍦扮洃鍚寚瀹氱鍙ｏ紝骞跺皢鏀跺埌鐨勭綉缁滄祦閲忕粡鐢辨寚瀹氳櫄鎷熻妭鐐硅浆鍙戝埌鐩爣鍦板潃\n';
+                    toml += '# 渚嬪: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80 琛ㄧず灏嗘湰鍦皌cp鐨?1绔彛鐨勬暟鎹浆鍙戝埌10.0.0.2:80\n';
+                    toml += '# 渚嬪: tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80 鍒欒〃绀哄皢鏈湴tcp鐨?1绔彛鐨勬暟鎹粡杩?0.0.0.2杞埌192.168.1.10:80\n';
+                    toml += '# 渚嬪: tcp://0.0.0.0:81-10.0.0.2-anyonehost:80 鍒欒〃绀哄皢鏈湴tcp鐨?1绔彛鐨勬暟鎹粡杩?0.0.0.2杞埌anyonehost:80\n';
                     toml += `port_mapping = [${portMappings.map(s => `"${s}"`).join(', ')}]\n`;
                 }
 
                 if (formData.value.allow_mapping) {
-                    toml += '\n# 是否允许作为端口映射出口，开启后其他设备才可使用本设备的ip为"目标虚拟IP"\n';
-                    toml += '# 开启后虚拟网络其他设备可以使用此设备当跳板访问其他网络\n';
+                    toml += '\n# 鏄惁鍏佽浣滀负绔彛鏄犲皠鍑哄彛锛屽紑鍚悗鍏朵粬璁惧鎵嶅彲浣跨敤鏈澶囩殑ip涓?鐩爣铏氭嫙IP"\n';
+                    toml += '# 寮€鍚悗铏氭嫙缃戠粶鍏朵粬璁惧鍙互浣跨敤姝よ澶囧綋璺虫澘璁块棶鍏朵粬缃戠粶\n';
                     toml += 'allow_mapping = true\n';
                 }
 
                 if (formData.value.mtu) {
-                    toml += '\n# MTU 设置\n';
+                    toml += '\n# MTU 璁剧疆\n';
                     toml += `mtu = ${formData.value.mtu}\n`;
                 }
 
-                toml += '\n# --- 设备配置 ---\n';
+                toml += '\n# --- 璁惧閰嶇疆 ---\n';
                 if (formData.value.device_name) {
-                    toml += '\n# 设备名称 (可选，默认读取本机 hostname)\n';
+                    toml += '\n# 璁惧鍚嶇О (鍙€夛紝榛樿璇诲彇鏈満 hostname)\n';
                     toml += `device_name = "${formData.value.device_name}"\n`;
                 }
                 if (formData.value.device_id) {
-                    toml += '\n# 设备 ID (可选，不填自动生成，不同设备ID不能相同)\n';
+                    toml += '\n# 璁惧 ID (鍙€夛紝涓嶅～鑷姩鐢熸垚锛屼笉鍚岃澶嘔D涓嶈兘鐩稿悓)\n';
                     toml += `device_id = "${formData.value.device_id}"\n`;
                 }
                 if (formData.value.tun_name) {
-                    toml += '\n# 虚拟网卡名称\n';
+                    toml += '\n# 铏氭嫙缃戝崱鍚嶇О\n';
                     toml += `tun_name = "${formData.value.tun_name}"\n`;
                 }
 
-                toml += '\n# --- 安全配置 ---\n';
+                toml += '\n# --- 瀹夊叏閰嶇疆 ---\n';
                 if (formData.value.network_secret) {
                     toml += '\n# Network join secret used for server-side admission control\n';
                     toml += `network_secret = "${formData.value.network_secret}"\n`;
@@ -1999,10 +1999,10 @@
                     toml += `password = "${formData.value.password}"\n`;
                 }
                 if (formData.value.cert_mode && formData.value.cert_mode !== 'skip') {
-                    toml += '\n# 证书校验方式：\n';
-                    toml += '#   skip     跳过验证（默认）\n';
-                    toml += '#   standard 使用系统证书验证\n';
-                    toml += '#   finger   使用证书指纹验证，服务端启动时日志会输出指纹\n';
+                    toml += '\n# 璇佷功鏍￠獙鏂瑰紡锛歕n';
+                    toml += '#   skip     璺宠繃楠岃瘉锛堥粯璁わ級\n';
+                    toml += '#   standard 浣跨敤绯荤粺璇佷功楠岃瘉\n';
+                    toml += '#   finger   浣跨敤璇佷功鎸囩汗楠岃瘉锛屾湇鍔＄鍚姩鏃舵棩蹇椾細杈撳嚭鎸囩汗\n';
                     if (formData.value.cert_mode === 'finger' && formData.value.fingerprint) {
                         toml += `cert_mode = "finger:${formData.value.fingerprint}"\n`;
                     } else {
@@ -2012,24 +2012,24 @@
 
                 const udpStuns = formData.value.udp_stun.filter(s => s.trim());
                 if (udpStuns.length > 0) {
-                    toml += '\n# 自定义UDP STUN地址，不设置则用默认stun\n';
+                    toml += '\n# 鑷畾涔塙DP STUN鍦板潃锛屼笉璁剧疆鍒欑敤榛樿stun\n';
                     toml += `udp_stun = [${udpStuns.map(s => `"${s}"`).join(', ')}]\n`;
                 }
 
                 const tcpStuns = formData.value.tcp_stun.filter(s => s.trim());
                 if (tcpStuns.length > 0) {
-                    toml += '\n# 自定义TCP STUN地址，不设置则用默认stun\n';
+                    toml += '\n# 鑷畾涔塗CP STUN鍦板潃锛屼笉璁剧疆鍒欑敤榛樿stun\n';
                     toml += `tcp_stun = [${tcpStuns.map(s => `"${s}"`).join(', ')}]\n`;
                 }
 
                 return toml;
             };
 
-            // 切换到表单模式
+            // 鍒囨崲鍒拌〃鍗曟ā寮?
             const switchToFormMode = () => {
                 if (editMode.value === 'toml') {
                     editMode.value = 'form';
-                    // 从TOML解析到表单
+                    // 浠嶵OML瑙ｆ瀽鍒拌〃鍗?
                     isParsingToml.value = true;
                     formData.value = parseTomlToForm(editorContent.value);
                     nextTick(() => {
@@ -2040,33 +2040,33 @@
                 }
             };
 
-            // 切换到TOML模式
+            // 鍒囨崲鍒癟OML妯″紡
             const switchToTomlMode = () => {
                 if (editMode.value === 'form') {
-                    // 如果表单被修改过，生成新的TOML
+                    // 濡傛灉琛ㄥ崟琚慨鏀硅繃锛岀敓鎴愭柊鐨凾OML
                     if (hasFormChanges.value) {
                         editorContent.value = formToToml();
-                        // 重置标记，因为表单修改已经应用到TOML了
+                        // 閲嶇疆鏍囪锛屽洜涓鸿〃鍗曚慨鏀瑰凡缁忓簲鐢ㄥ埌TOML浜?
                         hasFormChanges.value = false;
                     } else if (originalToml.value && !hasTomlChanges.value) {
-                        // 如果表单没被修改，且TOML也没被修改，使用原始TOML（保留用户注释）
+                        // 濡傛灉琛ㄥ崟娌¤淇敼锛屼笖TOML涔熸病琚慨鏀癸紝浣跨敤鍘熷TOML锛堜繚鐣欑敤鎴锋敞閲婏級
                         editorContent.value = originalToml.value;
                     } else {
-                        // 其他情况生成新的TOML
+                        // 鍏朵粬鎯呭喌鐢熸垚鏂扮殑TOML
                         editorContent.value = formToToml();
                     }
                 }
                 editMode.value = 'toml';
             };
 
-            // 监听TOML内容变化（只在TOML模式下）
+            // 鐩戝惉TOML鍐呭鍙樺寲锛堝彧鍦═OML妯″紡涓嬶級
             watch(editorContent, (newVal, oldVal) => {
                 if (editMode.value === 'toml' && oldVal !== undefined) {
                     hasTomlChanges.value = true;
                 }
             });
 
-            // 监听表单数据变化
+            // 鐩戝惉琛ㄥ崟鏁版嵁鍙樺寲
             watch(formData, () => {
                 if (editMode.value === 'form' && showEditor.value && !isParsingToml.value) {
                     hasFormChanges.value = true;
@@ -2076,9 +2076,9 @@
             const openEditor = async (fileName) => {
                 editorFileName.value = fileName || "";
                 editorMode.value = fileName ? "edit" : "new";
-                editMode.value = "form"; // 默认表单模式
-                hasTomlChanges.value = false; // 重置TOML修改标记
-                hasFormChanges.value = false; // 重置表单修改标记
+                editMode.value = "form"; // 榛樿琛ㄥ崟妯″紡
+                hasTomlChanges.value = false; // 閲嶇疆TOML淇敼鏍囪
+                hasFormChanges.value = false; // 閲嶇疆琛ㄥ崟淇敼鏍囪
 
                 if (fileName) {
                     try {
@@ -2088,20 +2088,20 @@
                         const json = await res.json();
                         if (json.code === 0) {
                             editorContent.value = json.data;
-                            originalToml.value = json.data; // 保存原始TOML
+                            originalToml.value = json.data; // 淇濆瓨鍘熷TOML
                             isParsingToml.value = true;
                             formData.value = parseTomlToForm(json.data);
                             nextTick(() => {
                                 isParsingToml.value = false;
                             });
                             showEditor.value = true;
-                        } else alert("获取配置失败: " + json.msg);
+                        } else alert("鑾峰彇閰嶇疆澶辫触: " + json.msg);
                     } catch (e) {
-                        alert("网络错误");
+                        alert("缃戠粶閿欒");
                     }
                 } else {
-                    // 新建配置，初始化表单
-                    originalToml.value = ""; // 新建时清空原始TOML
+                    // 鏂板缓閰嶇疆锛屽垵濮嬪寲琛ㄥ崟
+                    originalToml.value = ""; // 鏂板缓鏃舵竻绌哄師濮婽OML
                     formData.value = {
                         config_name: "",
                         network_code: "",
@@ -2129,91 +2129,103 @@
                         tcp_stun: [],
                         tunnel_port: null
                     };
-                    editorContent.value = `# config_name = "配置名称"
-# --- 网络配置 ---
-# 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
+                    editorContent.value = `# config_name = "My config"  # Optional display name. Default: file name.
+
+# --- Required ---
+
+# Virtual network identifier. Required. Default: none.
 network_code = "your_network_code"
 
-# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)
-# dynamic 协议使用dns txt解析记录值
+# Server addresses. Required. Default: none.
+# Supported schemes: quic://, tcp://, wss://, dynamic://
+# If the scheme is omitted, tcp:// is used.
 server = ["quic://1.2.3.4:29872"]
 
-# ===简单使用以下参数可以不动===
+# --- Common optional fields ---
 
-# 自定义虚拟 IP (可选)
+# Virtual IP. Default: auto-assigned by the server.
 # ip = "10.10.0.2"
 
-# 是否启用quic优化传输 (默认 false,设置为true时开启)
-# 开启后传输过程几乎不会丢包，但是延迟会有波动
+# Enable QUIC optimized transport. Default: false.
 # rtx = false
 
-# 是否启用 FEC 前向纠错，损失一定带宽来提升网络稳定性(默认 false,设置为true时开启)
-# 开启后可以减少丢包率，损失带宽但是延迟比较稳定，带宽充足时可以使用此功能
+# Enable forward error correction. Default: false.
 # fec = false
 
-# 是否关闭 P2P 打洞 (默认 false,设置为true时关闭)
+# Disable P2P hole punching. Default: false.
 # no_punch = false
 
-# 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
+# Enable LZ4 compression. Default: false.
 # compress = false
 
-# 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点
+# Route subnet traffic to a virtual peer. Default: [].
+# Format: "CIDR,target_virtual_ip"
 # input = ["192.168.0.0/24,10.26.0.2", "192.168.1.0/24,10.26.0.3"]
 
-# 出栈允许网段，用于点对网，允许指定网段的转发
+# Allow this node to forward traffic to these destination subnets. Default: [].
 # output = ["0.0.0.0/0"]
 
-# 是否关闭内置子网NAT，关闭(设为true)后需要配置网卡转发，否则无法使用点对网。通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好
+# Disable built-in subnet NAT. Default: false.
 # no_nat = false
 
-# 是否关闭TUN虚拟网卡，关闭(设为true)后只能充当流量出口或者进行端口映射，关闭后无需管理员权限
+# Disable TUN device creation. Default: false.
 # no_tun = false
 
-# 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址
-# 端口映射用于在本地监听指定端口，并将收到的网络流量经由指定虚拟节点转发到目标地址，从而实现跨网络或内网服务访问
-# 例如 port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"]
-# tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80 则表示将本地tcp的81端口的数据转发到10.0.0.2:80
-# tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到192.168.1.10:80
-# tcp://0.0.0.0:81-10.0.0.2-anyonehost:80 则表示将本地tcp的81端口的数据经过10.0.0.2转到anyonehost:80
+# Port mapping rules. Default: [].
+# Format: "tcp://listen_addr-virtual_target_ip-dst_host:dst_port"
+# Example:
+# port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"]
+# port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-192.168.1.10:80"]
+# port_mapping = ["tcp://0.0.0.0:81-10.0.0.2-anyonehost:80"]
 # port_mapping = []
 
-# 是否允许作为端口映射出口，开启(设置为true)后其他设备才可使用本设备的ip为"目标虚拟IP"
-# 开启后虚拟网络其他设备可以使用此设备当跳板访问其他网络
+# Allow other peers to use this node as a port-mapping egress. Default: false.
 # allow_mapping = false
 
-# MTU 设置
-# mtu = 1400
+# Local P2P tunnel port. Default: 0 (auto-assign).
+# tunnel_port = 0
 
-# --- 设备配置 ---
+# MTU. Default: 1380. Maximum: 1500.
+# mtu = 1380
 
-# 设备名称 (可选，默认读取本机 hostname)
+# --- Device identity ---
+
+# Device name. Default: local hostname.
 # device_name = "my-device"
 
-# 设备 ID (可选，不填自动生成，不同设备ID不能相同)
+# Device ID. Default: auto-generated from the local machine.
 # device_id = "device-id-xxxx"
 
-# 虚拟网卡名称
+# TUN interface name. Default: OS/runtime chosen.
 # tun_name = "vnt-tun"
 
-# --- 安全配置 ---
+# --- Security ---
 
-# 加密密码 (可选)
-# Network join secret used for server-side admission control
+# Join secret used for server-side admission control. Default: none.
 # network_secret = "replace_with_a_long_random_secret"
 
-# Data-plane packet encryption password
+# Payload encryption password. Default: none.
 # password = "123456"
 
-# 证书校验方式：
-#   skip     跳过验证（默认）
-#   standard 使用系统证书验证
-#   finger   使用证书指纹验证，服务端启动时日志会输出指纹，
-#            例如 finger:3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1
+# Server certificate validation mode. Default: "skip".
+# Options:
+#   "skip"               - no certificate validation
+#   "standard"           - validate against system root CAs
+#   "finger:<sha256hex>" - pin by certificate fingerprint
 # cert_mode = "skip"
 
-# --- 其他配置 ---
-# 自定义stun地址，分别用于udp打洞和tcp打洞，需要单独配置，不设置则用默认stun
+# --- STUN ---
+
+# UDP STUN servers. Default: built-in list.
+# Built-in default:
+# ["stun.miwifi.com:3478", "stun.chat.bilibili.com:3478", "stun.l.google.com:19302"]
+# If a host has no port, :3478 is appended automatically.
 # udp_stun = ["stun.chat.bilibili.com"]
+
+# TCP STUN servers. Default: built-in list.
+# Built-in default:
+# ["stun.flashdance.cx:3478", "stun.sipnet.net:3478", "stun.nextcloud.com:443"]
+# If a host has no port, :3478 is appended automatically.
 # tcp_stun = ["stun.nextcloud.com:443"]`;
                     showEditor.value = true;
                 }
@@ -2221,17 +2233,17 @@ server = ["quic://1.2.3.4:29872"]
 
             const saveConfig = async () => {
                 try {
-                    // 如果是表单模式，先转换为TOML
+                    // 濡傛灉鏄〃鍗曟ā寮忥紝鍏堣浆鎹负TOML
                     let configContent = editorContent.value;
                     if (editMode.value === 'form') {
-                        // 验证必填项
+                        // 楠岃瘉蹇呭～椤?
                         if (!formData.value.network_code.trim()) {
-                            alert('请填写网络编号');
+                            alert('璇峰～鍐欑綉缁滅紪鍙?);
                             return;
                         }
                         const servers = formData.value.server.filter(s => s.trim());
                         if (servers.length === 0) {
-                            alert('请至少填写一个服务器地址');
+                            alert('璇疯嚦灏戝～鍐欎竴涓湇鍔″櫒鍦板潃');
                             return;
                         }
                         configContent = formToToml();
@@ -2250,14 +2262,14 @@ server = ["quic://1.2.3.4:29872"]
                     if (json.code === 0) {
                         showEditor.value = false;
                         fetchConfigList();
-                    } else alert("保存失败: " + json.msg);
+                    } else alert("淇濆瓨澶辫触: " + json.msg);
                 } catch (e) {
-                    alert("保存失败: " + e.message);
+                    alert("淇濆瓨澶辫触: " + e.message);
                 }
             };
 
             const deleteConfig = async (fileName) => {
-                if (!confirm(`确定要删除配置 ${fileName} 吗?`)) return;
+                if (!confirm(`纭畾瑕佸垹闄ら厤缃?${fileName} 鍚?`)) return;
                 try {
                     const res = await fetch(
                         `${API_BASE}/api/config?file_name=${fileName}`,
@@ -2298,10 +2310,10 @@ server = ["quic://1.2.3.4:29872"]
             const showTooltipGlobal = inject("showPeerTooltip");
             const hideTooltipGlobal = inject("hidePeerTooltip");
             let timer = null;
-            // 记录上次流量数据和时间，用于前端计算网速
+            // 璁板綍涓婃娴侀噺鏁版嵁鍜屾椂闂达紝鐢ㄤ簬鍓嶇璁＄畻缃戦€?
             let lastTrafficMap = {};
             let lastFetchTime = 0;
-            // 展开状态和网速历史
+            // 灞曞紑鐘舵€佸拰缃戦€熷巻鍙?
             const expandedPeers = reactive({});
             const speedHistoryMap = {};
             const HISTORY_SIZE = 60;
@@ -2322,7 +2334,7 @@ server = ["quic://1.2.3.4:29872"]
                 const txArr = history ? history.tx : [];
                 const rxArr = history ? history.rx : [];
 
-                // 高清适配
+                // 楂樻竻閫傞厤
                 const dpr = window.devicePixelRatio || 1;
                 const rect = canvas.getBoundingClientRect();
                 canvas.width = rect.width * dpr;
@@ -2335,22 +2347,22 @@ server = ["quic://1.2.3.4:29872"]
                 const chartW = w - padLeft - padRight;
                 const chartH = h - padTop - padBottom;
 
-                // 背景
+                // 鑳屾櫙
                 ctx.fillStyle = '#0c1222';
                 ctx.fillRect(0, 0, w, h);
 
-                // 计算Y轴最大值
+                // 璁＄畻Y杞存渶澶у€?
                 const allValues = [...txArr, ...rxArr];
                 let maxVal = allValues.length > 0 ? Math.max(...allValues) : 0;
-                if (maxVal < 1024) maxVal = 1024; // 最小1KB
-                // 向上取整到合适的刻度
+                if (maxVal < 1024) maxVal = 1024; // 鏈€灏?KB
+                // 鍚戜笂鍙栨暣鍒板悎閫傜殑鍒诲害
                 const niceMax = niceNumber(maxVal);
 
-                // 更新最大值标签
+                // 鏇存柊鏈€澶у€兼爣绛?
                 const maxLabel = document.getElementById('chart-max-' + ip.replaceAll('.', '-'));
-                if (maxLabel) maxLabel.textContent = '峰值: ' + formatSpeed(niceMax);
+                if (maxLabel) maxLabel.textContent = '宄板€? ' + formatSpeed(niceMax);
 
-                // 网格线
+                // 缃戞牸绾?
                 const gridLines = 4;
                 ctx.strokeStyle = 'rgba(71, 85, 105, 0.3)';
                 ctx.lineWidth = 1;
@@ -2361,7 +2373,7 @@ server = ["quic://1.2.3.4:29872"]
                     ctx.lineTo(padLeft + chartW, y);
                     ctx.stroke();
                 }
-                // 垂直网格线
+                // 鍨傜洿缃戞牸绾?
                 const vLines = 6;
                 for (let i = 0; i <= vLines; i++) {
                     const x = padLeft + (chartW / vLines) * i;
@@ -2371,13 +2383,13 @@ server = ["quic://1.2.3.4:29872"]
                     ctx.stroke();
                 }
 
-                // 绘制曲线
+                // 缁樺埗鏇茬嚎
                 const drawLine = (data, strokeColor, fillColor) => {
                     if (data.length < 2) return;
                     const step = chartW / (HISTORY_SIZE - 1);
                     const offset = HISTORY_SIZE - data.length;
 
-                    // 填充区域
+                    // 濉厖鍖哄煙
                     ctx.beginPath();
                     ctx.moveTo(padLeft + offset * step, padTop + chartH);
                     for (let i = 0; i < data.length; i++) {
@@ -2391,7 +2403,7 @@ server = ["quic://1.2.3.4:29872"]
                     ctx.fillStyle = fillColor;
                     ctx.fill();
 
-                    // 线条
+                    // 绾挎潯
                     ctx.beginPath();
                     for (let i = 0; i < data.length; i++) {
                         const x = padLeft + (offset + i) * step;
@@ -2408,7 +2420,7 @@ server = ["quic://1.2.3.4:29872"]
                 drawLine(txArr, '#4ade80', 'rgba(74, 222, 128, 0.15)');
             };
 
-            // 将数值取整到适合的刻度
+            // 灏嗘暟鍊煎彇鏁村埌閫傚悎鐨勫埢搴?
             const niceNumber = (val) => {
                 const units = [
                     1024,             // 1KB
@@ -2454,7 +2466,7 @@ server = ["quic://1.2.3.4:29872"]
                                     peer.traffic.rx_speed = 0;
                                 }
                                 newTrafficMap[key] = { tx_bytes: peer.traffic.tx_bytes, rx_bytes: peer.traffic.rx_bytes };
-                                // 记录速度历史
+                                // 璁板綍閫熷害鍘嗗彶
                                 if (!speedHistoryMap[key]) speedHistoryMap[key] = { tx: [], rx: [] };
                                 speedHistoryMap[key].tx.push(peer.traffic.tx_speed);
                                 speedHistoryMap[key].rx.push(peer.traffic.rx_speed);
@@ -2467,7 +2479,7 @@ server = ["quic://1.2.3.4:29872"]
                         lastTrafficMap = newTrafficMap;
                         lastFetchTime = now;
                         peers.value = list;
-                        // 重绘所有展开的图表
+                        // 閲嶇粯鎵€鏈夊睍寮€鐨勫浘琛?
                         nextTick(() => {
                             for (const ip in expandedPeers) {
                                 if (expandedPeers[ip]) drawChart(ip);
@@ -2490,7 +2502,7 @@ server = ["quic://1.2.3.4:29872"]
                 if (timer) clearInterval(timer);
             });
 
-            // 监听 status 变化，当变为 running 时立即获取数据
+            // 鐩戝惉 status 鍙樺寲锛屽綋鍙樹负 running 鏃剁珛鍗宠幏鍙栨暟鎹?
             watch(() => info.value.status, (newStatus) => {
                 if (newStatus === "running") {
                     fetchPeers();
@@ -2498,14 +2510,14 @@ server = ["quic://1.2.3.4:29872"]
             });
 
             const getRouteModeClass = (route) => {
-                // route 包含 addr, protocol, metric, rtt
-                // 判断是否直连：metric === 1
+                // route 鍖呭惈 addr, protocol, metric, rtt
+                // 鍒ゆ柇鏄惁鐩磋繛锛歮etric === 1
                 const isDirect = route.metric === 1;
 
                 if (isDirect) {
-                    return 'text-purple-400 font-medium';  // 直连 - 紫色
+                    return 'text-purple-400 font-medium';  // 鐩磋繛 - 绱壊
                 } else {
-                    return 'text-blue-400';  // 客户端中继 - 蓝色
+                    return 'text-blue-400';  // 瀹㈡埛绔腑缁?- 钃濊壊
                 }
             };
 
@@ -2514,9 +2526,9 @@ server = ["quic://1.2.3.4:29872"]
                 const isTcp = route.protocol.includes('Tcp');
 
                 if (isDirect) {
-                    return isTcp ? '打洞TCP直连' : '打洞UDP直连';
+                    return isTcp ? '鎵撴礊TCP鐩磋繛' : '鎵撴礊UDP鐩磋繛';
                 } else {
-                    return isTcp ? '客户端TCP中继' : '客户端UDP中继';
+                    return isTcp ? '瀹㈡埛绔疶CP涓户' : '瀹㈡埛绔疷DP涓户';
                 }
             };
 
@@ -2568,7 +2580,7 @@ server = ["quic://1.2.3.4:29872"]
                 if (timer) clearInterval(timer);
             });
 
-            // 监听 status 变化，当变为 running 时立即获取数据
+            // 鐩戝惉 status 鍙樺寲锛屽綋鍙樹负 running 鏃剁珛鍗宠幏鍙栨暟鎹?
             watch(() => info.value.status, (newStatus) => {
                 if (newStatus === "running") {
                     fetchRoutes();
@@ -2579,7 +2591,7 @@ server = ["quic://1.2.3.4:29872"]
         },
     };
 
-    // --- 路由配置 ---
+    // --- 璺敱閰嶇疆 ---
 
     const routes = [
         {path: "/", redirect: "/general"},
@@ -2594,7 +2606,7 @@ server = ["quic://1.2.3.4:29872"]
         routes,
     });
 
-    // --- 主应用 ---
+    // --- 涓诲簲鐢?---
 
     createApp({
         setup() {
@@ -2614,7 +2626,7 @@ server = ["quic://1.2.3.4:29872"]
             const configList = ref([]);
             const loading = ref(false);
 
-            // 启动日志相关
+            // 鍚姩鏃ュ織鐩稿叧
             const showStartLog = ref(false);
             const startLogs = ref([]);
             const startStatus = ref("stopped");
@@ -2622,7 +2634,7 @@ server = ["quic://1.2.3.4:29872"]
             let statusInterval = null;
             let infoTimer = null;
 
-            // Tooltip 相关
+            // Tooltip 鐩稿叧
             const tooltipState = ref({
                 show: false,
                 x: 0,
@@ -2660,7 +2672,7 @@ server = ["quic://1.2.3.4:29872"]
                 tooltipState.value.show = false;
             };
 
-            // 计算属性
+            // 璁＄畻灞炴€?
             const isServerConnected = computed(
                 () =>
                     info.value.server_info &&
@@ -2671,11 +2683,11 @@ server = ["quic://1.2.3.4:29872"]
                     !info.value.server_info ||
                     !info.value.server_info.length
                 )
-                    return "未配置服务器";
-                return `${info.value.server_info.filter((s) => s.connected).length} / ${info.value.server_info.length} 已连接`;
+                    return "鏈厤缃湇鍔″櫒";
+                return `${info.value.server_info.filter((s) => s.connected).length} / ${info.value.server_info.length} 宸茶繛鎺;
             });
 
-            // 基础 API
+            // 鍩虹 API
             const fetchInfo = async () => {
                 try {
                     const res = await fetch(`${API_BASE}/api/info`);
@@ -2698,7 +2710,7 @@ server = ["quic://1.2.3.4:29872"]
                 }
             };
 
-            // 启动流程控制
+            // 鍚姩娴佺▼鎺у埗
             const pollStartStatus = async () => {
                 try {
                     const res = await fetch(
@@ -2753,7 +2765,7 @@ server = ["quic://1.2.3.4:29872"]
             const toggleVnt = async (selectedFile) => {
                 if (loading.value) return;
 
-                // 停止逻辑
+                // 鍋滄閫昏緫
                 if (
                     info.value.status === "running" ||
                     info.value.status === "starting"
@@ -2769,9 +2781,9 @@ server = ["quic://1.2.3.4:29872"]
                     return;
                 }
 
-                // 启动逻辑
+                // 鍚姩閫昏緫
                 if (!selectedFile) {
-                    alert("请先选择一个配置");
+                    alert("璇峰厛閫夋嫨涓€涓厤缃?);
                     return;
                 }
                 loading.value = true;
@@ -2786,13 +2798,13 @@ server = ["quic://1.2.3.4:29872"]
                     const json = await res.json();
                     loading.value = false;
                     if (json.code !== 0) {
-                        alert("启动失败: " + json.msg);
+                        alert("鍚姩澶辫触: " + json.msg);
                         return;
                     }
                     openStartingModal();
                 } catch (e) {
                     loading.value = false;
-                    alert("网络请求失败: " + e.message);
+                    alert("缃戠粶璇锋眰澶辫触: " + e.message);
                 }
             };
 
@@ -2802,7 +2814,7 @@ server = ["quic://1.2.3.4:29872"]
                     await fetch(`${API_BASE}/api/stop`, {
                         method: "POST",
                     });
-                    startLogs.value.push("启动已手动取消");
+                    startLogs.value.push("鍚姩宸叉墜鍔ㄥ彇娑?);
                 } catch (e) {
                 }
                 startStatus.value = "stopped";
@@ -2812,7 +2824,7 @@ server = ["quic://1.2.3.4:29872"]
             const restartVnt = async (selectedFile) => {
                 if (loading.value) return;
                 if (!selectedFile) {
-                    alert("请先选择一个配置");
+                    alert("璇峰厛閫夋嫨涓€涓厤缃?);
                     return;
                 }
                 loading.value = true;
@@ -2827,29 +2839,29 @@ server = ["quic://1.2.3.4:29872"]
                     const json = await res.json();
                     loading.value = false;
                     if (json.code !== 0) {
-                        alert("重启失败: " + json.msg);
+                        alert("閲嶅惎澶辫触: " + json.msg);
                         return;
                     }
                     openStartingModal();
                 } catch (e) {
                     loading.value = false;
-                    alert("网络请求失败: " + e.message);
+                    alert("缃戠粶璇锋眰澶辫触: " + e.message);
                 }
             };
 
-            // 导航辅助
+            // 瀵艰埅杈呭姪
             const navClass = (isActive) =>
                 isActive
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30"
                     : "text-slate-400 hover:bg-slate-800 hover:text-white";
 
-            // 页面可见性处理
+            // 椤甸潰鍙鎬у鐞?
             const isPageVisible = ref(!document.hidden);
             const visibilityHandler = () => {
                 isPageVisible.value = !document.hidden;
             };
 
-            // 依赖注入
+            // 渚濊禆娉ㄥ叆
             provide("info", info);
             provide("isPageVisible", isPageVisible);
             provide("configList", configList);
@@ -2870,7 +2882,7 @@ server = ["quic://1.2.3.4:29872"]
                 if (info.value.status === "starting")
                     openStartingModal();
 
-                // 全局轮询 info (状态/IP等)
+                // 鍏ㄥ眬杞 info (鐘舵€?IP绛?
                 infoTimer = setInterval(() => {
                     if (info.value.status !== "running") return;
                     if (isPageVisible.value) fetchInfo();
@@ -2907,3 +2919,4 @@ server = ["quic://1.2.3.4:29872"]
 </script>
 </body>
 </html>
+
