@@ -12,10 +12,6 @@ pub(crate) struct PacketCrypto {
     crypto: Option<Arc<chacha20_poly1305::PacketCrypto>>,
 }
 impl PacketCrypto {
-    pub(crate) fn key_sign(s: &str) -> String {
-        chacha20_poly1305::PacketCrypto::key_sign(s)
-    }
-
     pub(crate) fn new_from_str(s: Option<&str>) -> Self {
         Self {
             crypto: s

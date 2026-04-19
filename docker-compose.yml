@@ -1,0 +1,24 @@
+services:
+  vnt-client:
+    build:
+      context: .
+      args:
+        RUST_VERSION: 1.93.1
+    image: vnt2-client:local
+    container_name: vnt2-client
+    restart: unless-stopped
+    command: ["vnt2_web", "--addr", "0.0.0.0:19099", "--conf", "/app/data/config.toml"]
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      # The app writes config.toml, vnt_config/, vnt_current_config.txt and logs
+      # relative to its working directory. Persist all of them in ./data.
+      - ./data:/app/data
+    ports:
+      - "19099:19099/tcp"
+      # If you set tunnel_port in data/config.toml, publish the same UDP port here.
+      # Example:
+      # - "30001:30001/udp"
