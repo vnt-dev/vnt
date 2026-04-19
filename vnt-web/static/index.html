@@ -1044,8 +1044,11 @@
                                 <div class="space-y-4">
                                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
-                                            <label class="block text-sm font-medium text-slate-300 mb-2">组网加密密码(连接公共服务器时建议填写，同一组网密码需要相同)</label>
-                                            <input v-model="formData.password" type="password" placeholder="留空则不加密"
+                                            <label class="block text-sm font-medium text-slate-300 mb-2">入网验证密钥</label>
+                                            <input v-model="formData.network_secret" type="password" placeholder="建议使用长随机密钥"
+                                                   class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4">
+                                            <label class="block text-sm font-medium text-slate-300 mb-2">数据包加密口令</label>
+                                            <input v-model="formData.password" type="password" placeholder="留空则不加密数据"
                                                    class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                                         </div>
                                         <div>
@@ -1743,6 +1746,7 @@
                 device_name: "",
                 device_id: "",
                 tun_name: "",
+                network_secret: "",
                 password: "",
                 cert_mode: "skip",
                 fingerprint: "",
@@ -1772,6 +1776,7 @@
                     device_name: "",
                     device_id: "",
                     tun_name: "",
+                    network_secret: "",
                     password: "",
                     cert_mode: "skip",
                     fingerprint: "",
@@ -1844,6 +1849,9 @@
                     } else if (trimmed.includes('tun_name')) {
                         const match = trimmed.match(/tun_name\s*=\s*"([^"]*)"/);
                         if (match) data.tun_name = match[1];
+                    } else if (trimmed.includes('network_secret')) {
+                        const match = trimmed.match(/network_secret\s*=\s*"([^"]*)"/);
+                        if (match) data.network_secret = match[1];
                     } else if (trimmed.includes('password =')) {
                         const match = trimmed.match(/password\s*=\s*"([^"]*)"/);
                         if (match) data.password = match[1];
@@ -1982,8 +1990,12 @@
                 }
 
                 toml += '\n# --- 安全配置 ---\n';
+                if (formData.value.network_secret) {
+                    toml += '\n# Network join secret used for server-side admission control\n';
+                    toml += `network_secret = "${formData.value.network_secret}"\n`;
+                }
                 if (formData.value.password) {
-                    toml += '\n# 组网加密密码 (可选)\n';
+                    toml += '\n# Data-plane packet encryption password\n';
                     toml += `password = "${formData.value.password}"\n`;
                 }
                 if (formData.value.cert_mode && formData.value.cert_mode !== 'skip') {
@@ -2109,6 +2121,7 @@
                         device_name: "",
                         device_id: "",
                         tun_name: "",
+                        network_secret: "",
                         password: "",
                         cert_mode: "skip",
                         fingerprint: "",
@@ -2185,6 +2198,10 @@ server = ["quic://1.2.3.4:29872"]
 # --- 安全配置 ---
 
 # 加密密码 (可选)
+# Network join secret used for server-side admission control
+# network_secret = "replace_with_a_long_random_secret"
+
+# Data-plane packet encryption password
 # password = "123456"
 
 # 证书校验方式：

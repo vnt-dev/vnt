@@ -74,8 +74,11 @@ async fn main0() -> anyhow::Result<()> {
         log::info!("Sub network output:{x}");
     }
 
-    if let Some(password_sign) = config.key_sign() {
-        log::info!("password sign: {:?}", password_sign);
+    if config.network_secret.is_some() {
+        log::info!("network authentication: enabled");
+    }
+    if config.password.is_some() {
+        log::info!("payload encryption: enabled");
     }
 
     let group_manager = TaskGroupManager::new();

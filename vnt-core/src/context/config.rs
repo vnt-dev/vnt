@@ -1,4 +1,3 @@
-use crate::crypto::PacketCrypto;
 use crate::nat::NetInput;
 use crate::port_mapping::PortMapping;
 use crate::tls::verifier::CertValidationMode;
@@ -19,6 +18,7 @@ pub struct Config {
     pub server_addr: Vec<ProtocolAddress>,
     pub cert_mode: CertValidationMode,
     pub network_code: String,
+    pub network_secret: Option<String>,
     pub device_id: String,
     pub device_name: String,
     pub tun_name: Option<String>,
@@ -85,17 +85,17 @@ impl Config {
         Ok(())
     }
     pub fn key_sign(&self) -> Option<String> {
-        self.password.as_ref().map(|p| PacketCrypto::key_sign(p))
+        self.network_secret.clone()
     }
     pub(crate) fn to_connect_config(&self, index: usize) -> ConnectRegConfig {
         ConnectRegConfig {
             server_addr: self.server_addr[index].clone(),
             cert_mode: self.cert_mode.clone(),
             network_code: self.network_code.clone(),
+            key_sign: self.key_sign(),
             device_id: self.device_id.clone(),
             device_name: self.device_name.clone(),
             ip: self.ip,
-            key_sign: self.key_sign(),
             ip_variable: self.ip.is_none(),
         }
     }

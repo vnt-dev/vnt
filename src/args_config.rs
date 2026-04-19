@@ -15,6 +15,7 @@ use vnt_ipc::port_mapping::PortMapping;
 pub struct FileConfig {
     pub server: Option<Vec<String>>,
     pub network_code: Option<String>,
+    pub network_secret: Option<String>,
     pub ip: Option<Ipv4Addr>,
     pub no_punch: Option<bool>,
     pub rtx: Option<bool>,
@@ -91,6 +92,9 @@ pub struct Args {
     pub network_code: Option<String>,
     #[clap(short = 'k', long, hide = true)]
     pub token: Option<String>,
+    /// Network join secret used for registration validation
+    #[clap(long)]
+    pub network_secret: Option<String>,
     /// 自定义虚拟IP
     #[clap(long)]
     pub ip: Option<Ipv4Addr>,
@@ -235,6 +239,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
     let config = Config {
         server_addr,
         network_code,
+        network_secret: args.network_secret.or_else(|| file.network_secret.clone()),
         ip: args.ip.or(file.ip),
         no_punch: args.no_punch || file.no_punch.unwrap_or(false),
         rtx: args.rtx || file.rtx.unwrap_or(false),
@@ -276,6 +281,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         network_code: args
             .network_code
             .ok_or_else(|| anyhow!("network_code is required"))?,
+        network_secret: args.network_secret,
         ip: args.ip,
         no_punch: args.no_punch,
         rtx: args.rtx,
@@ -335,6 +341,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         network_code: file
             .network_code
             .ok_or_else(|| anyhow!("network_code is required"))?,
+        network_secret: file.network_secret.clone(),
         ip: file.ip,
         no_punch: file.no_punch.unwrap_or(false),
         rtx: file.rtx.unwrap_or(false),
@@ -450,6 +457,10 @@ server = ["quic://1.2.3.4:29872"]
 # --- 安全配置 ---
 
 # 加密密码 (可选)
+# Join secret for server-side admission control (optional)
+# network_secret = "replace_with_a_long_random_secret"
+
+# Data-plane packet encryption password (optional)
 # password = "123456"
 
 # 证书校验方式：

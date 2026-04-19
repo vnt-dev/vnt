@@ -165,6 +165,7 @@ pub struct StartConfig {
     pub server: Vec<String>,
     pub cert_mode: Option<String>,
     pub network_code: String,
+    pub network_secret: Option<String>,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
     pub tun_name: Option<String>,
@@ -938,6 +939,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
     Ok(CoreConfig {
         server_addr: server_addrs,
         network_code: cfg.network_code,
+        network_secret: cfg.network_secret,
         ip: cfg.ip,
         no_punch: cfg.no_punch,
         rtx: cfg.rtx,
