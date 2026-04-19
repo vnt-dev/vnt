@@ -40,6 +40,6 @@ impl PacketCompression {
         if let Some(compression) = self.compression.as_ref() {
             return compression.decompress(pkt);
         }
-        Ok(pkt)
+        LZ4Compression::new().decompress(pkt)
     }
 }

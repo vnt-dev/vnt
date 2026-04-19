@@ -280,10 +280,8 @@ impl P2pInboundHandler {
             }
             MsgType::RelayProbeReply => {
                 let metric = ctx.max_ttl - ctx.ttl;
-                self.route_table.add_route(
-                    ctx.src_ip,
-                    Route::from_default_rt(route_key, metric),
-                );
+                self.route_table
+                    .add_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
             }
             _ => {}
         }

@@ -1,0 +1,26 @@
+services:
+  vnt-client:
+    build:
+      context: .
+      args:
+        RUST_VERSION: 1.93.1
+    image: vnt2-client:local
+    container_name: vnt2-client
+    restart: unless-stopped
+    command: ["vnt2_web", "--addr", "0.0.0.0:19099", "--conf", "/app/data/config.toml"]
+    # Share the host network namespace so the TUN device and routes live on the host.
+    # This is required if remote VNT peers should reach services running on the host
+    # instead of only services inside the container namespace.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      # The app writes config.toml, vnt_config/, vnt_current_config.txt and logs
+      # relative to its working directory. Persist all of them in ./data.
+      - ./data:/app/data
+    # With host networking, do not publish ports here.
+    # 19099 is now bound directly on the host by vnt2_web itself.
+    # If you enable TUN mode in /app/data/config.toml, the VNT interface also lives on the host.

@@ -1,0 +1,6 @@
+.git
+.github
+target
+data
+logs
+*.log

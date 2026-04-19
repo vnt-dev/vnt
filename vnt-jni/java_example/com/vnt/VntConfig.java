@@ -14,6 +14,7 @@ public class VntConfig {
 
     private final List<String> servers;
     private final String networkCode;
+    private final String networkSecret;
     private final String password;
     private final String deviceId;
     private final String deviceName;
@@ -35,6 +36,7 @@ public class VntConfig {
     private VntConfig(Builder builder) {
         this.servers = builder.servers;
         this.networkCode = builder.networkCode;
+        this.networkSecret = builder.networkSecret;
         this.password = builder.password;
         this.deviceId = builder.deviceId;
         this.deviceName = builder.deviceName;
@@ -69,6 +71,7 @@ public class VntConfig {
         json.put("network_code", networkCode);
 
         // 可选项
+        if (networkSecret != null) json.put("network_secret", networkSecret);
         if (password != null) json.put("password", password);
         if (deviceId != null) json.put("device_id", deviceId);
         if (deviceName != null) json.put("device_name", deviceName);
@@ -120,6 +123,7 @@ public class VntConfig {
     public static class Builder {
         private List<String> servers = new ArrayList<>();
         private String networkCode;
+        private String networkSecret;
         private String password;
         private String deviceId;
         private String deviceName;
@@ -157,7 +161,15 @@ public class VntConfig {
         }
 
         /**
-         * 设置密码（可选）
+         * Set the join secret used for network admission validation.
+         */
+        public Builder setNetworkSecret(String networkSecret) {
+            this.networkSecret = networkSecret;
+            return this;
+        }
+
+        /**
+         * Set the optional packet encryption password.
          */
         public Builder setPassword(String password) {
             this.password = password;

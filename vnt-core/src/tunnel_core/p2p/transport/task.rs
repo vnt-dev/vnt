@@ -145,10 +145,7 @@ pub async fn ping_all(
         }
     }
 }
-pub async fn route_timeout_task(
-    route_table: RouteTable,
-    packet_loss_stats: PacketLossStats,
-) {
+pub async fn route_timeout_task(route_table: RouteTable, packet_loss_stats: PacketLossStats) {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let expired_time = std::time::Instant::now() - Duration::from_secs(10);

@@ -10,24 +10,6 @@ pub struct PacketCrypto {
 }
 
 impl PacketCrypto {
-    pub fn key_sign(s: &str) -> String {
-        use ring::digest::{Context, SHA256};
-
-        const PREFIX: &[u8] = b"KEY-BEGIN";
-        const SUFFIX: &[u8] = b"KEY-END";
-
-        let mut ctx = Context::new(&SHA256);
-        ctx.update(PREFIX);
-        ctx.update(s.as_bytes());
-        ctx.update(SUFFIX);
-        let digest = ctx.finish();
-        let mut key_bytes = [0u8; 16];
-        key_bytes.copy_from_slice(&digest.as_ref()[..16]);
-        key_bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
-    }
     pub fn new(key_bytes: [u8; 32]) -> Self {
         let unbound = UnboundKey::new(&CHACHA20_POLY1305, &key_bytes).unwrap();
         let key = LessSafeKey::new(unbound);

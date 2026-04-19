@@ -1,0 +1,52 @@
+# Display name shown in the client web UI.
+config_name = "default"
+
+# One or more control servers. Supported schemes: quic:// tcp:// wss:// dynamic://
+server = ["quic://YOUR_SERVER_IP:29872"]
+
+# Must match a network_code known by the server.
+network_code = "default"
+
+# Must match the server-side secret configured for that network_code.
+network_secret = "replace_with_the_server_side_network_secret"
+
+# Packet/data encryption inside the virtual network.
+# Leave commented out to disable payload encryption.
+# password = "optional_packet_password"
+
+# Quick-start setting for self-signed server certificates.
+# Use "finger:<hex>" or "standard" in production.
+cert_mode = "skip"
+
+# Optional fixed overlay IP inside the selected network CIDR.
+# ip = "172.16.57.10"
+
+# Optional device identity.
+device_name = "docker-client"
+# device_id = "docker-client-01"
+# tun_name = "vnt-tun"
+
+# Transport tuning.
+# rtx = true
+# fec = false
+# compress = false
+# no_punch = false
+
+# For a registration-only smoke test on a host without /dev/net/tun, uncomment:
+# no_tun = true
+
+# Optional fixed UDP port for P2P traffic.
+# If you set this in Docker, publish the same UDP port in docker-compose.yml.
+# tunnel_port = 30001
+
+# Optional subnet/gateway features.
+# input = ["192.168.10.0/24,172.16.57.10"]
+# output = ["0.0.0.0/0"]
+# no_nat = false
+# mtu = 1380
+# port_mapping = ["tcp://0.0.0.0:8080-172.16.57.20-172.16.57.20:80"]
+# allow_mapping = false
+
+# Optional STUN overrides.
+# udp_stun = ["stun.chat.bilibili.com:3478"]
+# tcp_stun = ["stun.nextcloud.com:443"]
