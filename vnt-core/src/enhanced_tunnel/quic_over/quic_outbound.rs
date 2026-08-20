@@ -35,7 +35,9 @@ impl EnhancedQuicOutbound {
                 let segmented = more_fragments || offset > 0;
                 if !segmented {
                     let Some(tcp) = TcpPacket::new(ipv4.payload()) else {
-                        return true;
+                        // TCP 解析失败无法判断连接归属，返回 false 让其他
+                        // 转发路径处理，不能返回 true 静默吞掉这个包
+                        return false;
                     };
                     // 不是第一个包
                     if !(tcp.get_flags() & SYN == SYN && tcp.get_flags() & ACK != ACK) {
