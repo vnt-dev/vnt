@@ -67,16 +67,19 @@ async fn my_nat_info_impl(app_context: &AppState, socket_manager: &SocketManager
         }
     }
     log::info!("local_ipv4s: {:?}", local_ipv4s);
-    let local_ipv4 = rust_p2p_core::extend::addr::local_ipv4()
+    let detected = rust_p2p_core::extend::addr::local_ipv4()
         .await
-        .unwrap_or_else(|e| {
+        .map_err(|e| {
             log::warn!("local ipv4 failed {e:?}");
-            local_ipv4s
-                .first()
-                .cloned()
-                .unwrap_or(Ipv4Addr::UNSPECIFIED)
-        });
-    local_ipv4s = vec![local_ipv4];
+            e
+        })
+        .ok();
+    let Some((local_ipv4, merged)) = select_local_ipv4(detected, &local_ipv4s) else {
+        log::warn!("未发现可用本机 IPv4 地址，跳过本次 NAT 信息更新");
+        return;
+    };
+    // 保留网卡扫描结果，主地址排在首位
+    local_ipv4s = merged;
     let mut ipv6 = rust_p2p_core::extend::addr::local_ipv6().await.ok();
     if let Some(addr) = ipv6 {
         if addr.is_loopback()
@@ -90,16 +93,24 @@ async fn my_nat_info_impl(app_context: &AppState, socket_manager: &SocketManager
     } else {
         ipv6 = local_ipv6.first().cloned();
     }
-    let local_udp_ports = socket_manager
-        .udp_socket_manager_as_ref()
-        .unwrap()
-        .local_ports()
-        .unwrap();
+    let Some(udp_mgr) = socket_manager.udp_socket_manager_as_ref() else {
+        log::warn!("udp socket manager 未就绪，跳过本次 NAT 信息更新");
+        return;
+    };
+    let local_udp_ports = match udp_mgr.local_ports() {
+        Ok(ports) => ports,
+        Err(e) => {
+            log::warn!("获取本地 UDP 端口失败: {e:?}，跳过本次 NAT 信息更新");
+            return;
+        }
+    };
     let local_tcp_port = socket_manager
         .tcp_socket_manager_as_ref()
-        .unwrap()
-        .local_addr()
-        .port();
+        .map(|m| m.local_addr().port())
+        .unwrap_or_else(|| {
+            log::warn!("tcp socket manager 未就绪，local_tcp_port 置 0");
+            0
+        });
     log::info!(
         "local_ipv4={local_ipv4},ipv6={ipv6:?},local_udp_ports:{local_udp_ports:?},local_tcp_port:{local_tcp_port:?}"
     );
@@ -138,13 +149,24 @@ async fn my_nat_info_impl(app_context: &AppState, socket_manager: &SocketManager
         NatType::Cone => Model::Low,
         NatType::Symmetric => Model::High,
     };
-    if let Err(e) = socket_manager
-        .udp_socket_manager_as_ref()
-        .unwrap()
-        .switch_model(model)
-    {
+    if let Err(e) = udp_mgr.switch_model(model) {
         log::error!("switch_model error: {e:?}");
     }
+}
+
+/// 确定本机主 IPv4 并把它合并到地址列表首位。
+/// detected 为路由探测得到的主地址（可能不可用），scanned 为网卡扫描结果。
+/// 返回 None 表示没有任何可用地址，调用方应跳过本次发布，避免上报 0.0.0.0。
+fn select_local_ipv4(
+    detected: Option<Ipv4Addr>,
+    scanned: &[Ipv4Addr],
+) -> Option<(Ipv4Addr, Vec<Ipv4Addr>)> {
+    let primary = detected
+        .filter(|ip| !ip.is_unspecified())
+        .or_else(|| scanned.first().copied())?;
+    let mut list: Vec<Ipv4Addr> = scanned.iter().copied().filter(|a| *a != primary).collect();
+    list.insert(0, primary);
+    Some((primary, list))
 }
 
 pub async fn query_udp_public_addr_loop(app_context: AppState, socket_manager: SocketManager) {
@@ -384,4 +406,51 @@ fn default_tcp_stun() -> Vec<String> {
         "stun.sipnet.net:3478".to_string(),
         "stun.nextcloud.com:443".to_string(),
     ]
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(s: &str) -> Ipv4Addr {
+        s.parse().unwrap()
+    }
+
+    /// 探测地址有效时：主地址在首位，扫描结果保留
+    #[test]
+    fn test_select_local_ipv4_detected_valid() {
+        let scanned = vec![ip("192.168.1.2"), ip("10.0.0.3")];
+        let (primary, list) = select_local_ipv4(Some(ip("172.16.0.2")), &scanned).unwrap();
+        assert_eq!(primary, ip("172.16.0.2"));
+        assert_eq!(list, vec![ip("172.16.0.2"), ip("192.168.1.2"), ip("10.0.0.3")]);
+    }
+
+    /// 探测失败/0.0.0.0 时：回退到扫描结果首个地址
+    #[test]
+    fn test_select_local_ipv4_fallback_to_scanned() {
+        let scanned = vec![ip("192.168.1.2"), ip("10.0.0.3")];
+        let (primary, list) = select_local_ipv4(None, &scanned).unwrap();
+        assert_eq!(primary, ip("192.168.1.2"));
+        assert_eq!(list, scanned);
+
+        let (primary, _) =
+            select_local_ipv4(Some(Ipv4Addr::UNSPECIFIED), &scanned).unwrap();
+        assert_eq!(primary, ip("192.168.1.2"));
+    }
+
+    /// 探测地址已在扫描结果中时不重复
+    #[test]
+    fn test_select_local_ipv4_no_duplicate() {
+        let scanned = vec![ip("192.168.1.2"), ip("10.0.0.3")];
+        let (_, list) = select_local_ipv4(Some(ip("10.0.0.3")), &scanned).unwrap();
+        assert_eq!(list, vec![ip("10.0.0.3"), ip("192.168.1.2")]);
+    }
+
+    /// 两者皆空：返回 None，调用方跳过发布，不会上报 0.0.0.0
+    #[test]
+    fn test_select_local_ipv4_none_when_empty() {
+        assert!(select_local_ipv4(None, &[]).is_none());
+        assert!(select_local_ipv4(Some(Ipv4Addr::UNSPECIFIED), &[]).is_none());
+    }
 }
