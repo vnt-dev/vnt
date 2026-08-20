@@ -213,7 +213,7 @@ pub async fn relay_probe_task(
                 non_direct_targets
             } else {
                 non_direct_targets
-                    .choose_multiple(&mut rng, 10)
+                    .sample(&mut rng, 10)
                     .copied()
                     .collect()
             }
@@ -222,10 +222,10 @@ pub async fn relay_probe_task(
         let all_routes = route_table.route_table();
         let mut direct_peers = Vec::new();
         for (ip, routes) in &all_routes {
-            if let Some(best_route) = routes.first() {
-                if best_route.is_direct() {
-                    direct_peers.push((*ip, best_route.route_key()));
-                }
+            if let Some(best_route) = routes.first()
+                && best_route.is_direct()
+            {
+                direct_peers.push((*ip, best_route.route_key()));
             }
         }
 
@@ -242,7 +242,7 @@ pub async fn relay_probe_task(
                 direct_peers
                     .iter()
                     .filter(|(ip, _)| ip != target_ip)
-                    .choose_multiple(&mut rng, max_probes_per_target)
+                    .sample(&mut rng, max_probes_per_target)
                     .into_iter()
                     .cloned()
                     .collect()

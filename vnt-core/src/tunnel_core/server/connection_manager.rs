@@ -264,7 +264,7 @@ impl ServerTurnManager {
 /// 3. Send confirmation to all servers
 /// 4. Return the registration response
 pub async fn coordinated_registration(
-    managers: &mut Vec<ServerTurnManager>,
+    managers: &mut [ServerTurnManager],
 ) -> anyhow::Result<ResponseMessage> {
     if managers.is_empty() {
         bail!("No servers to register");

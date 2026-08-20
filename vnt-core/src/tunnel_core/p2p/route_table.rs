@@ -197,10 +197,10 @@ impl RouteTable {
             }
         }
 
-        if let Some(owner_id) = owner_map.get(route_key) {
-            if owner_id == id {
-                owner_map.remove(route_key);
-            }
+        if let Some(owner_id) = owner_map.get(route_key)
+            && owner_id == id
+        {
+            owner_map.remove(route_key);
         }
 
         time_map.remove(&(*id, *route_key));
@@ -309,10 +309,10 @@ impl RouteTableInner {
                 }
             }
 
-            if let Some(owner_id) = owner_map.get(route_key) {
-                if *owner_id == *id {
-                    owner_map.remove(route_key);
-                }
+            if let Some(owner_id) = owner_map.get(route_key)
+                && *owner_id == *id
+            {
+                owner_map.remove(route_key);
             }
         }
 

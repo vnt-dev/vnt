@@ -187,7 +187,7 @@ pub(crate) async fn query_tcp_public_addr_loop(
     app_context: AppState,
     socket_manager: SocketManager,
 ) {
-    use rand::Rng;
+    use rand::RngExt;
     use rand::seq::SliceRandom;
 
     let tcp_stun_servers = {

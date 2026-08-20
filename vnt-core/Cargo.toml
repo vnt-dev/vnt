@@ -5,45 +5,44 @@ edition = "2024"
 
 [dependencies]
 
-
-tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-futures = "0.3"
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["codec"] }
+futures.workspace = true
 
 tun-rs = { version = "2", features = ["async", "async_framed"] }
 
 rust-p2p-core = { version="0.4" }
-tcp_ip = { git = "https://github.com/rustp2p/tcp_ip" }
+tcp_ip = "0.2"
 
-anyhow = "1"
-parking_lot = "0.12"
+anyhow.workspace = true
+parking_lot.workspace = true
 
 quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"] }
 
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 hex = "0.4"
-sha2 = "0.10"
+sha2 = "0.11"
 rustls-native-certs = "0.8.2"
-log = "0.4"
+log.workspace = true
 bytes = "1.11.0"
-rand = "0.9"
-time = { version = "0.3", features = ["macros", "formatting", "local-offset"] }
+rand = "0.10"
+time = { workspace = true, features = ["macros", "formatting", "local-offset"] }
 pnet_packet = "0.35"
 ring = "0.17.14"
 
-prost = "0.14"
-tokio-tungstenite = "0.28.0"
-tungstenite = "0.28.0"
+prost.workspace = true
+tokio-tungstenite = "0.30"
+tungstenite = "0.30"
 uuid = { version = "1.18.1", features = ["v4"] }
-ipnet = { version = "2.11", features = ["serde"] }
+ipnet.workspace = true
 getifaddrs = "0.6.0"
 dns-parser = "0.8"
 
-lz4_flex = "0.12.0"
+lz4_flex = "0.14"
 reed-solomon-erasure = "6.0"
 
-serde = { version = "1.0.228", features = ["derive"] }
+serde.workspace = true
 rcgen = "0.14.6"
 machine-uid = "0.5.4"
 

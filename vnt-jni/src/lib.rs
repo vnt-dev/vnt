@@ -47,7 +47,7 @@ lazy_static::lazy_static! {
 }
 
 /// 初始化JNI模块
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntManager_nativeInit(
     mut env: JNIEnv,
     _class: JClass,
@@ -70,14 +70,14 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeInit(
 }
 
 /// 销毁JNI模块
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntManager_nativeDestroy(_env: JNIEnv, _class: JClass) {
     let mut state = GLOBAL_STATE.lock();
     *state = None;
 }
 
 /// 创建网络实例
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -128,7 +128,7 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
 }
 
 /// 注册网络
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntNetwork_nativeRegister<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -192,7 +192,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeRegister<'local>(
 }
 
 /// 启动TUN设备（Android使用，需要传入fd）
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntNetwork_nativeStartTun(
     mut env: JNIEnv,
     _class: JClass,
@@ -244,7 +244,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStartTun(
 }
 
 /// 设置网络IP（非Android系统）
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntNetwork_nativeSetNetworkIp<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -300,7 +300,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeSetNetworkIp<'local>(
 }
 
 /// 获取VntApi实例
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntNetwork_nativeGetApi(
     mut env: JNIEnv,
     _class: JClass,
@@ -338,7 +338,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeGetApi(
 }
 
 /// 检查是否为无TUN模式
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntNetwork_nativeIsNoTun(
     mut env: JNIEnv,
     _class: JClass,
@@ -378,7 +378,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeIsNoTun(
 }
 
 /// 关闭网络
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
     mut env: JNIEnv,
     _class: JClass,
@@ -413,7 +413,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
 // ==================== VntApi 接口 ====================
 
 /// 获取客户端列表
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -454,7 +454,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
 }
 
 /// 获取网络配置信息
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetNetwork<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -495,7 +495,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetNetwork<'local>(
 }
 
 /// 获取NAT信息
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetNatInfo<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -535,7 +535,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetNatInfo<'local>(
 }
 
 /// 获取服务器节点列表
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetServerList<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -580,7 +580,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetServerList<'local>(
 }
 
 /// 获取路由表
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetRouteTable<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -633,7 +633,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetRouteTable<'local>(
 }
 
 /// 检查目标IP是否直连
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeIsDirect<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -671,7 +671,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeIsDirect<'local>(
 }
 
 /// 获取对端NAT信息
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetPeerNatInfo<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -715,7 +715,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetPeerNatInfo<'local>(
 }
 
 /// 获取丢包信息
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetPacketLoss<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
@@ -760,7 +760,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetPacketLoss<'local>(
 }
 
 /// 获取流量信息
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetTrafficInfo<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,

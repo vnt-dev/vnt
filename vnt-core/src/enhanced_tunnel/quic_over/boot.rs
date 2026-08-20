@@ -47,10 +47,7 @@ pub(crate) async fn quic_tunnel_start(
     config: QuicTunnelConfig,
     components: QuicTunnelComponents,
 ) -> anyhow::Result<(EnhancedQuicInbound, Option<EnhancedQuicOutbound>)> {
-    let ip_stack_config = IpStackConfig {
-        mtu: config.mtu,
-        ..Default::default()
-    };
+    let ip_stack_config = IpStackConfig::builder().mtu(config.mtu).build();
     let (ip_stack, ip_socket, quic_outbound) = if let Some(tun_data_sender) = tun_data_sender {
         let (ip_stack, ip_stack_send, ip_stack_recv) = tcp_ip::ip_stack(ip_stack_config)?;
         let ip_socket = tcp_ip::ip::IpSocket::bind_all(None, ip_stack.clone()).await?;

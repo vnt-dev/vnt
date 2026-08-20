@@ -107,9 +107,11 @@ impl TrafficStats {
     }
 }
 
+type PingStatsMap = HashMap<(Ipv4Addr, RouteKey), Arc<Mutex<PingStats>>>;
+
 #[derive(Clone, Default)]
 pub struct PacketLossStats {
-    inner: Arc<RwLock<HashMap<(Ipv4Addr, RouteKey), Arc<Mutex<PingStats>>>>>,
+    inner: Arc<RwLock<PingStatsMap>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

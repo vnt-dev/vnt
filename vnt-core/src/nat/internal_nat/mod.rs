@@ -34,10 +34,7 @@ impl InternalNatInbound {
         network: SharedNetworkAddr,
         no_tun: bool,
     ) -> anyhow::Result<Self> {
-        let ip_stack_config = IpStackConfig {
-            mtu,
-            ..Default::default()
-        };
+        let ip_stack_config = IpStackConfig::builder().mtu(mtu).build();
         let (ip_stack, ip_stack_send, ip_stack_recv) = tcp_ip::ip_stack(ip_stack_config)?;
         #[cfg(not(target_os = "android"))]
         icmp_nat::start_icmp_nat(task_group, &ip_stack, no_tun, network.clone()).await?;
