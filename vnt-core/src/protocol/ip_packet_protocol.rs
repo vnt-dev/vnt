@@ -140,9 +140,9 @@ impl TryFrom<u8> for MsgType {
             14 => MsgType::RpcReq,
             15 => MsgType::RpcRes,
 
-            16 => MsgType::RelayProbe,
             17 => MsgType::Quic,
-            18 => MsgType::RelayProbeReply,
+            18 => MsgType::RelayProbe,
+            19 => MsgType::RelayProbeReply,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -302,5 +302,67 @@ impl NetPacket<TransmissionBytes> {
         NetPacket {
             buffer: self.buffer.into_bytes().freeze(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn msg_type_round_trip() {
+        let all = [
+            MsgType::Turn,
+            MsgType::Broadcast,
+            MsgType::ExcludeBroadcast,
+            MsgType::TargetBroadcast,
+            MsgType::Ping,
+            MsgType::Pong,
+            MsgType::PingTurn,
+            MsgType::PongTurn,
+            MsgType::PunchStart1,
+            MsgType::PunchStart2,
+            MsgType::PunchReq,
+            MsgType::PunchRes,
+            MsgType::PushClientIps,
+            MsgType::RpcReq,
+            MsgType::RpcRes,
+            MsgType::Quic,
+            MsgType::RelayProbe,
+            MsgType::RelayProbeReply,
+        ];
+        for msg_type in all {
+            let byte = u8::from(msg_type);
+            assert_eq!(
+                MsgType::try_from(byte).unwrap(),
+                msg_type,
+                "round trip failed for {msg_type:?} ({byte})"
+            );
+        }
+        // 未分配的取值必须报错
+        assert!(MsgType::try_from(0u8).is_err());
+        assert!(MsgType::try_from(16u8).is_err());
+        assert!(MsgType::try_from(20u8).is_err());
+    }
+
+    /// 中继转发语义：包每经过一跳 curr_ttl 减 1，curr_ttl >= 1 时才继续转发，
+    /// 接收方以 metric = max_ttl - curr_ttl 计算路由距离。
+    #[test]
+    fn relay_reply_survives_one_hop() {
+        let mut packet =
+            NetPacket::new(BytesMut::from(&[0u8; HEAD_LENGTH][..])).unwrap();
+        packet.set_msg_type(MsgType::RelayProbeReply);
+        // 目标方回复时 TTL 必须允许一次中继
+        packet.set_ttl(2);
+
+        // 中继节点：decr 后 curr_ttl == 1，满足转发条件 ttl >= 1
+        packet.decr_ttl();
+        assert_eq!(packet.ttl(), 1);
+        assert!(packet.ttl() >= 1, "relay node would drop this packet");
+
+        // 发起方：decr 后 curr_ttl == 0，metric = 2（经由一个中继）
+        packet.decr_ttl();
+        assert_eq!(packet.ttl(), 0);
+        assert_eq!(packet.max_ttl() - packet.ttl(), 2);
     }
 }
