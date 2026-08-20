@@ -78,8 +78,8 @@ async fn stream_task(
 }
 
 pub(crate) async fn stream_nat<R, W, A: ToSocketAddrs + Debug>(
-    mut recv_stream: R,
-    mut send_stream: W,
+    recv_stream: R,
+    send_stream: W,
     addr: A,
 ) -> anyhow::Result<()>
 where
@@ -89,10 +89,11 @@ where
     let mut tokio_stream = TcpStream::connect(&addr)
         .await
         .with_context(|| format!("error connecting to {:?}", addr))?;
-    let (mut tcp_r, mut tcp_w) = tokio_stream.split();
-    tokio::select! {
-        _ = tokio::io::copy(&mut recv_stream, &mut tcp_w) => {},
-        _ = tokio::io::copy(&mut tcp_r, &mut send_stream) => {},
-    }
+    crate::port_mapping::tcp_port_mapping::copy_bidirectional_split(
+        &mut tokio_stream,
+        recv_stream,
+        send_stream,
+    )
+    .await?;
     Ok(())
 }
