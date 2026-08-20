@@ -206,13 +206,27 @@ impl NetworkManager {
     }
 
     /// Register with server(s) and start data handling tasks.
-    /// This method can only be called once.
     /// Returns the registration response on success.
+    /// On connection-level failure the internal state is kept, so the call can be retried.
     pub async fn register(&mut self) -> anyhow::Result<RegisterResponse> {
         let Some(mut ctx) = self.registration_context.take() else {
             bail!("register can only be called once");
         };
+        match Self::register_impl(&self.app_state, &self.task_group, &mut ctx).await {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                // 注册失败时归还上下文，允许调用方重试
+                self.registration_context = Some(ctx);
+                Err(e)
+            }
+        }
+    }
 
+    async fn register_impl(
+        app_state: &AppState,
+        task_group: &TaskGroup,
+        ctx: &mut RegistrationContext,
+    ) -> anyhow::Result<RegisterResponse> {
         let is_multi_server = ctx.server_managers.len() > 1;
 
         let response = if is_multi_server {
@@ -251,35 +265,35 @@ impl NetworkManager {
             ip: reg_response.ip,
             prefix_len: reg_response.prefix_len,
         };
-        self.app_state.network.set(network_addr);
+        app_state.network.set(network_addr);
 
         // 保存服务器版本信息
         if !reg_response.server_version.is_empty() {
             for (index, _) in ctx.server_managers.iter().enumerate() {
-                self.app_state
+                app_state
                     .server_info_collection
                     .set_server_version(index as u32, reg_response.server_version.clone());
             }
         }
 
         // Start data handling tasks for all servers
-        for turn_manager in ctx.server_managers {
+        for turn_manager in ctx.server_managers.drain(..) {
             let handler_config = Box::new(InboundHandlerConfig {
                 network_route: NetworkRoute::new(
-                    self.app_state.network.clone(),
+                    app_state.network.clone(),
                     ctx.subnet_external_route.clone(),
                 ),
-                server_info: self.app_state.server_info_collection.clone(),
-                nat_info: self.app_state.nat_info.clone(),
-                peer_map: self.app_state.peer_map.clone(),
-                punch_backoff: self.app_state.punch_backoff.clone(),
+                server_info: app_state.server_info_collection.clone(),
+                nat_info: app_state.nat_info.clone(),
+                peer_map: app_state.peer_map.clone(),
+                punch_backoff: app_state.punch_backoff.clone(),
                 puncher: ctx.puncher.clone(),
                 packet_crypto: ctx.packet_crypto.clone(),
                 packet_compression: ctx.packet_compression.clone(),
                 enhanced_inbound: ctx.enhanced_inbound.clone(),
                 fec_decoder: ctx.fec_decoder.clone(),
             });
-            turn_manager.data_handle_task_connected(&self.task_group, handler_config, network_addr);
+            turn_manager.data_handle_task_connected(task_group, handler_config, network_addr);
         }
 
         Ok(RegisterResponse::Success(network_addr))
@@ -290,29 +304,24 @@ impl NetworkManager {
     }
 
     pub async fn start_tun(&mut self) -> anyhow::Result<()> {
-        let Some(receiver) = self.tun_receiver.take() else {
+        if self.tun_receiver.is_none() || self.enhanced_outbound.is_none() {
             bail!("start_tun can only be called once");
-        };
-        let Some(enhanced_outbound) = self.enhanced_outbound.take() else {
-            bail!("start_tun can only be called once");
-        };
+        }
         let mut config = DeviceConfig::default();
         config = config.set_mtu(self.config.mtu.unwrap_or(DEFAULT_MTU));
         if let Some(tun_name) = self.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
         }
+        // 失败时 tun_receiver/enhanced_outbound 不会被消耗，可以重试
         self.device_io_manager
-            .start_task(config, receiver, enhanced_outbound)
+            .start_task(config, &mut self.tun_receiver, &mut self.enhanced_outbound)
             .await
     }
     #[cfg(unix)]
     pub async fn start_tun_fd(&mut self, tun_fd: Option<i32>) -> anyhow::Result<()> {
-        let Some(receiver) = self.tun_receiver.take() else {
+        if self.tun_receiver.is_none() || self.enhanced_outbound.is_none() {
             bail!("start_tun_fd can only be called once");
-        };
-        let Some(enhanced_outbound) = self.enhanced_outbound.take() else {
-            bail!("start_tun_fd can only be called once");
-        };
+        }
         let mut config = DeviceConfig::default();
         if let Some(tun_fd) = tun_fd {
             config = config.set_tun_fd(tun_fd);
@@ -321,7 +330,7 @@ impl NetworkManager {
             config = config.set_tun_name(tun_name);
         }
         self.device_io_manager
-            .start_task(config, receiver, enhanced_outbound)
+            .start_task(config, &mut self.tun_receiver, &mut self.enhanced_outbound)
             .await
     }
     #[cfg(not(target_os = "android"))]

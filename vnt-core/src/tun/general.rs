@@ -76,16 +76,19 @@ impl DeviceIOManager {
     pub async fn start_task(
         &self,
         device_config: DeviceConfig,
-        receiver: TunReceiver,
-        enhanced_outbound: EnhancedOutbound,
+        receiver: &mut Option<TunReceiver>,
+        enhanced_outbound: &mut Option<EnhancedOutbound>,
     ) -> anyhow::Result<()> {
+        if receiver.is_none() || enhanced_outbound.is_none() {
+            bail!("device task already started");
+        }
         self.stop_task().await;
-        let task = create(
-            &self.task_group,
-            device_config,
-            receiver.receiver,
-            enhanced_outbound,
-        )?;
+        // 先执行可能失败的 tun 设备创建，成功后才消费 receiver/outbound，
+        // 保证失败时调用方状态完整、可以重试
+        let device = Arc::new(create_tun(device_config)?);
+        let receiver = receiver.take().unwrap();
+        let enhanced_outbound = enhanced_outbound.take().unwrap();
+        let task = create(&self.task_group, device, receiver.receiver, enhanced_outbound);
         self.device.lock().await.0.replace(task);
         Ok(())
     }
@@ -148,12 +151,10 @@ fn create_tun(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
 }
 fn create(
     task_group: &TaskGroup,
-    config: DeviceConfig,
+    device: Arc<AsyncDevice>,
     receiver: Receiver<TransmissionBytes>,
     enhanced_outbound: EnhancedOutbound,
-) -> anyhow::Result<DeviceTask> {
-    let device = Arc::new(create_tun(config)?);
-
+) -> DeviceTask {
     let device_framed_read = DeviceFramedRead::new(device.clone(), BytesCodec::new());
     let device_framed_write = DeviceFramedWrite::new(device.clone(), BytesCodec::new());
 
@@ -168,11 +169,11 @@ fn create(
         }
     });
 
-    Ok(DeviceTask {
+    DeviceTask {
         device,
         task_recv,
         task_send,
-    })
+    }
 }
 
 async fn in_tun_loop(
