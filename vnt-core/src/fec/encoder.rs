@@ -15,7 +15,7 @@ mod fec_proto {
     include!(concat!(env!("OUT_DIR"), "/protocol.fec.rs"));
 }
 use crate::utils::task_control::TaskGroup;
-pub use fec_proto::FecPacket;
+pub use fec_proto::{FecPacket, ParityData};
 
 const BATCH_SIZE: usize = 10;
 const REDUNDANCY_RATE: f32 = 0.2;
