@@ -71,6 +71,18 @@ impl PacketCrypto {
         Ok(nonce12)
     }
 
+    /// AAD 覆盖头部 byte2(flags)/byte3(reserved)。
+    /// flags（COMPRESSED/FEC/GATEWAY）只由发送方设置、传输中不会被修改，
+    /// 必须纳入认证，否则中间人可翻转标志位造成不可检测的丢包/语义篡改；
+    /// ttl(byte1) 在中继转发时会递减，不能纳入 AAD。
+    fn make_aad<B: AsRef<[u8]>>(pkt: &NetPacket<B>) -> [u8; 2] {
+        let buf = pkt.buffer();
+        if buf.len() < HEAD_LENGTH {
+            return [0; 2];
+        }
+        [buf[2], buf[3]]
+    }
+
     /// 原地加密（in-place）
     /// payload 后需要预留16字节用于存放 tag
     pub fn encrypt_in_place<B: AsRef<[u8]> + AsMut<[u8]>>(
@@ -82,6 +94,7 @@ impl PacketCrypto {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         pkt.set_seq(seq);
         let nonce = Nonce::assume_unique_for_key(self.make_nonce(pkt)?);
+        let aad = Aad::from(Self::make_aad(pkt));
 
         let payload = pkt.payload_mut();
         let payload_len = payload.len() - TAG_LEN; // 实际 payload 长度（不含 tag 预留空间）
@@ -89,7 +102,7 @@ impl PacketCrypto {
         // 只加密实际的 payload 部分
         let tag = self
             .key
-            .seal_in_place_separate_tag(nonce, Aad::empty(), &mut payload[..payload_len])
+            .seal_in_place_separate_tag(nonce, aad, &mut payload[..payload_len])
             .map_err(|_| io::Error::other("encrypt failed"))?;
 
         // 将 tag 写入 payload 后的预留空间
@@ -104,12 +117,13 @@ impl PacketCrypto {
         pkt: &mut NetPacket<B>,
     ) -> io::Result<usize> {
         let nonce = Nonce::assume_unique_for_key(self.make_nonce(pkt)?);
+        let aad = Aad::from(Self::make_aad(pkt));
 
         let payload_with_tag = pkt.payload_mut();
 
         let plaintext = self
             .key
-            .open_in_place(nonce, Aad::empty(), payload_with_tag)
+            .open_in_place(nonce, aad, payload_with_tag)
             .map_err(|_| io::Error::other("decrypt failed"))?;
         Ok(plaintext.len())
     }
@@ -222,7 +236,8 @@ mod tests {
     }
 
     /// nonce 完全由包自带的头部字节决定，与发送端状态无关：
-    /// 旧版本(seq 恒为 0)发出的包，新版本必须能正常解密，反之亦然。
+    /// 未启用 AAD 的旧版本发出的包（flags/reserved 为 0 时 AAD 语义不同），
+    /// 这里用同一 AAD 逻辑模拟对端，验证 nonce 只依赖头部、与发送端 seq 状态无关。
     #[test]
     fn test_cross_version_compat() {
         let key = [7u8; 32];
@@ -235,11 +250,12 @@ mod tests {
         let original: Vec<u8> = pkt.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20].to_vec();
         pkt.set_seq(0);
         let nonce = Nonce::assume_unique_for_key(peer.make_nonce(&pkt).unwrap());
+        let aad = Aad::from(PacketCrypto::make_aad(&pkt));
         let payload = pkt.payload_mut();
         let payload_len = payload.len() - TAG_LEN;
         let tag = peer
             .key
-            .seal_in_place_separate_tag(nonce, Aad::empty(), &mut payload[..payload_len])
+            .seal_in_place_separate_tag(nonce, aad, &mut payload[..payload_len])
             .unwrap();
         payload[payload_len..payload_len + TAG_LEN].copy_from_slice(tag.as_ref());
 
@@ -256,6 +272,48 @@ mod tests {
         assert_eq!(
             &pkt2.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20],
             &original2[..]
+        );
+    }
+
+    /// AAD 覆盖 flags(byte2)：中间人翻转 COMPRESSED/FEC/GATEWAY 标志位
+    /// 必须导致解密失败，而不是被静默接受。
+    #[test]
+    fn test_tampered_flags_rejected() {
+        let crypto = PacketCrypto::new([7u8; 32]);
+
+        let mut pkt = build_test_packet(20);
+        crypto.encrypt_in_place(&mut pkt).expect("encrypt failed");
+
+        // 翻转 flags 字节（模拟中间人篡改）
+        pkt.set_fec_flag(true);
+
+        assert!(
+            crypto.decrypt_in_place(&mut pkt).is_err(),
+            "tampered flags must fail authentication"
+        );
+    }
+
+    /// ttl(byte1) 在中继转发时会递减，不属于 AAD：
+    /// 转发后 ttl 变化的包必须仍能正常解密。
+    #[test]
+    fn test_ttl_change_still_decrypts() {
+        let crypto = PacketCrypto::new([7u8; 32]);
+
+        let payload_len = 20;
+        let mut pkt = build_test_packet(payload_len);
+        pkt.set_ttl(15); // 初始 ttl
+        let original: Vec<u8> = pkt.buffer()[HEAD_LENGTH..HEAD_LENGTH + payload_len].to_vec();
+        crypto.encrypt_in_place(&mut pkt).expect("encrypt failed");
+
+        // 模拟中继递减 ttl
+        pkt.set_ttl(14);
+
+        crypto
+            .decrypt_in_place(&mut pkt)
+            .expect("ttl change must not break decryption");
+        assert_eq!(
+            &pkt.buffer()[HEAD_LENGTH..HEAD_LENGTH + payload_len],
+            &original[..]
         );
     }
 }
