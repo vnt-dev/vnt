@@ -19,10 +19,18 @@ pub struct QuicDataInbound {
 }
 impl QuicDataInbound {
     pub async fn send(&self, data: Bytes, addr: Ipv4Addr) -> anyhow::Result<()> {
-        self.sender
-            .send((data, addr))
-            .await
-            .map_err(|_e| anyhow!("quic data inbound error"))
+        match self.sender.try_send((data, addr)) {
+            Ok(()) => Ok(()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                // 消费端处理不过来时丢包：channel 满不能阻塞整条 QUIC 接收循环，
+                // 否则一个慢消费者会卡住所有对端的入站流量
+                log::warn!("quic data inbound channel full, dropping packet from {addr}");
+                Ok(())
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                Err(anyhow!("quic data inbound error"))
+            }
+        }
     }
 }
 impl Debug for QuicInnerInboundReceiver {
@@ -89,5 +97,44 @@ impl QuicInnerInboundReceiver {
             ))),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// channel 满时 send 必须立即返回（丢包），不能阻塞接收循环
+    #[tokio::test]
+    async fn test_send_drops_when_channel_full() {
+        let (inbound, _receiver) = create_enhanced_inbound();
+        // 填满 channel（容量 256）
+        for _ in 0..256 {
+            inbound
+                .send(Bytes::from_static(b"x"), Ipv4Addr::LOCALHOST)
+                .await
+                .unwrap();
+        }
+        // 再发送：旧实现会永久阻塞，修复后应立即返回 Ok（丢包）
+        let rs = tokio::time::timeout(
+            Duration::from_millis(200),
+            inbound.send(Bytes::from_static(b"y"), Ipv4Addr::LOCALHOST),
+        )
+        .await;
+        assert!(rs.is_ok(), "send blocked on full channel");
+        rs.unwrap().unwrap();
+    }
+
+    /// channel 关闭后 send 返回错误
+    #[tokio::test]
+    async fn test_send_errors_when_channel_closed() {
+        let (inbound, receiver) = create_enhanced_inbound();
+        drop(receiver);
+        let rs = inbound
+            .send(Bytes::from_static(b"x"), Ipv4Addr::LOCALHOST)
+            .await;
+        assert!(rs.is_err());
     }
 }
