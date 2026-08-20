@@ -155,10 +155,14 @@ impl TaskGroup {
 
     pub async fn wait_all_stopped(&self) {
         loop {
+            // 先注册等待再检查条件，避免在检查与等待之间丢失唤醒
+            let notified = self.inner.all_stopped_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if self.inner.all_tasks_stopped() {
                 return;
             }
-            self.inner.all_stopped_notify.notified().await;
+            notified.await;
         }
     }
 }
@@ -251,5 +255,35 @@ impl Drop for TaskGroupGuard {
         if let Some(task_group) = self.task_group.lock().take() {
             task_group.stop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 所有任务自然结束后 wait_all_stopped 必须返回。
+    /// 覆盖两个关键点：任务自然耗尽时 remove_task 置 stopped 并唤醒；
+    /// 等待方先注册再检查，不会因竞态错过唤醒而永久挂起。
+    #[tokio::test]
+    async fn test_wait_all_stopped_after_natural_completion() {
+        let manager = TaskGroupManager::new();
+        let (group, _guard) = manager.create_task().unwrap();
+
+        let waiter = {
+            let group = group.clone();
+            tokio::spawn(async move { group.wait_all_stopped().await })
+        };
+        // 让 waiter 先进入等待
+        tokio::task::yield_now().await;
+
+        let _sub = group.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("wait_all_stopped should return after all tasks complete")
+            .unwrap();
     }
 }

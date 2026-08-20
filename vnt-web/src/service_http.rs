@@ -36,7 +36,7 @@ use vnt_core::utils::task_control::TaskGroupManager;
 const CONFIG_DIR: &str = "vnt_config";
 const CURRENT_CONFIG_RECORD: &str = "vnt_current_config.txt";
 
-#[derive(Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
 #[serde(rename_all = "lowercase")]
 enum VntStatus {
     #[default]
@@ -56,6 +56,8 @@ struct HttpAppStateInner {
     vnt: Option<VntHandler>,
     status: VntStatus,
     start_logs: Vec<String>,
+    /// 启动任务句柄，用于在 Starting 状态中断注册重试循环
+    start_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl HttpAppState {
@@ -118,6 +120,13 @@ impl HttpAppState {
     }
     fn status(&self) -> VntStatus {
         self.inner.lock().status
+    }
+
+    /// 中断启动任务（如注册重试循环）。任务已完成时为空操作。
+    fn abort_start_task(&self) {
+        if let Some(handle) = self.inner.lock().start_handle.take() {
+            handle.abort();
+        }
     }
 
     fn timestamp() -> String {
@@ -522,7 +531,7 @@ async fn start_vnt_internal(
     state.record_log("创建组网管理器");
 
     let state_clone = state.clone();
-    tokio::spawn(async move {
+    let start_handle = tokio::spawn(async move {
         let result = start_vnt_network(
             state_clone.clone(),
             file_name,
@@ -540,6 +549,7 @@ async fn start_vnt_internal(
         }
         drop(on_error_guard);
     });
+    state.inner.lock().start_handle = Some(start_handle);
 
     Ok(())
 }
@@ -636,8 +646,10 @@ async fn start_vnt_network(
 
     state.starting_to_running();
 
-    // 启动网络管理任务
-    task_group.spawn(async move {
+    // 启动网络管理任务。
+    // 注意必须在任务组外等待：等待目标就是这个 task_group，
+    // 若 spawn 进组内会形成自引用等待，网络自行停止时永不返回
+    tokio::spawn(async move {
         network_manager.wait_all_stopped().await;
         drop(task_group_guard);
         drop(network_manager);
@@ -682,6 +694,8 @@ async fn stop_vnt_handler(State(state): State<HttpAppState>) -> Json<ApiResponse
     if state.status() == VntStatus::Stopped {
         return Json(ApiResponse::error("Vnt stopped"));
     }
+    // 先中断可能处于注册重试循环中的启动任务，再停止任务组
+    state.abort_start_task();
     state.task_group_manager.stop();
 
     let _ = fs::write(CURRENT_CONFIG_RECORD, "").await;
@@ -703,6 +717,7 @@ async fn restart_vnt_handler(
 
     // 先停止（如果正在运行则停止，否则忽略）
     if state.status() != VntStatus::Stopped {
+        state.abort_start_task();
         state.task_group_manager.stop();
         // 等待停止完成
         for _ in 0..50 {
@@ -1173,5 +1188,42 @@ mod tests {
             assert!(resolve_static_path("..\\..\\Cargo.toml").is_none());
             assert!(resolve_static_path("C:/Windows/win.ini").is_none());
         }
+    }
+
+    /// Starting 状态下执行停止：必须中断注册重试循环并迁移到 Stopped。
+    /// 复现 bug 场景——服务器不可达时启动任务陷在无限重试里，
+    /// 不中断启动任务则状态永远卡在 Starting。
+    #[tokio::test]
+    async fn test_stop_during_starting() {
+        let state = HttpAppState {
+            task_group_manager: TaskGroupManager::new(),
+            inner: Arc::new(Mutex::new(HttpAppStateInner::default())),
+        };
+        state.starting().unwrap();
+
+        // 模拟启动任务：注册一直失败、5 秒重试的无限循环
+        let state_clone = state.clone();
+        let on_error_guard = defer(move || {
+            state_clone.starting_to_stopped();
+        });
+        let handle = tokio::spawn(async move {
+            let _on_error_guard = on_error_guard;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+        state.inner.lock().start_handle = Some(handle);
+
+        assert_eq!(state.status(), VntStatus::Starting);
+        state.abort_start_task();
+
+        // abort 生效后 defer 触发，状态应迁移到 Stopped
+        for _ in 0..100 {
+            if state.status() == VntStatus::Stopped {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(state.status(), VntStatus::Stopped);
     }
 }
