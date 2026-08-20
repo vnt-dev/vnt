@@ -20,7 +20,7 @@ impl TunDataInbound {
 
 impl TunDataInbound {
     pub async fn send(&self, data: TransmissionBytes, net: &NetworkAddr) -> anyhow::Result<()> {
-        if data[0] >> 4 != 4 {
+        if data.is_empty() || data[0] >> 4 != 4 {
             return Ok(());
         }
         let Some(ipv4) = Ipv4Packet::new(data.as_ref()) else {
@@ -36,5 +36,41 @@ impl TunDataInbound {
             self.tun_inbound.sender.send(data).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nat::AllowSubnetExternalRoute;
+    use crate::tun::tun_channel;
+    use std::net::Ipv4Addr;
+
+    fn test_net() -> NetworkAddr {
+        NetworkAddr {
+            gateway: Ipv4Addr::new(10, 26, 0, 1),
+            broadcast: Ipv4Addr::new(10, 26, 0, 255),
+            ip: Ipv4Addr::new(10, 26, 0, 2),
+            prefix_len: 24,
+        }
+    }
+
+    /// 对端构造的零载荷/畸形包必须被静默丢弃，不能 panic 杀死数据面任务
+    #[tokio::test]
+    async fn test_send_empty_or_short_packet_does_not_panic() {
+        let (tun_inbound, _receiver) = tun_channel();
+        let inbound = TunDataInbound::new(tun_inbound, AllowSubnetExternalRoute::new(vec![]));
+
+        // 零载荷包（头部被剥离后为空）
+        inbound
+            .send(TransmissionBytes::zeroed(0), &test_net())
+            .await
+            .unwrap();
+
+        // 过短的包（不足 IPv4 头）
+        inbound
+            .send(TransmissionBytes::zeroed(3), &test_net())
+            .await
+            .unwrap();
     }
 }

@@ -53,7 +53,7 @@ impl InternalNatInbound {
         })
     }
     pub async fn send(&self, data: &[u8], net: &NetworkAddr) -> anyhow::Result<()> {
-        if data[0] >> 4 != 4 {
+        if data.is_empty() || data[0] >> 4 != 4 {
             return Ok(());
         }
         let Some(ipv4) = Ipv4Packet::new(data) else {
