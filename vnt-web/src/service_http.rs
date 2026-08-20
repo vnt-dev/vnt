@@ -444,12 +444,28 @@ fn build_headers_for_path(path: &str) -> HeaderMap {
     );
     headers
 }
+/// 将请求路径安全地映射到 static 目录内。
+/// 逐组件校验，拒绝 `..`、根路径、盘符等任何可能逃逸出 static 的路径。
+fn resolve_static_path(path: &str) -> Option<PathBuf> {
+    let mut local_path = PathBuf::from("static");
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::Normal(part) => local_path.push(part),
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    Some(local_path)
+}
+
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
 
     // 先尝试从本地文件读取
-    let local_path = Path::new("static").join(path);
+    let Some(local_path) = resolve_static_path(path) else {
+        return (StatusCode::NOT_FOUND, "404 Not Found").into_response();
+    };
     if local_path.is_file()
         && let Ok(content) = tokio::fs::read(&local_path).await
     {
@@ -1123,4 +1139,39 @@ async fn get_routes(State(state): State<HttpAppState>) -> Json<ApiResponse<Vec<H
         .collect();
 
     Json(ApiResponse::success(items))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_static_path_allows_normal_paths() {
+        assert_eq!(
+            resolve_static_path("index.html"),
+            Some(PathBuf::from("static").join("index.html"))
+        );
+        assert_eq!(
+            resolve_static_path("css/style.css"),
+            Some(PathBuf::from("static").join("css").join("style.css"))
+        );
+        assert_eq!(
+            resolve_static_path("./index.html"),
+            Some(PathBuf::from("static").join("index.html"))
+        );
+    }
+
+    #[test]
+    fn test_resolve_static_path_rejects_traversal() {
+        assert!(resolve_static_path("../Cargo.toml").is_none());
+        assert!(resolve_static_path("a/../../Cargo.toml").is_none());
+        assert!(resolve_static_path("/etc/passwd").is_none());
+        assert!(resolve_static_path("..").is_none());
+        // Windows 下反斜杠也是路径分隔符
+        #[cfg(windows)]
+        {
+            assert!(resolve_static_path("..\\..\\Cargo.toml").is_none());
+            assert!(resolve_static_path("C:/Windows/win.ini").is_none());
+        }
+    }
 }
