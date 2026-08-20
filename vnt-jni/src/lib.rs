@@ -14,7 +14,7 @@ use vnt_core::nat::NetInput;
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
-use vnt_core::utils::task_control::TaskGroupManager;
+use vnt_core::utils::task_control::{TaskGroupGuard, TaskGroupManager};
 
 /// 全局状态管理
 struct GlobalState {
@@ -26,6 +26,8 @@ struct GlobalState {
     vnt_apis: HashMap<i64, VntApi>,
     /// 任务组管理器
     task_group_managers: HashMap<i64, TaskGroupManager>,
+    /// 任务组守卫（drop 时会停止任务组，必须持有到 nativeStop）
+    task_group_guards: HashMap<i64, TaskGroupGuard>,
     /// 下一个实例ID
     next_id: i64,
 }
@@ -37,6 +39,7 @@ impl GlobalState {
             network_managers: HashMap::new(),
             vnt_apis: HashMap::new(),
             task_group_managers: HashMap::new(),
+            task_group_guards: HashMap::new(),
             next_id: 1,
         })
     }
@@ -93,7 +96,7 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
 
         // 创建任务组
         let task_group_manager = TaskGroupManager::new();
-        let (task_group, _task_group_guard) = task_group_manager
+        let (task_group, task_group_guard) = task_group_manager
             .create_task()
             .context("create task group")?;
 
@@ -109,11 +112,12 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
         let id = state.next_id;
         state.next_id += 1;
 
-        // 保存实例
+        // 保存实例（task_group_guard 必须随实例一直持有，drop 会停止整个任务组）
         state
             .network_managers
             .insert(id, Arc::new(Mutex::new(Some(network_manager))));
         state.task_group_managers.insert(id, task_group_manager);
+        state.task_group_guards.insert(id, task_group_guard);
 
         Ok(id)
     })();
@@ -397,6 +401,8 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
         state.network_managers.remove(&handle);
         state.vnt_apis.remove(&handle);
         state.task_group_managers.remove(&handle);
+        // 最后释放守卫（drop 时会停止任务组）
+        state.task_group_guards.remove(&handle);
 
         Ok(())
     })();
