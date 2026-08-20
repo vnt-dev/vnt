@@ -671,6 +671,16 @@ fn is_valid_file_name(file_name: &str) -> bool {
         && !file_name.contains('\\')
 }
 
+/// 规范化配置文件名：无扩展名时补 .toml；扩展名不是 .toml 则拒绝。
+/// list_configs 只列出 *.toml，不强制后缀会保存出列表中不可见的文件
+fn normalize_config_file_name(file_name: String) -> Result<String, &'static str> {
+    match Path::new(&file_name).extension() {
+        None => Ok(format!("{file_name}.toml")),
+        Some(ext) if ext == "toml" => Ok(file_name),
+        Some(_) => Err("Config file name must end with .toml"),
+    }
+}
+
 async fn start_vnt_handler(
     State(state): State<HttpAppState>,
     Json(req): Json<FileReq>,
@@ -863,6 +873,11 @@ async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
     if !is_valid_file_name(&file_name) {
         return Json(ApiResponse::error("Invalid file name"));
     }
+
+    let file_name = match normalize_config_file_name(file_name) {
+        Ok(name) => name,
+        Err(msg) => return Json(ApiResponse::error(msg)),
+    };
 
     let target_path = Path::new(CONFIG_DIR).join(&file_name);
 
@@ -1159,6 +1174,23 @@ async fn get_routes(State(state): State<HttpAppState>) -> Json<ApiResponse<Vec<H
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_config_file_name() {
+        // 无扩展名补 .toml
+        assert_eq!(
+            normalize_config_file_name("myconfig".to_string()).unwrap(),
+            "myconfig.toml"
+        );
+        // 已是 .toml 保持不变
+        assert_eq!(
+            normalize_config_file_name("a.toml".to_string()).unwrap(),
+            "a.toml"
+        );
+        // 其他扩展名拒绝（list_configs 只列 *.toml，保存了也不可见）
+        assert!(normalize_config_file_name("a.txt".to_string()).is_err());
+        assert!(normalize_config_file_name("a.json".to_string()).is_err());
+    }
 
     #[test]
     fn test_resolve_static_path_allows_normal_paths() {
