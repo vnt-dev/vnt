@@ -115,11 +115,29 @@ impl FecDecoder {
                 );
                 bail!("packet_index overflow {src_ip}");
             }
+            // 校验包索引必须落在 [data_shards, data_shards+parity_shards) 区间，
+            // 否则会覆盖数据区 shard，污染整个 group
+            if packet_index < data_shards {
+                log::warn!(
+                    "parity packet_index in data region, src={src_ip},group_id={group_id}, packet_index={packet_index}, data_shards={data_shards}"
+                );
+                return Ok(None);
+            }
             if group.data_shards != 0 && group.data_shards != data_shards {
                 bail!("group data_shards!=data_shards {src_ip}");
             }
             if group.parity_shards != 0 && group.parity_shards != parity_shards {
                 bail!("group parity_shards!=parity_shards {src_ip}");
+            }
+            // 尺寸未知时到达的越界数据包可能已把 received_shards 撑大，
+            // 该 group 已无法解码，直接放弃（等超时 GC）
+            if group.received_shards.len() > data_shards + parity_shards {
+                log::warn!(
+                    "fec group polluted by out-of-range packet_index, src={src_ip},group_id={group_id}, received_shards={}, total={}",
+                    group.received_shards.len(),
+                    data_shards + parity_shards
+                );
+                bail!("fec group polluted {src_ip}");
             }
             group.data_shards = data_shards;
             group.parity_shards = parity_shards;
@@ -140,6 +158,15 @@ impl FecDecoder {
             }
             group.received_shards[packet_index] = Some(payload);
         } else {
+            // group 尺寸已知时，数据包索引必须落在数据区，
+            // 否则会把 received_shards 撑出 data_shards+parity_shards，污染整个 group
+            if group.data_shards != 0 && packet_index >= group.data_shards {
+                log::warn!(
+                    "data packet_index overflow, src={src_ip},group_id={group_id}, packet_index={packet_index}, data_shards={}",
+                    group.data_shards
+                );
+                return Ok(None);
+            }
             let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + payload.len());
             let mut result_packet = NetPacket::new(buffer)?;
             result_packet.head_mut().copy_from_slice(net_packet.head());
@@ -154,10 +181,14 @@ impl FecDecoder {
             // 保存FEC数据: [type_byte, flags_byte, payload_len(u16), payload...]
             let type_byte = net_packet.head()[0];
             let flags_byte = net_packet.head()[2];
+            // 长度字段为 u16，超限必须拒绝而非静默截断（实际 payload 远小于此值，
+            // 这里是防御性检查）
+            let payload_len = u16::try_from(payload.len())
+                .map_err(|_| anyhow::anyhow!("fec payload too large: {}", payload.len()))?;
             let mut batch_data = vec![0u8; 4 + payload.len()];
             batch_data[0] = type_byte;
             batch_data[1] = flags_byte;
-            batch_data[2..4].copy_from_slice(&(payload.len() as u16).to_be_bytes());
+            batch_data[2..4].copy_from_slice(&payload_len.to_be_bytes());
             batch_data[4..].copy_from_slice(&payload);
             // 校验包先到时 shard 尺寸已知，补齐保持所有 shard 等长
             if group.shard_size != 0 && batch_data.len() < group.shard_size {
@@ -528,5 +559,47 @@ mod tests {
             .expect("good packet must not be swallowed");
         assert_eq!(passed.len(), 1);
         assert_eq!(passed[0].payload(), &[0xBB; 8][..]);
+    }
+
+    /// 越界数据包不污染 group：尺寸已知后到达的越界 packet_index 必须被丢弃，
+    /// 不能把 received_shards 撑出 data_shards+parity_shards 导致整组解码失败
+    #[test]
+    fn test_out_of_range_data_index_does_not_poison_group() {
+        let decoder = FecDecoder::new();
+        let group_id = 1u64;
+        let shard = make_shard(0x81, 0, &[0xAA; 10], 14);
+        // 校验包先到：data_shards=2, parity_shards=1，索引 2
+        let parity = build_parity_packet(group_id, 2, shard, 2, 1);
+        decoder.receive(parity).unwrap();
+
+        // 越界数据包（index 5 >= data_shards 2）：必须被丢弃
+        let evil = build_data_packet(group_id, 5, 0x81, 0, &[0xEE; 10]);
+        assert!(decoder.receive(evil).unwrap().is_none());
+
+        // 合法数据包 p0：received_shards 未被撑大，正常触发重构，
+        // 返回 p0 和恢复出的 p1 共 2 个包（修复前 group 已被污染，解码失败只返回 p0）
+        let p0 = build_data_packet(group_id, 0, 0x81, 0, &[0xAA; 10]);
+        let out = decoder.receive(p0).unwrap().expect("packet 0 delivered");
+        assert_eq!(out.len(), 2, "should deliver p0 and recovered p1");
+        // group 已完成，p1 重传被忽略
+        let p1 = build_data_packet(group_id, 1, 0x81, 0, &[0xBB; 10]);
+        assert!(decoder.receive(p1).unwrap().is_none());
+    }
+
+    /// 落在数据区的校验包索引必须被拒绝，且不能破坏 group
+    #[test]
+    fn test_parity_index_in_data_region_rejected() {
+        let decoder = FecDecoder::new();
+        let group_id = 1u64;
+        let shard = make_shard(0x81, 0, &[0xAA; 10], 14);
+        // 索引 0 < data_shards=2 的"校验包"：必须拒绝
+        let bad_parity = build_parity_packet(group_id, 0, shard.clone(), 2, 1);
+        assert!(decoder.receive(bad_parity).unwrap().is_none());
+
+        // group 仍可用：合法校验包 + 数据包正常处理
+        let parity = build_parity_packet(group_id, 2, shard, 2, 1);
+        decoder.receive(parity).unwrap();
+        let p0 = build_data_packet(group_id, 0, 0x81, 0, &[0xAA; 10]);
+        assert!(decoder.receive(p0).unwrap().is_some());
     }
 }
