@@ -36,12 +36,16 @@ impl TaskGroupInner {
             return None;
         }
 
-        let guard = TaskGuard {
-            inner: Arc::downgrade(self),
-        };
-
+        let weak = Arc::downgrade(self);
         let handle = tokio::spawn(async move {
-            let _guard = guard;
+            // 在任务上下文内获取自身 id 存入 guard；
+            // 不能延迟到 Drop 里调 tokio::task::id()：
+            // abort 路径下 future 可能在非任务上下文被销毁（panic），
+            // 在调用方任务上下文被销毁时又会拿到错误的 id 误删条目
+            let _guard = TaskGuard {
+                inner: weak,
+                task_id: tokio::task::id(),
+            };
             f.await;
         });
 
@@ -107,13 +111,14 @@ impl Drop for TaskGroupInner {
 
 struct TaskGuard {
     inner: Weak<TaskGroupInner>,
+    /// 创建时（任务上下文内）获取的自身任务 id
+    task_id: Id,
 }
 
 impl Drop for TaskGuard {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.upgrade() {
-            let task_id = tokio::task::id();
-            inner.remove_task(task_id);
+            inner.remove_task(self.task_id);
         }
     }
 }
@@ -285,5 +290,42 @@ mod tests {
             .await
             .expect("wait_all_stopped should return after all tasks complete")
             .unwrap();
+    }
+
+    /// abort 路径：任务被 stop() 终止后，TaskGuard 必须用创建时保存的 id
+    /// 注销自身；若在 Drop 里调 tokio::task::id()，在非任务上下文会 panic，
+    /// 在调用方任务上下文则会误删调用方的条目。
+    #[tokio::test]
+    async fn test_abort_task_keeps_caller_bookkeeping() {
+        let manager = TaskGroupManager::new();
+        let (group, _guard) = manager.create_task().unwrap();
+
+        let victim = group.spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        });
+
+        // observer 在同组任务内 abort victim，随后挂起等待放行
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<()>();
+        let observer = group.spawn(async move {
+            victim.stop().await;
+            let _ = done_tx.send(());
+            let _ = exit_rx.await;
+        });
+
+        done_rx.await.unwrap();
+        // victim 的 guard 注销不得误删 observer 的条目
+        assert!(
+            observer.is_running(),
+            "aborting victim must not remove the caller's task entry"
+        );
+
+        let _ = exit_tx.send(());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            group.wait_all_stopped(),
+        )
+        .await
+        .expect("wait_all_stopped should return after observer exits");
     }
 }
