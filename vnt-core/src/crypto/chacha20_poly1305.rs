@@ -1,12 +1,17 @@
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, NetPacket};
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const TAG_LEN: usize = 16;
 
 #[derive(Clone)]
 pub struct PacketCrypto {
     key: LessSafeKey,
+    /// 出站包序号，用于构造唯一 nonce。Clone 共享同一计数器。
+    /// 随机起始值可避免进程重启后（相同密钥）复用低序号段的 nonce。
+    seq: Arc<AtomicU32>,
 }
 
 impl PacketCrypto {
@@ -31,7 +36,10 @@ impl PacketCrypto {
     pub fn new(key_bytes: [u8; 32]) -> Self {
         let unbound = UnboundKey::new(&CHACHA20_POLY1305, &key_bytes).unwrap();
         let key = LessSafeKey::new(unbound);
-        Self { key }
+        Self {
+            key,
+            seq: Arc::new(AtomicU32::new(rand::random())),
+        }
     }
     pub fn new_from_str(s: &str) -> Self {
         let hash = ring::digest::digest(&ring::digest::SHA256, s.as_bytes());
@@ -69,6 +77,10 @@ impl PacketCrypto {
         &self,
         pkt: &mut NetPacket<B>,
     ) -> io::Result<()> {
+        // 为每个出站包分配递增 seq，保证 (msg_type, src, dst) 相同包之间 nonce 不重复
+        // （nonce 中 seq 占 3 字节，同一四元组约 1600 万个包后才会回绕）
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        pkt.set_seq(seq);
         let nonce = Nonce::assume_unique_for_key(self.make_nonce(pkt)?);
 
         let payload = pkt.payload_mut();
@@ -165,5 +177,47 @@ mod tests {
 
         // 解密后与原文一致
         assert_eq!(decrypted_payload, &original_payload[..]);
+    }
+
+    #[test]
+    fn test_nonce_unique_per_packet() {
+        let crypto = PacketCrypto::new([7u8; 32]);
+
+        let mut pkt1 = build_test_packet(20);
+        let mut pkt2 = build_test_packet(20);
+
+        let nonce1 = crypto.make_nonce(&pkt1).unwrap();
+        crypto.encrypt_in_place(&mut pkt1).expect("encrypt failed");
+        crypto.encrypt_in_place(&mut pkt2).expect("encrypt failed");
+        let nonce2 = crypto.make_nonce(&pkt1).unwrap();
+        let nonce3 = crypto.make_nonce(&pkt2).unwrap();
+
+        // 加密会自动分配递增 seq，两个相同头部的包 nonce 必须不同
+        assert_eq!(pkt1.seq() + 1, pkt2.seq());
+        assert_ne!(nonce1, nonce2);
+        assert_ne!(nonce2, nonce3);
+        // 密文也必须不同（相同明文、不同 nonce）
+        assert_ne!(pkt1.buffer(), pkt2.buffer());
+
+        // 两个包都能正常解密（头部 seq 不同，只比较 payload 区域）
+        crypto.decrypt_in_place(&mut pkt1).expect("decrypt failed");
+        crypto.decrypt_in_place(&mut pkt2).expect("decrypt failed");
+        assert_eq!(
+            &pkt1.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20],
+            &pkt2.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20]
+        );
+    }
+
+    #[test]
+    fn test_clone_shares_seq_counter() {
+        let crypto = PacketCrypto::new([9u8; 32]);
+        let cloned = crypto.clone();
+
+        let mut pkt1 = build_test_packet(8);
+        let mut pkt2 = build_test_packet(8);
+        crypto.encrypt_in_place(&mut pkt1).expect("encrypt failed");
+        cloned.encrypt_in_place(&mut pkt2).expect("encrypt failed");
+
+        assert_eq!(pkt1.seq() + 1, pkt2.seq());
     }
 }
