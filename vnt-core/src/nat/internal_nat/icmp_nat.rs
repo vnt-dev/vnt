@@ -60,14 +60,34 @@ async fn task(
     let mut map: IcmpNatMap = HashMap::new();
     let mut gc_interval = tokio::time::interval(ICMP_NAT_GC_INTERVAL);
     loop {
+        // 单次收发/处理失败不能拖垮整个任务：记录日志后继续，
+        // 短暂休眠避免持续性错误造成空转
         tokio::select! {
             rs = tokio_icmp_socket.recv(&mut buf1) => {
-                let len = rs?;
-                tokio_icmp_socket_recv(&buf1[..len],&inner_icmp_socket,&mut map,no_tun,&network).await?;
+                match rs {
+                    Ok(len) => {
+                        if let Err(e) = tokio_icmp_socket_recv(&buf1[..len],&inner_icmp_socket,&mut map,no_tun,&network).await {
+                            log::warn!("icmp nat outbound error: {e:?}");
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("icmp nat recv error: {e:?}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
             }
             rs = inner_icmp_socket.recv_from_to(&mut buf2) => {
-                let (len,src,dst) = rs?;
-                inner_icmp_socket_recv(&buf2[..len],src,dst,&tokio_icmp_socket,&mut map,no_tun,&network).await?;
+                match rs {
+                    Ok((len,src,dst)) => {
+                        if let Err(e) = inner_icmp_socket_recv(&buf2[..len],src,dst,&tokio_icmp_socket,&mut map,no_tun,&network).await {
+                            log::warn!("icmp nat inbound error: {e:?}");
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("icmp nat inner recv error: {e:?}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
             }
             _ = gc_interval.tick() => {
                 evict_expired(&mut map, Instant::now(), ICMP_NAT_TIMEOUT);
@@ -115,7 +135,11 @@ async fn tokio_icmp_socket_recv(
         return Ok(());
     };
     if no_tun && src == Ipv4Addr::LOCALHOST {
-        src = network.ip().context("not ip")?;
+        // 虚拟地址未就绪时丢弃该应答包，而不是让错误传播杀掉整个任务
+        let Some(ip) = network.ip() else {
+            return Ok(());
+        };
+        src = ip;
     }
 
     inner_icmp_socket
@@ -148,7 +172,8 @@ async fn inner_icmp_socket_recv(
     if payload.len() < 4 {
         return Ok(());
     }
-    if no_tun && dst == network.ip().context("not ip")? {
+    // 虚拟地址未就绪（None）时跳过重写，而不是让错误传播杀掉整个任务
+    if no_tun && Some(dst) == network.ip() {
         dst = Ipv4Addr::LOCALHOST;
     }
 

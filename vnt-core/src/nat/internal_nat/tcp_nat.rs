@@ -31,14 +31,31 @@ async fn listen_task(
     network: SharedNetworkAddr,
 ) -> anyhow::Result<()> {
     loop {
-        let (stream, _addr) = tcp_listener.accept().await?;
-        let mut local_addr = stream.local_addr()?;
-        let peer_addr = stream.peer_addr()?;
+        // 单次 accept/地址查询失败不能拖垮整个监听任务：
+        // 记录日志后继续，短暂休眠避免持续性错误造成空转
+        let (stream, _addr) = match tcp_listener.accept().await {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("tcp nat accept error: {e:?}");
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        let (mut local_addr, peer_addr) = match (stream.local_addr(), stream.peer_addr()) {
+            (Ok(local_addr), Ok(peer_addr)) => (local_addr, peer_addr),
+            (Err(e), _) | (_, Err(e)) => {
+                log::warn!("tcp nat get addr error: {e:?}");
+                continue;
+            }
+        };
         if no_tun {
             let IpAddr::V4(ip) = local_addr.ip() else {
                 continue;
             };
-            if ip == network.ip().context("not ip")? {
+            // 虚拟地址未就绪（None）时跳过重写，而不是终止任务
+            if let Some(net_ip) = network.ip()
+                && ip == net_ip
+            {
                 // 无tun的情况下写入本机的则写到localhost
                 local_addr.set_ip(IpAddr::V4(Ipv4Addr::LOCALHOST));
             }
