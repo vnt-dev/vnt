@@ -87,13 +87,14 @@ pub fn get_channel_score(rtt: u32, loss_v: u32, is_relay: bool) -> u32 {
     let weight = if is_relay { 100 } else { 120 };
     let k_adj = 10; // 丢包惩罚系数
 
+    // 用 u64 计算避免溢出：分母最大 rtt * 110000，rtt > 约39s 时 u32 溢出
     // 分子：代表"有效做功"的放大值
-    let numerator = weight * (10000 - loss_v) * 100;
+    let numerator = weight as u64 * (10000 - loss_v) as u64 * 100;
 
     // 分母：代表"链路阻力"
-    let denominator = rtt * (10000 + loss_v * k_adj);
+    let denominator = rtt as u64 * (10000 + loss_v * k_adj) as u64;
 
-    numerator / denominator
+    (numerator / denominator).min(u32::MAX as u64) as u32
 }
 
 #[derive(Clone)]
@@ -317,5 +318,24 @@ impl RouteTableInner {
         }
 
         expired_keys
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// rtt 极大（>39s）时分母不能 u32 溢出（debug 构建下溢出会 panic）
+    #[test]
+    fn test_get_channel_score_large_rtt_no_overflow() {
+        let score = get_channel_score(u32::MAX, 0, false);
+        assert_eq!(score, 0);
+        let score = get_channel_score(u32::MAX, 10000, true);
+        assert_eq!(score, 0);
+        // 正常值结果与预期一致：低 rtt 零丢包得分高
+        let good = get_channel_score(10, 0, false);
+        let bad = get_channel_score(1000, 5000, true);
+        assert!(good > bad);
     }
 }
