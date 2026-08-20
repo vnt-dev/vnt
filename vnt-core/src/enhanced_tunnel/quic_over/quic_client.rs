@@ -226,6 +226,26 @@ struct IpKey {
     src: Ipv4Addr,
     dest: Ipv4Addr,
 }
+
+/// 按流发送任务空闲超时：超时无包则关闭 QUIC 流并回收映射条目，
+/// 避免每个 (protocol, src, dest) 三元组的流与任务永久残留
+const DEST_SENDER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// 仅当映射仍指向同一个 channel（即仍是本任务的条目）时才移除，
+/// 避免条目被回收重建后，旧任务误删新条目
+fn remove_sender_if_same(
+    map: &mut HashMap<IpKey, Sender<Bytes>>,
+    key: &IpKey,
+    tx: &Sender<Bytes>,
+) -> bool {
+    if let Some(cur) = map.get(key)
+        && cur.same_channel(tx)
+    {
+        map.remove(key);
+        return true;
+    }
+    false
+}
 async fn ip_listen_impl(
     task_group: TaskGroup,
     ip_socket: Arc<IpSocket>,
@@ -253,7 +273,14 @@ async fn ip_listen_impl(
             } else {
                 let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(128);
 
-                spawn_dest_sender(task_group.clone(), key, rx, quic_tunnel_client.clone());
+                spawn_dest_sender(
+                    task_group.clone(),
+                    key,
+                    tx.clone(),
+                    rx,
+                    dest_map.clone(),
+                    quic_tunnel_client.clone(),
+                );
 
                 map.insert(key, tx.clone());
                 tx
@@ -275,7 +302,9 @@ async fn ip_listen_impl(
 fn spawn_dest_sender(
     task_group: TaskGroup,
     key: IpKey,
+    tx: Sender<Bytes>,
     mut rx: tokio::sync::mpsc::Receiver<Bytes>,
+    dest_map: Arc<Mutex<HashMap<IpKey, Sender<Bytes>>>>,
     quic_tunnel_client: QuicTunnelClient,
 ) {
     log::info!("send ip({}) packet {}->{}", key.protocol, key.src, key.dest);
@@ -294,8 +323,18 @@ fn spawn_dest_sender(
 
             let mut framed = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
 
-            while let Some(pkt) = rx.recv().await {
-                framed.send(pkt).await?;
+            loop {
+                // 空闲超时后退出，回收流与映射条目
+                match tokio::time::timeout(DEST_SENDER_IDLE_TIMEOUT, rx.recv()).await {
+                    Ok(Some(pkt)) => {
+                        framed.send(pkt).await?;
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        log::debug!("key {:?} sender idle timeout, closing stream", key);
+                        break;
+                    }
+                }
             }
 
             Ok::<(), anyhow::Error>(())
@@ -305,5 +344,44 @@ fn spawn_dest_sender(
         if let Err(e) = result {
             log::error!("key {:?} sender task exit: {:?}", key, e);
         }
+
+        // 回收映射条目（仅当仍是本任务的 channel）
+        remove_sender_if_same(&mut dest_map.lock(), &key, &tx);
     });
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_key() -> IpKey {
+        IpKey {
+            protocol: pnet_packet::ip::IpNextHeaderProtocols::Udp,
+            src: Ipv4Addr::new(10, 0, 0, 1),
+            dest: Ipv4Addr::new(10, 0, 0, 2),
+        }
+    }
+
+    /// 空闲回收竞态：条目被重建后，旧任务退出不得误删新条目
+    #[test]
+    fn test_remove_sender_if_same() {
+        let key = test_key();
+        let mut map = HashMap::new();
+        let (old_tx, _old_rx) = tokio::sync::mpsc::channel::<Bytes>(1);
+        map.insert(key, old_tx.clone());
+
+        // 条目被重建为新 channel
+        let (new_tx, _new_rx) = tokio::sync::mpsc::channel::<Bytes>(1);
+        map.insert(key, new_tx);
+
+        // 旧任务退出：不允许删除新条目
+        assert!(!remove_sender_if_same(&mut map, &key, &old_tx));
+        assert!(map.contains_key(&key));
+
+        // 新任务退出：允许删除
+        let new_tx = map.get(&key).unwrap().clone();
+        assert!(remove_sender_if_same(&mut map, &key, &new_tx));
+        assert!(!map.contains_key(&key));
+    }
 }
