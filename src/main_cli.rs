@@ -143,16 +143,11 @@ async fn main0() -> anyhow::Result<()> {
             }
         });
     }
-    loop {
-        tokio::select! {
-            _ = network_manager.wait_all_stopped() => {
-                break;
-            }
+    tokio::select! {
+        _ = network_manager.wait_all_stopped() => {}
 
-            _ = tokio::signal::ctrl_c() => {
-                log::info!("Ctrl+c received!");
-                break;
-            }
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("Ctrl+c received!");
         }
     }
     drop(task_group_guard);

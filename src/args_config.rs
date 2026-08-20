@@ -295,6 +295,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         mtu: args.mtu,
         port_mapping: args.port_mapping,
         allow_port_mapping: args.allow_mapping,
+        tunnel_port: args.tunnel_port,
         ..Default::default()
     };
     let ctrl_config = CtrlConfig {
@@ -473,5 +474,28 @@ server = ["quic://1.2.3.4:29872"]
         }
 
         Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 纯参数模式下 --tunnel-port 不能被静默丢弃
+    #[test]
+    fn test_args_only_keeps_tunnel_port() {
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--tunnel-port",
+            "12345",
+        ])
+        .unwrap();
+        let (config, _) = build_from_args_only(args).unwrap();
+        assert_eq!(config.tunnel_port, Some(12345));
     }
 }
