@@ -163,7 +163,6 @@ impl ServerTurnManager {
         initial_response: NetworkAddr,
     ) {
         let data_handler = ServerTurnInboundHandler::new(self.server_id, initial_response, config);
-        let task_group_ = task_group.clone();
         let Some(mut receiver) = self.receiver.take() else {
             unreachable!()
         };
@@ -188,7 +187,12 @@ impl ServerTurnManager {
                                 || reg.prefix_len != initial_response.prefix_len
                                 || reg.gateway != initial_response.gateway
                             {
-                                log::error!("虚拟网络发生变化");
+                                // 该服务器分配的虚拟网络与当前不一致，无法重连，
+                                // 只结束本服务器的任务，不影响其他服务器
+                                log::error!(
+                                    "服务器{}虚拟网络发生变化，放弃重连",
+                                    self.config.server_addr
+                                );
                                 break;
                             }
                             // 保存服务器版本
@@ -197,12 +201,16 @@ impl ServerTurnManager {
                             }
                         }
                         ResponseMessage::Error(e) => {
-                            log::error!("注册失败 {e:?}");
-                            break;
+                            // 单台服务器注册失败只影响本服务器的重连，
+                            // 退避后重试，不能拖垮整个任务组
+                            log::error!("注册失败 {e:?}，5秒后重试");
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
                         }
                         _ => {
-                            log::error!("错误的注册消息");
-                            break;
+                            log::error!("错误的注册消息，5秒后重试");
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
                         }
                     }
                 }
@@ -217,7 +225,6 @@ impl ServerTurnManager {
             }
             self.disconnect();
             data_handler.handle_disconnected();
-            task_group_.stop();
         });
     }
 
