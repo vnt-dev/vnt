@@ -39,7 +39,11 @@ pub async fn run_client(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<()> {
     framed
         .send(IpcRequest { ipc_cmd: Some(cmd) }.encode_to_vec().into())
         .await?;
-    let response = framed.next().await.context("Unexpected end of stream")??;
+    // 读响应加超时：服务端异常不回复时客户端不能永久挂起
+    let response = tokio::time::timeout(Duration::from_secs(5), framed.next())
+        .await
+        .context("Response timed out")?
+        .context("Unexpected end of stream")??;
     let response = IpcResponse::decode(response).context("decode response error")?;
     match response
         .response_payload

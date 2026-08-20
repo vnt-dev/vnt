@@ -11,6 +11,7 @@ use futures::{SinkExt, StreamExt};
 use prost::Message;
 use std::fs;
 use std::net::Ipv4Addr;
+use std::time::Duration;
 use tokio::io::{self};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -19,7 +20,14 @@ use vnt_core::api::VntApi;
 async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
-    if let Some(Ok(message)) = framed.next().await {
+    // 读请求加超时：空闲连接不能永久占用任务
+    let message = match tokio::time::timeout(Duration::from_secs(10), framed.next()).await {
+        Ok(Some(Ok(message))) => message,
+        Ok(Some(Err(e))) => return Err(e.into()),
+        Ok(None) => bail!("connection closed without request"),
+        Err(_) => bail!("read request timed out"),
+    };
+    {
         let request = IpcRequest::decode(message.as_ref())?;
         let Some(cmd) = request.ipc_cmd else {
             bail!("Received an IpcRequest but it was None");
@@ -178,8 +186,15 @@ pub async fn run_server(bind_port: Option<u16>, vnt_api: VntApi) -> anyhow::Resu
     log::info!("IPC Listening on {}", bound_addr);
     let actual_port = bound_addr.port();
 
-    let path = get_port_file_path();
-    fs::write(&path, actual_port.to_string())?;
+    // 只有默认端口的实例才写 PORT 文件：显式指定端口的实例、以及端口
+    // 冲突退避到随机端口的实例都不写，避免多实例互相覆盖导致客户端
+    // 连错实例；写入失败不影响服务本身
+    if bind_port.is_none() && actual_port == DEFAULT_PORT {
+        let path = get_port_file_path();
+        if let Err(e) = fs::write(&path, actual_port.to_string()) {
+            log::warn!("write PORT file failed: {e:?}");
+        }
+    }
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
