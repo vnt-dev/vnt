@@ -452,7 +452,7 @@ mod tests {
             .expect("should reconstruct the lost packet");
 
         assert_eq!(recovered.len(), 1);
-        assert_eq!(recovered[0].payload(), &payloads[2][..]);
+        assert_eq!(recovered[0].payload(), payloads[2]);
         assert_eq!(recovered[0].head()[0], type_bytes[2]);
         assert_eq!(recovered[0].src_id(), SRC);
         assert_eq!(recovered[0].dest_id(), DST);
@@ -468,7 +468,7 @@ mod tests {
         let payloads: [&[u8]; 2] = [&[0x11; 8], &[0x22; 24]];
         let max_len = 4 + 24;
 
-        let mut shards = vec![
+        let mut shards = [
             make_shard(0x81, 0, payloads[0], max_len),
             make_shard(0x82, 0, payloads[1], max_len),
             vec![0u8; max_len],
@@ -495,7 +495,7 @@ mod tests {
         // 校验包先到时 pkt1 会透传，恢复的 pkt0 也应在返回列表中
         let recovered_pkt0 = recovered
             .iter()
-            .find(|p| p.payload() == &payloads[0][..])
+            .find(|p| p.payload() == payloads[0])
             .expect("recovered pkt0 missing");
         assert_eq!(recovered_pkt0.head()[0], 0x81);
     }
