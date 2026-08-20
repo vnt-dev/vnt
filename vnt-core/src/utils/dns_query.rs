@@ -121,6 +121,18 @@ pub async fn dns_query_all(
     }
 }
 
+/// 校验域名格式：label 非空且不超过 63 字节，全长不超过 253 字节。
+/// dns-parser 的 add_question 对非法 label 直接 assert panic，
+/// 必须在调用前拦截
+fn is_valid_domain(domain: &str) -> bool {
+    let domain = domain.strip_suffix('.').unwrap_or(domain);
+    !domain.is_empty()
+        && domain.len() <= 253
+        && domain
+            .split('.')
+            .all(|label| !label.is_empty() && label.len() <= 63)
+}
+
 async fn query<'a>(
     udp: &UdpSocket,
     domain: &str,
@@ -128,9 +140,21 @@ async fn query<'a>(
     record_type: QueryType,
     buf: &'a mut [u8],
 ) -> io::Result<Packet<'a>> {
+    if !is_valid_domain(domain) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid domain {domain:?}"),
+        ));
+    }
     let mut builder = Builder::new_query(1, true);
     builder.add_question(domain, false, record_type, QueryClass::IN);
-    let packet = builder.build().unwrap();
+    // 非法域名（如 label 超长）build 会失败，不能 unwrap panic
+    let packet = builder.build().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid domain {domain:?}: {e:?}"),
+        )
+    })?;
 
     udp.connect(name_server).await?;
     let mut count = 0;
@@ -248,4 +272,41 @@ pub async fn aaaa_dns(
         }
     }
     Ok(rs)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 非法域名（label 超过 63 字节）必须返回错误而不是 panic
+    #[tokio::test]
+    async fn test_query_invalid_domain_no_panic() {
+        let udp = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let mut buf = vec![0u8; 512];
+        let bad_domain = format!("{}.com", "a".repeat(64));
+        let rs = query(
+            &udp,
+            &bad_domain,
+            "127.0.0.1:53".parse().unwrap(),
+            QueryType::A,
+            &mut buf,
+        )
+        .await;
+        let err = rs.expect_err("invalid domain must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn test_is_valid_domain() {
+        assert!(is_valid_domain("example.com"));
+        assert!(is_valid_domain("a-b_1.example.com"));
+        assert!(is_valid_domain("example.com.")); // FQDN 尾点合法
+        assert!(is_valid_domain(&format!("{}.com", "a".repeat(63))));
+
+        assert!(!is_valid_domain(""));
+        assert!(!is_valid_domain(&format!("{}.com", "a".repeat(64))));
+        assert!(!is_valid_domain("a..b"));
+        assert!(!is_valid_domain(&"a".repeat(254)));
+    }
 }
