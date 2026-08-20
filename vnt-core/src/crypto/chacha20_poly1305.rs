@@ -220,4 +220,42 @@ mod tests {
 
         assert_eq!(pkt1.seq() + 1, pkt2.seq());
     }
+
+    /// nonce 完全由包自带的头部字节决定，与发送端状态无关：
+    /// 旧版本(seq 恒为 0)发出的包，新版本必须能正常解密，反之亦然。
+    #[test]
+    fn test_cross_version_compat() {
+        let key = [7u8; 32];
+        let crypto = PacketCrypto::new(key);
+        // 用相同密钥的另一个实例模拟对端
+        let peer = PacketCrypto::new(key);
+
+        // 模拟旧版本发包：seq 固定为 0，nonce 直接由头部计算
+        let mut pkt = build_test_packet(20);
+        let original: Vec<u8> = pkt.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20].to_vec();
+        pkt.set_seq(0);
+        let nonce = Nonce::assume_unique_for_key(peer.make_nonce(&pkt).unwrap());
+        let payload = pkt.payload_mut();
+        let payload_len = payload.len() - TAG_LEN;
+        let tag = peer
+            .key
+            .seal_in_place_separate_tag(nonce, Aad::empty(), &mut payload[..payload_len])
+            .unwrap();
+        payload[payload_len..payload_len + TAG_LEN].copy_from_slice(tag.as_ref());
+
+        // 新版本解密旧版本的包
+        crypto.decrypt_in_place(&mut pkt).expect("decrypt failed");
+        assert_eq!(&pkt.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20], &original[..]);
+
+        // 反向：新版本发(自动分配 seq)，旧版本逻辑解密(nonce 只读头部)
+        let mut pkt2 = build_test_packet(20);
+        let original2: Vec<u8> = pkt2.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20].to_vec();
+        crypto.encrypt_in_place(&mut pkt2).expect("encrypt failed");
+        assert_ne!(pkt2.seq(), 0, "sanity check: new version assigns seq");
+        peer.decrypt_in_place(&mut pkt2).expect("decrypt failed");
+        assert_eq!(
+            &pkt2.buffer()[HEAD_LENGTH..HEAD_LENGTH + 20],
+            &original2[..]
+        );
+    }
 }
