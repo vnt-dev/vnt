@@ -53,7 +53,16 @@ async fn recv(
     let mut buf = vec![0u8; 65536];
     let dest_map = Arc::new(Mutex::new(HashMap::<SocketAddr, Sender<Bytes>>::new()));
     loop {
-        let (len, src) = udp_socket.recv_from(&mut buf).await?;
+        // 单次接收错误不能杀掉整个端口映射任务：记录日志后继续，
+        // 短暂休眠避免持续性错误造成空转
+        let (len, src) = match udp_socket.recv_from(&mut buf).await {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("udp port mapping recv error: {e:?}");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
         let bytes = Bytes::copy_from_slice(&buf[..len]);
 
         let tx = {
@@ -67,6 +76,8 @@ async fn recv(
                 let dst_host = mapping.dst_host.clone();
                 let dst_port = mapping.dst_port;
                 let tunnel_client = quic_tunnel_client.clone();
+                let tx_clone = tx.clone();
+                let dest_map_clone = dest_map.clone();
                 task_group.spawn(async move {
                     if let Err(e) = udp_mapping_handle(
                         udp_socket,
@@ -81,6 +92,9 @@ async fn recv(
                     {
                         log::error!("udp_mapping_handle {e:?},src:{src}");
                     }
+                    // 任务退出（含 60s 空闲超时）时回收映射条目，
+                    // 否则 dest_map 随不同 src 数量无界增长
+                    remove_if_same(&mut dest_map_clone.lock(), &src, &tx_clone);
                 });
 
                 map.insert(src, tx.clone());
@@ -98,6 +112,22 @@ async fn recv(
             }
         }
     }
+}
+
+/// 仅当映射仍指向同一个 channel（即仍是本任务的条目）时才移除，
+/// 避免条目被回收重建后，旧任务误删新条目
+fn remove_if_same(
+    map: &mut HashMap<SocketAddr, Sender<Bytes>>,
+    src: &SocketAddr,
+    tx: &Sender<Bytes>,
+) -> bool {
+    if let Some(cur) = map.get(src)
+        && cur.same_channel(tx)
+    {
+        map.remove(src);
+        return true;
+    }
+    false
 }
 
 async fn udp_mapping_handle(
@@ -142,4 +172,32 @@ async fn udp_mapping_handle(
         }
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 空闲回收竞态：条目被重建后，旧任务退出不得误删新条目
+    #[test]
+    fn test_remove_if_same() {
+        let src: SocketAddr = "10.0.0.1:5000".parse().unwrap();
+        let mut map = HashMap::new();
+        let (old_tx, _old_rx) = tokio::sync::mpsc::channel::<Bytes>(1);
+        map.insert(src, old_tx.clone());
+
+        // 条目被重建为新 channel
+        let (new_tx, _new_rx) = tokio::sync::mpsc::channel::<Bytes>(1);
+        map.insert(src, new_tx);
+
+        // 旧任务退出：不允许删除新条目
+        assert!(!remove_if_same(&mut map, &src, &old_tx));
+        assert!(map.contains_key(&src));
+
+        // 新任务退出：允许删除
+        let new_tx = map.get(&src).unwrap().clone();
+        assert!(remove_if_same(&mut map, &src, &new_tx));
+        assert!(!map.contains_key(&src));
+    }
 }
