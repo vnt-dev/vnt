@@ -9,11 +9,14 @@ use std::str::FromStr;
 #[derive(Debug)]
 pub struct FingerprintVerifier {
     pub expected_fingerprint: [u8; 32],
+    supported_algorithms: rustls::crypto::WebPkiSupportedAlgorithms,
 }
 impl FingerprintVerifier {
     pub fn new(expected_fingerprint: [u8; 32]) -> Self {
         Self {
             expected_fingerprint,
+            supported_algorithms: rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms,
         }
     }
 }
@@ -45,39 +48,26 @@ impl ServerCertVerifier for FingerprintVerifier {
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        // 必须真正验证握手签名：证书本身（由密码确定性生成）是公开信息，
+        // 只比对指纹而不验签无法抵抗重放真实证书的主动中间人
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported_algorithms)
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported_algorithms)
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            // RSA schemes
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            // ECDSA schemes
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            // EdDSA schemes
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-        ]
+        self.supported_algorithms.supported_schemes()
     }
 }
 #[derive(Debug)]
@@ -202,9 +192,7 @@ impl CertValidationMode {
                 Ok(std::sync::Arc::new(InsecureVerifier))
             }
             CertValidationMode::VerifyFingerprint(fingerprint) => {
-                Ok(std::sync::Arc::new(FingerprintVerifier {
-                    expected_fingerprint: *fingerprint,
-                }))
+                Ok(std::sync::Arc::new(FingerprintVerifier::new(*fingerprint)))
             }
             CertValidationMode::Standard => {
                 let root_store = load_root_cert()?;
@@ -224,5 +212,75 @@ impl CertValidationMode {
             .with_custom_certificate_verifier(verifier)
             .with_no_client_auth();
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tls::cert::generate_deterministic_cert;
+    use rustls::ServerConfig;
+    use rustls::pki_types::ServerName;
+    use sha2::{Digest, Sha256};
+    use std::sync::Arc;
+
+    fn fingerprint_of(cert: &CertificateDer<'_>) -> [u8; 32] {
+        Sha256::digest(cert.as_ref()).into()
+    }
+
+    async fn try_handshake(
+        server_config: Arc<ServerConfig>,
+        client_config: Arc<ClientConfig>,
+    ) -> std::io::Result<()> {
+        let (client_io, server_io) = tokio::io::duplex(8192);
+        let acceptor = tokio_rustls::TlsAcceptor::from(server_config);
+        let connector = tokio_rustls::TlsConnector::from(client_config);
+        let server_name = ServerName::try_from("deterministic-node")
+            .unwrap()
+            .to_owned();
+
+        let (client, _server) = tokio::join!(
+            connector.connect(server_name, client_io),
+            acceptor.accept(server_io),
+        );
+        client.map(|_| ())
+    }
+
+    #[tokio::test]
+    async fn test_fingerprint_handshake() {
+        let password = "handshake_test_password";
+        let (cert, key) = generate_deterministic_cert(password).unwrap();
+        let fingerprint = fingerprint_of(&cert);
+
+        let server_config = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![cert], key)
+                .unwrap(),
+        );
+
+        // 正例：指纹匹配且服务端持有对应私钥。
+        // 修复前 verify_tls13_signature 无条件放行，握手必然成功；
+        // 修复后走真实验签，只有实现正确才能握手成功。
+        let client_config = Arc::new(
+            CertValidationMode::VerifyFingerprint(fingerprint)
+                .create_tls_client_config()
+                .unwrap(),
+        );
+        try_handshake(server_config.clone(), client_config)
+            .await
+            .expect("handshake with matching fingerprint should succeed");
+
+        // 反例：指纹不匹配（攻击者证书），握手必须失败
+        let wrong_fingerprint = [0xABu8; 32];
+        let client_config = Arc::new(
+            CertValidationMode::VerifyFingerprint(wrong_fingerprint)
+                .create_tls_client_config()
+                .unwrap(),
+        );
+        assert!(
+            try_handshake(server_config, client_config).await.is_err(),
+            "handshake with mismatched fingerprint should fail"
+        );
     }
 }
