@@ -116,19 +116,7 @@ impl ConnectRegConfig {
                 txt.shuffle(&mut rand::rng());
                 let x = txt.first().context("DNS query failed")?;
                 let x = x.to_lowercase();
-                let (protocol_type, domain) = if let Some(v) = x.strip_prefix("udp://") {
-                    (ProtocolType::Quic, v)
-                } else if let Some(v) = x.strip_prefix("quic://") {
-                    (ProtocolType::Quic, v)
-                } else if let Some(v) = x.strip_prefix("tcp://") {
-                    (ProtocolType::TlsTcp, v)
-                } else if let Some(v) = x.strip_prefix("ws://") {
-                    (ProtocolType::TlsTcp, v)
-                } else if let Some(v) = x.strip_prefix("wss://") {
-                    (ProtocolType::TlsTcp, v)
-                } else {
-                    (ProtocolType::TlsTcp, x.as_str())
-                };
+                let (protocol_type, domain) = parse_dynamic_txt(&x);
                 (protocol_type, domain.to_owned())
             }
             v => (v, self.server_addr.address.to_string()),
@@ -144,6 +132,25 @@ impl ConnectRegConfig {
         })
     }
 }
+/// 解析动态 DNS TXT 记录中的协议前缀。
+/// 注意 wss:// 必须映射到 Wss（此前错映射为 TlsTcp，导致动态发现模式下
+/// WSS 实际不可用）。
+fn parse_dynamic_txt(txt: &str) -> (ProtocolType, &str) {
+    if let Some(v) = txt.strip_prefix("udp://") {
+        (ProtocolType::Quic, v)
+    } else if let Some(v) = txt.strip_prefix("quic://") {
+        (ProtocolType::Quic, v)
+    } else if let Some(v) = txt.strip_prefix("tcp://") {
+        (ProtocolType::TlsTcp, v)
+    } else if let Some(v) = txt.strip_prefix("ws://") {
+        (ProtocolType::TlsTcp, v)
+    } else if let Some(v) = txt.strip_prefix("wss://") {
+        (ProtocolType::Wss, v)
+    } else {
+        (ProtocolType::TlsTcp, txt)
+    }
+}
+
 fn strip_port(addr: &str) -> &str {
     if let Some(stripped) = addr.strip_prefix('[')
         && let Some(pos) = stripped.find(']')
@@ -169,5 +176,41 @@ impl ConnectConfig {
     }
     pub fn server_name(&self) -> &String {
         &self.server_domain
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 动态 DNS TXT 记录中的 wss:// 必须映射为 Wss，
+    /// 其余前缀维持原有映射不变
+    #[test]
+    fn test_parse_dynamic_txt() {
+        assert_eq!(
+            parse_dynamic_txt("wss://example.com:443"),
+            (ProtocolType::Wss, "example.com:443")
+        );
+        assert_eq!(
+            parse_dynamic_txt("quic://example.com:29872"),
+            (ProtocolType::Quic, "example.com:29872")
+        );
+        assert_eq!(
+            parse_dynamic_txt("udp://example.com:29872"),
+            (ProtocolType::Quic, "example.com:29872")
+        );
+        assert_eq!(
+            parse_dynamic_txt("tcp://example.com:29872"),
+            (ProtocolType::TlsTcp, "example.com:29872")
+        );
+        assert_eq!(
+            parse_dynamic_txt("ws://example.com:80"),
+            (ProtocolType::TlsTcp, "example.com:80")
+        );
+        assert_eq!(
+            parse_dynamic_txt("example.com:29872"),
+            (ProtocolType::TlsTcp, "example.com:29872")
+        );
     }
 }
