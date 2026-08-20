@@ -1,4 +1,4 @@
-use crate::utils::task_control::TaskGroup;
+use crate::utils::task_control::{SubTask, TaskGroup};
 use anyhow::Context;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
@@ -16,6 +16,8 @@ use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 struct NatEntry {
     socket: Arc<tokio::net::UdpSocket>,
     last_active: Instant,
+    /// 反向转发任务，条目过期回收时需要一并终止，否则任务与 socket 永久残留
+    inbound_task: SubTask,
 }
 
 type NatTable = Arc<Mutex<HashMap<(SocketAddr, SocketAddr), NatEntry>>>;
@@ -71,22 +73,24 @@ async fn handle_outbound(
             let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
             sock.connect(dst).await?;
             let sock = Arc::new(sock);
-            table.insert(
-                key,
-                NatEntry {
-                    socket: sock.clone(),
-                    last_active: Instant::now(),
-                },
-            );
 
             // 启动反向转发
-            spawn_inbound(
+            let inbound_task = spawn_inbound(
                 task_group,
                 inner.clone(),
                 nat.clone(),
                 src,
                 dst,
                 sock.clone(),
+            );
+
+            table.insert(
+                key,
+                NatEntry {
+                    socket: sock.clone(),
+                    last_active: Instant::now(),
+                    inbound_task,
+                },
             );
 
             sock
@@ -104,7 +108,7 @@ fn spawn_inbound(
     src: SocketAddr,
     dst: SocketAddr,
     socket: Arc<tokio::net::UdpSocket>,
-) {
+) -> SubTask {
     task_group.spawn(async move {
         let mut buf = vec![0u8; 65536];
 
@@ -125,9 +129,26 @@ fn spawn_inbound(
             }
         }
 
-        // 回收 NAT
-        nat.lock().await.remove(&(src, dst));
-    });
+        // 回收 NAT：仅当表中的条目仍是本任务持有的 socket 时才删除，
+        // 避免条目过期被 GC 回收并重建后，旧任务误删新条目
+        let mut table = nat.lock().await;
+        remove_if_current(&mut table, &(src, dst), &socket);
+    })
+}
+
+/// 仅当映射中的条目仍持有同一个 socket（即仍是当前任务对应的条目）时才删除
+fn remove_if_current(
+    table: &mut HashMap<(SocketAddr, SocketAddr), NatEntry>,
+    key: &(SocketAddr, SocketAddr),
+    socket: &Arc<tokio::net::UdpSocket>,
+) -> bool {
+    if let Some(entry) = table.get(key)
+        && Arc::ptr_eq(&entry.socket, socket)
+    {
+        table.remove(key);
+        return true;
+    }
+    false
 }
 
 fn spawn_nat_gc(task_group: &TaskGroup, nat: NatTable) {
@@ -138,21 +159,32 @@ fn spawn_nat_gc(task_group: &TaskGroup, nat: NatTable) {
             interval.tick().await;
 
             let now = Instant::now();
-            let mut table = nat.lock().await;
-
-            table.retain(|(src, dst), entry| {
-                let alive = now.duration_since(entry.last_active) < NAT_IDLE_TIMEOUT;
-                if !alive {
-                    log::debug!("udp nat expired: {} -> {}", src, dst);
+            let expired_tasks = {
+                let mut table = nat.lock().await;
+                let expired_keys: Vec<(SocketAddr, SocketAddr)> = table
+                    .iter()
+                    .filter(|(_, entry)| now.duration_since(entry.last_active) >= NAT_IDLE_TIMEOUT)
+                    .map(|(key, _)| *key)
+                    .collect();
+                let mut tasks = Vec::with_capacity(expired_keys.len());
+                for key in expired_keys {
+                    if let Some(entry) = table.remove(&key) {
+                        log::debug!("udp nat expired: {} -> {}", key.0, key.1);
+                        tasks.push(entry.inbound_task);
+                    }
                 }
-                alive
-            });
+                tasks
+            };
+
+            // 终止过期条目的反向转发任务，释放其持有的 socket
+            for task in expired_tasks {
+                task.stop().await;
+            }
         }
     });
 }
 
-pub(crate) async fn stream_nat<R, W, A: ToSocketAddrs + Debug>(
-    recv_stream: R,
+pub(crate) async fn stream_nat<R, W, A: ToSocketAddrs + Debug>(    recv_stream: R,
     send_stream: W,
     addr: A,
 ) -> anyhow::Result<()>
@@ -185,4 +217,65 @@ where
         }
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::task_control::TaskGroupManager;
+
+    async fn new_entry() -> (NatEntry, Arc<tokio::net::UdpSocket>) {
+        let socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let manager = TaskGroupManager::new();
+        let (group, _guard) = manager.create_task().unwrap();
+        let inbound_task = group.spawn(async {});
+        (
+            NatEntry {
+                socket: socket.clone(),
+                last_active: Instant::now(),
+                inbound_task,
+            },
+            socket,
+        )
+    }
+
+    fn test_key() -> (SocketAddr, SocketAddr) {
+        (
+            "10.0.0.1:1000".parse().unwrap(),
+            "8.8.8.8:53".parse().unwrap(),
+        )
+    }
+
+    /// 误删竞态：条目过期被 GC 回收并以新 socket 重建后，
+    /// 旧任务退出时不允许把新条目删掉。
+    #[tokio::test]
+    async fn test_remove_if_current_only_removes_same_socket() {
+        let key = test_key();
+        let mut table = HashMap::new();
+        let (entry, socket) = new_entry().await;
+        table.insert(key, entry);
+
+        // 旧任务持有的 socket 与表中条目不同（条目已重建）：不允许删除
+        let stale_socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        assert!(!remove_if_current(&mut table, &key, &stale_socket));
+        assert!(table.contains_key(&key));
+
+        // 同一个 socket（条目确属本任务）：允许删除
+        assert!(remove_if_current(&mut table, &key, &socket));
+        assert!(!table.contains_key(&key));
+    }
+
+    /// 条目中的 inbound_task 可被正常终止（GC 回收路径依赖此能力释放任务与 socket）
+    #[tokio::test]
+    async fn test_entry_inbound_task_stoppable() {
+        let manager = TaskGroupManager::new();
+        let (group, _guard) = manager.create_task().unwrap();
+        let task = group.spawn(async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        });
+        assert!(task.is_running());
+        task.stop().await;
+        assert!(!task.is_running());
+    }
 }
