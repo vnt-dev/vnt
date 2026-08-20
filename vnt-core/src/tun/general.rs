@@ -20,8 +20,7 @@ pub struct DeviceIOManager {
 type DeviceMutex = Arc<tokio::sync::Mutex<(Option<DeviceTask>, Option<(Ipv4Addr, u8)>)>>;
 pub struct DeviceTask {
     device: Arc<AsyncDevice>,
-    task_recv: SubTask,
-    task_send: SubTask,
+    task: SubTask,
 }
 #[derive(Debug, Default)]
 pub struct DeviceConfig {
@@ -69,8 +68,7 @@ impl DeviceIOManager {
     pub async fn stop_task(&self) {
         let mut guard = self.device.lock().await;
         if let Some(dev) = guard.0.take() {
-            dev.task_recv.stop().await;
-            dev.task_send.stop().await;
+            dev.task.stop().await;
         }
     }
     pub async fn start_task(
@@ -158,22 +156,28 @@ fn create(
     let device_framed_read = DeviceFramedRead::new(device.clone(), BytesCodec::new());
     let device_framed_write = DeviceFramedWrite::new(device.clone(), BytesCodec::new());
 
-    let task_recv = task_group.spawn(async move {
-        if let Err(e) = in_tun_loop(receiver, device_framed_write).await {
-            log::error!("in_tun_loop error: {e:?}")
-        }
-    });
-    let task_send = task_group.spawn(async move {
-        if let Err(e) = out_tun_loop(device_framed_read, enhanced_outbound).await {
-            log::error!("out_tun_loop error: {e:?}");
+    // 读写两个方向合并为一个任务：任一方向结束（出错或设备关闭）即
+    // 通过 select! 取消另一方向，避免单侧失败后另一侧继续运行的半开状态
+    let task = task_group.spawn(async move {
+        tokio::select! {
+            rs = in_tun_loop(receiver, device_framed_write) => {
+                if let Err(e) = rs {
+                    log::error!("in_tun_loop error, stopping out_tun_loop: {e:?}");
+                } else {
+                    log::warn!("in_tun_loop exited, stopping out_tun_loop");
+                }
+            }
+            rs = out_tun_loop(device_framed_read, enhanced_outbound) => {
+                if let Err(e) = rs {
+                    log::error!("out_tun_loop error, stopping in_tun_loop: {e:?}");
+                } else {
+                    log::warn!("out_tun_loop exited, stopping in_tun_loop");
+                }
+            }
         }
     });
 
-    DeviceTask {
-        device,
-        task_recv,
-        task_send,
-    }
+    DeviceTask { device, task }
 }
 
 async fn in_tun_loop(
