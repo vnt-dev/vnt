@@ -47,7 +47,10 @@ impl PacketCrypto {
         key_bytes.copy_from_slice(hash.as_ref());
         Self::new(key_bytes)
     }
-    /// 根据包头生成 12 字节 nonce
+    /// 根据包头生成 12 字节 nonce。
+    /// nonce 只承担"唯一性"职责：seq（随机起始计数器）+ src + dst，
+    /// 三者构成每个 (src, dst) 流内不重复的 96 位值；
+    /// 头部其余字段的完整性认证由 AAD 负责，与 nonce 无关。
     pub fn make_nonce<B: AsRef<[u8]>>(&self, pkt: &NetPacket<B>) -> io::Result<[u8; 12]> {
         let buf = pkt.buffer();
 
@@ -57,7 +60,6 @@ impl PacketCrypto {
                 "buffer too small",
             ));
         }
-        let msg_type = buf[0];
         let seq = &buf[4..8];
         let src = &buf[8..12];
         let dst = &buf[12..16];
@@ -66,21 +68,21 @@ impl PacketCrypto {
         nonce12[0..4].copy_from_slice(seq);
         nonce12[4..8].copy_from_slice(dst);
         nonce12[8..12].copy_from_slice(src);
-        nonce12[0] = msg_type;
 
         Ok(nonce12)
     }
 
-    /// AAD 覆盖头部 byte2(flags)/byte3(reserved)。
-    /// flags（COMPRESSED/FEC/GATEWAY）只由发送方设置、传输中不会被修改，
-    /// 必须纳入认证，否则中间人可翻转标志位造成不可检测的丢包/语义篡改；
-    /// ttl(byte1) 在中继转发时会递减，不能纳入 AAD。
-    fn make_aad<B: AsRef<[u8]>>(pkt: &NetPacket<B>) -> [u8; 2] {
+    /// AAD 承担"认证"职责：覆盖传输中不变、但不参与 nonce 的头部字节
+    /// byte0(msg_type)/byte2(flags)/byte3(reserved)。
+    /// msg_type 与 flags（COMPRESSED/FEC/GATEWAY）只由发送方设置、
+    /// 传输中不会被修改，必须纳入认证，否则中间人可翻转造成不可检测的
+    /// 丢包/语义篡改；ttl(byte1) 在中继转发时会递减，不能纳入 AAD。
+    fn make_aad<B: AsRef<[u8]>>(pkt: &NetPacket<B>) -> [u8; 3] {
         let buf = pkt.buffer();
         if buf.len() < HEAD_LENGTH {
-            return [0; 2];
+            return [0; 3];
         }
-        [buf[2], buf[3]]
+        [buf[0], buf[2], buf[3]]
     }
 
     /// 原地加密（in-place）
@@ -89,8 +91,8 @@ impl PacketCrypto {
         &self,
         pkt: &mut NetPacket<B>,
     ) -> io::Result<()> {
-        // 为每个出站包分配递增 seq，保证 (msg_type, src, dst) 相同包之间 nonce 不重复
-        // （nonce 中 seq 占 3 字节，同一四元组约 1600 万个包后才会回绕）
+        // 为每个出站包分配递增 seq，保证同一 (src, dst) 流内 nonce 不重复
+        // （seq 占满 4 字节，约 43 亿个包后才回绕）
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         pkt.set_seq(seq);
         let nonce = Nonce::assume_unique_for_key(self.make_nonce(pkt)?);
@@ -132,6 +134,7 @@ impl PacketCrypto {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::ip_packet_protocol::MsgType;
     use bytes::BytesMut;
 
     // 用于构造一个简单的 NetPacket，包含头 16 字节 + payload + 16 字节 TAG 预留
@@ -235,9 +238,8 @@ mod tests {
         assert_eq!(pkt1.seq() + 1, pkt2.seq());
     }
 
-    /// nonce 完全由包自带的头部字节决定，与发送端状态无关：
-    /// 未启用 AAD 的旧版本发出的包（flags/reserved 为 0 时 AAD 语义不同），
-    /// 这里用同一 AAD 逻辑模拟对端，验证 nonce 只依赖头部、与发送端 seq 状态无关。
+    /// nonce 与 AAD 完全由包自带的头部字节推导，与发送端状态无关：
+    /// 即使对端用自己的 seq 状态发包，本端仅凭头部即可正确解密。
     #[test]
     fn test_cross_version_compat() {
         let key = [7u8; 32];
@@ -290,6 +292,22 @@ mod tests {
         assert!(
             crypto.decrypt_in_place(&mut pkt).is_err(),
             "tampered flags must fail authentication"
+        );
+    }
+
+    /// AAD 覆盖 msg_type(byte0)：中间人篡改消息类型必须导致解密失败。
+    #[test]
+    fn test_tampered_msg_type_rejected() {
+        let crypto = PacketCrypto::new([7u8; 32]);
+
+        let mut pkt = build_test_packet(20);
+        crypto.encrypt_in_place(&mut pkt).expect("encrypt failed");
+
+        pkt.set_msg_type(MsgType::Pong);
+
+        assert!(
+            crypto.decrypt_in_place(&mut pkt).is_err(),
+            "tampered msg_type must fail authentication"
         );
     }
 
