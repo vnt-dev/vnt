@@ -11,3 +11,6 @@ vnt-desktop/dist
 vnt-desktop/src-tauri/gen
 vnt-desktop/src-tauri/icons/android
 vnt-desktop/src-tauri/icons/ios
+
+# 前端构建产物，由 vnt-web/build.rs 自动构建
+vnt-web/static
