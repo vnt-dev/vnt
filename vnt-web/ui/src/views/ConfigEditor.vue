@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, nextTick } from "vue";
 import AppModal from "../components/AppModal.vue";
+import AppSelect from "../components/AppSelect.vue";
 import { useUiStore } from "../stores/ui";
 import { getConfig, saveConfig } from "../api";
 import { emptyFormData, parseTomlToForm, formToToml, NEW_CONFIG_TEMPLATE } from "../utils/toml";
@@ -24,6 +25,11 @@ const hasTomlChanges = ref(false);
 const hasFormChanges = ref(false);
 const isParsingToml = ref(false);
 const formData = ref(emptyFormData());
+const certificateModeOptions = [
+  { value: "skip", label: "跳过验证（默认）" },
+  { value: "standard", label: "系统证书验证" },
+  { value: "finger", label: "证书指纹验证" },
+];
 
 // 打开时加载内容
 watch(
@@ -350,11 +356,7 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 </div>
                 <div>
                   <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">服务端证书校验模式</label>
-                  <select v-model="formData.cert_mode" class="input">
-                    <option value="skip">跳过验证 (默认)</option>
-                    <option value="standard">系统证书验证</option>
-                    <option value="finger">证书指纹验证</option>
-                  </select>
+                  <AppSelect v-model="formData.cert_mode" :options="certificateModeOptions" aria-label="服务端证书校验模式" />
                 </div>
               </div>
               <div v-if="formData.cert_mode === 'finger'">

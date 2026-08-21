@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from "vue";
+import AppSelect from "../components/AppSelect.vue";
 
 const bridge = globalThis.__VNT_WEB_ACCESS__;
 const draft = reactive({ enabled: false, port: 19099, global: false, token: "" });
@@ -8,6 +9,10 @@ const loading = ref(true);
 const saving = ref(false);
 const notice = ref("");
 const error = ref("");
+const listenScopeOptions = [
+  { value: false, label: "仅本机（推荐）" },
+  { value: true, label: "局域网内所有设备" },
+];
 
 const sync = (value) => {
   status.value = value;
@@ -77,6 +82,11 @@ const saveNetworkSettings = async () => {
   await update({}, "监听设置已自动保存");
 };
 
+const updateListenScope = async (value) => {
+  draft.global = value;
+  await saveNetworkSettings();
+};
+
 const copyToken = async () => {
   await navigator.clipboard.writeText(draft.token);
   notice.value = "访问令牌已复制";
@@ -133,10 +143,13 @@ onMounted(load);
           </label>
           <label class="block">
             <span class="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">监听范围</span>
-            <select v-model="draft.global" class="input" :disabled="saving || draft.enabled" @change="saveNetworkSettings">
-              <option :value="false">仅本机（推荐）</option>
-              <option :value="true">局域网内所有设备</option>
-            </select>
+            <AppSelect
+              :model-value="draft.global"
+              :options="listenScopeOptions"
+              :disabled="saving || draft.enabled"
+              aria-label="监听范围"
+              @update:model-value="updateListenScope"
+            />
           </label>
         </div>
         <p class="-mt-3 text-xs text-slate-400">端口和监听范围会自动保存；需要修改时请先关闭 Web 服务。</p>

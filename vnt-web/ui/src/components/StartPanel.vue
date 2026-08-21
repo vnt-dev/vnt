@@ -2,6 +2,7 @@
 import { ref, computed, watch } from "vue";
 import { useAppStore } from "../stores/app";
 import { useUiStore } from "../stores/ui";
+import AppSelect from "./AppSelect.vue";
 
 // 启动组网面板:选择配置 + 启动,总览页与实例页复用
 const app = useAppStore();
@@ -14,6 +15,12 @@ const availableConfigs = computed(() =>
   app.configList.filter(
     (cfg) => !app.instanceList.some((inst) => inst.file_name === cfg.file_name),
   ),
+);
+const configOptions = computed(() =>
+  availableConfigs.value.map((cfg) => ({
+    value: cfg.file_name,
+    label: cfg.config_name || cfg.file_name,
+  })),
 );
 
 // 默认选中第一个可用配置;当前选中项不可用时(如已启动)自动切到下一个
@@ -52,12 +59,7 @@ const handleStart = () => {
     <div v-else class="flex flex-col gap-3 sm:flex-row sm:items-end">
       <div class="flex-1">
         <label class="mb-1.5 block text-xs font-medium muted">选择配置</label>
-        <select v-model="localSelectedConfig" class="input">
-          <option value="" disabled>请选择配置...</option>
-          <option v-for="cfg in availableConfigs" :key="cfg.file_name" :value="cfg.file_name">
-            {{ cfg.config_name || cfg.file_name }}
-          </option>
-        </select>
+        <AppSelect v-model="localSelectedConfig" :options="configOptions" placeholder="请选择配置…" aria-label="选择配置" />
       </div>
       <button
         class="btn-primary px-8"
