@@ -1,7 +1,23 @@
-// fetch 封装:统一解包 ApiResponse{code,msg,data},code!==0 抛出带 msg 的错误
-const request = async (url, options) => {
-  const res = await fetch(url, options);
+import { clearAccessToken, getAccessToken } from "../auth";
+
+// HTTP 与 Tauri IPC 共用相同的 ApiResponse{code,msg,data} 协议。
+const request = async (url, options = {}) => {
+  if (globalThis.__VNT_IPC_REQUEST__) {
+    const json = await globalThis.__VNT_IPC_REQUEST__({
+      method: options.method || "GET",
+      path: url,
+      body: options.body || null,
+    });
+    if (json.code !== 0) throw new Error(json.msg || "请求失败");
+    return json.data;
+  }
+
+  const headers = new Headers(options.headers || {});
+  const token = getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(url, { ...options, headers });
   const json = await res.json();
+  if (res.status === 401) clearAccessToken();
   if (json.code !== 0) {
     throw new Error(json.msg || "请求失败");
   }

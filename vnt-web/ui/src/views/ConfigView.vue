@@ -111,7 +111,7 @@ onMounted(() => app.fetchConfigList());
             </p>
           </div>
         </div>
-        <div class="mt-4 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+        <div class="config-card-actions mt-4 flex justify-end transition-opacity">
           <button
             class="mr-4 text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
             @click.stop="openEditor(cfg.file_name)"
@@ -133,3 +133,22 @@ onMounted(() => app.fetchConfigList());
     />
   </div>
 </template>
+
+<style scoped>
+/* 触屏和窄屏设备没有可靠的 hover，操作按钮必须直接可见。 */
+.config-card-actions {
+  opacity: 1;
+}
+
+/* 只有宽屏且确实支持精细悬停的设备才使用移入显示。 */
+@media (min-width: 640px) and (hover: hover) and (pointer: fine) {
+  .config-card-actions {
+    opacity: 0;
+  }
+
+  .group:hover .config-card-actions,
+  .group:focus-within .config-card-actions {
+    opacity: 1;
+  }
+}
+</style>

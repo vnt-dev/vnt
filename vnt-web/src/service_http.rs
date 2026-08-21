@@ -1,7 +1,7 @@
 use crate::defer;
 use anyhow::{Context, anyhow, bail};
-use axum::body::Body;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
+use axum::body::{Body, to_bytes};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use axum::{
     Json, Router,
@@ -13,6 +13,7 @@ use axum::{
 use ipnet::Ipv4Net;
 use mime_guess::from_path;
 use parking_lot::Mutex;
+use rand::Rng;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,6 +24,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use time::{OffsetDateTime, format_description};
 use tokio::fs;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 use vnt_core::api::VntApi;
 use vnt_core::context::config::Config as CoreConfig;
@@ -465,37 +468,86 @@ async fn logging_middleware(req: Request, next: axum::middleware::Next) -> Respo
 #[folder = "static/"]
 struct Asset;
 
-pub async fn run_http_server(
-    addr: SocketAddr,
-    start_config_file_name: Option<PathBuf>,
-) -> anyhow::Result<()> {
-    fs::create_dir_all(CONFIG_DIR)
-        .await
-        .context("Failed to create config directory")?;
+/// 进程内 VNT 业务服务。HTTP 和 Tauri IPC 共用同一组 handler 与状态。
+#[derive(Clone)]
+pub struct VntService {
+    router: Router,
+}
 
-    let state = HttpAppState {
-        inner: Arc::new(Default::default()),
-    };
+impl VntService {
+    pub async fn new(start_config_file_name: Option<PathBuf>) -> anyhow::Result<Self> {
+        fs::create_dir_all(CONFIG_DIR)
+            .await
+            .context("Failed to create config directory")?;
 
-    // 自动启动逻辑
-    let auto_start_files = determine_auto_start_files(start_config_file_name).await;
+        let state = HttpAppState {
+            inner: Arc::new(Default::default()),
+        };
 
-    for (file_name, path) in auto_start_files {
-        log::info!("Auto starting VNT with config: {:?}", path);
-        let state_clone = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) = start_vnt_internal(&state_clone, file_name, path).await {
-                log::error!("Auto start failed: {:?}", e);
-            }
-        });
+        for (file_name, path) in determine_auto_start_files(start_config_file_name).await {
+            log::info!("Auto starting VNT with config: {:?}", path);
+            let state_clone = state.clone();
+            tokio::spawn(async move {
+                if let Err(e) = start_vnt_internal(&state_clone, file_name, path).await {
+                    log::error!("Auto start failed: {:?}", e);
+                }
+            });
+        }
+
+        Ok(Self {
+            router: api_router(state),
+        })
     }
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    /// 由 Tauri command 调用，不经过 TCP/HTTP 监听端口。
+    pub async fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let method = Method::from_bytes(method.as_bytes()).context("Invalid request method")?;
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.unwrap_or_default()))?;
+        let response = self.router.clone().oneshot(request).await?;
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024).await?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
+            .with_context(|| format!("Invalid service response ({status})"))?;
+        Ok(value)
+    }
 
-    let app = Router::new()
+    /// 在当前进程中按需开放带令牌鉴权的 Web 服务。
+    pub async fn start_http(
+        &self,
+        addr: SocketAddr,
+        token: String,
+        cancellation: CancellationToken,
+    ) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
+        let listener = TcpListener::bind(addr).await?;
+        let actual_addr = listener.local_addr()?;
+        let app = http_router(self.router.clone(), token);
+        log::info!("HTTP API Listening on http://{}", actual_addr);
+        Ok(tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(cancellation.cancelled_owned())
+                .await?;
+            Ok(())
+        }))
+    }
+}
+
+pub fn generate_access_token() -> String {
+    let mut bytes = [0_u8; 24];
+    rand::rng().fill(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn api_router(state: HttpAppState) -> Router {
+    Router::new()
         .route("/api/version", get(get_version))
         .route("/api/info", get(get_info))
         .route("/api/peers", get(get_peers))
@@ -511,17 +563,56 @@ pub async fn run_http_server(
             "/api/config",
             get(get_config).post(save_config).delete(delete_config),
         )
+        .with_state(state)
+}
+
+async fn token_auth_middleware(
+    State(token): State<String>,
+    req: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let authorized = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|provided| provided == token);
+    if !authorized {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<()>::error("访问令牌无效或已过期")),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
+fn http_router(api: Router, token: String) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+    Router::new()
+        .merge(api.layer(middleware::from_fn_with_state(
+            token,
+            token_auth_middleware,
+        )))
+        .fallback(static_handler)
         .layer(cors)
         .layer(middleware::from_fn(logging_middleware))
-        .with_state(state)
-        .fallback(static_handler);
+}
 
-    log::info!("HTTP API Listening on http://{}", addr);
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
-
+pub async fn run_http_server(
+    addr: SocketAddr,
+    start_config_file_name: Option<PathBuf>,
+    token: String,
+) -> anyhow::Result<()> {
+    let service = VntService::new(start_config_file_name).await?;
+    let cancellation = CancellationToken::new();
+    let handle = service.start_http(addr, token, cancellation.clone()).await?;
+    shutdown_signal().await;
+    cancellation.cancel();
+    handle.await??;
     Ok(())
 }
 
@@ -1497,6 +1588,45 @@ async fn get_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_ipc_request_uses_in_process_router() {
+        let service = VntService {
+            router: api_router(new_test_state()),
+        };
+        let response = service.request("GET", "/api/version", None).await.unwrap();
+        assert_eq!(response["code"], 0);
+        assert!(response["data"].as_str().is_some_and(|value| !value.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn test_http_api_requires_bearer_token() {
+        let token = "test-token-with-enough-entropy".to_string();
+        let app = http_router(api_router(new_test_state()), token.clone());
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let authorized = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/version")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authorized.status(), StatusCode::OK);
+    }
 
     #[test]
     fn test_normalize_config_file_name() {

@@ -1,19 +1,22 @@
 {
-  "name": "vnt-web-ui",
+  "name": "vnt-desktop",
   "private": true,
   "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",
+    "@tauri-apps/cli": "^2.8.4",
     "@vitejs/plugin-vue": "catalog:",
     "tailwindcss": "catalog:",
     "vite": "catalog:"

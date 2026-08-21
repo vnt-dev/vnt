@@ -1,0 +1,5 @@
+/node_modules/
+/vnt-desktop/node_modules/
+/vnt-web/ui/node_modules/
+/vnt-desktop/dist/
+/vnt-web/static/

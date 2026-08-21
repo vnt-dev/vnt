@@ -1,0 +1,13 @@
+{
+  "name": "vnt-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "dev:web": "pnpm --filter vnt-web-ui dev",
+    "build:web": "pnpm --filter vnt-web-ui build",
+    "dev:desktop-ui": "pnpm --filter vnt-desktop dev",
+    "dev:desktop": "pnpm --filter vnt-desktop tauri dev",
+    "build:desktop-ui": "pnpm --filter vnt-desktop build",
+    "build:desktop": "pnpm --filter vnt-desktop tauri build"
+  }
+}

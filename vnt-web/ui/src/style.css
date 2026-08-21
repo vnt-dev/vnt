@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "./**/*.{vue,js}";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -10,6 +11,13 @@
 
 body {
   @apply bg-slate-50 text-slate-700 antialiased dark:bg-slate-950 dark:text-slate-200;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
 }
 
 .scrollbar-hide::-webkit-scrollbar {
@@ -123,6 +131,27 @@ body {
   transform: translateY(-6px);
 }
 
+/* 移动端侧栏抽屉 */
+.drawer-enter-active,
+.drawer-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.drawer-enter-active .drawer-panel,
+.drawer-leave-active .drawer-panel {
+  transition: transform 0.2s ease;
+}
+
+.drawer-enter-from,
+.drawer-leave-to {
+  opacity: 0;
+}
+
+.drawer-enter-from .drawer-panel,
+.drawer-leave-to .drawer-panel {
+  transform: translateX(-100%);
+}
+
 @utility btn {
   @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium
     transition-all duration-150 active:scale-95 cursor-pointer
@@ -232,9 +261,15 @@ body {
     @apply text-2xl font-bold text-slate-900 dark:text-white;
   }
 
-  .page-subtitle {
-    @apply mt-1 text-sm text-slate-500 dark:text-slate-400;
-  }
+.page-subtitle {
+  @apply mt-1 text-sm text-slate-500 dark:text-slate-400;
+}
+
+/* 页面名称由统一外壳标题栏展示，视图只保留自身操作按钮。 */
+.page-title,
+.page-subtitle {
+  display: none;
+}
 
   /* 弱文本 */
   .muted {

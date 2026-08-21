@@ -8,6 +8,7 @@ vnt-core.workspace = true
 tokio = { workspace = true, features = ["full"] }
 axum = "0.8.8"
 tower-http = { version = "0.7", features = ["fs", "cors", "trace"] }
+tower = { version = "0.5", features = ["util"] }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -21,3 +22,5 @@ rust-embed = "8.0"
 mime_guess = "2.0"
 parking_lot.workspace = true
 time = { workspace = true, features = ["local-offset", "formatting", "macros"] }
+tokio-util.workspace = true
+rand = "0.9"

@@ -4,6 +4,7 @@ import InstancesView from "../views/InstancesView.vue";
 import ConfigView from "../views/ConfigView.vue";
 import PeersView from "../views/PeersView.vue";
 import RoutesView from "../views/RoutesView.vue";
+import WebAccessView from "../views/WebAccessView.vue";
 
 const routes = [
   { path: "/", component: DashboardView },
@@ -13,6 +14,7 @@ const routes = [
   { path: "/config", component: ConfigView },
   { path: "/peers", component: PeersView },
   { path: "/routes", component: RoutesView },
+  { path: "/web-access", component: WebAccessView },
 ];
 
 export default createRouter({

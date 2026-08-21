@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { useUiStore } from "./ui";
 import { useStartLogStore } from "./startLog";
+import { getAccessToken, isDesktop } from "../auth";
 
 export const useAppStore = defineStore("app", () => {
   const ui = useUiStore();
@@ -217,6 +218,7 @@ export const useAppStore = defineStore("app", () => {
   startLog.bindApp({ fetchInstances, instanceList, configList });
 
   const init = async () => {
+    if (!isDesktop && !getAccessToken()) return;
     document.addEventListener("visibilitychange", visibilityHandler);
     fetchVersion();
     await fetchInstances();
