@@ -1,6 +1,5 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import DashboardView from "../views/DashboardView.vue";
-import InstancesView from "../views/InstancesView.vue";
 import ConfigView from "../views/ConfigView.vue";
 import PeersView from "../views/PeersView.vue";
 import RoutesView from "../views/RoutesView.vue";
@@ -9,9 +8,9 @@ import AboutView from "../views/AboutView.vue";
 
 const routes = [
   { path: "/", component: DashboardView },
-  { path: "/instances", component: InstancesView },
-  // 兼容旧路由
-  { path: "/general", redirect: "/instances" },
+  // 兼容旧路由：实例管理已并入网络总览
+  { path: "/instances", redirect: "/" },
+  { path: "/general", redirect: "/" },
   { path: "/config", component: ConfigView },
   { path: "/peers", component: PeersView },
   { path: "/routes", component: RoutesView },

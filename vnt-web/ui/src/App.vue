@@ -79,7 +79,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
 
         <div class="min-w-0">
           <h1 class="truncate text-lg font-bold text-slate-900 dark:text-white">{{ pageMeta.label }}</h1>
-          <p class="hidden text-xs text-slate-400 sm:block">VNT 虚拟局域网管理</p>
+          <p class="hidden text-xs text-slate-400 sm:block">{{ pageMeta.subtitle || "VNT 虚拟局域网管理" }}</p>
         </div>
 
         <div class="ml-auto flex items-center gap-2">
@@ -103,7 +103,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
       </header>
 
       <main class="custom-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
-        <div class="mx-auto w-full max-w-7xl px-4 py-5 sm:px-5 lg:px-7 lg:py-6">
+        <div class="mx-auto w-full max-w-[1700px] px-4 py-5 sm:px-5 lg:px-7 lg:py-6">
           <router-view v-slot="{ Component }">
             <transition name="fade" mode="out-in"><component :is="Component" /></transition>
           </router-view>
