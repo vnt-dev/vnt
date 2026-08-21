@@ -350,7 +350,7 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300"
-                    >组网加密密码(连接公共服务器时建议填写，同一组网密码需要相同)</label
+                    >组网加密密码(同一组网密码需要相同)</label
                   >
                   <input v-model="formData.password" type="password" placeholder="留空则不加密" class="input" />
                 </div>
