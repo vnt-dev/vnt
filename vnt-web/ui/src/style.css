@@ -1,0 +1,229 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* 全局唯一主色 */
+  --color-accent: var(--color-indigo-600);
+  --color-accent-hover: var(--color-indigo-500);
+}
+
+body {
+  @apply bg-slate-50 text-slate-700 antialiased dark:bg-slate-950 dark:text-slate-200;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 自定义滚动条 */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply rounded bg-slate-300 dark:bg-slate-600;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400 dark:bg-slate-500;
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-slate-300) transparent;
+}
+
+.dark .custom-scrollbar {
+  scrollbar-color: var(--color-slate-600) transparent;
+}
+
+/* 路由切换动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* 弹窗动画 */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-enter-active .modal-panel,
+.modal-leave-active .modal-panel {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .modal-panel,
+.modal-leave-to .modal-panel {
+  transform: scale(0.96);
+  opacity: 0;
+}
+
+/* Toast 动画 */
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.toast-enter-from {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+/* 移动导航动画 */
+.navdrop-enter-active,
+.navdrop-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.navdrop-enter-from,
+.navdrop-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium
+    transition-all duration-150 active:scale-95 cursor-pointer
+    disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100
+    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40;
+}
+
+@utility badge {
+  @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+}
+
+@layer components {
+  .btn-primary {
+    @apply btn bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400;
+  }
+
+  .btn-ghost {
+    @apply btn border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50
+      dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 text-white shadow-sm hover:bg-red-500;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-shadow duration-200
+      hover:shadow-md dark:border-slate-700/80 dark:bg-slate-900;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
+      placeholder-slate-400 transition-colors
+      focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/25
+      disabled:opacity-50 disabled:cursor-not-allowed
+      dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500;
+  }
+
+  /* 语义徽章:浅色底深色字,dark 下深底浅字 */
+  .badge-green {
+    @apply badge bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300;
+  }
+
+  .badge-red {
+    @apply badge bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300;
+  }
+
+  .badge-yellow {
+    @apply badge bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300;
+  }
+
+  .badge-blue {
+    @apply badge bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300;
+  }
+
+  .badge-purple {
+    @apply badge bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300;
+  }
+
+  .badge-gray {
+    @apply badge bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300;
+  }
+
+  .table {
+    @apply min-w-full divide-y divide-slate-200 dark:divide-slate-700;
+  }
+
+  .table thead {
+    @apply bg-slate-50 dark:bg-slate-800/60;
+  }
+
+  .table thead th {
+    @apply px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 whitespace-nowrap
+      dark:text-slate-400;
+  }
+
+  .table tbody {
+    @apply divide-y divide-slate-200 bg-white dark:divide-slate-700 dark:bg-transparent;
+  }
+
+  .table tbody td {
+    @apply px-4 py-3 text-sm text-slate-600 whitespace-nowrap dark:text-slate-300;
+  }
+
+  /* 表格内静态 tooltip */
+  .tooltip {
+    @apply relative inline-flex items-center justify-center;
+  }
+
+  .tooltip .tooltip-text {
+    @apply invisible absolute bottom-[125%] left-1/2 z-10 w-36 -translate-x-1/2 rounded-md
+      border border-slate-200 bg-white px-2 py-1.5 text-center text-xs text-slate-600 shadow-lg
+      opacity-0 transition-opacity duration-300 pointer-events-none
+      dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200;
+  }
+
+  .tooltip:hover .tooltip-text {
+    @apply visible opacity-100;
+  }
+
+  /* 页面标题区 */
+  .page-title {
+    @apply text-2xl font-bold text-slate-900 dark:text-white;
+  }
+
+  .page-subtitle {
+    @apply mt-1 text-sm text-slate-500 dark:text-slate-400;
+  }
+
+  /* 弱文本 */
+  .muted {
+    @apply text-slate-500 dark:text-slate-400;
+  }
+}

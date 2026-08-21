@@ -1,0 +1,21 @@
+import { createRouter, createWebHashHistory } from "vue-router";
+import DashboardView from "../views/DashboardView.vue";
+import InstancesView from "../views/InstancesView.vue";
+import ConfigView from "../views/ConfigView.vue";
+import PeersView from "../views/PeersView.vue";
+import RoutesView from "../views/RoutesView.vue";
+
+const routes = [
+  { path: "/", component: DashboardView },
+  { path: "/instances", component: InstancesView },
+  // 兼容旧路由
+  { path: "/general", redirect: "/instances" },
+  { path: "/config", component: ConfigView },
+  { path: "/peers", component: PeersView },
+  { path: "/routes", component: RoutesView },
+];
+
+export default createRouter({
+  history: createWebHashHistory(),
+  routes,
+});

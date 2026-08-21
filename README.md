@@ -33,6 +33,17 @@
 2. 浏览器打开 http://127.0.0.1:19099
 3. 在页面上添加组网配置，再启动组网
 
+## 前端构建
+
+web 前端源码位于 `vnt-web/ui/`(Vite + Vue 3 + Pinia + Tailwind CSS v4),构建产物输出到 `vnt-web/static/`,由 RustEmbed 嵌入二进制。
+
+```
+cd vnt-web/ui
+pnpm install
+pnpm build
+```
+
+开发调试使用 `pnpm dev`,Vite dev server 会将 `/api` 代理到 `127.0.0.1:19099`(需先启动 vnt2_web)。
 
 # VNT2.0新特性
 

@@ -5,3 +5,5 @@ vnt_config
 vnt_current_config.txt
 logs/*
 /.tools/
+node_modules
+vnt-web/ui/dist
