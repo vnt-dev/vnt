@@ -18,6 +18,7 @@ public class VntConfig {
     private final String deviceId;
     private final String deviceName;
     private final String tunName;
+    private final String outboundInterface;
     private final String ip;
     private final String certMode;
     private final boolean noPunch;
@@ -39,6 +40,7 @@ public class VntConfig {
         this.deviceId = builder.deviceId;
         this.deviceName = builder.deviceName;
         this.tunName = builder.tunName;
+        this.outboundInterface = builder.outboundInterface;
         this.ip = builder.ip;
         this.certMode = builder.certMode;
         this.noPunch = builder.noPunch;
@@ -73,6 +75,7 @@ public class VntConfig {
         if (deviceId != null) json.put("device_id", deviceId);
         if (deviceName != null) json.put("device_name", deviceName);
         if (tunName != null) json.put("tun_name", tunName);
+        if (outboundInterface != null) json.put("outbound_interface", outboundInterface);
         if (ip != null) json.put("ip", ip);
         if (certMode != null) json.put("cert_mode", certMode);
         if (mtu != null) json.put("mtu", mtu);
@@ -124,6 +127,7 @@ public class VntConfig {
         private String deviceId;
         private String deviceName;
         private String tunName;
+        private String outboundInterface;
         private String ip;
         private String certMode;
         private boolean noPunch = false;
@@ -185,6 +189,14 @@ public class VntConfig {
          */
         public Builder setTunName(String tunName) {
             this.tunName = tunName;
+            return this;
+        }
+
+        /**
+         * 绑定对外通信Socket的出口网卡名称（可选）
+         */
+        public Builder setOutboundInterface(String outboundInterface) {
+            this.outboundInterface = outboundInterface;
             return this;
         }
 

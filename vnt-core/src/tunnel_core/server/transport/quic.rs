@@ -4,7 +4,7 @@ use crate::tunnel_core::server::transport::config::ConnectConfig;
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use quinn::{ClientConfig, Endpoint, RecvStream, SendStream};
+use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, TokioRuntime};
 use std::sync::Arc;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
@@ -56,14 +56,15 @@ pub async fn connect_quic(
     let server_addr = config.server_addr();
     let server_name = config.server_name();
     let quic_config = create_client_config(&config.cert_mode)?;
-    let mut endpoint = match Endpoint::client((std::net::Ipv6Addr::UNSPECIFIED, 0).into()) {
-        Ok(endpoint) => endpoint,
-        Err(e) => {
-            log::warn!("Failed to create QUIC endpoint: {}", e);
-            Endpoint::client((std::net::Ipv4Addr::UNSPECIFIED, 0).into())
-                .context("Failed to create QUIC endpoint")?
-        }
+    let bind_addr = if server_addr.is_ipv4() {
+        (std::net::Ipv4Addr::UNSPECIFIED, 0).into()
+    } else {
+        (std::net::Ipv6Addr::UNSPECIFIED, 0).into()
     };
+    let socket = crate::utils::socket::bind_udp(bind_addr, config.default_interface.as_ref())?;
+    let socket = socket.into_std()?;
+    let mut endpoint = Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime))
+        .context("Failed to create QUIC endpoint")?;
 
     endpoint.set_default_client_config(quic_config);
     let connection = endpoint

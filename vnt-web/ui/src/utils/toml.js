@@ -19,6 +19,7 @@ export const emptyFormData = () => ({
   device_name: "",
   device_id: "",
   tun_name: "",
+  outbound_interface: "",
   password: "",
   cert_mode: "skip",
   fingerprint: "",
@@ -95,6 +96,9 @@ export const parseTomlToForm = (toml) => {
     } else if (trimmed.includes("tun_name")) {
       const match = trimmed.match(/tun_name\s*=\s*"([^"]*)"/);
       if (match) data.tun_name = match[1];
+    } else if (trimmed.includes("outbound_interface")) {
+      const match = trimmed.match(/outbound_interface\s*=\s*"([^"]*)"/);
+      if (match) data.outbound_interface = match[1];
     } else if (trimmed.includes("password =")) {
       const match = trimmed.match(/password\s*=\s*"([^"]*)"/);
       if (match) data.password = match[1];
@@ -231,6 +235,10 @@ export const formToToml = (formData) => {
     toml += "\n# 虚拟网卡名称\n";
     toml += `tun_name = "${formData.tun_name}"\n`;
   }
+  if (formData.outbound_interface) {
+    toml += "\n# 绑定对外通信 Socket 的出口网卡名称（用于服务端通信、P2P 打洞及转发流量）\n";
+    toml += `outbound_interface = "${formData.outbound_interface}"\n`;
+  }
 
   toml += "\n# --- 安全配置 ---\n";
   if (formData.password) {
@@ -330,6 +338,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 虚拟网卡名称
 # tun_name = "vnt-tun"
+
+# 绑定对外通信 Socket 的出口网卡名称（例如 Ethernet、Wi-Fi、eth0）
+# outbound_interface = "Ethernet"
 
 # --- 安全配置 ---
 

@@ -254,6 +254,7 @@ pub struct StartConfig {
     pub device_id: Option<String>,
     pub device_name: Option<String>,
     pub tun_name: Option<String>,
+    pub outbound_interface: Option<String>,
     pub ip: Option<Ipv4Addr>,
     pub password: Option<String>,
     #[serde(default)]
@@ -1389,6 +1390,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         device_id,
         device_name,
         tun_name: cfg.tun_name,
+        outbound_interface: cfg.outbound_interface,
         password: cfg.password,
         cert_mode,
         input: cfg.input,
@@ -1690,6 +1692,7 @@ mod tests {
             device_id: Some("device-a".to_string()),
             device_name: None,
             tun_name: None,
+            outbound_interface: None,
             ip: None,
             password: None,
             no_punch: false,

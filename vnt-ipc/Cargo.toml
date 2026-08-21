@@ -18,3 +18,4 @@ cli-table = "0.5.0"
 
 [build-dependencies]
 prost-build = "0.14"
+protoc-bin-vendored = "3"

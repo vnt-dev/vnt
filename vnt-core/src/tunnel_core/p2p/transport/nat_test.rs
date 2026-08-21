@@ -1,5 +1,6 @@
 use crate::context::AppState;
 use rust_p2p_core::nat::{NatInfo, NatType};
+use rust_p2p_core::socket::LocalInterface;
 use rust_p2p_core::tunnel::SocketManager;
 use rust_p2p_core::tunnel::udp::Model;
 use std::collections::HashMap;
@@ -9,19 +10,38 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub async fn my_nat_info(app_context: AppState, socket_manager: SocketManager) {
+pub async fn my_nat_info(
+    app_context: AppState,
+    socket_manager: SocketManager,
+    default_interface: Option<LocalInterface>,
+    outbound_interface_name: Option<String>,
+) {
     loop {
-        my_nat_info_impl(&app_context, &socket_manager).await;
+        my_nat_info_impl(
+            &app_context,
+            &socket_manager,
+            default_interface.as_ref(),
+            outbound_interface_name.as_deref(),
+        )
+        .await;
         tokio::time::sleep(Duration::from_secs(60 * 30)).await;
     }
 }
-async fn my_nat_info_impl(app_context: &AppState, socket_manager: &SocketManager) {
+async fn my_nat_info_impl(
+    app_context: &AppState,
+    socket_manager: &SocketManager,
+    default_interface: Option<&LocalInterface>,
+    outbound_interface_name: Option<&str>,
+) {
     let network = app_context.network.network();
     let mut local_ipv4s = Vec::new();
     let mut local_ipv6 = Vec::new();
     match getifaddrs::getifaddrs() {
         Ok(addrs) => {
             for x in addrs {
+                if outbound_interface_name.is_some_and(|name| x.name != name) {
+                    continue;
+                }
                 let Some(ip) = x.address.ip_addr() else {
                     continue;
                 };
@@ -67,20 +87,28 @@ async fn my_nat_info_impl(app_context: &AppState, socket_manager: &SocketManager
         }
     }
     log::info!("local_ipv4s: {:?}", local_ipv4s);
-    let detected = rust_p2p_core::extend::addr::local_ipv4()
-        .await
-        .map_err(|e| {
-            log::warn!("local ipv4 failed {e:?}");
-            e
-        })
-        .ok();
+    let detected = if outbound_interface_name.is_none() {
+        rust_p2p_core::extend::addr::local_ipv4()
+            .await
+            .map_err(|e| {
+                log::warn!("local ipv4 failed {e:?}");
+                e
+            })
+            .ok()
+    } else {
+        None
+    };
     let Some((local_ipv4, merged)) = select_local_ipv4(detected, &local_ipv4s) else {
         log::warn!("未发现可用本机 IPv4 地址，跳过本次 NAT 信息更新");
         return;
     };
     // 保留网卡扫描结果，主地址排在首位
     local_ipv4s = merged;
-    let mut ipv6 = rust_p2p_core::extend::addr::local_ipv6().await.ok();
+    let mut ipv6 = if outbound_interface_name.is_none() {
+        rust_p2p_core::extend::addr::local_ipv6().await.ok()
+    } else {
+        local_ipv6.first().cloned()
+    };
     if let Some(addr) = ipv6 {
         if addr.is_loopback()
             || addr.is_unique_local()
@@ -134,12 +162,13 @@ async fn my_nat_info_impl(app_context: &AppState, socket_manager: &SocketManager
     if stun_server.is_empty() {
         stun_server = default_udp_stun();
     }
-    let (nat_type, public_ips, port_range) = rust_p2p_core::stun::stun_test_nat(stun_server, None)
-        .await
-        .unwrap_or_else(|e| {
-            log::warn!("stun_test_nat {e:?}");
-            (NatType::Cone, vec![], 0)
-        });
+    let (nat_type, public_ips, port_range) =
+        rust_p2p_core::stun::stun_test_nat(stun_server, default_interface)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("stun_test_nat {e:?}");
+                (NatType::Cone, vec![], 0)
+            });
     log::info!("nat_type:{nat_type:?},public_ips:{public_ips:?},port_range={port_range}");
     nat_info.nat_type = nat_type;
     nat_info.public_ips = public_ips;

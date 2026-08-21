@@ -58,9 +58,10 @@ pub async fn connect_tls_tcp(
     let rustls_config = config.cert_mode.create_tls_client_config()?;
     let connector = TlsConnector::from(Arc::new(rustls_config));
 
-    let tcp_stream = TcpStream::connect(server_addr)
-        .await
-        .context("Failed to establish underlying TCP connection")?;
+    let tcp_stream =
+        crate::utils::socket::connect_tcp(server_addr, config.default_interface.as_ref())
+            .await
+            .context("Failed to establish underlying TCP connection")?;
     if let Err(e) = tcp_stream.set_nodelay(true) {
         log::error!("Failed to set TCP_NODELAY: {}", e);
     }

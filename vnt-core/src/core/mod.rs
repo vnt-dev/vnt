@@ -60,11 +60,32 @@ impl NetworkManager {
     ) -> anyhow::Result<NetworkManager> {
         let app_state = AppState::default();
         config.check()?;
+        let outbound_interface_name = config
+            .outbound_interface
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        let resolved_interface =
+            crate::utils::socket::resolve_interface(outbound_interface_name.as_deref())?;
+        let default_interface = resolved_interface
+            .as_ref()
+            .map(|interface| interface.socket_interface.clone());
+        let canonical_interface_name = resolved_interface
+            .as_ref()
+            .map(|interface| interface.name.clone());
+        if let Some(name) = canonical_interface_name.as_deref() {
+            log::info!("绑定出口网卡: {name}");
+        }
         let mtu = config.mtu.unwrap_or(DEFAULT_MTU);
         let packet_crypto = PacketCrypto::new_from_str(config.password.as_deref());
         let packet_compression = PacketCompression::new(config.compress);
-        let (server_manager_list, tunnel_to_server, server_rpc) =
-            create_server_tunnel(app_state.clone(), &config, packet_crypto.clone());
+        let (server_manager_list, tunnel_to_server, server_rpc) = create_server_tunnel(
+            app_state.clone(),
+            &config,
+            packet_crypto.clone(),
+            default_interface.clone(),
+        );
         let device_io_manager = DeviceIOManager::new(task_group.clone());
         let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
 
@@ -75,6 +96,8 @@ impl NetworkManager {
                 tunnel_to_server.clone(),
                 packet_crypto.clone(),
                 config.tunnel_port,
+                default_interface.clone(),
+                canonical_interface_name,
             )
             .await?;
 
@@ -116,6 +139,7 @@ impl NetworkManager {
             config.no_tun,
             config.allow_port_mapping,
             app_state.network.clone(),
+            default_interface.clone(),
         );
         let internal_nat_inbound = if config.no_nat && !config.no_tun {
             None
@@ -127,6 +151,7 @@ impl NetworkManager {
                 allow_subnet.clone(),
                 app_state.network.clone(),
                 config.no_tun,
+                default_interface.clone(),
             )
             .await?;
             Some(nat_inbound)

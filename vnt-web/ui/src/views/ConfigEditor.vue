@@ -515,7 +515,7 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               </svg>
               设备配置
             </h4>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div>
                 <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">设备名称</label>
                 <input v-model="formData.device_name" type="text" placeholder="默认为主机名" class="input" />
@@ -527,6 +527,16 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               <div>
                 <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">虚拟网卡名</label>
                 <input v-model="formData.tun_name" type="text" placeholder="默认为vnt-tun" class="input" />
+              </div>
+              <div>
+                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">绑定出口网卡</label>
+                <input
+                  v-model="formData.outbound_interface"
+                  type="text"
+                  placeholder="例如 Ethernet、Wi-Fi、eth0"
+                  class="input"
+                />
+                <p class="mt-1.5 text-xs leading-5 text-slate-400">服务端通信、P2P 打洞及转发流量将使用此网卡</p>
               </div>
             </div>
           </div>

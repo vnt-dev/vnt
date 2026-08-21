@@ -8,6 +8,7 @@ use anyhow::Context;
 use bytes::BytesMut;
 use pnet_packet::ip::IpNextHeaderProtocol;
 use pnet_packet::ipv4::Ipv4Packet;
+use rust_p2p_core::socket::LocalInterface;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ pub(crate) struct InternalNatInbound {
     ip_stack_send: Arc<IpStackSend>,
     allow_subnet: AllowSubnetExternalRoute,
     network: SharedNetworkAddr,
+    default_interface: Option<LocalInterface>,
 }
 impl InternalNatInbound {
     pub async fn create(
@@ -33,13 +35,28 @@ impl InternalNatInbound {
         allow_subnet: AllowSubnetExternalRoute,
         network: SharedNetworkAddr,
         no_tun: bool,
+        default_interface: Option<LocalInterface>,
     ) -> anyhow::Result<Self> {
         let ip_stack_config = IpStackConfig::builder().mtu(mtu).build();
         let (ip_stack, ip_stack_send, ip_stack_recv) = tcp_ip::ip_stack(ip_stack_config)?;
         #[cfg(not(target_os = "android"))]
-        icmp_nat::start_icmp_nat(task_group, &ip_stack, no_tun, network.clone()).await?;
-        tcp_nat::start_tcp_nat(task_group, &ip_stack, no_tun, network.clone()).await?;
-        udp_nat::start_udp_nat(task_group, &ip_stack).await?;
+        icmp_nat::start_icmp_nat(
+            task_group,
+            &ip_stack,
+            no_tun,
+            network.clone(),
+            default_interface.clone(),
+        )
+        .await?;
+        tcp_nat::start_tcp_nat(
+            task_group,
+            &ip_stack,
+            no_tun,
+            network.clone(),
+            default_interface.clone(),
+        )
+        .await?;
+        udp_nat::start_udp_nat(task_group, &ip_stack, default_interface.clone()).await?;
         task_group.spawn(async move {
             if let Err(e) = ip_stack_recv_task(ip_stack_recv, hybrid_outbound).await {
                 log::error!("ip stack recv task error: {e:?}");
@@ -50,6 +67,7 @@ impl InternalNatInbound {
             ip_stack_send: Arc::new(ip_stack_send),
             allow_subnet,
             network,
+            default_interface,
         })
     }
     pub async fn send(&self, data: &[u8], net: &NetworkAddr) -> anyhow::Result<()> {
@@ -140,7 +158,13 @@ impl InternalNatInbound {
             }
         }
         let dst = SocketAddr::new(dest_ip.into(), dest_port);
-        tcp_nat::stream_nat(recv_stream, send_stream, dst).await
+        tcp_nat::stream_nat(
+            recv_stream,
+            send_stream,
+            dst,
+            self.default_interface.as_ref(),
+        )
+        .await
     }
 }
 
@@ -149,14 +173,21 @@ pub(crate) struct PortMappingManager {
     no_tun: bool,
     allow_port_mapping: bool,
     network: SharedNetworkAddr,
+    default_interface: Option<LocalInterface>,
 }
 
 impl PortMappingManager {
-    pub fn new(no_tun: bool, allow_port_mapping: bool, network: SharedNetworkAddr) -> Self {
+    pub fn new(
+        no_tun: bool,
+        allow_port_mapping: bool,
+        network: SharedNetworkAddr,
+        default_interface: Option<LocalInterface>,
+    ) -> Self {
         Self {
             no_tun,
             allow_port_mapping,
             network,
+            default_interface,
         }
     }
     pub async fn tcp_mapping<R, W>(
@@ -181,13 +212,25 @@ impl PortMappingManager {
 
             if dest_ip == net.ip {
                 let dst = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), dest_port);
-                return tcp_nat::stream_nat(recv_stream, send_stream, dst).await;
+                return tcp_nat::stream_nat(
+                    recv_stream,
+                    send_stream,
+                    dst,
+                    self.default_interface.as_ref(),
+                )
+                .await;
             } else if net.network().contains(&dest_ip) {
                 return Ok(());
             }
         }
         let dst = format!("{}:{}", dest, dest_port);
-        tcp_nat::stream_nat(recv_stream, send_stream, dst).await
+        tcp_nat::stream_nat(
+            recv_stream,
+            send_stream,
+            dst,
+            self.default_interface.as_ref(),
+        )
+        .await
     }
     pub async fn udp_mapping<R, W>(
         &self,
@@ -211,12 +254,24 @@ impl PortMappingManager {
 
             if dest_ip == net.ip {
                 let dst = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), dest_port);
-                return udp_nat::stream_nat(recv_stream, send_stream, dst).await;
+                return udp_nat::stream_nat(
+                    recv_stream,
+                    send_stream,
+                    dst,
+                    self.default_interface.as_ref(),
+                )
+                .await;
             } else if net.network().contains(&dest_ip) {
                 return Ok(());
             }
         }
         let dst = format!("{}:{}", dest, dest_port);
-        udp_nat::stream_nat(recv_stream, send_stream, dst).await
+        udp_nat::stream_nat(
+            recv_stream,
+            send_stream,
+            dst,
+            self.default_interface.as_ref(),
+        )
+        .await
     }
 }

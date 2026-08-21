@@ -2,6 +2,7 @@ use crate::utils::task_control::{SubTask, TaskGroup};
 use anyhow::Context;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
+use rust_p2p_core::socket::LocalInterface;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -25,7 +26,11 @@ type NatTable = Arc<Mutex<HashMap<(SocketAddr, SocketAddr), NatEntry>>>;
 const NAT_IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 5);
 const NAT_GC_INTERVAL: Duration = Duration::from_secs(60);
 
-pub async fn start_udp_nat(task_group: &TaskGroup, ip_stack: &IpStack) -> anyhow::Result<()> {
+pub async fn start_udp_nat(
+    task_group: &TaskGroup,
+    ip_stack: &IpStack,
+    default_interface: Option<LocalInterface>,
+) -> anyhow::Result<()> {
     let inner_socket = tcp_ip::udp::UdpSocket::bind_all(ip_stack.clone()).await?;
     let inner_socket = Arc::new(inner_socket);
     let nat_table: NatTable = Arc::new(Mutex::new(HashMap::new()));
@@ -42,8 +47,16 @@ pub async fn start_udp_nat(task_group: &TaskGroup, ip_stack: &IpStack) -> anyhow
                 }
             };
 
-            if let Err(e) =
-                handle_outbound(&group, &inner_socket, &nat_table, src, dst, &buf[..len]).await
+            if let Err(e) = handle_outbound(
+                &group,
+                &inner_socket,
+                &nat_table,
+                src,
+                dst,
+                &buf[..len],
+                default_interface.as_ref(),
+            )
+            .await
             {
                 log::warn!("udp nat outbound error: {e:?}");
             }
@@ -60,6 +73,7 @@ async fn handle_outbound(
     src: SocketAddr,
     dst: SocketAddr,
     packet: &[u8],
+    default_interface: Option<&LocalInterface>,
 ) -> anyhow::Result<()> {
     let key = (src, dst);
 
@@ -70,7 +84,17 @@ async fn handle_outbound(
             entry.socket.clone()
         } else {
             // 创建真实 UDP socket
-            let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+            let bind_addr = if dst.is_ipv4() {
+                "0.0.0.0:0".parse().expect("valid IPv4 bind address")
+            } else {
+                "[::]:0".parse().expect("valid IPv6 bind address")
+            };
+            let interface = if dst.ip().is_loopback() {
+                None
+            } else {
+                default_interface
+            };
+            let sock = crate::utils::socket::bind_udp(bind_addr, interface)?;
             sock.connect(dst).await?;
             let sock = Arc::new(sock);
 
@@ -184,19 +208,32 @@ fn spawn_nat_gc(task_group: &TaskGroup, nat: NatTable) {
     });
 }
 
-pub(crate) async fn stream_nat<R, W, A: ToSocketAddrs + Debug>(    recv_stream: R,
+pub(crate) async fn stream_nat<R, W, A: ToSocketAddrs + Debug>(
+    recv_stream: R,
     send_stream: W,
     addr: A,
+    default_interface: Option<&LocalInterface>,
 ) -> anyhow::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let udp_socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-    udp_socket
-        .connect(&addr)
-        .await
-        .with_context(|| format!("error connecting to {:?}", addr))?;
+    let destination = tokio::net::lookup_host(addr)
+        .await?
+        .next()
+        .context("UDP NAT destination resolved to no address")?;
+    let bind_addr = if destination.is_ipv4() {
+        "0.0.0.0:0".parse().expect("valid IPv4 bind address")
+    } else {
+        "[::]:0".parse().expect("valid IPv6 bind address")
+    };
+    let interface = if destination.ip().is_loopback() {
+        None
+    } else {
+        default_interface
+    };
+    let udp_socket = crate::utils::socket::bind_udp(bind_addr, interface)?;
+    udp_socket.connect(destination).await?;
     let mut framed_read = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
     let mut framed_write = FramedWrite::new(send_stream, LengthDelimitedCodec::new());
     let mut buf = vec![0u8; 65536];
@@ -218,7 +255,6 @@ where
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

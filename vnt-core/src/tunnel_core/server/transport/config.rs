@@ -2,6 +2,7 @@ use crate::protocol::control_message::{RegRequestMsg, RegistrationMode};
 use crate::tls::verifier::CertValidationMode;
 use anyhow::Context;
 use rand::seq::SliceRandom;
+use rust_p2p_core::socket::LocalInterface;
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
@@ -16,6 +17,7 @@ pub(crate) struct ConnectRegConfig {
     pub ip: Option<Ipv4Addr>,
     pub key_sign: Option<String>,
     pub ip_variable: bool,
+    pub default_interface: Option<LocalInterface>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectConfig {
@@ -23,6 +25,7 @@ pub(crate) struct ConnectConfig {
     pub server_addr: SocketAddr,
     pub server_domain: String,
     pub cert_mode: CertValidationMode,
+    pub default_interface: Option<LocalInterface>,
 }
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub enum ProtocolType {
@@ -110,7 +113,7 @@ impl ConnectRegConfig {
                 let mut txt = crate::utils::dns_query::dns_query_txt(
                     &self.server_addr.address,
                     vec![],
-                    &None,
+                    &self.default_interface,
                 )
                 .await?;
                 txt.shuffle(&mut rand::rng());
@@ -121,14 +124,19 @@ impl ConnectRegConfig {
             }
             v => (v, self.server_addr.address.to_string()),
         };
-        let server_addr =
-            crate::utils::dns_query::dns_query_one(&server_domain, &vec![], &None).await?;
+        let server_addr = crate::utils::dns_query::dns_query_one(
+            &server_domain,
+            &vec![],
+            &self.default_interface,
+        )
+        .await?;
         let server_domain = strip_port(&server_domain).to_owned();
         Ok(ConnectConfig {
             protocol_type,
             server_addr,
             server_domain,
             cert_mode: self.cert_mode.clone(),
+            default_interface: self.default_interface.clone(),
         })
     }
 }

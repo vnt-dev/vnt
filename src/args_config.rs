@@ -31,6 +31,7 @@ pub struct FileConfig {
     pub device_id: Option<String>,
     pub device_name: Option<String>,
     pub tun_name: Option<String>,
+    pub outbound_interface: Option<String>,
     pub password: Option<String>,
     pub cert_mode: Option<String>,
     pub udp_stun: Option<Vec<String>>,
@@ -127,6 +128,9 @@ pub struct Args {
     /// 虚拟网卡名称
     #[clap(long)]
     pub tun_name: Option<String>,
+    /// 绑定对外通信 Socket 的出口网卡名称
+    #[clap(long)]
+    pub outbound_interface: Option<String>,
     /// 关闭内置子网NAT
     #[clap(long)]
     pub no_nat: bool,
@@ -246,6 +250,9 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
             .or_else(|| file.device_name.clone())
             .unwrap_or_else(default_hostname),
         tun_name: args.tun_name.or_else(|| file.tun_name.clone()),
+        outbound_interface: args
+            .outbound_interface
+            .or_else(|| file.outbound_interface.clone()),
         password: args.password.or_else(|| file.password.clone()),
         cert_mode,
         input,
@@ -285,6 +292,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         device_id,
         device_name: args.device_name.unwrap_or_else(default_hostname),
         tun_name: args.tun_name,
+        outbound_interface: args.outbound_interface,
         password: args.password,
         cert_mode: args
             .cert_mode
@@ -345,6 +353,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         device_id,
         device_name: file.device_name.clone().unwrap_or_else(default_hostname),
         tun_name: file.tun_name.clone(),
+        outbound_interface: file.outbound_interface.clone(),
         password: file.password.clone(),
         cert_mode,
         output: file.output.unwrap_or_default(),
@@ -448,6 +457,9 @@ server = ["quic://1.2.3.4:29872"]
 # 虚拟网卡名称
 # tun_name = "vnt-tun"
 
+# 绑定对外通信 Socket 的出口网卡名称（用于服务端通信、P2P 打洞及转发流量）
+# outbound_interface = "Ethernet"
+
 # --- 安全配置 ---
 
 # 加密密码 (可选)
@@ -493,9 +505,12 @@ mod tests {
             "test-net",
             "--tunnel-port",
             "12345",
+            "--outbound-interface",
+            "Ethernet",
         ])
         .unwrap();
         let (config, _) = build_from_args_only(args).unwrap();
         assert_eq!(config.tunnel_port, Some(12345));
+        assert_eq!(config.outbound_interface.as_deref(), Some("Ethernet"));
     }
 }

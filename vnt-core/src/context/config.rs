@@ -22,6 +22,8 @@ pub struct Config {
     pub device_id: String,
     pub device_name: String,
     pub tun_name: Option<String>,
+    /// 绑定 VNT 对外通信 Socket 的物理网卡名称。
+    pub outbound_interface: Option<String>,
     pub ip: Option<Ipv4Addr>,
     pub password: Option<String>,
     pub no_punch: bool,
@@ -87,7 +89,11 @@ impl Config {
     pub fn key_sign(&self) -> Option<String> {
         self.password.as_ref().map(|p| PacketCrypto::key_sign(p))
     }
-    pub(crate) fn to_connect_config(&self, index: usize) -> ConnectRegConfig {
+    pub(crate) fn to_connect_config(
+        &self,
+        index: usize,
+        default_interface: Option<rust_p2p_core::socket::LocalInterface>,
+    ) -> ConnectRegConfig {
         ConnectRegConfig {
             server_addr: self.server_addr[index].clone(),
             cert_mode: self.cert_mode.clone(),
@@ -97,6 +103,7 @@ impl Config {
             ip: self.ip,
             key_sign: self.key_sign(),
             ip_variable: self.ip.is_none(),
+            default_interface,
         }
     }
 }

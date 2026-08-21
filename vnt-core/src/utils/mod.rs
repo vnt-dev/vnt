@@ -1,5 +1,6 @@
 pub mod device_id;
 pub(crate) mod dns_query;
+pub(crate) mod socket;
 pub mod task_control;
 pub(crate) mod time {
     pub fn now_ts_ms() -> i64 {

@@ -13,6 +13,7 @@ use crate::tunnel_core::p2p::transport::punch::{PunchTaskContext, punch_task};
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::utils::task_control::TaskGroup;
 use rust_p2p_core::punch::Puncher;
+use rust_p2p_core::socket::LocalInterface;
 use rust_p2p_core::tunnel::{Tunnel, TunnelDispatcher, new_tunnel_component};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -24,17 +25,29 @@ pub async fn init_tunnel(
     tunnel_to_server: ServerOutbound,
     packet_crypto: PacketCrypto,
     tunnel_port: Option<u16>,
+    default_interface: Option<LocalInterface>,
+    outbound_interface_name: Option<String>,
 ) -> anyhow::Result<(Puncher, P2pOutbound, P2pTask)> {
     let tunnel_port = tunnel_port.unwrap_or(0);
-    let udp_config = rust_p2p_core::tunnel::config::UdpTunnelConfig::default()
+    let mut udp_config = rust_p2p_core::tunnel::config::UdpTunnelConfig::default()
         .set_main_udp_count(2)
         .set_sub_udp_count(82)
         .set_simple_udp_port(tunnel_port);
-    let tcp_config = rust_p2p_core::tunnel::config::TcpTunnelConfig::new(Box::new(
+    let mut tcp_config = rust_p2p_core::tunnel::config::TcpTunnelConfig::new(Box::new(
         rust_p2p_core::tunnel::tcp::LengthPrefixedInitCodec,
     ))
     .set_tcp_multiplexing_limit(2)
     .set_tcp_port(tunnel_port);
+    if let Some(interface) = default_interface.clone() {
+        // rust-p2p-core 当前的接口绑定实现针对 IPv4；指定出口网卡时关闭
+        // 未绑定的 IPv6 Socket，避免流量绕过所选网卡。
+        udp_config = udp_config
+            .set_default_interface(interface.clone())
+            .set_use_v6(false);
+        tcp_config = tcp_config
+            .set_default_interface(interface)
+            .set_use_v6(false);
+    }
     let config = rust_p2p_core::tunnel::config::TunnelConfig::empty()
         .set_udp_tunnel_config(udp_config)
         .set_tcp_tunnel_config(tcp_config);
@@ -48,6 +61,8 @@ pub async fn init_tunnel(
     task_group.spawn(my_nat_info(
         app_state.clone(),
         tunnel_dispatcher.socket_manager(),
+        default_interface,
+        outbound_interface_name,
     ));
     let manager = tunnel_dispatcher.socket_manager();
     task_group.spawn(query_udp_public_addr_loop(

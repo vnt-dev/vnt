@@ -6091,6 +6091,7 @@ dependencies = [
  "getifaddrs",
  "hex",
  "ipnet",
+ "libc",
  "log",
  "lz4_flex",
  "machine-uid",
@@ -6121,6 +6122,7 @@ dependencies = [
  "uuid",
  "widestring",
  "winapi",
+ "windows-sys 0.60.2",
  "zerocopy",
 ]
 
@@ -6154,6 +6156,7 @@ dependencies = [
  "log",
  "prost",
  "prost-build",
+ "protoc-bin-vendored",
  "time",
  "tokio",
  "tokio-util",

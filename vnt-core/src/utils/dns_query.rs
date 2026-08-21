@@ -44,6 +44,10 @@ pub async fn dns_query_one(
     default_interface: &Option<LocalInterface>,
 ) -> anyhow::Result<SocketAddr> {
     let mut vec = dns_query_all(domain, name_servers, default_interface).await?;
+    if default_interface.is_some() {
+        // 出口网卡绑定目前应用于 IPv4 Socket；优先且只使用可绑定的 IPv4 地址。
+        vec.retain(SocketAddr::is_ipv4);
+    }
     vec.shuffle(&mut rand::rng());
     vec.pop().context("DNS query failed")
 }

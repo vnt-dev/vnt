@@ -5,6 +5,7 @@ use pnet_packet::Packet;
 use pnet_packet::icmp::echo_reply::{Identifier, SequenceNumber};
 use pnet_packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet_packet::ipv4::Ipv4Packet;
+use rust_p2p_core::socket::LocalInterface;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::{Duration, Instant};
@@ -24,6 +25,7 @@ pub async fn start_icmp_nat(
     ip_stack: &IpStack,
     no_tun: bool,
     network: SharedNetworkAddr,
+    default_interface: Option<LocalInterface>,
 ) -> anyhow::Result<()> {
     let net_icmp_socket = socket2::Socket::new(
         socket2::Domain::IPV4,
@@ -31,6 +33,12 @@ pub async fn start_icmp_nat(
         Some(socket2::Protocol::ICMPV4),
     )
     .context("new Socket RAW ICMPV4 failed")?;
+    crate::utils::socket::bind_socket_to_interface(
+        &net_icmp_socket,
+        default_interface.as_ref(),
+        true,
+    )
+    .context("bind ICMP socket to outbound interface failed")?;
     let addr: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
     net_icmp_socket
         .bind(&socket2::SockAddr::from(addr))

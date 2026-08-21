@@ -47,13 +47,14 @@ pub(crate) fn create_server_tunnel(
     app_state: AppState,
     config: &Config,
     packet_crypto: PacketCrypto,
+    default_interface: Option<rust_p2p_core::socket::LocalInterface>,
 ) -> (Vec<ServerTurnManager>, ServerOutbound, ServerRPC) {
     let mut rpc_notifier: HashMap<u32, RpcNotifier> = HashMap::new();
     let mut sender_map: HashMap<u32, Sender<(Bytes, Instant)>> = HashMap::new();
     let mut server_manager_list = Vec::with_capacity(config.server_addr.len());
     let mut server_addr_list = Vec::with_capacity(config.server_addr.len());
     for (index, server_addr) in config.server_addr.iter().enumerate() {
-        let connect_reg_config = config.to_connect_config(index);
+        let connect_reg_config = config.to_connect_config(index, default_interface.clone());
 
         let server_id = index as u32;
 

@@ -895,6 +895,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         tun_name: Option<String>,
         #[serde(default)]
+        outbound_interface: Option<String>,
+        #[serde(default)]
         ip: Option<Ipv4Addr>,
         #[serde(default)]
         password: Option<String>,
@@ -994,6 +996,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         device_id,
         device_name,
         tun_name: cfg.tun_name,
+        outbound_interface: cfg.outbound_interface,
         password: cfg.password,
         cert_mode,
         input: cfg.input,
