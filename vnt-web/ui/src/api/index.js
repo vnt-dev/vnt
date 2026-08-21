@@ -26,6 +26,9 @@ export const getRoutes = (fileName) =>
 export const getStartStatus = (fileName) =>
   request(`/api/start/status?file_name=${encodeURIComponent(fileName)}`);
 
+// GET /api/version
+export const getVersion = () => request("/api/version");
+
 // GET /api/instances
 export const getInstances = () => request("/api/instances");
 

@@ -496,6 +496,7 @@ pub async fn run_http_server(
         .allow_headers(Any);
 
     let app = Router::new()
+        .route("/api/version", get(get_version))
         .route("/api/info", get(get_info))
         .route("/api/peers", get(get_peers))
         .route("/api/routes", get(get_routes))
@@ -1019,6 +1020,11 @@ async fn restart_vnt_handler(
         Ok(_) => Json(ApiResponse::success(())),
         Err(e) => Json(ApiResponse::error(format!("Restart failed: {:?}", e))),
     }
+}
+
+/// 客户端版本号,与组网状态无关,任何时刻都可获取
+async fn get_version() -> Json<ApiResponse<String>> {
+    Json(ApiResponse::success(env!("CARGO_PKG_VERSION").to_string()))
 }
 
 async fn get_info(

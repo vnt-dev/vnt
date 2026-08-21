@@ -4,6 +4,7 @@ import {
   getInstances,
   getInstanceInfo,
   getConfigList,
+  getVersion,
   startVntApi,
   stopVntApi,
   restartVntApi,
@@ -54,13 +55,16 @@ export const useAppStore = defineStore("app", () => {
     );
     return inst ? inst.config_name || inst.file_name : selectedInstance.value;
   });
-  const version = computed(() => {
-    for (const key in instances.value) {
-      const item = instances.value[key];
-      if (item && item.version) return item.version;
+  // 客户端版本号,来自 /api/version,与组网状态无关
+  const version = ref("");
+
+  const fetchVersion = async () => {
+    try {
+      version.value = (await getVersion()) || "";
+    } catch (e) {
+      console.error("Fetch version error", e);
     }
-    return "";
-  });
+  };
   const isServerConnected = computed(
     () =>
       !!(
@@ -214,6 +218,7 @@ export const useAppStore = defineStore("app", () => {
 
   const init = async () => {
     document.addEventListener("visibilitychange", visibilityHandler);
+    fetchVersion();
     await fetchInstances();
     fetchConfigList();
     // 页面加载时若有正在启动的实例,恢复其日志弹窗
