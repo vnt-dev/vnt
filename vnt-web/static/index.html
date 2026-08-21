@@ -263,7 +263,7 @@
         </nav>
 
         <div class="p-4 text-xs text-slate-500 text-center">
-            Client: v{{ info.version }}
+            Client: v{{ version || '-' }}
         </div>
     </aside>
 
@@ -280,17 +280,15 @@
                 >
                             <span
                                     class="w-2.5 h-2.5 rounded-full"
-                                    :class="info.status === 'running' ? 'bg-green-500 animate-pulse' : (info.status === 'starting' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500')"
+                                    :class="runningCount > 0 ? 'bg-green-500 animate-pulse' : (startingCount > 0 ? 'bg-blue-500 animate-pulse' : 'bg-red-500')"
                             ></span>
                     <span class="text-sm font-medium"
-                    >{{ info.status === 'running' ? '已运行' :
-                                (info.status === 'starting' ? '启动中...' :
-                                '未启动') }}</span
+                    >{{ headerStatusText }}</span
                     >
                 </div>
 
                 <div
-                        v-if="info.status === 'running'"
+                        v-if="selectedInfo"
                         class="flex items-center space-x-2 bg-slate-800 rounded-full px-3 py-1 border border-slate-700"
                         :title="serverStatusText"
                 >
@@ -317,25 +315,28 @@
                 </div>
 
                 <div
-                        v-if="info.ip"
+                        v-if="selectedInfo && selectedInfo.ip"
                         class="flex items-center space-x-2 text-slate-300"
                 >
                             <span
                                     class="font-mono text-blue-400 font-bold bg-blue-900/20 px-2 py-0.5 rounded"
-                            >{{ info.ip }}</span
+                            >{{ selectedInfo.ip }}</span
                             >
+                    <span class="text-xs text-slate-500"
+                    >{{ selectedConfigName }}</span
+                    >
                 </div>
             </div>
 
-            <div class="flex items-center space-x-2 text-slate-400">
+            <div class="flex items-center space-x-2 text-slate-400" v-if="selectedInfo">
                 <span class="text-sm">设备:</span>
                 <span class="font-bold text-white"
-                >{{ info.name || '' }}</span
+                >{{ selectedInfo.name || '' }}</span
                 >
                 <span
                         class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-500"
                         title="Device ID"
-                >{{ info.device_id.substring(0, 8) }}...</span
+                >{{ (selectedInfo.device_id || '').substring(0, 8) }}...</span
                 >
             </div>
         </header>
@@ -379,10 +380,17 @@
                             'running' ? '启动成功' : '启动失败') }}
                         </h3>
                     </div>
-                    <span
-                            class="text-xs font-mono text-slate-500 uppercase tracking-widest"
-                    >{{ startStatus }}</span
-                    >
+                    <div class="flex items-center space-x-3">
+                        <span
+                                class="text-sm font-medium text-blue-400 truncate max-w-[200px]"
+                                :title="logFileName"
+                        >{{ logConfigName }}</span
+                        >
+                        <span
+                                class="text-xs font-mono text-slate-500 uppercase tracking-widest"
+                        >{{ startStatus }}</span
+                        >
+                    </div>
                 </div>
                 <div
                         ref="logContainer"
@@ -500,11 +508,12 @@
 <!-- 1. General (通用) -->
 <template id="tpl-general">
     <div class="space-y-6 max-w-5xl mx-auto">
+        <!-- 启动组网 -->
         <div class="glass-panel rounded-xl p-6 shadow-lg">
             <h2
                     class="text-xl font-bold mb-6 text-white border-l-4 border-blue-500 pl-3"
             >
-                运行控制
+                启动组网
             </h2>
             <div class="flex items-end space-x-4">
                 <div class="flex-1">
@@ -514,12 +523,11 @@
                     >
                     <select
                             v-model="localSelectedConfig"
-                            :disabled="info.status === 'starting'"
                             class="w-full bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <option value="" disabled>请选择配置...</option>
                         <option
-                                v-for="cfg in configList"
+                                v-for="cfg in availableConfigs"
                                 :key="cfg.file_name"
                                 :value="cfg.file_name"
                         >
@@ -528,84 +536,117 @@
                     </select>
                 </div>
                 <button
-                        v-if="info.status === 'running'"
-                        @click="handleRestart"
-                        :disabled="loading || !localSelectedConfig"
-                        class="px-6 py-2.5 rounded-lg font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center disabled:opacity-50 disabled:cursor-not-allowed bg-blue-500 hover:bg-blue-600"
+                        @click="handleStart"
+                        :disabled="!localSelectedConfig || !!loadingMap[localSelectedConfig]"
+                        class="px-8 py-2.5 rounded-lg font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center disabled:opacity-50 disabled:cursor-not-allowed bg-green-500 hover:bg-green-600"
                 >
-                    <span v-if="loading" class="mr-2 animate-spin">⟳</span>
-                    重启
-                </button>
-                <button
-                        @click="handleToggle"
-                        :disabled="loading || (!localSelectedConfig && info.status !== 'running' && info.status !== 'starting')"
-                        :class="(info.status === 'running' || info.status === 'starting') ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'"
-                        class="px-8 py-2.5 rounded-lg font-bold text-white shadow-lg transition-transform active:scale-95 flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                            <span v-if="loading" class="mr-2 animate-spin"
+                            <span v-if="loadingMap[localSelectedConfig]" class="mr-2 animate-spin"
                             >⟳</span
                             >
-                    {{ (info.status === 'running' || info.status ===
-                    'starting') ? '停止运行' : '启动运行' }}
+                    启动
                 </button>
             </div>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div
-                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-blue-500"
+        <!-- 组网实例 -->
+        <div class="glass-panel rounded-xl p-6 shadow-lg">
+            <h2
+                    class="text-xl font-bold mb-6 text-white border-l-4 border-green-500 pl-3"
             >
-                        <span class="text-slate-400 text-sm mb-1"
-                        >在线设备</span
-                        >
-                <span class="text-3xl font-bold text-blue-400"
-                >{{ info.online_client_num }}</span
-                >
+                组网实例
+            </h2>
+            <div
+                    v-if="instanceList.length === 0"
+                    class="text-center text-slate-500 py-8"
+            >
+                暂无运行中的组网，请在上方选择配置启动
             </div>
-            <div
-                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-green-500"
-            >
-                        <span class="text-slate-400 text-sm mb-1"
-                        >直连设备</span
-                        >
-                <span class="text-3xl font-bold text-green-400"
-                >{{ info.direct_client_num }}</span
+            <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div
+                        v-for="inst in instanceList"
+                        :key="inst.file_name"
+                        @click="selectInstance(inst.file_name)"
+                        :class="selectedInstance === inst.file_name ? 'ring-2 ring-blue-500 bg-slate-800/80' : 'bg-slate-800/40 hover:bg-slate-800/60'"
+                        class="rounded-xl p-5 border border-slate-700 transition-all cursor-pointer"
                 >
-            </div>
-            <div
-                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-slate-500"
-            >
-                        <span class="text-slate-400 text-sm mb-1"
-                        >离线设备</span
+                    <div class="flex items-center justify-between">
+                        <h3
+                                class="font-bold text-lg text-white truncate"
+                                :title="inst.file_name"
                         >
-                <span class="text-3xl font-bold text-slate-400"
-                >{{ info.offline_client_num }}</span
-                >
-            </div>
-            <div
-                    class="glass-panel p-5 rounded-xl flex flex-col items-center justify-center border-t-4 border-t-yellow-500"
-            >
-                        <span class="text-slate-400 text-sm mb-1"
-                        >当前配置</span
-                        >
-                <span
-                        class="text-lg font-medium text-yellow-400 truncate w-full text-center px-2"
-                        :title="info.current_config_file"
-                >
-                            {{ info.current_config_name || '-' }}
+                            {{ inst.config_name || inst.file_name }}
+                        </h3>
+                        <span class="flex items-center text-sm shrink-0 ml-2">
+                            <span
+                                    class="w-2 h-2 rounded-full mr-1.5"
+                                    :class="statusDotClass(inst.status)"
+                            ></span>
+                            <span :class="statusTextClass(inst.status)">{{ statusText(inst.status) }}</span>
                         </span>
+                    </div>
+                    <div class="mt-2 text-sm">
+                        <span class="text-slate-400">虚拟 IP:</span>
+                        <span class="font-mono text-blue-300 ml-1">{{ infoOf(inst.file_name).ip || '-' }}</span>
+                    </div>
+                    <div class="mt-3 flex space-x-4 text-xs text-slate-400">
+                        <span>在线 <span class="text-blue-400 font-bold">{{ infoOf(inst.file_name).online_client_num || 0 }}</span></span>
+                        <span>直连 <span class="text-green-400 font-bold">{{ infoOf(inst.file_name).direct_client_num || 0 }}</span></span>
+                        <span>离线 <span class="text-slate-500 font-bold">{{ infoOf(inst.file_name).offline_client_num || 0 }}</span></span>
+                    </div>
+                    <div class="mt-4 flex justify-end space-x-2">
+                        <button
+                                @click.stop="openStartLog(inst.file_name)"
+                                class="px-3 py-1.5 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
+                        >
+                            日志
+                        </button>
+                        <button
+                                v-if="inst.status === 'running' || inst.status === 'stopped'"
+                                @click.stop="restartVnt(inst.file_name)"
+                                :disabled="!!loadingMap[inst.file_name]"
+                                class="px-3 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                        >
+                            <span v-if="loadingMap[inst.file_name]" class="mr-1 animate-spin">⟳</span>
+                            {{ inst.status === 'stopped' ? '重新启动' : '重启' }}
+                        </button>
+                        <button
+                                v-if="inst.status !== 'stopped'"
+                                @click.stop="stopVnt(inst.file_name)"
+                                :disabled="!!loadingMap[inst.file_name]"
+                                class="px-3 py-1.5 text-sm rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                        >
+                            <span v-if="loadingMap[inst.file_name]" class="mr-1 animate-spin">⟳</span
+                            >
+                            停止
+                        </button>
+                        <button
+                                v-if="inst.status === 'stopped'"
+                                @click.stop="dismissInstance(inst.file_name)"
+                                :disabled="!!loadingMap[inst.file_name]"
+                                class="px-3 py-1.5 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                        >
+                            <span v-if="loadingMap[inst.file_name]" class="mr-1 animate-spin">⟳</span>
+                            移除
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
+        <!-- 选中实例详情 -->
+        <template v-if="selectedInstance">
         <div class="glass-panel rounded-xl p-6 shadow-lg">
-            <h2 class="text-lg font-bold mb-4 text-white">网络详情</h2>
+            <h2 class="text-lg font-bold mb-4 text-white">
+                网络详情
+                <span class="text-sm font-medium text-blue-400 ml-2">{{ selectedConfigName }}</span>
+            </h2>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div
                         class="flex justify-between border-b border-slate-700 pb-2"
                 >
                     <span class="text-slate-400">虚拟 IP / 掩码</span>
                     <span class="font-mono text-white"
-                    >{{ info.ip || '-' }} / {{ info.prefix_len ||
+                    >{{ selectedInfo.ip || '-' }} / {{ selectedInfo.prefix_len ||
                                 '-' }}</span
                     >
                 </div>
@@ -614,7 +655,7 @@
                 >
                     <span class="text-slate-400">网关</span>
                     <span class="font-mono text-white"
-                    >{{ info.gateway || '-' }}</span
+                    >{{ selectedInfo.gateway || '-' }}</span
                     >
                 </div>
                 <div
@@ -622,7 +663,7 @@
                 >
                     <span class="text-slate-400">网络编号</span>
                     <span class="font-mono text-white"
-                    >{{ info.network_code || '-' }}</span
+                    >{{ selectedInfo.network_code || '-' }}</span
                     >
                 </div>
                 <div
@@ -630,7 +671,7 @@
                 >
                     <span class="text-slate-400">MTU</span>
                     <span class="font-mono text-white"
-                    >{{ info.mtu || '' }}</span
+                    >{{ selectedInfo.mtu || '' }}</span
                     >
                 </div>
                 <div
@@ -638,7 +679,7 @@
                 >
                     <span class="text-slate-400">NAT 类型</span>
                     <span class="font-mono text-blue-300"
-                    >{{ info.nat_type || 'Unknown' }}</span
+                    >{{ selectedInfo.nat_type || 'Unknown' }}</span
                     >
                 </div>
                 <div
@@ -647,26 +688,26 @@
                     <span class="text-slate-400">Public IPv6</span>
                     <span
                             class="font-mono text-white truncate max-w-[200px]"
-                            :title="info.public_ipv6"
-                    >{{ info.public_ipv6 || '-' }}</span
+                            :title="selectedInfo.public_ipv6"
+                    >{{ selectedInfo.public_ipv6 || '-' }}</span
                     >
                 </div>
             </div>
             <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
-                    <span class="w-2 h-2 rounded-full" :class="info.encrypt ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="w-2 h-2 rounded-full" :class="selectedInfo.encrypt ? 'bg-green-500' : 'bg-slate-600'"></span>
                     <span class="text-sm text-slate-300">加密</span>
                 </div>
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
-                    <span class="w-2 h-2 rounded-full" :class="info.compress ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="w-2 h-2 rounded-full" :class="selectedInfo.compress ? 'bg-green-500' : 'bg-slate-600'"></span>
                     <span class="text-sm text-slate-300">压缩</span>
                 </div>
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
-                    <span class="w-2 h-2 rounded-full" :class="info.fec ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="w-2 h-2 rounded-full" :class="selectedInfo.fec ? 'bg-green-500' : 'bg-slate-600'"></span>
                     <span class="text-sm text-slate-300">FEC纠错</span>
                 </div>
                 <div class="flex items-center space-x-2 bg-slate-800/50 rounded-lg px-3 py-2">
-                    <span class="w-2 h-2 rounded-full" :class="info.rtx ? 'bg-green-500' : 'bg-slate-600'"></span>
+                    <span class="w-2 h-2 rounded-full" :class="selectedInfo.rtx ? 'bg-green-500' : 'bg-slate-600'"></span>
                     <span class="text-sm text-slate-300">QUIC传输</span>
                 </div>
             </div>
@@ -676,13 +717,13 @@
                         >
                 <div class="flex flex-wrap gap-2">
                             <span
-                                    v-for="pip in info.public_ipv4s"
+                                    v-for="pip in selectedInfo.public_ipv4s"
                                     :key="pip"
                                     class="px-2 py-1 bg-slate-800 rounded text-xs font-mono text-green-300 border border-slate-600"
                             >{{ pip }}</span
                             >
                     <span
-                            v-if="!info.public_ipv4s || info.public_ipv4s.length === 0"
+                            v-if="!selectedInfo.public_ipv4s || selectedInfo.public_ipv4s.length === 0"
                             class="text-slate-600 text-xs"
                     >无</span
                     >
@@ -726,7 +767,7 @@
                             class="divide-y divide-slate-700 bg-slate-900/30"
                     >
                     <tr
-                            v-for="(server, idx) in info.server_info"
+                            v-for="(server, idx) in selectedInfo.server_info"
                             :key="idx"
                     >
                         <td
@@ -756,7 +797,7 @@
                         </td>
                     </tr>
                     <tr
-                            v-if="!info.server_info || info.server_info.length === 0"
+                            v-if="!selectedInfo.server_info || selectedInfo.server_info.length === 0"
                     >
                         <td
                                 colspan="4"
@@ -769,6 +810,7 @@
                 </table>
             </div>
         </div>
+        </template>
     </div>
 </template>
 
@@ -804,15 +846,21 @@
             <div
                     v-for="cfg in configList"
                     :key="cfg.file_name"
-                    :class="{'ring-2 ring-green-500 bg-slate-800/80': info.current_config_file === cfg.file_name, 'bg-slate-800/40 hover:bg-slate-800/60': info.current_config_file !== cfg.file_name}"
+                    :class="{'ring-2 ring-green-500 bg-slate-800/80': instStatus(cfg.file_name) === 'running', 'ring-2 ring-blue-500 bg-slate-800/80': instStatus(cfg.file_name) === 'starting', 'bg-slate-800/40 hover:bg-slate-800/60': !instStatus(cfg.file_name)}"
                     class="rounded-xl p-5 border border-slate-700 transition-all cursor-pointer group relative overflow-hidden flex flex-col justify-between min-h-[140px]"
                     @click="openEditor(cfg.file_name)"
             >
                 <div
-                        v-if="info.current_config_file === cfg.file_name"
+                        v-if="instStatus(cfg.file_name) === 'running'"
                         class="absolute top-0 right-0 bg-green-500 text-white text-xs px-2 py-1 rounded-bl"
                 >
-                    Running
+                    运行中
+                </div>
+                <div
+                        v-else-if="instStatus(cfg.file_name) === 'starting'"
+                        class="absolute top-0 right-0 bg-blue-500 text-white text-xs px-2 py-1 rounded-bl"
+                >
+                    启动中
                 </div>
                 <div class="flex items-start">
                     <div
@@ -1301,7 +1349,32 @@
 <!-- 3. Peers (设备列表) -->
 <template id="tpl-peers">
     <div class="max-w-7xl mx-auto">
-        <div class="glass-panel rounded-xl shadow-lg overflow-hidden">
+        <!-- 实例切换器 -->
+        <div
+                v-if="instanceList.length > 0"
+                class="flex items-center space-x-2 mb-4 overflow-x-auto scrollbar-hide"
+        >
+            <button
+                    v-for="inst in instanceList"
+                    :key="inst.file_name"
+                    @click="selectedInstance = inst.file_name"
+                    :class="selectedInstance === inst.file_name ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'"
+                    class="flex items-center px-4 py-2 rounded-lg border text-sm font-medium transition-colors shrink-0"
+            >
+                <span
+                        class="w-2 h-2 rounded-full mr-2"
+                        :class="inst.status === 'running' ? 'bg-green-500' : (inst.status === 'starting' ? 'bg-blue-400 animate-pulse' : 'bg-red-500')"
+                ></span>
+                {{ inst.config_name || inst.file_name }}
+            </button>
+        </div>
+        <div
+                v-if="!selectedInstance"
+                class="glass-panel rounded-xl p-12 text-center text-slate-500"
+        >
+            暂无运行中的组网实例
+        </div>
+        <div v-else class="glass-panel rounded-xl shadow-lg overflow-hidden">
             <div
                     class="px-6 py-4 border-b border-slate-700 flex justify-between items-center"
             >
@@ -1528,7 +1601,32 @@
 <!-- 4. Routes (路由) -->
 <template id="tpl-routes">
     <div class="max-w-6xl mx-auto">
-        <div class="glass-panel rounded-xl shadow-lg overflow-hidden">
+        <!-- 实例切换器 -->
+        <div
+                v-if="instanceList.length > 0"
+                class="flex items-center space-x-2 mb-4 overflow-x-auto scrollbar-hide"
+        >
+            <button
+                    v-for="inst in instanceList"
+                    :key="inst.file_name"
+                    @click="selectedInstance = inst.file_name"
+                    :class="selectedInstance === inst.file_name ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'"
+                    class="flex items-center px-4 py-2 rounded-lg border text-sm font-medium transition-colors shrink-0"
+            >
+                <span
+                        class="w-2 h-2 rounded-full mr-2"
+                        :class="inst.status === 'running' ? 'bg-green-500' : (inst.status === 'starting' ? 'bg-blue-400 animate-pulse' : 'bg-red-500')"
+                ></span>
+                {{ inst.config_name || inst.file_name }}
+            </button>
+        </div>
+        <div
+                v-if="!selectedInstance"
+                class="glass-panel rounded-xl p-12 text-center text-slate-500"
+        >
+            暂无运行中的组网实例
+        </div>
+        <div v-else class="glass-panel rounded-xl shadow-lg overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-700">
                 <h2 class="text-xl font-bold text-white">路由表</h2>
             </div>
@@ -1654,53 +1752,96 @@
     const GeneralView = {
         template: "#tpl-general",
         setup() {
-            const info = inject("info");
+            const instanceList = inject("instanceList");
+            const instances = inject("instances");
             const configList = inject("configList");
-            const toggleVnt = inject("toggleVnt");
+            const startVnt = inject("startVnt");
+            const stopVnt = inject("stopVnt");
             const restartVnt = inject("restartVnt");
-            const loading = inject("loading");
+            const dismissInstance = inject("dismissInstance");
+            const openStartLog = inject("openStartLog");
+            const loadingMap = inject("loadingMap");
+            const selectedInstance = inject("selectedInstance");
             const localSelectedConfig = ref("");
 
-            // 同步当前配置
-            watch(
-                () => info.value.current_config_file,
-                (newVal) => {
-                    if (
-                        (info.value.status === "running" ||
-                            info.value.status === "starting") &&
-                        newVal
-                    ) {
-                        localSelectedConfig.value = newVal;
-                    }
-                },
-                {immediate: true},
+            // 只列出没有对应实例的配置（同一配置最多一个实例）
+            const availableConfigs = computed(() =>
+                configList.value.filter(
+                    (cfg) =>
+                        !instanceList.value.some(
+                            (inst) => inst.file_name === cfg.file_name,
+                        ),
+                ),
             );
 
-            const handleToggle = () => {
-                // 如果是启动，且有本地选择的配置，传递给 toggle
-                if (
-                    info.value.status !== "running" &&
-                    info.value.status !== "starting"
-                ) {
-                    toggleVnt(localSelectedConfig.value);
-                } else {
-                    toggleVnt(null);
-                }
+            const infoOf = (fileName) => instances.value[fileName] || {};
+
+            const selectedInfo = computed(() =>
+                selectedInstance.value
+                    ? infoOf(selectedInstance.value)
+                    : {},
+            );
+
+            const selectedConfigName = computed(() => {
+                if (!selectedInstance.value) return "";
+                const inst = instanceList.value.find(
+                    (i) => i.file_name === selectedInstance.value,
+                );
+                return inst
+                    ? inst.config_name || inst.file_name
+                    : selectedInstance.value;
+            });
+
+            const selectInstance = (fileName) => {
+                selectedInstance.value = fileName;
             };
 
-            const handleRestart = () => {
-                if (localSelectedConfig.value) {
-                    restartVnt(localSelectedConfig.value);
+            const handleStart = () => {
+                if (!localSelectedConfig.value) {
+                    alert("请先选择一个配置");
+                    return;
                 }
+                startVnt(localSelectedConfig.value);
+                localSelectedConfig.value = "";
             };
+
+            const statusText = (status) =>
+                status === "running"
+                    ? "运行中"
+                    : status === "starting"
+                      ? "启动中"
+                      : "已停止";
+            const statusDotClass = (status) =>
+                status === "running"
+                    ? "bg-green-500"
+                    : status === "starting"
+                      ? "bg-blue-500 animate-pulse"
+                      : "bg-red-500";
+            const statusTextClass = (status) =>
+                status === "running"
+                    ? "text-green-400"
+                    : status === "starting"
+                      ? "text-blue-400"
+                      : "text-red-400";
 
             return {
-                info,
-                configList,
+                instanceList,
+                availableConfigs,
                 localSelectedConfig,
-                loading,
-                handleToggle,
-                handleRestart,
+                loadingMap,
+                selectedInstance,
+                selectedInfo,
+                selectedConfigName,
+                infoOf,
+                selectInstance,
+                handleStart,
+                stopVnt,
+                restartVnt,
+                dismissInstance,
+                openStartLog,
+                statusText,
+                statusDotClass,
+                statusTextClass,
             };
         },
     };
@@ -1708,9 +1849,17 @@
     const ConfigView = {
         template: "#tpl-config",
         setup() {
-            const info = inject("info");
+            const instanceList = inject("instanceList");
             const configList = inject("configList");
             const fetchConfigList = inject("fetchConfigList");
+
+            // 配置对应的实例运行状态（无实例返回 null）
+            const instStatus = (fileName) => {
+                const inst = instanceList.value.find(
+                    (i) => i.file_name === fileName,
+                );
+                return inst ? inst.status : null;
+            };
 
             // 编辑器状态
             const showEditor = ref(false);
@@ -2255,7 +2404,7 @@ server = ["quic://1.2.3.4:29872"]
             };
 
             return {
-                info,
+                instStatus,
                 configList,
                 showEditor,
                 editorContent,
@@ -2276,7 +2425,8 @@ server = ["quic://1.2.3.4:29872"]
         template: "#tpl-peers",
         setup() {
             const peers = ref([]);
-            const info = inject("info");
+            const instanceList = inject("instanceList");
+            const selectedInstance = inject("selectedInstance");
             const isPageVisible = inject("isPageVisible");
             const showTooltipGlobal = inject("showPeerTooltip");
             const hideTooltipGlobal = inject("hidePeerTooltip");
@@ -2408,15 +2558,34 @@ server = ["quic://1.2.3.4:29872"]
                 return Math.ceil(val / (1024 * 1024 * 1024)) * 1024 * 1024 * 1024;
             };
 
+            const currentStatus = () => {
+                const inst = instanceList.value.find(
+                    (i) => i.file_name === selectedInstance.value,
+                );
+                return inst ? inst.status : null;
+            };
+
+            const resetPeerState = () => {
+                peers.value = [];
+                lastTrafficMap = {};
+                lastFetchTime = 0;
+                for (const key in speedHistoryMap)
+                    delete speedHistoryMap[key];
+                for (const key in expandedPeers) delete expandedPeers[key];
+            };
+
             const fetchPeers = async () => {
-                if (info.value.status !== "running") {
-                    peers.value = [];
-                    lastTrafficMap = {};
-                    lastFetchTime = 0;
+                if (
+                    !selectedInstance.value ||
+                    currentStatus() !== "running"
+                ) {
+                    resetPeerState();
                     return;
                 }
                 try {
-                    const res = await fetch(`${API_BASE}/api/peers`);
+                    const res = await fetch(
+                        `${API_BASE}/api/peers?file_name=${encodeURIComponent(selectedInstance.value)}`,
+                    );
                     const json = await res.json();
                     if (json.code === 0) {
                         const now = Date.now();
@@ -2473,8 +2642,14 @@ server = ["quic://1.2.3.4:29872"]
                 if (timer) clearInterval(timer);
             });
 
-            // 监听 status 变化，当变为 running 时立即获取数据
-            watch(() => info.value.status, (newStatus) => {
+            // 切换实例时重置并重新拉取
+            watch(selectedInstance, () => {
+                resetPeerState();
+                fetchPeers();
+            });
+
+            // 监听选中实例状态变化，当变为 running 时立即获取数据
+            watch(currentStatus, (newStatus) => {
                 if (newStatus === "running") {
                     fetchPeers();
                 }
@@ -2505,6 +2680,8 @@ server = ["quic://1.2.3.4:29872"]
 
             return {
                 peers,
+                instanceList,
+                selectedInstance,
                 expandedPeers,
                 toggleExpand,
                 formatTime,
@@ -2522,17 +2699,30 @@ server = ["quic://1.2.3.4:29872"]
         template: "#tpl-routes",
         setup() {
             const routes = ref([]);
-            const info = inject("info");
+            const instanceList = inject("instanceList");
+            const selectedInstance = inject("selectedInstance");
             const isPageVisible = inject("isPageVisible");
             let timer = null;
 
+            const currentStatus = () => {
+                const inst = instanceList.value.find(
+                    (i) => i.file_name === selectedInstance.value,
+                );
+                return inst ? inst.status : null;
+            };
+
             const fetchRoutes = async () => {
-                if (info.value.status !== "running") {
+                if (
+                    !selectedInstance.value ||
+                    currentStatus() !== "running"
+                ) {
                     routes.value = [];
                     return;
                 }
                 try {
-                    const res = await fetch(`${API_BASE}/api/routes`);
+                    const res = await fetch(
+                        `${API_BASE}/api/routes?file_name=${encodeURIComponent(selectedInstance.value)}`,
+                    );
                     const json = await res.json();
                     if (json.code === 0) routes.value = json.data || [];
                 } catch (e) {
@@ -2551,14 +2741,19 @@ server = ["quic://1.2.3.4:29872"]
                 if (timer) clearInterval(timer);
             });
 
-            // 监听 status 变化，当变为 running 时立即获取数据
-            watch(() => info.value.status, (newStatus) => {
+            // 切换实例时重新拉取
+            watch(selectedInstance, () => {
+                fetchRoutes();
+            });
+
+            // 监听选中实例状态变化，当变为 running 时立即获取数据
+            watch(currentStatus, (newStatus) => {
                 if (newStatus === "running") {
                     fetchRoutes();
                 }
             });
 
-            return {routes};
+            return {routes, instanceList, selectedInstance};
         },
     };
 
@@ -2581,26 +2776,18 @@ server = ["quic://1.2.3.4:29872"]
 
     createApp({
         setup() {
-            const info = ref({
-                status: "stopped",
-                ip: "",
-                name: "",
-                device_id: "",
-                version: "",
-                server_info: [],
-                online_client_num: 0,
-                direct_client_num: 0,
-                offline_client_num: 0,
-                current_config_file: null,
-                current_config_name: null,
-            });
+            // 多实例状态：key=file_name, value=该实例 info
+            const instances = ref({});
+            const instanceList = ref([]);
+            const selectedInstance = ref(null);
             const configList = ref([]);
-            const loading = ref(false);
+            const loadingMap = ref({});
 
             // 启动日志相关
             const showStartLog = ref(false);
             const startLogs = ref([]);
             const startStatus = ref("stopped");
+            const logFileName = ref(null);
             const logContainer = ref(null);
             let statusInterval = null;
             let infoTimer = null;
@@ -2644,28 +2831,124 @@ server = ["quic://1.2.3.4:29872"]
             };
 
             // 计算属性
+            const runningCount = computed(
+                () =>
+                    instanceList.value.filter(
+                        (i) => i.status === "running",
+                    ).length,
+            );
+            const startingCount = computed(
+                () =>
+                    instanceList.value.filter(
+                        (i) => i.status === "starting",
+                    ).length,
+            );
+            const headerStatusText = computed(() => {
+                if (runningCount.value > 0)
+                    return `运行中 x${runningCount.value}`;
+                if (startingCount.value > 0) return "启动中...";
+                return "未启动";
+            });
+            const selectedInfo = computed(() =>
+                selectedInstance.value
+                    ? instances.value[selectedInstance.value] || null
+                    : null,
+            );
+            const selectedConfigName = computed(() => {
+                if (!selectedInstance.value) return "";
+                const inst = instanceList.value.find(
+                    (i) => i.file_name === selectedInstance.value,
+                );
+                return inst
+                    ? inst.config_name || inst.file_name
+                    : selectedInstance.value;
+            });
+            const version = computed(() => {
+                for (const key in instances.value) {
+                    const item = instances.value[key];
+                    if (item && item.version) return item.version;
+                }
+                return "";
+            });
+            const logConfigName = computed(() => {
+                if (!logFileName.value) return "";
+                const inst = instanceList.value.find(
+                    (i) => i.file_name === logFileName.value,
+                );
+                if (inst) return inst.config_name || inst.file_name;
+                const cfg = configList.value.find(
+                    (c) => c.file_name === logFileName.value,
+                );
+                return cfg
+                    ? cfg.config_name || cfg.file_name
+                    : logFileName.value;
+            });
             const isServerConnected = computed(
                 () =>
-                    info.value.server_info &&
-                    info.value.server_info.some((s) => s.connected),
+                    !!(
+                        selectedInfo.value &&
+                        selectedInfo.value.server_info &&
+                        selectedInfo.value.server_info.some((s) => s.connected)
+                    ),
             );
             const serverStatusText = computed(() => {
-                if (
-                    !info.value.server_info ||
-                    !info.value.server_info.length
-                )
+                const si = selectedInfo.value;
+                if (!si || !si.server_info || !si.server_info.length)
                     return "未配置服务器";
-                return `${info.value.server_info.filter((s) => s.connected).length} / ${info.value.server_info.length} 已连接`;
+                return `${si.server_info.filter((s) => s.connected).length} / ${si.server_info.length} 已连接`;
             });
 
             // 基础 API
-            const fetchInfo = async () => {
+            const fetchInstanceInfo = async (fileName) => {
                 try {
-                    const res = await fetch(`${API_BASE}/api/info`);
+                    const res = await fetch(
+                        `${API_BASE}/api/info?file_name=${encodeURIComponent(fileName)}`,
+                    );
                     const json = await res.json();
-                    if (json.code === 0) info.value = json.data;
+                    if (json.code === 0)
+                        instances.value[fileName] = json.data;
                 } catch (e) {
                     console.error("Fetch info error", e);
+                }
+            };
+
+            const fetchInstances = async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/instances`);
+                    const json = await res.json();
+                    if (json.code !== 0) return;
+                    const list = json.data || [];
+                    instanceList.value = list;
+                    // 清理已消失实例的 info 缓存
+                    for (const key of Object.keys(instances.value)) {
+                        if (!list.some((i) => i.file_name === key)) {
+                            delete instances.value[key];
+                        }
+                    }
+                    // 默认选中第一个 running 实例
+                    if (
+                        !selectedInstance.value ||
+                        !list.some(
+                            (i) => i.file_name === selectedInstance.value,
+                        )
+                    ) {
+                        const running = list.find(
+                            (i) => i.status === "running",
+                        );
+                        selectedInstance.value = running
+                            ? running.file_name
+                            : list.length > 0
+                              ? list[0].file_name
+                              : null;
+                    }
+                    // 拉取 running 实例的详情
+                    for (const inst of list) {
+                        if (inst.status === "running") {
+                            fetchInstanceInfo(inst.file_name);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Fetch instances error", e);
                 }
             };
 
@@ -2683,9 +2966,10 @@ server = ["quic://1.2.3.4:29872"]
 
             // 启动流程控制
             const pollStartStatus = async () => {
+                if (!logFileName.value) return;
                 try {
                     const res = await fetch(
-                        `${API_BASE}/api/start/status`,
+                        `${API_BASE}/api/start/status?file_name=${encodeURIComponent(logFileName.value)}`,
                     );
                     const json = await res.json();
                     if (json.code === 0) {
@@ -2699,14 +2983,14 @@ server = ["quic://1.2.3.4:29872"]
 
                         if (startStatus.value === "running") {
                             stopPolling();
-                            fetchInfo();
+                            fetchInstances();
                             showStartLog.value = false;
                         } else if (
                             startStatus.value === "stopped" &&
                             startLogs.value.length > 0
                         ) {
                             stopPolling();
-                            fetchInfo();
+                            fetchInstances();
                         }
                     }
                 } catch (e) {
@@ -2726,97 +3010,137 @@ server = ["quic://1.2.3.4:29872"]
                 pollStartStatus();
             };
 
-            const openStartingModal = () => {
+            const openStartLog = (fileName) => {
+                logFileName.value = fileName;
                 startLogs.value = [];
                 startStatus.value = "starting";
                 showStartLog.value = true;
                 startPolling();
             };
 
-            const toggleVnt = async (selectedFile) => {
-                if (loading.value) return;
-
-                // 停止逻辑
-                if (
-                    info.value.status === "running" ||
-                    info.value.status === "starting"
-                ) {
-                    loading.value = true;
-                    await fetch(`${API_BASE}/api/stop`, {
-                        method: "POST",
-                    });
-                    loading.value = false;
-                    stopPolling();
-                    showStartLog.value = false;
-                    fetchInfo();
-                    return;
-                }
-
-                // 启动逻辑
-                if (!selectedFile) {
+            const startVnt = async (fileName) => {
+                if (!fileName) {
                     alert("请先选择一个配置");
                     return;
                 }
-                loading.value = true;
+                if (loadingMap.value[fileName]) return;
+                loadingMap.value[fileName] = true;
                 try {
                     const res = await fetch(`${API_BASE}/api/start`, {
                         method: "POST",
                         headers: {"Content-Type": "application/json"},
                         body: JSON.stringify({
-                            file_name: selectedFile,
+                            file_name: fileName,
                         }),
                     });
                     const json = await res.json();
-                    loading.value = false;
                     if (json.code !== 0) {
                         alert("启动失败: " + json.msg);
                         return;
                     }
-                    openStartingModal();
+                    openStartLog(fileName);
+                    fetchInstances();
                 } catch (e) {
-                    loading.value = false;
                     alert("网络请求失败: " + e.message);
+                } finally {
+                    loadingMap.value[fileName] = false;
+                }
+            };
+
+            const stopVnt = async (fileName) => {
+                if (!fileName || loadingMap.value[fileName]) return;
+                loadingMap.value[fileName] = true;
+                try {
+                    await fetch(`${API_BASE}/api/stop`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            file_name: fileName,
+                        }),
+                    });
+                    if (logFileName.value === fileName) {
+                        stopPolling();
+                        showStartLog.value = false;
+                    }
+                    fetchInstances();
+                } catch (e) {
+                    console.error(e);
+                } finally {
+                    loadingMap.value[fileName] = false;
                 }
             };
 
             const cancelStart = async () => {
                 stopPolling();
-                try {
-                    await fetch(`${API_BASE}/api/stop`, {
-                        method: "POST",
-                    });
-                    startLogs.value.push("启动已手动取消");
-                } catch (e) {
+                const fileName = logFileName.value;
+                if (fileName) {
+                    try {
+                        await fetch(`${API_BASE}/api/stop`, {
+                            method: "POST",
+                            headers: {"Content-Type": "application/json"},
+                            body: JSON.stringify({
+                                file_name: fileName,
+                            }),
+                        });
+                        startLogs.value.push("启动已手动取消");
+                    } catch (e) {
+                    }
                 }
                 startStatus.value = "stopped";
-                fetchInfo();
+                fetchInstances();
             };
 
-            const restartVnt = async (selectedFile) => {
-                if (loading.value) return;
-                if (!selectedFile) {
-                    alert("请先选择一个配置");
-                    return;
+            // 移除已停止（启动失败残留）的实例条目
+            const dismissInstance = async (fileName) => {
+                if (!fileName || loadingMap.value[fileName]) return;
+                loadingMap.value[fileName] = true;
+                try {
+                    const res = await fetch(
+                        `${API_BASE}/api/instance?file_name=${encodeURIComponent(fileName)}`,
+                        {method: "DELETE"},
+                    );
+                    const json = await res.json();
+                    if (json.code !== 0) {
+                        alert("移除失败: " + json.msg);
+                        return;
+                    }
+                    if (logFileName.value === fileName) {
+                        stopPolling();
+                        showStartLog.value = false;
+                    }
+                    if (selectedInstance.value === fileName) {
+                        selectedInstance.value = null;
+                    }
+                    fetchInstances();
+                } catch (e) {
+                    alert("网络请求失败: " + e.message);
+                } finally {
+                    loadingMap.value[fileName] = false;
                 }
-                loading.value = true;
+            };
+
+            const restartVnt = async (fileName) => {
+                if (!fileName || loadingMap.value[fileName]) return;
+                loadingMap.value[fileName] = true;
                 try {
                     const res = await fetch(`${API_BASE}/api/restart`, {
                         method: "POST",
                         headers: {"Content-Type": "application/json"},
                         body: JSON.stringify({
-                            file_name: selectedFile,
+                            file_name: fileName,
                         }),
                     });
                     const json = await res.json();
-                    loading.value = false;
                     if (json.code !== 0) {
                         alert("重启失败: " + json.msg);
                         return;
                     }
-                    openStartingModal();
+                    openStartLog(fileName);
+                    fetchInstances();
                 } catch (e) {
-                    loading.value = false;
                     alert("网络请求失败: " + e.message);
+                } finally {
+                    loadingMap.value[fileName] = false;
                 }
             };
 
@@ -2833,13 +3157,18 @@ server = ["quic://1.2.3.4:29872"]
             };
 
             // 依赖注入
-            provide("info", info);
+            provide("instanceList", instanceList);
+            provide("instances", instances);
+            provide("selectedInstance", selectedInstance);
             provide("isPageVisible", isPageVisible);
             provide("configList", configList);
             provide("fetchConfigList", fetchConfigList);
-            provide("toggleVnt", toggleVnt);
+            provide("startVnt", startVnt);
+            provide("stopVnt", stopVnt);
             provide("restartVnt", restartVnt);
-            provide("loading", loading);
+            provide("dismissInstance", dismissInstance);
+            provide("openStartLog", openStartLog);
+            provide("loadingMap", loadingMap);
             provide("showPeerTooltip", showPeerTooltip);
             provide("hidePeerTooltip", hidePeerTooltip);
 
@@ -2848,15 +3177,17 @@ server = ["quic://1.2.3.4:29872"]
                     "visibilitychange",
                     visibilityHandler,
                 );
-                await fetchInfo();
+                await fetchInstances();
                 fetchConfigList();
-                if (info.value.status === "starting")
-                    openStartingModal();
+                // 页面加载时若有正在启动的实例，恢复其日志弹窗
+                const starting = instanceList.value.find(
+                    (i) => i.status === "starting",
+                );
+                if (starting) openStartLog(starting.file_name);
 
-                // 全局轮询 info (状态/IP等)
+                // 全局轮询实例列表及 running 实例详情
                 infoTimer = setInterval(() => {
-                    if (info.value.status !== "running") return;
-                    if (isPageVisible.value) fetchInfo();
+                    if (isPageVisible.value) fetchInstances();
                 }, 3000);
             });
 
@@ -2870,13 +3201,20 @@ server = ["quic://1.2.3.4:29872"]
             });
 
             return {
-                info,
+                version,
+                runningCount,
+                startingCount,
+                headerStatusText,
+                selectedInfo,
+                selectedConfigName,
                 isServerConnected,
                 serverStatusText,
                 navClass,
                 showStartLog,
                 startStatus,
                 startLogs,
+                logFileName,
+                logConfigName,
                 logContainer,
                 cancelStart,
                 tooltipState,

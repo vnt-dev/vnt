@@ -4,3 +4,4 @@
 vnt_config
 vnt_current_config.txt
 logs/*
+/.tools/
