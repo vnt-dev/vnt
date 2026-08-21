@@ -9,10 +9,10 @@ use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tun_rs::async_framed::{Decoder, DeviceFramedRead, DeviceFramedWrite, Encoder};
 use tun_rs::AsyncDevice;
 #[cfg(not(target_os = "android"))]
 use tun_rs::DeviceBuilder;
+use tun_rs::async_framed::{Decoder, DeviceFramedRead, DeviceFramedWrite, Encoder};
 
 #[derive(Clone)]
 pub struct DeviceIOManager {
@@ -130,40 +130,42 @@ impl DeviceIOManager {
 fn create_tun(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
     #[cfg(target_os = "android")]
     {
-        let fd = config.tun_fd.context("Android requires a VpnService TUN fd")?;
+        let fd = config
+            .tun_fd
+            .context("Android requires a VpnService TUN fd")?;
         // SAFETY: The fd comes directly from ParcelFileDescriptor returned by
         // VpnService.Builder.establish and remains open for the network lifetime.
         return unsafe { Ok(AsyncDevice::from_fd(fd)?) };
     }
     #[cfg(not(target_os = "android"))]
     {
-    #[cfg(unix)]
-    if let Some(fd) = config.tun_fd {
-        // SAFETY: Caller must ensure fd is a valid, open file descriptor for a TUN device.
-        // Using an invalid fd may cause undefined behavior.
-        unsafe { return Ok(AsyncDevice::from_fd(fd)?) }
-    }
-    let mut builder = DeviceBuilder::new();
-    if let Some(tun_name) = config.tun_name {
-        builder = builder.name(tun_name);
-    }
-    if let Some(mtu) = config.mtu {
-        builder = builder.mtu(mtu);
-    }
-    #[cfg(windows)]
-    {
-        builder = builder.metric(1);
-    }
-    #[cfg(target_os = "linux")]
-    {
-        builder = builder.offload(true);
-    }
-    let dev = builder.build_async().context("创建tun失败")?;
-    #[cfg(target_os = "linux")]
-    {
-        _ = dev.set_tx_queue_len(1000);
-    }
-    Ok(dev)
+        #[cfg(unix)]
+        if let Some(fd) = config.tun_fd {
+            // SAFETY: Caller must ensure fd is a valid, open file descriptor for a TUN device.
+            // Using an invalid fd may cause undefined behavior.
+            unsafe { return Ok(AsyncDevice::from_fd(fd)?) }
+        }
+        let mut builder = DeviceBuilder::new();
+        if let Some(tun_name) = config.tun_name {
+            builder = builder.name(tun_name);
+        }
+        if let Some(mtu) = config.mtu {
+            builder = builder.mtu(mtu);
+        }
+        #[cfg(windows)]
+        {
+            builder = builder.metric(1);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            builder = builder.offload(true);
+        }
+        let dev = builder.build_async().context("创建tun失败")?;
+        #[cfg(target_os = "linux")]
+        {
+            _ = dev.set_tx_queue_len(1000);
+        }
+        Ok(dev)
     }
 }
 fn create(
