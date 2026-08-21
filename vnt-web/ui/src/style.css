@@ -59,6 +59,20 @@ body {
   opacity: 0;
 }
 
+/* 实例卡片列表:停止/移除后渐隐收缩消失 */
+.card-list-enter-active,
+.card-list-leave-active {
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.card-list-enter-from,
+.card-list-leave-to {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
 /* 弹窗动画 */
 .modal-enter-active,
 .modal-leave-active {

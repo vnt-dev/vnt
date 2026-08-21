@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 pub(crate) mod internal_nat;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetInput {
     pub net: Ipv4Net,
     pub target_ip: Ipv4Addr,

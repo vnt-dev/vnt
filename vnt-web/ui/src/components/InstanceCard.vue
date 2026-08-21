@@ -14,11 +14,27 @@ const ui = useUiStore();
 
 const info = computed(() => app.infoOf(props.inst.file_name));
 const loading = computed(() => !!app.loadingMap[props.inst.file_name]);
+// 停止中:点击停止后直到实例真正消失/停止
+const stopping = computed(() => !!app.stoppingMap[props.inst.file_name]);
+// 展示名优先用配置名称,兜底文件名
+const displayName = computed(() => props.inst.config_name || props.inst.file_name);
 
 const statusBadgeClass = (status) =>
-  status === "running" ? "badge-green" : status === "starting" ? "badge-blue" : "badge-gray";
+  stopping.value
+    ? "badge-yellow"
+    : status === "running"
+      ? "badge-green"
+      : status === "starting"
+        ? "badge-blue"
+        : "badge-gray";
 const statusText = (status) =>
-  status === "running" ? "运行中" : status === "starting" ? "启动中" : "已停止";
+  stopping.value
+    ? "停止中"
+    : status === "running"
+      ? "运行中"
+      : status === "starting"
+        ? "启动中"
+        : "已停止";
 
 const select = () => {
   if (props.selectable) app.selectedInstance = props.inst.file_name;
@@ -27,7 +43,7 @@ const select = () => {
 const confirmStop = async () => {
   const ok = await ui.confirm({
     title: "停止组网",
-    message: `确定要停止 ${props.inst.file_name} 吗?`,
+    message: `确定要停止 ${displayName.value} 吗?`,
     danger: true,
     confirmText: "停止",
   });
@@ -37,7 +53,7 @@ const confirmStop = async () => {
 const confirmRestart = async () => {
   const ok = await ui.confirm({
     title: "重启组网",
-    message: `确定要重启 ${props.inst.file_name} 吗?`,
+    message: `确定要重启 ${displayName.value} 吗?`,
   });
   if (ok) app.restartVnt(props.inst.file_name);
 };
@@ -45,7 +61,7 @@ const confirmRestart = async () => {
 const confirmDismiss = async () => {
   const ok = await ui.confirm({
     title: "移除实例",
-    message: `确定要移除已停止的实例 ${props.inst.file_name} 吗?`,
+    message: `确定要移除已停止的实例 ${displayName.value} 吗?`,
     danger: true,
     confirmText: "移除",
   });
@@ -66,9 +82,20 @@ const confirmDismiss = async () => {
   >
     <div class="flex items-center justify-between gap-2">
       <h3 class="truncate text-base font-bold text-slate-900 dark:text-white" :title="inst.file_name">
-        {{ inst.config_name || inst.file_name }}
+        {{ displayName }}
       </h3>
-      <span class="shrink-0" :class="statusBadgeClass(inst.status)">{{ statusText(inst.status) }}</span>
+      <div class="flex shrink-0 items-center gap-1.5">
+        <span
+          v-if="info.config_changed"
+          class="badge-yellow"
+          title="配置文件在启动后被修改，重启实例后生效"
+        >
+          配置发生变化
+        </span>
+        <span :class="[statusBadgeClass(inst.status), stopping ? 'animate-pulse' : '']">{{
+          statusText(inst.status)
+        }}</span>
+      </div>
     </div>
 
     <div class="mt-2 text-sm">
@@ -98,33 +125,41 @@ const confirmDismiss = async () => {
     </div>
 
     <div class="mt-4 flex flex-wrap justify-end gap-2">
-      <button
-        v-if="inst.status === 'running' || inst.status === 'stopped'"
-        class="btn-primary btn-sm"
-        :disabled="loading"
-        @click.stop="confirmRestart"
-      >
-        <span v-if="loading" class="animate-spin">⟳</span>
-        {{ inst.status === "stopped" ? "重新启动" : "重启" }}
-      </button>
-      <button
-        v-if="inst.status !== 'stopped'"
-        class="btn-danger btn-sm"
-        :disabled="loading"
-        @click.stop="confirmStop"
-      >
-        <span v-if="loading" class="animate-spin">⟳</span>
-        停止
-      </button>
-      <button
-        v-if="inst.status === 'stopped'"
-        class="btn-ghost btn-sm"
-        :disabled="loading"
-        @click.stop="confirmDismiss"
-      >
-        <span v-if="loading" class="animate-spin">⟳</span>
-        移除
-      </button>
+      <template v-if="stopping">
+        <span class="flex items-center gap-1.5 text-xs muted">
+          <span class="inline-block animate-spin">⟳</span>
+          正在停止，请稍候...
+        </span>
+      </template>
+      <template v-else>
+        <button
+          v-if="inst.status === 'running' || inst.status === 'stopped'"
+          class="btn-primary btn-sm"
+          :disabled="loading"
+          @click.stop="confirmRestart"
+        >
+          <span v-if="loading" class="animate-spin">⟳</span>
+          {{ inst.status === "stopped" ? "重新启动" : "重启" }}
+        </button>
+        <button
+          v-if="inst.status !== 'stopped'"
+          class="btn-danger btn-sm"
+          :disabled="loading"
+          @click.stop="confirmStop"
+        >
+          <span v-if="loading" class="animate-spin">⟳</span>
+          停止
+        </button>
+        <button
+          v-if="inst.status === 'stopped'"
+          class="btn-ghost btn-sm"
+          :disabled="loading"
+          @click.stop="confirmDismiss"
+        >
+          <span v-if="loading" class="animate-spin">⟳</span>
+          移除
+        </button>
+      </template>
     </div>
   </div>
 </template>

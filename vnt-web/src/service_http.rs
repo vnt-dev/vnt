@@ -242,7 +242,7 @@ impl<T> ApiResponse<T> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StartConfig {
     pub config_name: Option<String>,
     pub server: Vec<String>,
@@ -322,6 +322,8 @@ struct HttpAppInfo {
     compress: Option<bool>,
     encrypt: Option<bool>,
     rtx: Option<bool>,
+    /// 启动后配置文件是否发生过变化(与启动时的配置快照对比)
+    config_changed: bool,
 }
 
 #[derive(Serialize)]
@@ -1023,11 +1025,26 @@ async fn get_info(
     State(state): State<HttpAppState>,
     Query(req): Query<FileReq>,
 ) -> Json<ApiResponse<HttpAppInfo>> {
+    // 先读当前配置文件(异步),避免持锁跨 await
+    let current_config: Option<StartConfig> =
+        match fs::read_to_string(Path::new(CONFIG_DIR).join(&req.file_name)).await {
+            Ok(content) => toml::from_str(&content).ok(),
+            Err(_) => None,
+        };
+
     let lock = state.inner.lock();
     let Some(inst) = lock.instances.get(&req.file_name) else {
         return Json(ApiResponse::error("实例不存在"));
     };
     let status = inst.status;
+
+    // 与启动时的配置快照对比:文件缺失或解析失败也视为已变化
+    let config_changed = status != VntStatus::Stopped
+        && match (&inst.start_config, &current_config) {
+            (Some(base), Some(current)) => base != current,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
 
     let info = if let Some(handler) = inst.vnt.as_ref() {
         let api = &handler.api;
@@ -1077,11 +1094,13 @@ async fn get_info(
             compress: config.as_ref().map(|v| v.compress),
             encrypt: config.as_ref().map(|v| v.password.is_some()),
             rtx: config.as_ref().map(|v| v.rtx),
+            config_changed,
         }
     } else {
         HttpAppInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
             status,
+            config_changed,
             ..Default::default()
         }
     };

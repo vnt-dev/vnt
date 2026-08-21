@@ -22,6 +22,8 @@ export const useAppStore = defineStore("app", () => {
   const selectedInstance = ref(null);
   const configList = ref([]);
   const loadingMap = ref({});
+  // 停止中的实例:key=file_name;点击停止后置位,实例从列表消失或变为 stopped 时清除
+  const stoppingMap = ref({});
 
   // 页面可见性
   const isPageVisible = ref(!document.hidden);
@@ -93,6 +95,13 @@ export const useAppStore = defineStore("app", () => {
           delete instances.value[key];
         }
       }
+      // 停止已生效(实例消失或进入 stopped)时清除停止中标记
+      for (const key of Object.keys(stoppingMap.value)) {
+        const inst = list.find((i) => i.file_name === key);
+        if (!inst || inst.status === "stopped") {
+          delete stoppingMap.value[key];
+        }
+      }
       // 默认选中逻辑:当前选中失效时优先第一个 running,否则第一个,否则 null
       if (
         !selectedInstance.value ||
@@ -145,6 +154,7 @@ export const useAppStore = defineStore("app", () => {
   const stopVnt = async (fileName) => {
     if (!fileName || loadingMap.value[fileName]) return;
     loadingMap.value[fileName] = true;
+    stoppingMap.value[fileName] = true;
     try {
       await stopVntApi(fileName);
       ui.toast.success("已停止");
@@ -156,6 +166,8 @@ export const useAppStore = defineStore("app", () => {
     } catch (e) {
       ui.toast.error("停止失败: " + e.message);
       console.error(e);
+      // 停止失败,恢复可操作状态
+      delete stoppingMap.value[fileName];
     } finally {
       loadingMap.value[fileName] = false;
     }
@@ -231,6 +243,7 @@ export const useAppStore = defineStore("app", () => {
     selectedInstance,
     configList,
     loadingMap,
+    stoppingMap,
     isPageVisible,
     runningCount,
     startingCount,

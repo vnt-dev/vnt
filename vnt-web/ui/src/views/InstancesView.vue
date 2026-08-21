@@ -20,9 +20,9 @@ const app = useAppStore();
 
     <!-- 组网实例 -->
     <EmptyState v-if="app.instanceList.length === 0" text="暂无运行中的组网，请在上方选择配置启动" />
-    <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <TransitionGroup v-else name="card-list" tag="div" class="grid grid-cols-1 gap-4 md:grid-cols-2">
       <InstanceCard v-for="inst in app.instanceList" :key="inst.file_name" :inst="inst" selectable />
-    </div>
+    </TransitionGroup>
 
     <!-- 选中实例详情 -->
     <template v-if="app.selectedInstance && app.selectedInfo">
