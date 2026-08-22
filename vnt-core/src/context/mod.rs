@@ -524,8 +524,8 @@ impl ServerInfoCollection {
             server_node.client_map.extend(map);
         }
         let mut client_simple_map = HashMap::<Ipv4Addr, ClientSimpleInfo>::new();
-        for (_, server_node) in guard.iter() {
-            for (_, x) in server_node.client_map.iter() {
+        for server_node in guard.values() {
+            for x in server_node.client_map.values() {
                 if let Some(v) = client_simple_map.get_mut(&x.ip) {
                     if x.online {
                         v.online = true;
@@ -555,7 +555,7 @@ impl ServerInfoCollection {
                 }
             }
         } else {
-            for (_, server_node) in guard.iter() {
+            for server_node in guard.values() {
                 if server_node.connected {
                     return true;
                 }
@@ -597,7 +597,7 @@ impl ServerInfoCollection {
     }
     pub fn get_server_rtt(&self, ip: &Ipv4Addr) -> Option<u32> {
         let server_node_map_guard = self.server_node_map.read();
-        for (_, server_node) in server_node_map_guard.iter() {
+        for server_node in server_node_map_guard.values() {
             if !server_node.connected {
                 continue;
             }

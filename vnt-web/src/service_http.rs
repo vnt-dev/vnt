@@ -13,7 +13,7 @@ use axum::{
 use ipnet::Ipv4Net;
 use mime_guess::from_path;
 use parking_lot::Mutex;
-use rand::Rng;
+use rand::RngExt;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -849,7 +849,6 @@ async fn start_vnt_internal(
 
     let start_config = cfg.clone();
     let core_config = convert_config(cfg)?;
-    let sub_input = core_config.input.clone();
 
     state.record_log(&file_name, "创建异步任务组");
     let task_group_manager = state
@@ -870,7 +869,6 @@ async fn start_vnt_internal(
             config_display_name,
             start_config,
             core_config,
-            sub_input,
             task_group,
             task_group_guard,
         )
@@ -894,10 +892,10 @@ async fn start_vnt_network(
     config_display_name: String,
     start_config: StartConfig,
     core_config: CoreConfig,
-    sub_input: Vec<NetInput>,
     task_group: vnt_core::utils::task_control::TaskGroup,
     task_group_guard: vnt_core::utils::task_control::TaskGroupGuard,
 ) -> anyhow::Result<()> {
+    let sub_input = core_config.input.clone();
     let mut network_manager =
         NetworkManager::create_network(Box::new(core_config), task_group.clone())
             .await

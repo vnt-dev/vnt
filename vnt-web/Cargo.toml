@@ -23,4 +23,4 @@ mime_guess = "2.0"
 parking_lot.workspace = true
 time = { workspace = true, features = ["local-offset", "formatting", "macros"] }
 tokio-util.workspace = true
-rand = "0.9"
+rand = "0.10"
