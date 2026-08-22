@@ -7,7 +7,7 @@ edition = "2024"
 vnt-core.workspace = true
 tokio = { workspace = true, features = ["full"] }
 axum = "0.8.8"
-tower-http = { version = "0.7", features = ["fs", "cors", "trace"] }
+tower-http = { version = "0.7", features = ["cors"] }
 tower = { version = "0.5", features = ["util"] }
 
 serde.workspace = true

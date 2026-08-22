@@ -79,8 +79,8 @@ jobs:
             OS: ubuntu-latest
           - TARGET: x86_64-unknown-freebsd
             OS: ubuntu-latest
-            ARTIFACT_NAME: freebsd-13.2-x86_64
-            BSD_VERSION: 13.2
+            ARTIFACT_NAME: freebsd-14.4-x86_64
+            BSD_VERSION: '14.4'
     runs-on: ${{ matrix.OS }}
     env:
       NAME: Vnt
@@ -116,7 +116,7 @@ jobs:
       - name: List
         run: find ./
       - name: Build Vnt X86_64-FreeBSD
-        uses: cross-platform-actions/action@v0.23.0
+        uses: cross-platform-actions/action@v1.3.0
         if: ${{ endsWith(matrix.TARGET, 'freebsd') }}
         env:
           TARGET: ${{ matrix.TARGET }}
