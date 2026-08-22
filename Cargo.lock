@@ -6311,7 +6311,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vnt-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -6357,7 +6357,7 @@ dependencies = [
 
 [[package]]
 name = "vnt-desktop"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "log",
@@ -6378,7 +6378,7 @@ dependencies = [
 
 [[package]]
 name = "vnt-ipc"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "cli-table",
@@ -6396,7 +6396,7 @@ dependencies = [
 
 [[package]]
 name = "vnt-jni"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "hostname",
@@ -6413,7 +6413,7 @@ dependencies = [
 
 [[package]]
 name = "vnt-web"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -6438,7 +6438,7 @@ dependencies = [
 
 [[package]]
 name = "vnt2"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "clap",
