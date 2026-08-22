@@ -87,11 +87,6 @@ const updateListenScope = async (value) => {
   await saveNetworkSettings();
 };
 
-const copyToken = async () => {
-  await navigator.clipboard.writeText(draft.token);
-  notice.value = "访问令牌已复制";
-};
-
 const copyUrl = async () => {
   await navigator.clipboard.writeText(status.value.url);
   notice.value = "访问地址已复制";
@@ -120,7 +115,6 @@ onMounted(load);
         <div class="flex items-start justify-between gap-5">
           <div>
             <h3 class="text-sm font-semibold text-slate-900 dark:text-white">启用 Web 服务</h3>
-            <p class="mt-1 text-xs leading-5 text-slate-400">服务内置于桌面客户端，不会启动单独的 vnt2_web 进程。</p>
           </div>
           <button
             type="button"
@@ -159,10 +153,7 @@ onMounted(load);
             <span class="text-sm font-medium text-slate-700 dark:text-slate-200">访问令牌</span>
             <button class="text-xs font-medium text-indigo-600 hover:text-indigo-500 disabled:opacity-50 dark:text-indigo-400" type="button" :disabled="saving" @click="regenerate">更换令牌</button>
           </div>
-          <div class="flex items-center gap-2">
-            <code class="min-w-0 flex-1 truncate rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">{{ draft.token }}</code>
-            <button class="btn-ghost shrink-0" type="button" :disabled="saving" @click="copyToken">复制令牌</button>
-          </div>
+          <code class="block min-w-0 truncate rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">{{ draft.token }}</code>
           <p class="mt-2 text-xs text-slate-400">更换令牌后，已登录的浏览器需要使用新令牌重新鉴权。</p>
         </div>
 

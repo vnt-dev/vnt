@@ -19,7 +19,7 @@ let lastTrafficMap = {};
 let lastFetchTime = 0;
 // 展开状态和网速历史
 const expandedPeers = reactive({});
-const speedHistoryMap = {};
+const speedHistoryMap = reactive({});
 const HISTORY_SIZE = 60;
 
 const toggleExpand = (ip) => {
@@ -112,9 +112,9 @@ const getRouteModeClass = (route) => {
   // 判断是否直连:metric === 1
   const isDirect = route.metric === 1;
   if (isDirect) {
-    return "text-purple-600 font-medium dark:text-purple-400"; // 直连 - 紫色
+    return "font-medium text-green-600 dark:text-green-400";
   } else {
-    return "text-blue-600 dark:text-blue-400"; // 客户端中继 - 蓝色
+    return "text-blue-600 dark:text-blue-400";
   }
 };
 
@@ -183,7 +183,7 @@ const switcherClass = (fileName) =>
         </div>
       </div>
       <div class="custom-scrollbar max-h-[600px] overflow-x-auto">
-        <table class="table">
+        <table class="table peer-table">
           <thead>
             <tr>
               <th class="w-8 px-2"></th>
@@ -226,7 +226,7 @@ const switcherClass = (fileName) =>
                 <td>
                   <div class="flex items-center gap-2">
                     <span :class="peer.online ? 'badge-green' : 'badge-gray'">{{
-                      peer.online ? "Online" : "Offline"
+                      peer.online ? "在线" : "离线"
                     }}</span>
                     <!-- 加密状态图标 -->
                     <div v-if="peer.online && peer.key_equal === 1" class="tooltip">
@@ -316,3 +316,21 @@ const switcherClass = (fileName) =>
     </div>
   </div>
 </template>
+
+<style scoped>
+.peer-table :deep(thead th) {
+  padding: 0.5rem;
+  font-size: 0.6875rem;
+}
+
+.peer-table :deep(tbody td) {
+  padding: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.peer-table :deep(th:first-child),
+.peer-table :deep(td:first-child) {
+  padding-left: 0.25rem;
+  padding-right: 0;
+}
+</style>
