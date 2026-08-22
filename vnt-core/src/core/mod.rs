@@ -23,6 +23,7 @@ use crate::tunnel_core::server::rpc::ServerRPC;
 use crate::utils::task_control::TaskGroup;
 use anyhow::bail;
 use ipnet::Ipv4Net;
+#[cfg(not(target_os = "android"))]
 use std::net::Ipv4Addr;
 
 pub const DEFAULT_MTU: u16 = 1380;

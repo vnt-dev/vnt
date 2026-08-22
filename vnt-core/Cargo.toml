@@ -44,7 +44,6 @@ reed-solomon-erasure = "6.0"
 
 serde.workspace = true
 rcgen = "0.14.6"
-machine-uid = "0.5.4"
 
 zerocopy = { version = "0.8.31", features = ["derive"] }
 socket2 = { version = "0.6.1", features = ["all"] }
@@ -52,10 +51,13 @@ socket2 = { version = "0.6.1", features = ["all"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3.9", features = ["winreg"] }
 widestring = "1.2"
-windows-sys = { version = "0.60.2", features = ["Win32_Networking_WinSock"] }
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+machine-uid = "0.6"
 
 [build-dependencies]
 prost-build = "0.14"

@@ -10,7 +10,9 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tun_rs::async_framed::{Decoder, DeviceFramedRead, DeviceFramedWrite, Encoder};
-use tun_rs::{AsyncDevice, DeviceBuilder};
+use tun_rs::AsyncDevice;
+#[cfg(not(target_os = "android"))]
+use tun_rs::DeviceBuilder;
 
 #[derive(Clone)]
 pub struct DeviceIOManager {
@@ -19,6 +21,7 @@ pub struct DeviceIOManager {
 }
 type DeviceMutex = Arc<tokio::sync::Mutex<(Option<DeviceTask>, Option<(Ipv4Addr, u8)>)>>;
 pub struct DeviceTask {
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     device: Arc<AsyncDevice>,
     task: SubTask,
 }
@@ -104,6 +107,7 @@ impl DeviceIOManager {
             bail!("device doesn't exist")
         }
     }
+    #[cfg(not(target_os = "android"))]
     pub async fn set_network(&self, ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<()> {
         let mut guard = self.device.lock().await;
         let Some(dev) = guard.0.as_ref() else {
@@ -124,6 +128,15 @@ impl DeviceIOManager {
 }
 
 fn create_tun(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
+    #[cfg(target_os = "android")]
+    {
+        let fd = config.tun_fd.context("Android requires a VpnService TUN fd")?;
+        // SAFETY: The fd comes directly from ParcelFileDescriptor returned by
+        // VpnService.Builder.establish and remains open for the network lifetime.
+        return unsafe { Ok(AsyncDevice::from_fd(fd)?) };
+    }
+    #[cfg(not(target_os = "android"))]
+    {
     #[cfg(unix)]
     if let Some(fd) = config.tun_fd {
         // SAFETY: Caller must ensure fd is a valid, open file descriptor for a TUN device.
@@ -151,6 +164,7 @@ fn create_tun(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
         _ = dev.set_tx_queue_len(1000);
     }
     Ok(dev)
+    }
 }
 fn create(
     task_group: &TaskGroup,

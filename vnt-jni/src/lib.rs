@@ -300,54 +300,51 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeSetNetworkIp<'local>(
     ip: JString<'local>,
     prefix_len: jint,
 ) -> jboolean {
-    jni_guard!(env, 0, {
-        let result: anyhow::Result<()> = (|| {
-            let (network_manager_arc, runtime) = {
-                let mut global_state = GLOBAL_STATE.lock();
-                let state = global_state.as_mut().context("VNT not initialized")?;
+    #[cfg(target_os = "android")]
+    {
+        let _ = (handle, ip, prefix_len);
+        let _ = env.throw("set_network_ip is not supported on Android");
+        0
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        jni_guard!(env, 0, {
+            let result: anyhow::Result<()> = (|| {
+                let (network_manager_arc, runtime) = {
+                    let mut global_state = GLOBAL_STATE.lock();
+                    let state = global_state.as_mut().context("VNT not initialized")?;
 
-                let network_manager_arc = state
-                    .network_managers
-                    .get(&handle)
-                    .context("Invalid handle")?
-                    .clone();
+                    let network_manager_arc = state
+                        .network_managers
+                        .get(&handle)
+                        .context("Invalid handle")?
+                        .clone();
 
-                let runtime = state.runtime.clone();
-                (network_manager_arc, runtime)
-            };
+                    let runtime = state.runtime.clone();
+                    (network_manager_arc, runtime)
+                };
 
-            let ip_str: String = env.get_string(&ip)?.into();
-            let ip_addr: Ipv4Addr = ip_str.parse().context("Invalid IP address")?;
-
-            let manager_lock = network_manager_arc.lock();
-            let manager = manager_lock
-                .as_ref()
-                .context("Network manager already destroyed")?;
-
-            #[cfg(not(target_os = "android"))]
-            {
+                let ip_str: String = env.get_string(&ip)?.into();
+                let ip_addr: Ipv4Addr = ip_str.parse().context("Invalid IP address")?;
+                let manager_lock = network_manager_arc.lock();
+                let manager = manager_lock
+                    .as_ref()
+                    .context("Network manager already destroyed")?;
                 runtime.block_on(async {
                     manager.set_tun_network_ip(ip_addr, prefix_len as u8).await
                 })?;
-            }
+                Ok(())
+            })();
 
-            #[cfg(target_os = "android")]
-            {
-                let _ = (ip_addr, prefix_len); // 避免未使用警告
-                anyhow::bail!("set_network_ip is not supported on Android");
+            match result {
+                Ok(_) => 1,
+                Err(e) => {
+                    let _ = env.throw(format!("Failed to set network IP: {:?}", e));
+                    0
+                }
             }
-
-            Ok(())
-        })();
-
-        match result {
-            Ok(_) => 1,
-            Err(e) => {
-                let _ = env.throw(format!("Failed to set network IP: {:?}", e));
-                0
-            }
-        }
-    })
+        })
+    }
 }
 
 /// 获取VntApi实例

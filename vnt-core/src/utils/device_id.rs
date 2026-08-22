@@ -2,6 +2,7 @@ use anyhow::Context;
 use std::fs;
 use std::path::PathBuf;
 pub fn get_device_id() -> anyhow::Result<String> {
+    #[cfg(not(target_os = "android"))]
     match machine_uid::get() {
         Ok(id) => return Ok(id),
         Err(e) => {

@@ -86,7 +86,6 @@ jobs:
       NAME: Vnt
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
-      FEATURES: ${{ matrix.FEATURES }}
     steps:
       - uses: actions/checkout@v5
       - name: Replace Web static files with current frontend build
@@ -295,10 +294,103 @@ jobs:
           name: Vnt-${{ matrix.TARGET }}
           path: |
             ./artifacts/*
+
+  build-android-jni:
+    name: Build Android JNI (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            abi: arm64-v8a
+            clang: aarch64-linux-android24-clang
+            cargo_env: AARCH64_LINUX_ANDROID
+            cc_env: CC_aarch64_linux_android
+            ar_env: AR_aarch64_linux_android
+          - target: armv7-linux-androideabi
+            abi: armeabi-v7a
+            clang: armv7a-linux-androideabi24-clang
+            cargo_env: ARMV7_LINUX_ANDROIDEABI
+            cc_env: CC_armv7_linux_androideabi
+            ar_env: AR_armv7_linux_androideabi
+          - target: x86_64-linux-android
+            abi: x86_64
+            clang: x86_64-linux-android24-clang
+            cargo_env: X86_64_LINUX_ANDROID
+            cc_env: CC_x86_64_linux_android
+            ar_env: AR_x86_64_linux_android
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android NDK r27d
+        run: sdkmanager "ndk;27.3.13750724"
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: android-jni-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: android-jni-${{ matrix.target }}-
+
+      - name: Build vnt-jni
+        env:
+          TARGET: ${{ matrix.target }}
+          CLANG: ${{ matrix.clang }}
+          CARGO_ENV: ${{ matrix.cargo_env }}
+          CC_ENV: ${{ matrix.cc_env }}
+          AR_ENV: ${{ matrix.ar_env }}
+        run: |
+          set -euo pipefail
+          NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.3.13750724"
+          toolchain="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export PATH="$toolchain:$PATH"
+          export "CARGO_TARGET_${CARGO_ENV}_LINKER=$toolchain/$CLANG"
+          export "CARGO_TARGET_${CARGO_ENV}_RUSTFLAGS=-C link-arg=-Wl,-z,max-page-size=16384"
+          export "$CC_ENV=$toolchain/$CLANG"
+          export "$AR_ENV=$toolchain/llvm-ar"
+          cargo build --locked --release -p vnt-jni --target "$TARGET"
+
+      - name: Verify and package native library
+        env:
+          TARGET: ${{ matrix.target }}
+          ABI: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.3.13750724"
+          library="target/$TARGET/release/libvnt_jni.so"
+          readelf="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          nm="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          test -s "$library"
+          "$nm" -D --defined-only "$library" | grep -q Java_com_vnt_VntManager_nativeInit
+          "$readelf" -l "$library" | awk '/ LOAD / { found=1; if ($NF != "0x4000") bad=1 } END { exit (!found || bad) }'
+          mkdir -p artifacts
+          asset="artifacts/vnt-jni-${ABI}-${GITHUB_REF_NAME}.so"
+          cp "$library" "$asset"
+          (cd artifacts && sha256sum "$(basename "$asset")" > "$(basename "$asset").sha256")
+
+      - name: Upload Android JNI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vnt-Android-${{ matrix.abi }}
+          path: artifacts/vnt-jni-${{ matrix.abi }}-${{ github.ref_name }}.so*
+          if-no-files-found: error
   # deploys to github releases on tag
   deploy:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, build-android-jni]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -312,6 +404,14 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN  }}
           file: ./artifacts/*/*.zip
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
+      - name: Release Android JNI libraries
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./artifacts/Vnt-Android-*/*.so*
           tag: ${{ github.ref }}
           overwrite: true
           file_glob: true
