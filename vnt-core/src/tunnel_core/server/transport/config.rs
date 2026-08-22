@@ -187,7 +187,6 @@ impl ConnectConfig {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -412,11 +412,7 @@ mod tests {
         build_packet(fec, 0x81, 0)
     }
 
-    fn build_packet(
-        fec: FecPacket,
-        type_byte: u8,
-        flags_byte: u8,
-    ) -> NetPacket<TransmissionBytes> {
+    fn build_packet(fec: FecPacket, type_byte: u8, flags_byte: u8) -> NetPacket<TransmissionBytes> {
         let fec_payload = fec.encode_to_vec();
         let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + fec_payload.len());
         let mut pkt = NetPacket::new(buffer).unwrap();
@@ -467,13 +463,25 @@ mod tests {
         // 收到 pkt0、pkt1，pkt2 丢失，随后收到校验包
         assert!(
             decoder
-                .receive(build_data_packet(group_id, 0, type_bytes[0], 0, payloads[0]))
+                .receive(build_data_packet(
+                    group_id,
+                    0,
+                    type_bytes[0],
+                    0,
+                    payloads[0]
+                ))
                 .unwrap()
                 .is_some()
         );
         assert!(
             decoder
-                .receive(build_data_packet(group_id, 1, type_bytes[1], 0, payloads[1]))
+                .receive(build_data_packet(
+                    group_id,
+                    1,
+                    type_bytes[1],
+                    0,
+                    payloads[1]
+                ))
                 .unwrap()
                 .is_some()
         );

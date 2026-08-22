@@ -321,7 +321,6 @@ impl RouteTableInner {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

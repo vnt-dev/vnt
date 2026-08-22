@@ -98,7 +98,6 @@ async fn stream_copy(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

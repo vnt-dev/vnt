@@ -45,6 +45,9 @@ export const getStartStatus = (fileName) =>
 // GET /api/version
 export const getVersion = () => request("/api/version");
 
+// GET /api/runtime
+export const getRuntime = () => request("/api/runtime");
+
 // GET /api/instances
 export const getInstances = () => request("/api/instances");
 

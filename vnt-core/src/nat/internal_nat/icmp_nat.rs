@@ -194,7 +194,6 @@ async fn inner_icmp_socket_recv(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,8 +220,12 @@ mod tests {
         let now = Instant::now();
         let mut map: IcmpNatMap = HashMap::new();
         let (k_fresh, v_fresh) = entry("8.8.8.8", 1, 1, now);
-        let (k_stale, v_stale) =
-            entry("1.1.1.1", 2, 2, now - ICMP_NAT_TIMEOUT - Duration::from_secs(1));
+        let (k_stale, v_stale) = entry(
+            "1.1.1.1",
+            2,
+            2,
+            now - ICMP_NAT_TIMEOUT - Duration::from_secs(1),
+        );
         map.insert(k_fresh, v_fresh);
         map.insert(k_stale, v_stale);
 

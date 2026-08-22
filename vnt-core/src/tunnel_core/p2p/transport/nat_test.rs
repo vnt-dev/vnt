@@ -437,7 +437,6 @@ fn default_tcp_stun() -> Vec<String> {
     ]
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,7 +451,10 @@ mod tests {
         let scanned = vec![ip("192.168.1.2"), ip("10.0.0.3")];
         let (primary, list) = select_local_ipv4(Some(ip("172.16.0.2")), &scanned).unwrap();
         assert_eq!(primary, ip("172.16.0.2"));
-        assert_eq!(list, vec![ip("172.16.0.2"), ip("192.168.1.2"), ip("10.0.0.3")]);
+        assert_eq!(
+            list,
+            vec![ip("172.16.0.2"), ip("192.168.1.2"), ip("10.0.0.3")]
+        );
     }
 
     /// 探测失败/0.0.0.0 时：回退到扫描结果首个地址
@@ -463,8 +465,7 @@ mod tests {
         assert_eq!(primary, ip("192.168.1.2"));
         assert_eq!(list, scanned);
 
-        let (primary, _) =
-            select_local_ipv4(Some(Ipv4Addr::UNSPECIFIED), &scanned).unwrap();
+        let (primary, _) = select_local_ipv4(Some(Ipv4Addr::UNSPECIFIED), &scanned).unwrap();
         assert_eq!(primary, ip("192.168.1.2"));
     }
 

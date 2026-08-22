@@ -25,11 +25,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* https://api.github.com"
     }
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -44,6 +45,17 @@
     "windows": {
       "wix": { "language": "zh-CN" },
       "nsis": { "displayLanguageSelector": false }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE3MTQzQjc3NTJGQjBGRTEKUldUaEQvdFNkenNVcHdwd0pRNEhDV1lTdkMzTDZLa1V3WGllMDRoMmxBNDdobi8wclN1dmo3cFoK",
+      "endpoints": [
+        "https://github.com/vnt-dev/vnt/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

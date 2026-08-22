@@ -100,7 +100,6 @@ impl QuicInnerInboundReceiver {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

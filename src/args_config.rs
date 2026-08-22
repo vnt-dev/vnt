@@ -489,7 +489,6 @@ server = ["quic://1.2.3.4:29872"]
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -350,7 +350,6 @@ fn spawn_dest_sender(
     });
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

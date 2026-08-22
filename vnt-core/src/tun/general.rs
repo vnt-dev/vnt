@@ -86,7 +86,12 @@ impl DeviceIOManager {
         let device = Arc::new(create_tun(device_config)?);
         let receiver = receiver.take().unwrap();
         let enhanced_outbound = enhanced_outbound.take().unwrap();
-        let task = create(&self.task_group, device, receiver.receiver, enhanced_outbound);
+        let task = create(
+            &self.task_group,
+            device,
+            receiver.receiver,
+            enhanced_outbound,
+        );
         self.device.lock().await.0.replace(task);
         Ok(())
     }

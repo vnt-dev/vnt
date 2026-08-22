@@ -48,7 +48,11 @@ mod tests {
     use super::*;
 
     fn temp_dll_path(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("vnt_wintun_test_{}_{}.dll", std::process::id(), tag))
+        std::env::temp_dir().join(format!(
+            "vnt_wintun_test_{}_{}.dll",
+            std::process::id(),
+            tag
+        ))
     }
 
     #[test]

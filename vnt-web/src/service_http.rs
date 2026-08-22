@@ -120,8 +120,7 @@ impl HttpAppState {
         }
         inst.vnt.take();
         inst.status = VntStatus::Stopped;
-        inst
-            .start_logs
+        inst.start_logs
             .push(format!("[{}] 启动中断", HttpAppState::timestamp()));
     }
     fn starting_to_running(&self, file_name: &str) {
@@ -475,8 +474,34 @@ pub struct VntService {
     router: Router,
 }
 
+#[derive(Clone, Copy)]
+enum ServiceRuntime {
+    StandaloneWeb,
+    DesktopWeb,
+}
+
+impl ServiceRuntime {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::StandaloneWeb => "standalone_web",
+            Self::DesktopWeb => "desktop_web",
+        }
+    }
+}
+
 impl VntService {
     pub async fn new(start_config_file_name: Option<PathBuf>) -> anyhow::Result<Self> {
+        Self::new_with_runtime(start_config_file_name, ServiceRuntime::StandaloneWeb).await
+    }
+
+    pub async fn new_desktop(start_config_file_name: Option<PathBuf>) -> anyhow::Result<Self> {
+        Self::new_with_runtime(start_config_file_name, ServiceRuntime::DesktopWeb).await
+    }
+
+    async fn new_with_runtime(
+        start_config_file_name: Option<PathBuf>,
+        runtime: ServiceRuntime,
+    ) -> anyhow::Result<Self> {
         fs::create_dir_all(CONFIG_DIR)
             .await
             .context("Failed to create config directory")?;
@@ -496,7 +521,7 @@ impl VntService {
         }
 
         Ok(Self {
-            router: api_router(state),
+            router: api_router(state, runtime),
         })
     }
 
@@ -547,9 +572,12 @@ pub fn generate_access_token() -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn api_router(state: HttpAppState) -> Router {
+fn api_router(state: HttpAppState, runtime: ServiceRuntime) -> Router {
+    let get_runtime =
+        move || async move { Json(ApiResponse::success(runtime.as_str().to_string())) };
     Router::new()
         .route("/api/version", get(get_version))
+        .route("/api/runtime", get(get_runtime))
         .route("/api/info", get(get_info))
         .route("/api/peers", get(get_peers))
         .route("/api/routes", get(get_routes))
@@ -594,10 +622,7 @@ fn http_router(api: Router, token: String) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
     Router::new()
-        .merge(api.layer(middleware::from_fn_with_state(
-            token,
-            token_auth_middleware,
-        )))
+        .merge(api.layer(middleware::from_fn_with_state(token, token_auth_middleware)))
         .fallback(static_handler)
         .layer(cors)
         .layer(middleware::from_fn(logging_middleware))
@@ -610,7 +635,9 @@ pub async fn run_http_server(
 ) -> anyhow::Result<()> {
     let service = VntService::new(start_config_file_name).await?;
     let cancellation = CancellationToken::new();
-    let handle = service.start_http(addr, token, cancellation.clone()).await?;
+    let handle = service
+        .start_http(addr, token, cancellation.clone())
+        .await?;
     shutdown_signal().await;
     cancellation.cancel();
     handle.await??;
@@ -644,7 +671,11 @@ async fn determine_auto_start_files(
     };
 
     for p in paths {
-        let Some(file_name) = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_string()) else {
+        let Some(file_name) = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+        else {
             continue;
         };
         if result.iter().any(|(name, _)| *name == file_name) {
@@ -830,9 +861,7 @@ async fn start_vnt_internal(
         let running: Vec<&StartConfig> = inner
             .instances
             .iter()
-            .filter(|(name, inst)| {
-                name.as_str() != file_name && inst.status != VntStatus::Stopped
-            })
+            .filter(|(name, inst)| name.as_str() != file_name && inst.status != VntStatus::Stopped)
             .filter_map(|(_, inst)| {
                 inst.vnt
                     .as_ref()
@@ -1592,17 +1621,38 @@ mod tests {
     #[tokio::test]
     async fn test_ipc_request_uses_in_process_router() {
         let service = VntService {
-            router: api_router(new_test_state()),
+            router: api_router(new_test_state(), ServiceRuntime::StandaloneWeb),
         };
         let response = service.request("GET", "/api/version", None).await.unwrap();
         assert_eq!(response["code"], 0);
-        assert!(response["data"].as_str().is_some_and(|value| !value.is_empty()));
+        assert!(
+            response["data"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+
+        let response = service.request("GET", "/api/runtime", None).await.unwrap();
+        assert_eq!(response["code"], 0);
+        assert_eq!(response["data"], "standalone_web");
+
+        let desktop_service = VntService {
+            router: api_router(new_test_state(), ServiceRuntime::DesktopWeb),
+        };
+        let response = desktop_service
+            .request("GET", "/api/runtime", None)
+            .await
+            .unwrap();
+        assert_eq!(response["code"], 0);
+        assert_eq!(response["data"], "desktop_web");
     }
 
     #[tokio::test]
     async fn test_http_api_requires_bearer_token() {
         let token = "test-token-with-enough-entropy".to_string();
-        let app = http_router(api_router(new_test_state()), token.clone());
+        let app = http_router(
+            api_router(new_test_state(), ServiceRuntime::StandaloneWeb),
+            token.clone(),
+        );
         let unauthorized = app
             .clone()
             .oneshot(

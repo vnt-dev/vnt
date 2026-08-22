@@ -1,4 +1,4 @@
-name: Rust
+name: Release
 
 on:
   push:
@@ -17,8 +17,36 @@ permissions:
   packages: write
 
 jobs:
+  build-web:
+    name: Build Web frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.5
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build shared Web frontend
+        run: pnpm build:web
+      - name: Upload Web static files
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnt-web-static
+          path: vnt-web/static
+          retention-days: 1
+
   build:
     name: Build ${{ matrix.TARGET }}
+    needs: build-web
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +88,14 @@ jobs:
       OS: ${{ matrix.OS }}
       FEATURES: ${{ matrix.FEATURES }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: Replace Web static files with current frontend build
+        run: rm -rf vnt-web/static && mkdir -p vnt-web/static
+      - name: Download Web static files
+        uses: actions/download-artifact@v4
+        with:
+          name: vnt-web-static
+          path: vnt-web/static
       - name: Init submodules
         run: git submodule update --init --recursive --remote && git submodule status
       - name: Cargo cache
@@ -280,3 +315,61 @@ jobs:
           tag: ${{ github.ref }}
           overwrite: true
           file_glob: true
+
+  desktop-windows:
+    name: Build and publish VNT Desktop for Windows
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: deploy
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.5
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify tag matches desktop version
+        shell: pwsh
+        run: |
+          $config = Get-Content vnt-desktop/src-tauri/tauri.conf.json | ConvertFrom-Json
+          $tagVersion = "${{ github.ref_name }}" -replace '^v', ''
+          if ($tagVersion -ne $config.version) {
+            throw "Tag ${{ github.ref_name }} does not match desktop version $($config.version)"
+          }
+      - name: Build and publish Windows desktop installers
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: vnt-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: VNT ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: false
+          releaseAssetNamePattern: 'VNT.Desktop_[version]_windows_[arch][setup][ext]'
+          args: --bundles nsis,msi
+
+  release-notes:
+    name: Add download links to release notes
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: desktop-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Update updater metadata and release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/update-release-downloads.mjs

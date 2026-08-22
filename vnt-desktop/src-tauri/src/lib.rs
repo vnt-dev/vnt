@@ -245,6 +245,8 @@ pub fn run() {
             open_web_url
         ])
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
@@ -260,7 +262,7 @@ pub fn run() {
             let config_path = data_dir.join(WEB_ACCESS_CONFIG);
             let config = load_web_config(&config_path);
             save_web_config(&config_path, &config)?;
-            let service = tauri::async_runtime::block_on(VntService::new(None))?;
+            let service = tauri::async_runtime::block_on(VntService::new_desktop(None))?;
             let mut web = WebRuntime {
                 config,
                 cancellation: None,

@@ -1,6 +1,6 @@
 fn main() {
-    let protoc_path = protoc_bin_vendored::protoc_bin_path()
-        .expect("failed to find vendored protoc");
+    let protoc_path =
+        protoc_bin_vendored::protoc_bin_path().expect("failed to find vendored protoc");
 
     let mut config = prost_build::Config::new();
 

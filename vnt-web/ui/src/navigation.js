@@ -36,6 +36,12 @@ export const navItems = [
     desktopOnly: true,
     icon: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0c2.2-2.5 3.3-5.5 3.3-9S14.2 5.5 12 3m0 18c-2.2-2.5-3.3-5.5-3.3-9S9.8 5.5 12 3M3.5 9h17m-17 6h17",
   },
+  {
+    to: "/about",
+    label: "关于",
+    shortLabel: "关于",
+    icon: "M12 17v-6m0-4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
+  },
 ];
 
 export const visibleNavItems = () =>

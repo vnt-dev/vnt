@@ -160,10 +160,7 @@ pub async fn ping_all(
         }
     }
 }
-pub async fn route_timeout_task(
-    route_table: RouteTable,
-    packet_loss_stats: PacketLossStats,
-) {
+pub async fn route_timeout_task(route_table: RouteTable, packet_loss_stats: PacketLossStats) {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let expired_time = std::time::Instant::now() - Duration::from_secs(10);
@@ -227,10 +224,7 @@ pub async fn relay_probe_task(
             if non_direct_targets.len() <= 10 {
                 non_direct_targets
             } else {
-                non_direct_targets
-                    .sample(&mut rng, 10)
-                    .copied()
-                    .collect()
+                non_direct_targets.sample(&mut rng, 10).copied().collect()
             }
         };
 

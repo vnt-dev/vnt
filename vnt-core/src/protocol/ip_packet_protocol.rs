@@ -349,8 +349,7 @@ mod tests {
     /// 接收方以 metric = max_ttl - curr_ttl 计算路由距离。
     #[test]
     fn relay_reply_survives_one_hop() {
-        let mut packet =
-            NetPacket::new(BytesMut::from(&[0u8; HEAD_LENGTH][..])).unwrap();
+        let mut packet = NetPacket::new(BytesMut::from(&[0u8; HEAD_LENGTH][..])).unwrap();
         packet.set_msg_type(MsgType::RelayProbeReply);
         // 目标方回复时 TTL 必须允许一次中继
         packet.set_ttl(2);

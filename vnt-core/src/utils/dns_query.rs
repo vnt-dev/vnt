@@ -278,7 +278,6 @@ pub async fn aaaa_dns(
     Ok(rs)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

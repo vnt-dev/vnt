@@ -321,11 +321,8 @@ mod tests {
         );
 
         let _ = exit_tx.send(());
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            group.wait_all_stopped(),
-        )
-        .await
-        .expect("wait_all_stopped should return after observer exits");
+        tokio::time::timeout(std::time::Duration::from_secs(2), group.wait_all_stopped())
+            .await
+            .expect("wait_all_stopped should return after observer exits");
     }
 }

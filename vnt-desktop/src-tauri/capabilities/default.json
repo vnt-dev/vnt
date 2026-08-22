@@ -11,6 +11,8 @@
     "core:window:allow-unmaximize",
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "process:allow-restart",
+    "updater:default"
   ]
 }
