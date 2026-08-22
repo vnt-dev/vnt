@@ -917,8 +917,6 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         no_nat: bool,
         #[serde(default)]
         device_mode: DeviceMode,
-        #[serde(default, rename = "no_tun")]
-        legacy_no_tun: Option<bool>,
         #[serde(default)]
         mtu: Option<u16>,
         #[serde(default)]
@@ -934,9 +932,6 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
     }
 
     let cfg: ConfigJson = serde_json::from_str(json_str)?;
-    if cfg.legacy_no_tun.is_some() {
-        anyhow::bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"");
-    }
 
     let server_addrs: Vec<ProtocolAddress> = cfg
         .server

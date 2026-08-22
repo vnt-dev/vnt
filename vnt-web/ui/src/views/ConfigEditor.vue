@@ -504,7 +504,7 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               <label :class="toggleLabelClass">
                 <div class="flex-1">
                   <div class="text-sm font-medium text-slate-800 dark:text-white">允许作为映射出口</div>
-                  <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板</div>
+                  <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板来进行端口映射</div>
                 </div>
                 <input v-model="formData.allow_mapping" type="checkbox" :class="checkboxClass" />
               </label>
