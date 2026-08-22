@@ -64,11 +64,21 @@ pnpm dev:desktop
 2. 提升流量稳定性，支持使用quic代理流量，支持FEC冗余传输
 3. 简化操作，去除了大量vnt1.0的重复和无用的配置参数
 4. vnt-link、vnt合二为一
-5. 支持有tun模式、无tun模式、端口映射
+5. 支持无网卡、TUN（三层）和 TAP（二层）模式及端口映射；三种模式的 IPv4 流量可互通
 6. 全功能的情况下，减少程序体积
 7. 性能提升，支持linux-offload
 8. 更规范的api接入，可以轻松自定义客户端
 9. 支持同时连接多个服务端，可以容灾和负载均衡
+
+## 虚拟网卡模式
+
+配置文件使用 `device_mode = "no|tun|tap"`，默认值为 `tun`；命令行可用 `--device-mode` 覆盖。旧的 `no_tun` 配置已移除，程序会提示迁移而不会静默按 TUN 启动。
+
+- `no`：不创建虚拟网卡，只提供流量出口和端口映射。
+- `tun`：创建三层网卡，网卡收发 IPv4 包。
+- `tap`：创建二层网卡，完整透传 Ethernet 帧，并与 TUN/NO 节点转换 IPv4、兼容 ARP。
+
+Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装 `tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
 
 # 说明
 

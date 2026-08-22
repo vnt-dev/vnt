@@ -1,4 +1,5 @@
 use crate::context::AppState;
+use crate::context::config::DeviceMode;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
 use crate::nat::SubnetExternalRoute;
@@ -18,6 +19,7 @@ pub(crate) struct TunnelConfig {
     pub password: Option<String>,
     pub open_quic_client: bool,
     pub port_mapping: Vec<PortMapping>,
+    pub device_mode: DeviceMode,
 }
 
 pub(crate) struct TunnelComponents {
@@ -36,7 +38,7 @@ pub(crate) async fn enhanced_ipv4_tunnel(
 ) -> anyhow::Result<(EnhancedInbound, Option<EnhancedOutbound>)> {
     let password = config.password.unwrap_or_else(|| "password".to_string());
     let tun = match &tun_data_sender {
-        EnhancedTunInbound::Tun(tun) => Some(tun.clone()),
+        EnhancedTunInbound::Tun(tun) | EnhancedTunInbound::Tap(tun) => Some(tun.clone()),
         EnhancedTunInbound::Nat(_) => None,
     };
     let (inbound, outbound) = quic_over::boot::quic_tunnel_start(
@@ -62,6 +64,8 @@ pub(crate) async fn enhanced_ipv4_tunnel(
         inbound,
         components.internal_nat_inbound,
         app_state.traffic_stats.clone(),
+        config.device_mode,
+        components.hybrid_outbound.clone(),
     );
 
     let enhanced_outbound = outbound.map(|outbound| {

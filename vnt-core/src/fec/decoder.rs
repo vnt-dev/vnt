@@ -436,6 +436,18 @@ mod tests {
         shard
     }
 
+    #[test]
+    fn test_original_fec_packet_preserves_ethernet_flag() {
+        let decoder = FecDecoder::new();
+        let packets = decoder
+            .receive(build_data_packet(99, 0, 0x81, 0x10, &[1, 2, 3]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(packets.len(), 1);
+        assert!(packets[0].is_ethernet());
+        assert!(!packets[0].is_fec());
+    }
+
     /// 变长批次：丢一个数据包，靠校验包必须能恢复（修复前必报 IncorrectShardSize）
     #[test]
     fn test_reconstruct_variable_length_batch() {

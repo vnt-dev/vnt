@@ -51,7 +51,7 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 pnpm build:desktop
 ```
 
-Windows 使用虚拟网卡模式时，可能需要以管理员身份运行。
+Windows 使用虚拟网卡模式时，可能需要以管理员身份运行；TAP（二层）模式还需要预先安装 `tap-windows`（`tap0901`）驱动，内置的 `wintun.dll` 只用于 TUN（三层）模式。
 
 ### 发布桌面更新
 

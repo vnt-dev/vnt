@@ -2,6 +2,7 @@ pub(crate) mod compression;
 pub mod context;
 pub mod core;
 pub mod crypto;
+pub(crate) mod ethernet;
 pub(crate) mod fec;
 pub mod nat;
 pub mod protocol;

@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 use vnt_core::api::VntApi;
-use vnt_core::context::config::Config as CoreConfig;
+use vnt_core::context::config::{Config as CoreConfig, DeviceMode};
 use vnt_core::core::{DEFAULT_MTU, NetworkManager, RegisterResponse};
 use vnt_core::nat::NetInput;
 use vnt_core::port_mapping::PortMapping;
@@ -271,7 +271,9 @@ pub struct StartConfig {
     #[serde(default)]
     pub no_nat: bool,
     #[serde(default)]
-    pub no_tun: bool,
+    pub device_mode: DeviceMode,
+    #[serde(default, rename = "no_tun", skip_serializing)]
+    pub legacy_no_tun: Option<bool>,
     pub mtu: Option<u16>,
     #[serde(default)]
     pub port_mapping: Vec<String>,
@@ -282,6 +284,15 @@ pub struct StartConfig {
     #[serde(default)]
     pub tcp_stun: Vec<String>,
     pub tunnel_port: Option<u16>,
+}
+
+impl StartConfig {
+    fn reject_legacy_no_tun(&self) -> anyhow::Result<()> {
+        if self.legacy_no_tun.is_some() {
+            bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"")
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize)]
@@ -982,19 +993,20 @@ async fn start_vnt_network(
         format!("注册成功 {}/{}", reg_msg.ip, reg_msg.prefix_len),
     );
     log::info!("Network Started: {}/{}", reg_msg.ip, reg_msg.prefix_len);
-    if !network_manager.is_no_tun() {
-        state.record_log(&file_name, "正在创建 TUN 虚拟网卡");
-        network_manager.start_tun().await?;
+    if network_manager.device_mode().has_device() {
+        let mode = network_manager.device_mode();
+        state.record_log(&file_name, format!("正在创建 {} 虚拟网卡", mode));
+        network_manager.start_device().await?;
 
-        state.record_log(&file_name, "创建 TUN 虚拟网卡成功，设置 IP");
+        state.record_log(&file_name, format!("创建 {} 虚拟网卡成功，设置 IP", mode));
         network_manager
-            .set_tun_network_ip(reg_msg.ip, reg_msg.prefix_len)
+            .set_device_network_ip(reg_msg.ip, reg_msg.prefix_len)
             .await?;
         state.record_log(&file_name, "设置 IP 成功");
 
         // 配置子网路由
         if !sub_input.is_empty()
-            && let Ok(if_index) = network_manager.tun_if_index().await
+            && let Ok(if_index) = network_manager.device_if_index().await
             && let Ok(mut route_manager) = route_manager::RouteManager::new()
         {
             state.record_log(&file_name, "配置子网路由");
@@ -1011,6 +1023,8 @@ async fn start_vnt_network(
                 }
             }
         }
+    } else {
+        state.record_log(&file_name, "device_mode=no，不创建虚拟网卡");
     }
 
     state.starting_to_running(&file_name);
@@ -1278,7 +1292,13 @@ async fn list_configs() -> Json<ApiResponse<Vec<ConfigSummary>>> {
 
 async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
     // 验证配置格式
-    if let Err(e) = toml::from_str::<StartConfig>(&req.config) {
+    let parsed = toml::from_str::<StartConfig>(&req.config).and_then(|config| {
+        config
+            .reject_legacy_no_tun()
+            .map(|_| config)
+            .map_err(serde::de::Error::custom)
+    });
+    if let Err(e) = parsed {
         log::warn!("Failed to parse configuration: {:?}", e);
         return Json(ApiResponse::error(format!("Invalid TOML format: {}", e)));
     }
@@ -1358,6 +1378,7 @@ async fn delete_config(
 }
 
 fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
+    cfg.reject_legacy_no_tun()?;
     let server_addrs: Vec<ProtocolAddress> = cfg
         .server
         .iter()
@@ -1423,7 +1444,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         input: cfg.input,
         output: cfg.output,
         no_nat: cfg.no_nat,
-        no_tun: cfg.no_tun,
+        device_mode: cfg.device_mode,
         mtu: cfg.mtu,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
@@ -1750,8 +1771,9 @@ mod tests {
             input: Vec::new(),
             output: Vec::new(),
             no_nat: false,
-            // 默认 no_tun，避免无关用例意外触发 tun_name 冲突
-            no_tun: true,
+            // 默认无网卡，避免无关用例意外触发 tun_name 冲突
+            device_mode: DeviceMode::No,
+            legacy_no_tun: None,
             mtu: None,
             port_mapping: Vec::new(),
             allow_mapping: false,
@@ -1759,6 +1781,22 @@ mod tests {
             tcp_stun: Vec::new(),
             tunnel_port: None,
         }
+    }
+
+    #[test]
+    fn test_device_mode_config_and_legacy_rejection() {
+        let base = r#"server = ["quic://127.0.0.1:29872"]
+network_code = "test"
+"#;
+        let default_cfg: StartConfig = toml::from_str(base).unwrap();
+        assert_eq!(default_cfg.device_mode, DeviceMode::Tun);
+
+        let tap_cfg: StartConfig =
+            toml::from_str(&format!("{base}device_mode = \"tap\"\n")).unwrap();
+        assert_eq!(tap_cfg.device_mode, DeviceMode::Tap);
+
+        let legacy: StartConfig = toml::from_str(&format!("{base}no_tun = true\n")).unwrap();
+        assert!(legacy.reject_legacy_no_tun().is_err());
     }
 
     /// 两个实例同时处于 Starting 互不影响

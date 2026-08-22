@@ -89,11 +89,13 @@ mod tests {
 
         // --- 构造原始包 ---
         let payload = vec![1u8; 200];
-        let original = make_packet(&payload);
+        let mut original = make_packet(&payload);
+        original.set_ethernet_flag(true);
 
         // --- 压缩 ---
         let compressed = lz.compress(original, 0).unwrap();
         assert!(compressed.is_compressed());
+        assert!(compressed.is_ethernet());
 
         // 压缩后的 payload 应变小
         assert!(
@@ -106,11 +108,14 @@ mod tests {
 
         // 标志应清除
         assert!(!decompressed.is_compressed());
+        assert!(decompressed.is_ethernet());
 
         // HEAD 不变
+        let mut expected_head = [0u8; HEAD_LENGTH];
+        expected_head[2] = 0x10;
         assert_eq!(
             &decompressed.buffer()[..HEAD_LENGTH],
-            &[0u8; HEAD_LENGTH][..],
+            &expected_head,
             "HEAD 必须保持不变"
         );
 

@@ -6,13 +6,53 @@ use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAd
 use anyhow::bail;
 use ipnet::Ipv4Net;
 use std::collections::HashSet;
+use std::fmt::{Display, Formatter};
 use std::net::Ipv4Addr;
+use std::str::FromStr;
 
 pub const MAX_NETWORK_CODE_LEN: usize = 32;
 pub const MAX_DEVICE_ID_LEN: usize = 64;
 pub const MAX_NAME_LEN: usize = 128;
 pub const MAX_VERSION_LEN: usize = 32;
 pub const MAX_MTU: u16 = 1500;
+
+#[derive(Debug, Copy, Clone, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceMode {
+    No,
+    #[default]
+    Tun,
+    Tap,
+}
+
+impl DeviceMode {
+    pub fn has_device(self) -> bool {
+        !matches!(self, Self::No)
+    }
+}
+
+impl Display for DeviceMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::No => "no",
+            Self::Tun => "tun",
+            Self::Tap => "tap",
+        })
+    }
+}
+
+impl FromStr for DeviceMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "no" => Ok(Self::No),
+            "tun" => Ok(Self::Tun),
+            "tap" => Ok(Self::Tap),
+            _ => bail!("invalid device_mode '{value}', expected one of: no, tun, tap"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -33,7 +73,7 @@ pub struct Config {
     pub input: Vec<NetInput>,
     pub output: Vec<Ipv4Net>,
     pub no_nat: bool,
-    pub no_tun: bool,
+    pub device_mode: DeviceMode,
     pub mtu: Option<u16>,
     pub port_mapping: Vec<PortMapping>,
     pub allow_port_mapping: bool,
@@ -43,6 +83,10 @@ pub struct Config {
 }
 impl Config {
     pub fn check(&self) -> anyhow::Result<()> {
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
+        if self.device_mode == DeviceMode::Tap {
+            bail!("TAP mode is not supported on mobile VPN interfaces");
+        }
         if self.server_addr.is_empty() {
             bail!("服务器地址不能为空");
         }
@@ -105,5 +149,24 @@ impl Config {
             ip_variable: self.ip.is_none(),
             default_interface,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_mode_parse_and_display() {
+        for (text, mode) in [
+            ("no", DeviceMode::No),
+            ("tun", DeviceMode::Tun),
+            ("tap", DeviceMode::Tap),
+        ] {
+            assert_eq!(text.parse::<DeviceMode>().unwrap(), mode);
+            assert_eq!(mode.to_string(), text);
+        }
+        assert!("bridge".parse::<DeviceMode>().is_err());
+        assert_eq!(DeviceMode::default(), DeviceMode::Tun);
     }
 }

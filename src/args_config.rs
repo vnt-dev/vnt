@@ -4,7 +4,7 @@ use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
-use vnt_core::context::config::Config;
+use vnt_core::context::config::{Config, DeviceMode};
 use vnt_core::nat::NetInput;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
@@ -23,7 +23,9 @@ pub struct FileConfig {
     pub input: Option<Vec<NetInput>>,
     pub output: Option<Vec<Ipv4Net>>,
     pub no_nat: Option<bool>,
-    pub no_tun: Option<bool>,
+    pub device_mode: Option<DeviceMode>,
+    #[serde(rename = "no_tun", skip_serializing)]
+    pub legacy_no_tun: Option<bool>,
     pub mtu: Option<u16>,
     pub ctrl_port: Option<u16>,
     pub port_mapping: Option<Vec<String>>,
@@ -134,9 +136,9 @@ pub struct Args {
     /// 关闭内置子网NAT
     #[clap(long)]
     pub no_nat: bool,
-    /// 禁用tun，禁用后只能充当流量出口或者进行端口映射，无需管理员权限
+    /// 虚拟网卡模式：no（无网卡）、tun（三层网卡）、tap（二层网卡）
     #[clap(long)]
-    pub no_tun: bool,
+    pub device_mode: Option<DeviceMode>,
     /// 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址
     #[clap(long)]
     pub port_mapping: Vec<PortMapping>,
@@ -177,6 +179,14 @@ pub fn build_config_from_args_and_file(
     args: Option<Args>,
     file: Option<FileConfig>,
 ) -> anyhow::Result<(Config, CtrlConfig)> {
+    if file
+        .as_ref()
+        .is_some_and(|config| config.legacy_no_tun.is_some())
+    {
+        return Err(anyhow!(
+            "configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\""
+        ));
+    }
     match (args, file) {
         (Some(args), Some(file)) => build_from_args_and_file(args, file),
         (Some(args), None) => build_from_args_only(args),
@@ -258,7 +268,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         input,
         output,
         no_nat: args.no_nat || file.no_nat.unwrap_or(false),
-        no_tun: args.no_tun || file.no_tun.unwrap_or(false),
+        device_mode: args.device_mode.or(file.device_mode).unwrap_or_default(),
         mtu: args.mtu.or(file.mtu),
         port_mapping,
         allow_port_mapping: args.allow_mapping || file.allow_mapping.unwrap_or(false),
@@ -299,7 +309,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
             .unwrap_or(CertValidationMode::InsecureSkipVerification),
         output: args.output,
         no_nat: args.no_nat,
-        no_tun: args.no_tun,
+        device_mode: args.device_mode.unwrap_or_default(),
         mtu: args.mtu,
         port_mapping: args.port_mapping,
         allow_port_mapping: args.allow_mapping,
@@ -313,6 +323,11 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
 }
 
 fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)> {
+    if file.legacy_no_tun.is_some() {
+        return Err(anyhow!(
+            "configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\""
+        ));
+    }
     let server_addr = file.to_server_addr()?;
     let port_mapping = file.to_port_mapping()?;
 
@@ -358,7 +373,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         cert_mode,
         output: file.output.unwrap_or_default(),
         no_nat: file.no_nat.unwrap_or(false),
-        no_tun: file.no_tun.unwrap_or(false),
+        device_mode: file.device_mode.unwrap_or_default(),
         mtu: file.mtu,
         port_mapping,
         allow_port_mapping: file.allow_mapping.unwrap_or(false),
@@ -422,8 +437,8 @@ server = ["quic://1.2.3.4:29872"]
 # 是否关闭内置子网NAT，关闭(设为true)后需要配置网卡转发，否则无法使用点对网。通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好
 # no_nat = false
 
-# 是否关闭TUN虚拟网卡，关闭(设为true)后只能充当流量出口或者进行端口映射，关闭后无需管理员权限
-# no_tun = false
+# 虚拟网卡模式：no（无网卡）、tun（三层网卡，默认）、tap（二层网卡）
+# device_mode = "tun"
 
 # 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址
 # 端口映射用于在本地监听指定端口，并将收到的网络流量经由指定虚拟节点转发到目标地址，从而实现跨网络或内网服务访问
@@ -511,5 +526,51 @@ mod tests {
         let (config, _) = build_from_args_only(args).unwrap();
         assert_eq!(config.tunnel_port, Some(12345));
         assert_eq!(config.outbound_interface.as_deref(), Some("Ethernet"));
+    }
+
+    #[test]
+    fn test_device_mode_cli_and_legacy_rejection() {
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--device-mode",
+            "tap",
+        ])
+        .unwrap();
+        let (config, _) = build_from_args_only(args).unwrap();
+        assert_eq!(config.device_mode, DeviceMode::Tap);
+
+        let legacy: FileConfig = toml::from_str("no_tun = true").unwrap();
+        let error = match build_config_from_args_and_file(None, Some(legacy)) {
+            Err(error) => error,
+            Ok(_) => panic!("legacy no_tun must be rejected"),
+        };
+        assert!(error.to_string().contains("device_mode"));
+    }
+
+    #[test]
+    fn test_device_mode_cli_overrides_file_and_file_defaults() {
+        let file: FileConfig = toml::from_str("device_mode = \"no\"").unwrap();
+        let args = Args::try_parse_from(["vnt", "-s", "quic://127.0.0.1:29872", "-n", "test-net"])
+            .unwrap();
+        let (config, _) = build_config_from_args_and_file(Some(args), Some(file)).unwrap();
+        assert_eq!(config.device_mode, DeviceMode::No);
+
+        let file: FileConfig = toml::from_str("device_mode = \"no\"").unwrap();
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--device-mode",
+            "tap",
+        ])
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(Some(args), Some(file)).unwrap();
+        assert_eq!(config.device_mode, DeviceMode::Tap);
     }
 }

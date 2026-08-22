@@ -234,6 +234,60 @@ impl HybridOutbound {
         self.traffic_stats.record_tx(dest, len);
         Ok(())
     }
+
+    pub async fn ethernet_ipv4_outbound(
+        &self,
+        net: NetworkAddr,
+        data: TransmissionBytes,
+        mut dest: Ipv4Addr,
+    ) -> anyhow::Result<()> {
+        if dest == net.gateway {
+            let Some(ip) = crate::ethernet::strip_ipv4(data) else {
+                return Ok(());
+            };
+            return self.ipv4_gateway_outbound(net, ip).await;
+        }
+        if dest.is_multicast() || dest == net.broadcast || dest.is_broadcast() {
+            return self.ethernet_broadcast_outbound(net, data).await;
+        }
+        if !net.network().contains(&dest) {
+            if let Some(route) = self.external_route.route(&dest) {
+                dest = route;
+            } else {
+                return Ok(());
+            }
+        }
+        self.ethernet_unicast_outbound(net, dest, data).await
+    }
+
+    pub async fn ethernet_unicast_outbound(
+        &self,
+        net: NetworkAddr,
+        dest: Ipv4Addr,
+        mut data: TransmissionBytes,
+    ) -> anyhow::Result<()> {
+        let len = data.len() as u64;
+        data.retreat_head(HEAD_LENGTH)?;
+        let mut packet = NetPacket::new(data)?;
+        packet.set_msg_type(MsgType::Turn);
+        packet.set_src_id(net.ip.into());
+        packet.set_dest_id(dest.into());
+        packet.set_ttl(5);
+        packet.set_ethernet_flag(true);
+        let packet = self
+            .packet_compression
+            .compress(packet, self.basic_outbound.encrypt_reserve())?;
+        let packet = if let Some(fec_encoder) = &self.fec_encoder {
+            fec_encoder.encode(packet)?
+        } else {
+            packet
+        };
+        self.basic_outbound
+            .send_encrypted_packet(dest, packet)
+            .await?;
+        self.traffic_stats.record_tx(dest, len);
+        Ok(())
+    }
     pub async fn ipv4_gateway_outbound(
         &self,
         net: NetworkAddr,
@@ -275,6 +329,37 @@ impl HybridOutbound {
             return Ok(());
         }
 
+        self.basic_outbound
+            .send_raw_broadcast(exclude_ips, packet_bytes)
+            .await
+    }
+
+    pub async fn ethernet_broadcast_outbound(
+        &self,
+        net: NetworkAddr,
+        mut data: TransmissionBytes,
+    ) -> anyhow::Result<()> {
+        data.retreat_head(HEAD_LENGTH)?;
+        let mut packet = NetPacket::new(data)?;
+        packet.set_msg_type(MsgType::Broadcast);
+        packet.set_src_id(net.ip.into());
+        packet.set_dest_id(Ipv4Addr::BROADCAST.into());
+        packet.set_ttl(5);
+        packet.set_ethernet_flag(true);
+        let mut packet = self
+            .packet_compression
+            .compress(packet, self.basic_outbound.encrypt_reserve())?;
+        self.basic_outbound.encrypt_in_place(&mut packet)?;
+        let packet_bytes = packet.into_bytes();
+        let list = self.server_info.client_online_ips();
+        let exclude_ips = self
+            .basic_outbound
+            .p2p_broadcast_transmission(&list, 16, &packet_bytes);
+        if let Some(exclude_ips) = &exclude_ips
+            && exclude_ips.len() == list.len()
+        {
+            return Ok(());
+        }
         self.basic_outbound
             .send_raw_broadcast(exclude_ips, packet_bytes)
             .await

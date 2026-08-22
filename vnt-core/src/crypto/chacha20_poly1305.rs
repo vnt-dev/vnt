@@ -74,7 +74,7 @@ impl PacketCrypto {
 
     /// AAD 承担"认证"职责：覆盖传输中不变、但不参与 nonce 的头部字节
     /// byte0(msg_type)/byte2(flags)/byte3(reserved)。
-    /// msg_type 与 flags（COMPRESSED/FEC/GATEWAY）只由发送方设置、
+    /// msg_type 与 flags（COMPRESSED/FEC/GATEWAY/ETHERNET）只由发送方设置、
     /// 传输中不会被修改，必须纳入认证，否则中间人可翻转造成不可检测的
     /// 丢包/语义篡改；ttl(byte1) 在中继转发时会递减，不能纳入 AAD。
     fn make_aad<B: AsRef<[u8]>>(pkt: &NetPacket<B>) -> [u8; 3] {

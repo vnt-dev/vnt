@@ -26,9 +26,14 @@ const hasFormChanges = ref(false);
 const isParsingToml = ref(false);
 const formData = ref(emptyFormData());
 const certificateModeOptions = [
-  { value: "skip", label: "跳过验证（默认）" },
+  { value: "skip", label: "跳过验证(默认)" },
   { value: "standard", label: "系统证书验证" },
   { value: "finger", label: "证书指纹验证" },
+];
+const deviceModeOptions = [
+  { value: "no", label: "无虚拟网卡" },
+  { value: "tun", label: "TUN(三层)" },
+  { value: "tap", label: "TAP(二层)" },
 ];
 
 // 打开时加载内容
@@ -68,13 +73,17 @@ watch(
 // 切换到表单模式
 const switchToFormMode = () => {
   if (editMode.value === "toml") {
-    editMode.value = "form";
-    // 从TOML解析到表单
-    isParsingToml.value = true;
-    formData.value = parseTomlToForm(editorContent.value);
-    nextTick(() => {
-      isParsingToml.value = false;
-    });
+    try {
+      const parsed = parseTomlToForm(editorContent.value);
+      editMode.value = "form";
+      isParsingToml.value = true;
+      formData.value = parsed;
+      nextTick(() => {
+        isParsingToml.value = false;
+      });
+    } catch (e) {
+      ui.toast.error("配置解析失败: " + e.message);
+    }
   } else {
     editMode.value = "form";
   }
@@ -440,13 +449,13 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                   </div>
                   <input v-model="formData.no_nat" type="checkbox" :class="checkboxClass" />
                 </label>
-                <label :class="toggleLabelClass">
+                <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                   <div class="flex-1">
-                    <div class="text-sm font-medium text-slate-800 dark:text-white">关闭TUN网卡</div>
-                    <div class="text-xs text-slate-400 mt-0.5">仅作流量出口或端口映射</div>
+                    <div class="text-sm font-medium text-slate-800 dark:text-white">虚拟网卡模式</div>
+                    <div class="text-xs text-slate-400 mt-0.5">TAP 为二层网卡；Windows 需要 tap-windows 驱动</div>
                   </div>
-                  <input v-model="formData.no_tun" type="checkbox" :class="checkboxClass" />
-                </label>
+                  <AppSelect v-model="formData.device_mode" :options="deviceModeOptions" class="mt-2" aria-label="虚拟网卡模式" />
+                </div>
               </div>
             </div>
           </div>

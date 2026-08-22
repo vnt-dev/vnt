@@ -16,6 +16,7 @@ use crate::tun::TunDataInbound;
 use crate::tunnel_core::outbound::HybridOutbound;
 use crate::utils::task_control::TaskGroup;
 use anyhow::Context;
+use pnet_packet::ipv4::Ipv4Packet;
 use quinn::congestion::BbrConfig;
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::{ClientConfig, Endpoint, EndpointConfig, TransportConfig, default_runtime};
@@ -186,7 +187,13 @@ async fn ip_stack_recv_task(
             log::error!("not network");
             break;
         };
-        match tun_data_sender.send((&buf[..len]).into(), &net).await {
+        let Some(ipv4) = Ipv4Packet::new(&buf[..len]) else {
+            continue;
+        };
+        match tun_data_sender
+            .send_ip((&buf[..len]).into(), &net, ipv4.get_source())
+            .await
+        {
             Ok(_) => {}
             Err(e) => {
                 log::error!("IP stack send error: {:?}", e);

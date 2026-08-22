@@ -104,18 +104,26 @@ async fn main0() -> anyhow::Result<()> {
             }
         }
     };
-    if !network_manager.is_no_tun() {
-        log::info!("启动网络：{}/{}", reg_msg.ip, reg_msg.prefix_len);
-        network_manager.start_tun().await.context("start tun")?;
+    if network_manager.device_mode().has_device() {
+        log::info!(
+            "启动网络：{}/{} ({})",
+            reg_msg.ip,
+            reg_msg.prefix_len,
+            network_manager.device_mode()
+        );
         network_manager
-            .set_tun_network_ip(reg_msg.ip, reg_msg.prefix_len)
+            .start_device()
+            .await
+            .context("start device")?;
+        network_manager
+            .set_device_network_ip(reg_msg.ip, reg_msg.prefix_len)
             .await
             .context("set network ip")?;
         if !sub_input.is_empty() {
             let if_index = network_manager
-                .tun_if_index()
+                .device_if_index()
                 .await
-                .context("tun_if_index")?;
+                .context("device_if_index")?;
             let mut route_manager = route_manager::RouteManager::new()?;
             for x in sub_input {
                 let route = Route::new(x.net.network().into(), x.net.prefix_len())

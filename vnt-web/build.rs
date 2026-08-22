@@ -18,9 +18,18 @@ fn main() {
 
     // UI 源码变化时重新运行本脚本
     println!("cargo:rerun-if-changed={}", ui_dir.join("src").display());
-    println!("cargo:rerun-if-changed={}", ui_dir.join("index.html").display());
-    println!("cargo:rerun-if-changed={}", ui_dir.join("vite.config.js").display());
-    println!("cargo:rerun-if-changed={}", ui_dir.join("package.json").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        ui_dir.join("index.html").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        ui_dir.join("vite.config.js").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        ui_dir.join("package.json").display()
+    );
     // 产物被删除时也要重新运行
     println!(
         "cargo:rerun-if-changed={}",
@@ -53,9 +62,9 @@ fn main() {
 
     if !ui_dir.join("node_modules").is_dir() {
         // ui 依赖使用 workspace catalog，必须在仓库根目录安装
-        run_or_panic(&pnpm, &["install", "--frozen-lockfile"], workspace_root);
+        run_or_panic(pnpm, &["install", "--frozen-lockfile"], workspace_root);
     }
-    run_or_panic(&pnpm, &["--filter", "vnt-web-ui", "build"], workspace_root);
+    run_or_panic(pnpm, &["--filter", "vnt-web-ui", "build"], workspace_root);
 }
 
 /// pnpm 命令名（Windows 上是 pnpm.cmd，由 cmd.exe 执行）
@@ -72,14 +81,24 @@ fn find_pnpm() -> Option<&'static str> {
 }
 
 fn run_or_panic(program: &str, args: &[&str], dir: &Path) {
-    println!("cargo:warning=执行前端构建: {} {} ({})", program, args.join(" "), dir.display());
+    println!(
+        "cargo:warning=执行前端构建: {} {} ({})",
+        program,
+        args.join(" "),
+        dir.display()
+    );
     let status = Command::new(program)
         .args(args)
         .current_dir(dir)
         .status()
         .unwrap_or_else(|e| panic!("执行 {} 失败: {}", program, e));
     if !status.success() {
-        panic!("前端构建失败: {} {} (exit: {:?})", program, args.join(" "), status.code());
+        panic!(
+            "前端构建失败: {} {} (exit: {:?})",
+            program,
+            args.join(" "),
+            status.code()
+        );
     }
 }
 

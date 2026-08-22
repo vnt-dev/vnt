@@ -2,7 +2,7 @@
    0                                            15                                              31
    0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1  2  3  4  5  6  7  8  9  0  1
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  | 1 |    msg_type(7)  |max ttl(4) |curr ttl(4)| C | G | R |           reserve(13)             |
+   | 1 |    msg_type(7)  |max ttl(4) |curr ttl(4)| C | G | F | E |        reserve(12)             |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   |                                            seq(32)                                          |
   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -27,7 +27,7 @@ pub struct NetHeader {
     pub type_byte: u8,
     /// Byte 1: high 4 = max ttl, low 4 = curr ttl
     pub ttl_byte: u8,
-    /// Byte 2: C(0x80) | G(0x40) | reserve
+    /// Byte 2: C(0x80) | G(0x40) | F(0x20) | ETHERNET(0x10) | reserve
     pub flags_byte: u8,
     /// Byte 3: reserve
     pub _reserved: u8,
@@ -39,6 +39,7 @@ pub struct NetHeader {
 const COMPRESSED: u8 = 0x80;
 const GATEWAY: u8 = 0x40;
 const FEC: u8 = 0x20;
+const ETHERNET: u8 = 0x10;
 impl NetHeader {
     #[inline]
     pub fn msg_type(&self) -> u8 {
@@ -210,6 +211,9 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
     pub fn is_fec(&self) -> bool {
         (self.header().flags_byte & FEC) != 0
     }
+    pub fn is_ethernet(&self) -> bool {
+        (self.header().flags_byte & ETHERNET) != 0
+    }
     pub fn head(&self) -> &[u8] {
         &self.buffer.as_ref()[..HEAD_LENGTH]
     }
@@ -257,6 +261,9 @@ impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
     }
     pub fn set_fec_flag(&mut self, fec: bool) {
         self.header_mut().set_flag(FEC, fec);
+    }
+    pub fn set_ethernet_flag(&mut self, ethernet: bool) {
+        self.header_mut().set_flag(ETHERNET, ethernet);
     }
 
     pub fn set_payload(&mut self, data: &[u8]) -> io::Result<()> {
@@ -343,6 +350,19 @@ mod tests {
         assert!(MsgType::try_from(0u8).is_err());
         assert!(MsgType::try_from(16u8).is_err());
         assert!(MsgType::try_from(20u8).is_err());
+    }
+
+    #[test]
+    fn ethernet_flag_round_trip() {
+        let mut packet = NetPacket::new(BytesMut::from(&[0u8; HEAD_LENGTH][..])).unwrap();
+        assert!(!packet.is_ethernet());
+        packet.set_ethernet_flag(true);
+        assert!(packet.is_ethernet());
+        packet.set_fec_flag(true);
+        assert!(packet.is_ethernet());
+        packet.set_ethernet_flag(false);
+        assert!(!packet.is_ethernet());
+        assert!(packet.is_fec());
     }
 
     /// 中继转发语义：包每经过一跳 curr_ttl 减 1，curr_ttl >= 1 时才继续转发，

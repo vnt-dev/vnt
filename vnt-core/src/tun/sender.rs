@@ -1,25 +1,39 @@
 use crate::context::NetworkAddr;
+use crate::context::config::DeviceMode;
+use crate::ethernet::wrap_ipv4;
 use crate::nat::AllowSubnetExternalRoute;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tun::TunInbound;
 use pnet_packet::ipv4::Ipv4Packet;
+use std::net::Ipv4Addr;
 
 #[derive(Clone)]
 pub struct TunDataInbound {
     allow_subnet: AllowSubnetExternalRoute,
     tun_inbound: TunInbound,
+    device_mode: DeviceMode,
 }
 impl TunDataInbound {
-    pub fn new(tun_inbound: TunInbound, allow_subnet: AllowSubnetExternalRoute) -> Self {
+    pub fn new(
+        tun_inbound: TunInbound,
+        allow_subnet: AllowSubnetExternalRoute,
+        device_mode: DeviceMode,
+    ) -> Self {
         Self {
             allow_subnet,
             tun_inbound,
+            device_mode,
         }
     }
 }
 
 impl TunDataInbound {
-    pub async fn send(&self, data: TransmissionBytes, net: &NetworkAddr) -> anyhow::Result<()> {
+    pub async fn send_ip(
+        &self,
+        data: TransmissionBytes,
+        net: &NetworkAddr,
+        src_node: Ipv4Addr,
+    ) -> anyhow::Result<()> {
         if data.is_empty() || data[0] >> 4 != 4 {
             return Ok(());
         }
@@ -33,8 +47,21 @@ impl TunDataInbound {
             || dest.is_multicast()
             || self.allow_subnet.allow(&dest)
         {
+            let data = if self.device_mode == DeviceMode::Tap {
+                let Some(frame) = wrap_ipv4(data, src_node, net) else {
+                    return Ok(());
+                };
+                frame
+            } else {
+                data
+            };
             self.tun_inbound.sender.send(data).await?;
         }
+        Ok(())
+    }
+
+    pub async fn send_frame(&self, data: TransmissionBytes) -> anyhow::Result<()> {
+        self.tun_inbound.sender.send(data).await?;
         Ok(())
     }
 }
@@ -44,7 +71,6 @@ mod tests {
     use super::*;
     use crate::nat::AllowSubnetExternalRoute;
     use crate::tun::tun_channel;
-    use std::net::Ipv4Addr;
 
     fn test_net() -> NetworkAddr {
         NetworkAddr {
@@ -59,17 +85,29 @@ mod tests {
     #[tokio::test]
     async fn test_send_empty_or_short_packet_does_not_panic() {
         let (tun_inbound, _receiver) = tun_channel();
-        let inbound = TunDataInbound::new(tun_inbound, AllowSubnetExternalRoute::new(vec![]));
+        let inbound = TunDataInbound::new(
+            tun_inbound,
+            AllowSubnetExternalRoute::new(vec![]),
+            DeviceMode::Tun,
+        );
 
         // 零载荷包（头部被剥离后为空）
         inbound
-            .send(TransmissionBytes::zeroed(0), &test_net())
+            .send_ip(
+                TransmissionBytes::zeroed(0),
+                &test_net(),
+                Ipv4Addr::new(10, 26, 0, 3),
+            )
             .await
             .unwrap();
 
         // 过短的包（不足 IPv4 头）
         inbound
-            .send(TransmissionBytes::zeroed(3), &test_net())
+            .send_ip(
+                TransmissionBytes::zeroed(3),
+                &test_net(),
+                Ipv4Addr::new(10, 26, 0, 3),
+            )
             .await
             .unwrap();
     }

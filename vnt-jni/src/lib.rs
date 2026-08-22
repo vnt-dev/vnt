@@ -8,7 +8,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
-use vnt_core::context::config::Config;
+use vnt_core::context::config::{Config, DeviceMode};
 use vnt_core::core::{NetworkManager, RegisterResponse};
 use vnt_core::nat::NetInput;
 use vnt_core::port_mapping::PortMapping;
@@ -269,13 +269,13 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStartTun(
             #[cfg(unix)]
             {
                 let tun_fd = if tun_fd < 0 { None } else { Some(tun_fd) };
-                runtime.block_on(async { manager.start_tun_fd(tun_fd).await })?;
+                runtime.block_on(async { manager.start_device_fd(tun_fd).await })?;
             }
 
             #[cfg(not(unix))]
             {
                 let _ = tun_fd; // 避免未使用警告
-                runtime.block_on(async { manager.start_tun().await })?;
+                runtime.block_on(async { manager.start_device().await })?;
             }
 
             Ok(())
@@ -331,7 +331,9 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeSetNetworkIp<'local>(
                     .as_ref()
                     .context("Network manager already destroyed")?;
                 runtime.block_on(async {
-                    manager.set_tun_network_ip(ip_addr, prefix_len as u8).await
+                    manager
+                        .set_device_network_ip(ip_addr, prefix_len as u8)
+                        .await
                 })?;
                 Ok(())
             })();
@@ -410,19 +412,19 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeIsNoTun(
                 .as_ref()
                 .context("Network manager already destroyed")?;
 
-            Ok(manager.is_no_tun())
+            Ok(manager.device_mode() == DeviceMode::No)
         })();
 
         match result {
-            Ok(is_no_tun) => {
-                if is_no_tun {
+            Ok(is_no_device) => {
+                if is_no_device {
                     1
                 } else {
                     0
                 }
             }
             Err(e) => {
-                let _ = env.throw(format!("Failed to check no_tun: {:?}", e));
+                let _ = env.throw(format!("Failed to check device mode: {:?}", e));
                 0
             }
         }
@@ -914,7 +916,9 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         no_nat: bool,
         #[serde(default)]
-        no_tun: bool,
+        device_mode: DeviceMode,
+        #[serde(default, rename = "no_tun")]
+        legacy_no_tun: Option<bool>,
         #[serde(default)]
         mtu: Option<u16>,
         #[serde(default)]
@@ -930,6 +934,9 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
     }
 
     let cfg: ConfigJson = serde_json::from_str(json_str)?;
+    if cfg.legacy_no_tun.is_some() {
+        anyhow::bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"");
+    }
 
     let server_addrs: Vec<ProtocolAddress> = cfg
         .server
@@ -999,7 +1006,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         input: cfg.input,
         output: cfg.output,
         no_nat: cfg.no_nat,
-        no_tun: cfg.no_tun,
+        device_mode: cfg.device_mode,
         mtu: cfg.mtu,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,

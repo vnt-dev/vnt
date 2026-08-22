@@ -13,7 +13,7 @@ export const emptyFormData = () => ({
   input: [],
   output: [],
   no_nat: false,
-  no_tun: false,
+  device_mode: "tun",
   port_mapping: [],
   allow_mapping: false,
   device_name: "",
@@ -78,7 +78,13 @@ export const parseTomlToForm = (toml) => {
     } else if (trimmed.match(/^no_nat\s*=/)) {
       data.no_nat = trimmed.includes("true");
     } else if (trimmed.match(/^no_tun\s*=/)) {
-      data.no_tun = trimmed.includes("true");
+      throw new Error('配置项 no_tun 已移除，请改用 device_mode = "no|tun|tap"');
+    } else if (trimmed.match(/^device_mode\s*=/)) {
+      const match = trimmed.match(/device_mode\s*=\s*"([^"]*)"/);
+      if (!match || !["no", "tun", "tap"].includes(match[1])) {
+        throw new Error('device_mode 必须是 "no"、"tun" 或 "tap"');
+      }
+      data.device_mode = match[1];
     } else if (trimmed.startsWith("port_mapping")) {
       const match = trimmed.match(/port_mapping\s*=\s*\[(.*)\]/);
       if (match) {
@@ -196,10 +202,8 @@ export const formToToml = (formData) => {
     toml += "no_nat = true\n";
   }
 
-  if (formData.no_tun) {
-    toml += "\n# 是否关闭TUN虚拟网卡，关闭后只能充当流量出口或者进行端口映射，关闭后无需管理员权限\n";
-    toml += "no_tun = true\n";
-  }
+  toml += "\n# 虚拟网卡模式：no（无网卡）、tun（三层网卡）、tap（二层网卡）\n";
+  toml += `device_mode = "${formData.device_mode || "tun"}"\n`;
 
   const portMappings = formData.port_mapping.filter((s) => s.trim());
   if (portMappings.length > 0) {
@@ -310,8 +314,9 @@ server = ["quic://1.2.3.4:29872"]
 # 是否关闭内置子网NAT，关闭(设为true)后需要配置网卡转发，否则无法使用点对网。通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好
 # no_nat = false
 
-# 是否关闭TUN虚拟网卡，关闭(设为true)后只能充当流量出口或者进行端口映射，关闭后无需管理员权限
-# no_tun = false
+# 虚拟网卡模式：no（无网卡）、tun（三层网卡，默认）、tap（二层网卡）
+# Windows 的 tap 模式需要预先安装 tap-windows (tap0901) 驱动
+device_mode = "tun"
 
 # 端口映射，格式为：协议://本地监听地址-目标虚拟IP-目标映射地址
 # 端口映射用于在本地监听指定端口，并将收到的网络流量经由指定虚拟节点转发到目标地址，从而实现跨网络或内网服务访问
