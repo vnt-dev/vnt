@@ -1,74 +1,68 @@
 # VNT
 
-一个简单、高效、能快速组建虚拟局域网的工具
+一个简单、高效、能快速组建虚拟局域网的工具。无论设备身在何处，只要接入同一个虚拟网络，即可像在同一局域网内一样互相访问，适用于远程桌面、联机游戏、访问家中 NAS、跨地区协作等场景。
 
 # 快速开始
 
-### 简单说明
-1. vnt2_cli 是一个纯命令行组网工具，可以从命令行参数或配置文件快速启动组网
-2. vnt2_ctrl 和vnt2_cli搭配使用，vnt2_cli后台运行时，可以用vnt2_ctrl来获取组网状态
-3. vnt2_web 是一个集成web服务的组网工具，带web页面，可以在页面上操作组网
-4. `vnt-desktop` 是基于 Tauri 2 的 PC 客户端，内置组网服务、桌面工作台和系统托盘
+## 第一步：选择适合的程序
 
-## 使用vnt2_cli组网
+| 程序 | 适用对象 | 特点 |
+| --- | --- | --- |
+| **VNT 桌面客户端** | 一般用户（推荐） | 图形化界面，操作简单，Windows 安装包开箱即用 |
+| **vnt2_web** | 偏好网页管理的用户 | 启动后通过浏览器操作，适合无桌面环境的服务器/NAS |
+| **vnt2_cli + vnt2_ctrl** | 进阶用户 | 纯命令行，适合脚本化、自动化部署 |
 
-使用方式和vnt1.0一样，只是增减了一些功能，具体参数请查看 -h
+各平台的安装包请到 [GitHub Releases](https://github.com/vnt-dev/vnt/releases) 下载。
+
+## 第二步：组网（以桌面客户端为例）
+
+1. 安装并打开 VNT 桌面客户端。
+2. 新建一个组网配置，只需填写两项：
+   - **组网编号（-k）**：用于标识虚拟网络的编号，需要互联的设备须填写相同的编号，例如 `123456`；
+   - **服务端地址（-s）**：可使用公共服务端 `101.35.230.139:6660`，也可填写自行部署的服务端。
+3. 点击启动。所有使用**相同组网编号 + 相同服务端**的设备会自动组成一个虚拟局域网，每台设备会分配到虚拟 IP（网段由服务端设置）。
+4. 验证：在设备 A 上 `ping` 设备 B 的虚拟 IP，能 ping 通即表示组网成功。
+
+> 其他设备（电脑、服务器、手机）使用同样的组网编号和服务端地址加入即可，设备数量不限。
+
+## 用 vnt2_web 组网
+
+1. 启动程序：
+   ```
+   ./vnt2_web
+   ```
+2. 从启动日志复制带 `?token=...` 的访问地址（默认监听 `127.0.0.1:19099`）；也可以通过 `--token` 或 `VNT_WEB_TOKEN` 指定固定令牌。
+3. 在网页上添加组网配置（同样只需组网编号和服务端地址），再点击启动组网。
+
+## 用 vnt2_cli 组网
+
 ```
-# 启动程序 服务端可以使用101.35.230.139:6660
+# 启动组网
 ./vnt2_cli -k 123456 -s 101.35.230.139:6660
 ```
 
 ```
-# 查看组网信息
+# vnt2_cli 后台运行时，使用 vnt2_ctrl 查看组网状态
 ./vnt2_ctrl info
 ```
- 
-## 使用vnt2_web组网
 
-1. 启动程序
+更多参数请查看 `./vnt2_cli -h`。
 
-    ```
-    # 启动程序
-    ./vnt2_web
-    ```
-2. 从启动日志复制带 `?token=...` 的 Web 访问地址；也可以通过 `--token` 或 `VNT_WEB_TOKEN` 指定固定令牌
-3. 在页面上添加组网配置，再启动组网
+## 常见问题
 
-## 前端构建
+- **Windows 上提示需要管理员权限？** 创建虚拟网卡需要以管理员身份运行程序，右键选择"以管理员身份运行"即可。
+- **ping 不通对方？** 请确认两边组网编号、服务端地址完全一致，且均已启动组网；防火墙可能拦截 ICMP，可使用共享文件夹等实际业务进行验证。
+- **没有公网服务器？** 可先使用公共服务端 `101.35.230.139:6660` 体验；正式使用建议自建服务端，以获得更好的稳定性和私密性。
+- **不希望修改系统网络设置？** 可将设备模式设为 `no`（无网卡模式），仅提供流量出口和端口映射，无需管理员权限。
 
-web 前端源码位于 `vnt-web/ui/`(Vite + Vue 3 + Pinia + Tailwind CSS v4),构建产物输出到 `vnt-web/static/`,由 RustEmbed 嵌入二进制。
+## 安全说明
 
-项目使用根级 pnpm workspace 统一管理 Web 与桌面前端依赖：
+- **建议设置组网密码**。设置密码后（命令行 `-p` / `--password`，或配置文件中的 `password`），节点之间的数据采用端到端加密（ChaCha20-Poly1305），**服务端仅负责转发密文，无法解密通信内容**。即使使用公共服务端，通信内容也不会泄露给服务端。
+- 同一虚拟网络内的所有设备必须使用**相同的密码**，否则无法互相通信。
+- 未设置密码时，节点间数据不加密，经过服务端中继的流量理论上可被服务端查看，请仅在可信网络环境下省略密码。
+- 此外，客户端与服务端之间的连接本身支持 tcp-tls、quic、wss 等加密传输协议，并可绑定服务端证书，防止伪造服务端攻击。
 
-```
-pnpm install
-pnpm build:web
-```
-
-开发调试使用 `pnpm dev:web`，Vite dev server 会将 `/api` 代理到 `127.0.0.1:19099`。启动 `vnt2_web` 时应指定令牌，并在浏览器登录页输入相同令牌。
-
-## PC 客户端
-
-桌面客户端源码位于 `vnt-desktop/`（Tauri 2 + Vue 3）。桌面工作台通过 Tauri IPC 直接调用进程内 `vnt-core`；需要浏览器访问时，可在“Web 访问”中按需启用同进程 HTTP 服务，无需单独运行 `vnt2_web`。Tauri 与 Web 端统一使用 `vnt-web/ui/src/` 下的同一套响应式前端代码。
-
-```
-pnpm install
-pnpm dev:desktop
-```
-
-构建安装包使用 `pnpm build:desktop`。更多说明见 `vnt-desktop/README.md`。
-
-# VNT2.0新特性
-
-1. 提升安全性，支持tcp-tls、quic、wss协议连接服务器，和服务端强制使用tls加密，并支持证书绑定，防止伪造服务端攻击
-2. 提升流量稳定性，支持使用quic代理流量，支持FEC冗余传输
-3. 简化操作，去除了大量vnt1.0的重复和无用的配置参数
-4. vnt-link、vnt合二为一
-5. 支持无网卡、TUN（三层）和 TAP（二层）模式及端口映射；三种模式的 IPv4 流量可互通
-6. 全功能的情况下，减少程序体积
-7. 性能提升，支持linux-offload
-8. 更规范的api接入，可以轻松自定义客户端
-9. 支持同时连接多个服务端，可以容灾和负载均衡
+# 进阶说明
 
 ## 虚拟网卡模式
 
@@ -80,18 +74,53 @@ pnpm dev:desktop
 
 Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装 `tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
 
+## VNT2.0 新特性
+
+1. 提升安全性，支持 tcp-tls、quic、wss 协议连接服务器，和服务端强制使用 tls 加密，并支持证书绑定，防止伪造服务端攻击
+2. 提升流量稳定性，支持使用 quic 代理流量，支持 FEC 冗余传输
+3. 简化操作，去除了大量 vnt1.0 的重复和无用的配置参数
+4. vnt-link、vnt 合二为一
+5. 支持无网卡、TUN（三层）和 TAP（二层）模式及端口映射；三种模式的 IPv4 流量可互通
+6. 全功能的情况下，减少程序体积
+7. 性能提升，支持 linux-offload
+8. 更规范的 api 接入，可以轻松自定义客户端
+9. 支持同时连接多个服务端，可以容灾和负载均衡
+
+# 开发者
+
+## 前端构建
+
+web 前端源码位于 `vnt-web/ui/`（Vite + Vue 3 + Pinia + Tailwind CSS v4），构建产物输出到 `vnt-web/static/`，由 RustEmbed 嵌入二进制。
+
+项目使用根级 pnpm workspace 统一管理 Web 与桌面前端依赖：
+
+```
+pnpm install
+pnpm build:web
+```
+
+开发调试使用 `pnpm dev:web`，Vite dev server 会将 `/api` 代理到 `127.0.0.1:19099`。启动 `vnt2_web` 时应指定令牌，并在浏览器登录页输入相同令牌。
+
+## PC 客户端开发
+
+桌面客户端源码位于 `vnt-desktop/`（Tauri 2 + Vue 3）。桌面工作台通过 Tauri IPC 直接调用进程内 `vnt-core`；需要浏览器访问时，可在"Web 访问"中按需启用同进程 HTTP 服务，无需单独运行 `vnt2_web`。Tauri 与 Web 端统一使用 `vnt-web/ui/src/` 下的同一套响应式前端代码。
+
+```
+pnpm install
+pnpm dev:desktop
+```
+
+构建安装包使用 `pnpm build:desktop`。更多说明见 `vnt-desktop/README.md`。
+
 # 说明
 
-vnt2.0整体重构了一遍，和1.0不兼容，同时也可能引入新的bug，欢迎反馈
+vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
 
-其他平台后续再推出
+其他平台后续再推出。
 
 ### 相关库
-1. tun虚拟网卡(https://github.com/tun-rs/tun-rs)
-2. 路由设置(https://github.com/tun-rs/route_manager)
-3. 用户态协议栈(用于quic代理和无tun模式出口)(https://github.com/rustp2p/tcp_ip)
-4. 打洞通道处理(https://github.com/rustp2p/rustp2p/tree/master/rustp2p-core)
-
-
-
-
+1. tun 虚拟网卡（https://github.com/tun-rs/tun-rs）
+2. 路由设置（https://github.com/tun-rs/route_manager）
+3. 用户态协议栈（用于 quic 代理和无 tun 模式出口）（https://github.com/rustp2p/tcp_ip）
+4. 打洞通道处理（https://github.com/rustp2p/rustp2p/tree/master/rustp2p-core）
+5. 安卓端2.0已发布（https://github.com/vnt-dev/VntApp）
