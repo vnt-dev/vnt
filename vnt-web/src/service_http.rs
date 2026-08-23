@@ -288,7 +288,7 @@ pub struct StartConfig {
 
 impl StartConfig {
     fn reject_legacy_no_tun(&self) -> anyhow::Result<()> {
-        if self.legacy_no_tun.is_some() {
+        if self.legacy_no_tun == Some(true) {
             bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"")
         }
         Ok(())
@@ -1800,6 +1800,10 @@ network_code = "test"
 
         let legacy: StartConfig = toml::from_str(&format!("{base}no_tun = true\n")).unwrap();
         assert!(legacy.reject_legacy_no_tun().is_err());
+
+        let legacy_false: StartConfig =
+            toml::from_str(&format!("{base}no_tun = false\n")).unwrap();
+        assert!(legacy_false.reject_legacy_no_tun().is_ok());
     }
 
     /// 两个实例同时处于 Starting 互不影响

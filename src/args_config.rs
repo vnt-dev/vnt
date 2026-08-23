@@ -181,7 +181,7 @@ pub fn build_config_from_args_and_file(
 ) -> anyhow::Result<(Config, CtrlConfig)> {
     if file
         .as_ref()
-        .is_some_and(|config| config.legacy_no_tun.is_some())
+        .is_some_and(|config| config.legacy_no_tun == Some(true))
     {
         return Err(anyhow!(
             "configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\""
@@ -323,7 +323,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
 }
 
 fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)> {
-    if file.legacy_no_tun.is_some() {
+    if file.legacy_no_tun == Some(true) {
         return Err(anyhow!(
             "configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\""
         ));
@@ -546,9 +546,16 @@ mod tests {
         let legacy: FileConfig = toml::from_str("no_tun = true").unwrap();
         let error = match build_config_from_args_and_file(None, Some(legacy)) {
             Err(error) => error,
-            Ok(_) => panic!("legacy no_tun must be rejected"),
+            Ok(_) => panic!("legacy no_tun = true must be rejected"),
         };
         assert!(error.to_string().contains("device_mode"));
+
+        let legacy_false: FileConfig = toml::from_str(
+            "no_tun = false\nserver = [\"quic://127.0.0.1:29872\"]\nnetwork_code = \"test\"",
+        )
+        .unwrap();
+        build_config_from_args_and_file(None, Some(legacy_false))
+            .expect("legacy no_tun = false should be ignored");
     }
 
     #[test]
