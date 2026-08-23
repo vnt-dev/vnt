@@ -33,15 +33,16 @@ impl PacketCrypto {
             .map(|b| format!("{:02x}", b))
             .collect::<String>()
     }
-    pub fn new(key_bytes: [u8; 32]) -> Self {
-        let unbound = UnboundKey::new(&CHACHA20_POLY1305, &key_bytes).unwrap();
+    pub fn new(key_bytes: [u8; 32]) -> io::Result<Self> {
+        let unbound = UnboundKey::new(&CHACHA20_POLY1305, &key_bytes)
+            .map_err(|_| io::Error::other("failed to initialize ChaCha20-Poly1305 key"))?;
         let key = LessSafeKey::new(unbound);
-        Self {
+        Ok(Self {
             key,
             seq: Arc::new(AtomicU32::new(rand::random())),
-        }
+        })
     }
-    pub fn new_from_str(s: &str) -> Self {
+    pub fn new_from_str(s: &str) -> io::Result<Self> {
         let hash = ring::digest::digest(&ring::digest::SHA256, s.as_bytes());
         let mut key_bytes = [0u8; 32];
         key_bytes.copy_from_slice(hash.as_ref());
@@ -161,7 +162,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_in_place() {
         let key = [7u8; 32];
-        let crypto = PacketCrypto::new(key);
+        let crypto = PacketCrypto::new(key).unwrap();
 
         let payload_len = 20;
         let mut pkt = build_test_packet(payload_len);
@@ -198,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_nonce_unique_per_packet() {
-        let crypto = PacketCrypto::new([7u8; 32]);
+        let crypto = PacketCrypto::new([7u8; 32]).unwrap();
 
         let mut pkt1 = build_test_packet(20);
         let mut pkt2 = build_test_packet(20);
@@ -227,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_clone_shares_seq_counter() {
-        let crypto = PacketCrypto::new([9u8; 32]);
+        let crypto = PacketCrypto::new([9u8; 32]).unwrap();
         let cloned = crypto.clone();
 
         let mut pkt1 = build_test_packet(8);
@@ -243,9 +244,9 @@ mod tests {
     #[test]
     fn test_cross_version_compat() {
         let key = [7u8; 32];
-        let crypto = PacketCrypto::new(key);
+        let crypto = PacketCrypto::new(key).unwrap();
         // 用相同密钥的另一个实例模拟对端
-        let peer = PacketCrypto::new(key);
+        let peer = PacketCrypto::new(key).unwrap();
 
         // 模拟旧版本发包：seq 固定为 0，nonce 直接由头部计算
         let mut pkt = build_test_packet(20);
@@ -281,7 +282,7 @@ mod tests {
     /// 必须导致解密失败，而不是被静默接受。
     #[test]
     fn test_tampered_flags_rejected() {
-        let crypto = PacketCrypto::new([7u8; 32]);
+        let crypto = PacketCrypto::new([7u8; 32]).unwrap();
 
         let mut pkt = build_test_packet(20);
         crypto.encrypt_in_place(&mut pkt).expect("encrypt failed");
@@ -298,7 +299,7 @@ mod tests {
     /// AAD 覆盖 msg_type(byte0)：中间人篡改消息类型必须导致解密失败。
     #[test]
     fn test_tampered_msg_type_rejected() {
-        let crypto = PacketCrypto::new([7u8; 32]);
+        let crypto = PacketCrypto::new([7u8; 32]).unwrap();
 
         let mut pkt = build_test_packet(20);
         crypto.encrypt_in_place(&mut pkt).expect("encrypt failed");
@@ -315,7 +316,7 @@ mod tests {
     /// 转发后 ttl 变化的包必须仍能正常解密。
     #[test]
     fn test_ttl_change_still_decrypts() {
-        let crypto = PacketCrypto::new([7u8; 32]);
+        let crypto = PacketCrypto::new([7u8; 32]).unwrap();
 
         let payload_len = 20;
         let mut pkt = build_test_packet(payload_len);

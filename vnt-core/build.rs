@@ -1,4 +1,4 @@
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = prost_build::Config::new();
 
     match protoc_bin_vendored::protoc_bin_path() {
@@ -14,15 +14,14 @@ fn main() {
 
     config.protoc_arg("--experimental_allow_proto3_optional");
 
-    config
-        .compile_protos(
-            &[
-                "proto/control_message.proto",
-                "proto/rpc.proto",
-                "proto/client.proto",
-                "proto/fec.proto",
-            ],
-            &["proto"],
-        )
-        .unwrap();
+    config.compile_protos(
+        &[
+            "proto/control_message.proto",
+            "proto/rpc.proto",
+            "proto/client.proto",
+            "proto/fec.proto",
+        ],
+        &["proto"],
+    )?;
+    Ok(())
 }

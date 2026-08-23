@@ -149,8 +149,11 @@ pub async fn ping_all(
                 ping.set_ttl(1);
                 ping.set_src_id(src.into());
                 ping.set_dest_id(id.into());
-                ping.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())
-                    .unwrap();
+                if let Err(error) = ping.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())
+                {
+                    log::warn!("failed to build route probe: {error}");
+                    continue;
+                }
                 let route_key = route.route_key();
                 if socket_manager.send_to(ping, &route_key).await.is_ok() {
                     packet_loss_stats.record_sent(id, route_key);

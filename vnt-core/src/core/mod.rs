@@ -79,7 +79,7 @@ impl NetworkManager {
             log::info!("绑定出口网卡: {name}");
         }
         let mtu = config.mtu.unwrap_or(DEFAULT_MTU);
-        let packet_crypto = PacketCrypto::new_from_str(config.password.as_deref());
+        let packet_crypto = PacketCrypto::new_from_str(config.password.as_deref())?;
         let packet_compression = PacketCompression::new(config.compress);
         let (server_manager_list, tunnel_to_server, server_rpc) = create_server_tunnel(
             app_state.clone(),
@@ -163,7 +163,7 @@ impl NetworkManager {
                 EnhancedTunInbound::Nat(
                     internal_nat_inbound
                         .clone()
-                        .expect("internal_nat_inbound must be Some in no-device mode"),
+                        .context("internal NAT is unavailable in no-device mode")?,
                 ),
                 None,
             ),

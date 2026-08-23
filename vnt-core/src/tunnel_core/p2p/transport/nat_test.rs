@@ -357,7 +357,9 @@ pub(crate) async fn query_tcp_public_addr_loop(
         let addrs: Vec<SocketAddr> = active_connections.keys().cloned().collect();
 
         for addr in addrs {
-            let (tcp_stream, _) = active_connections.get_mut(&addr).unwrap();
+            let Some((tcp_stream, _)) = active_connections.get_mut(&addr) else {
+                continue;
+            };
             let mut buf = [0u8; 1024];
 
             match tcp_stream.try_read(&mut buf) {

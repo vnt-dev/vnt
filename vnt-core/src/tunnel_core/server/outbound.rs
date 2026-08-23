@@ -151,7 +151,10 @@ impl ServerOutbound {
 
         // 只有一个服务器，直接发送
         if map.len() == 1 {
-            let (server_id, (ips, _)) = map.iter().next().expect("map has exactly one element");
+            let (server_id, (ips, _)) = map
+                .iter()
+                .next()
+                .context("connected server map unexpectedly became empty")?;
             if ips.is_empty() {
                 return Ok(());
             }

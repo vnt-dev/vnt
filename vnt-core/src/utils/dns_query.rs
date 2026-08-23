@@ -228,11 +228,9 @@ fn bind_udp(
     default_interface: &Option<LocalInterface>,
 ) -> io::Result<UdpSocket> {
     let addr: SocketAddr = if name_server.is_ipv4() {
-        "0.0.0.0:0"
-            .parse()
-            .expect("valid IPv4 socket address literal")
+        SocketAddr::from(([0, 0, 0, 0], 0))
     } else {
-        "[::]:0".parse().expect("valid IPv6 socket address literal")
+        SocketAddr::from(([0; 8], 0))
     };
     let socket = rust_p2p_core::socket::bind_udp(addr, default_interface.as_ref())?;
     UdpSocket::from_std(socket.into())

@@ -16,12 +16,12 @@ impl PacketCrypto {
         chacha20_poly1305::PacketCrypto::key_sign(s)
     }
 
-    pub(crate) fn new_from_str(s: Option<&str>) -> Self {
-        Self {
-            crypto: s
-                .map(chacha20_poly1305::PacketCrypto::new_from_str)
-                .map(Arc::new),
-        }
+    pub(crate) fn new_from_str(s: Option<&str>) -> io::Result<Self> {
+        let crypto = s
+            .map(chacha20_poly1305::PacketCrypto::new_from_str)
+            .transpose()?
+            .map(Arc::new);
+        Ok(Self { crypto })
     }
     pub(crate) fn encrypt_reserve(&self) -> usize {
         if self.crypto.is_some() { TAG_LEN } else { 0 }

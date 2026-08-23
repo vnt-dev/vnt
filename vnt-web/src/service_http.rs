@@ -21,7 +21,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use time::{OffsetDateTime, format_description};
+use time::{OffsetDateTime, macros::format_description};
 use tokio::fs;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -205,7 +205,7 @@ impl HttpAppState {
 
     fn timestamp() -> String {
         let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
-        let format = format_description::parse("[hour]:[minute]:[second]").unwrap();
+        let format = format_description!("[hour]:[minute]:[second]");
         now.format(&format)
             .unwrap_or_else(|_| "00:00:00".to_string())
     }
@@ -649,9 +649,10 @@ pub async fn run_http_server(
     let handle = service
         .start_http(addr, token, cancellation.clone())
         .await?;
-    shutdown_signal().await;
+    let shutdown_result = shutdown_signal().await;
     cancellation.cancel();
     handle.await??;
+    shutdown_result?;
     Ok(())
 }
 
@@ -751,7 +752,8 @@ fn build_headers_for_path(path: &str) -> HeaderMap {
     };
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(mime.as_ref()).unwrap(),
+        HeaderValue::from_str(mime.as_ref())
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
 
     if is_gz {
@@ -1309,7 +1311,7 @@ async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
         .unwrap_or_else(|| {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis();
             format!("{}.toml", now)
         });
@@ -1455,28 +1457,29 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
     })
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal() -> anyhow::Result<()> {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
-            .expect("failed to install Ctrl+C handler");
+            .context("failed to install Ctrl+C handler")
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+        let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("failed to install terminate signal handler")?;
+        signal.recv().await;
+        Ok::<(), anyhow::Error>(())
     };
 
     #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+    let terminate = std::future::pending::<anyhow::Result<()>>();
 
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        result = ctrl_c => result?,
+        result = terminate => result?,
     }
+    Ok(())
 }
 
 async fn get_peers(

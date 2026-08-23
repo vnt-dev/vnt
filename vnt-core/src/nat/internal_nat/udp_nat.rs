@@ -85,9 +85,9 @@ async fn handle_outbound(
         } else {
             // 创建真实 UDP socket
             let bind_addr = if dst.is_ipv4() {
-                "0.0.0.0:0".parse().expect("valid IPv4 bind address")
+                SocketAddr::from(([0, 0, 0, 0], 0))
             } else {
-                "[::]:0".parse().expect("valid IPv6 bind address")
+                SocketAddr::from(([0; 8], 0))
             };
             let interface = if dst.ip().is_loopback() {
                 None
@@ -223,9 +223,9 @@ where
         .next()
         .context("UDP NAT destination resolved to no address")?;
     let bind_addr = if destination.is_ipv4() {
-        "0.0.0.0:0".parse().expect("valid IPv4 bind address")
+        SocketAddr::from(([0, 0, 0, 0], 0))
     } else {
-        "[::]:0".parse().expect("valid IPv6 bind address")
+        SocketAddr::from(([0; 8], 0))
     };
     let interface = if destination.ip().is_loopback() {
         None

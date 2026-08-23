@@ -235,7 +235,7 @@ fn toggle_main_window(app: &AppHandle) {
     }
 }
 
-pub fn run() {
+pub fn run() -> Result<(), tauri::Error> {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             api_request,
@@ -320,5 +320,4 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running VNT Desktop");
 }

@@ -18,7 +18,7 @@ use crate::protocol::transmission::TransmissionBytes;
 use bytes::{Bytes, BytesMut};
 use std::io;
 use zerocopy::byteorder::{NetworkEndian, U32};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Ref, Unaligned};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 #[derive(Debug, FromBytes, IntoBytes, Unaligned, KnownLayout, Immutable)]
 #[repr(C)]
@@ -167,11 +167,6 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
         }
         Ok(NetPacket { buffer })
     }
-    fn header(&self) -> Ref<&[u8], NetHeader> {
-        // Safe: NetHeader is Unaligned and length is validated in new()
-        let (header, _) = Ref::<&[u8], NetHeader>::from_prefix(self.buffer.as_ref()).unwrap();
-        header
-    }
     pub fn buffer(&self) -> &[u8] {
         self.buffer.as_ref()
     }
@@ -182,37 +177,40 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
         &self.buffer
     }
     pub fn msg_type(&self) -> io::Result<MsgType> {
-        self.header().msg_type().try_into()
+        (self.buffer.as_ref()[0] & 0x7F).try_into()
     }
     pub fn max_ttl(&self) -> u8 {
-        self.header().max_ttl()
+        self.buffer.as_ref()[1] >> 4
     }
     pub fn ttl(&self) -> u8 {
-        self.header().curr_ttl()
+        self.buffer.as_ref()[1] & 0x0F
     }
 
     pub fn seq(&self) -> u32 {
-        self.header().seq.get()
+        let buf = self.buffer.as_ref();
+        u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]])
     }
 
     pub fn src_id(&self) -> u32 {
-        self.header().src_id.get()
+        let buf = self.buffer.as_ref();
+        u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]])
     }
 
     pub fn dest_id(&self) -> u32 {
-        self.header().dest_id.get()
+        let buf = self.buffer.as_ref();
+        u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]])
     }
     pub fn is_compressed(&self) -> bool {
-        (self.header().flags_byte & COMPRESSED) != 0
+        (self.buffer.as_ref()[2] & COMPRESSED) != 0
     }
     pub fn is_gateway(&self) -> bool {
-        (self.header().flags_byte & GATEWAY) != 0
+        (self.buffer.as_ref()[2] & GATEWAY) != 0
     }
     pub fn is_fec(&self) -> bool {
-        (self.header().flags_byte & FEC) != 0
+        (self.buffer.as_ref()[2] & FEC) != 0
     }
     pub fn is_ethernet(&self) -> bool {
-        (self.header().flags_byte & ETHERNET) != 0
+        (self.buffer.as_ref()[2] & ETHERNET) != 0
     }
     pub fn head(&self) -> &[u8] {
         &self.buffer.as_ref()[..HEAD_LENGTH]
@@ -223,47 +221,54 @@ impl<B: AsRef<[u8]>> NetPacket<B> {
 }
 
 impl<B: AsRef<[u8]> + AsMut<[u8]>> NetPacket<B> {
-    fn header_mut(&mut self) -> Ref<&mut [u8], NetHeader> {
-        // Safe: NetHeader is Unaligned and length is validated in new()
-        let (header, _) = Ref::<&mut [u8], NetHeader>::from_prefix(self.buffer.as_mut()).unwrap();
-        header
-    }
-
     pub fn set_msg_type(&mut self, msg_type: MsgType) {
-        self.header_mut().set_msg_type(msg_type.into());
+        self.buffer.as_mut()[0] = (u8::from(msg_type) & 0x7F) | 0x80;
     }
 
     pub fn decr_ttl(&mut self) {
-        self.header_mut().decr_ttl()
+        let ttl_byte = &mut self.buffer.as_mut()[1];
+        let current = *ttl_byte & 0x0F;
+        if current != 0 {
+            *ttl_byte = (*ttl_byte & 0xF0) | (current - 1);
+        }
     }
 
     pub fn set_ttl(&mut self, ttl: u8) {
-        self.header_mut().set_ttl(ttl, ttl);
+        self.buffer.as_mut()[1] = (ttl << 4) | (ttl & 0x0F);
     }
 
     pub fn set_seq(&mut self, seq: u32) {
-        self.header_mut().seq.set(seq);
+        self.buffer.as_mut()[4..8].copy_from_slice(&seq.to_be_bytes());
     }
 
     pub fn set_src_id(&mut self, id: u32) {
-        self.header_mut().src_id.set(id);
+        self.buffer.as_mut()[8..12].copy_from_slice(&id.to_be_bytes());
     }
 
     pub fn set_dest_id(&mut self, id: u32) {
-        self.header_mut().dest_id.set(id);
+        self.buffer.as_mut()[12..16].copy_from_slice(&id.to_be_bytes());
+    }
+
+    fn set_flag(&mut self, mask: u8, value: bool) {
+        let flags = &mut self.buffer.as_mut()[2];
+        if value {
+            *flags |= mask;
+        } else {
+            *flags &= !mask;
+        }
     }
 
     pub fn set_compressed_flag(&mut self, compressed: bool) {
-        self.header_mut().set_flag(COMPRESSED, compressed);
+        self.set_flag(COMPRESSED, compressed);
     }
     pub fn set_gateway_flag(&mut self, gateway: bool) {
-        self.header_mut().set_flag(GATEWAY, gateway);
+        self.set_flag(GATEWAY, gateway);
     }
     pub fn set_fec_flag(&mut self, fec: bool) {
-        self.header_mut().set_flag(FEC, fec);
+        self.set_flag(FEC, fec);
     }
     pub fn set_ethernet_flag(&mut self, ethernet: bool) {
-        self.header_mut().set_flag(ETHERNET, ethernet);
+        self.set_flag(ETHERNET, ethernet);
     }
 
     pub fn set_payload(&mut self, data: &[u8]) -> io::Result<()> {

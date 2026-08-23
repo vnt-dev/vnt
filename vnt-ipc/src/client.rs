@@ -285,5 +285,5 @@ pub fn ts_to_string(ts_secs: i64) -> String {
     };
     let dt_local = dt.to_offset(local_offset);
     let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
-    dt_local.format(&format).unwrap()
+    dt_local.format(&format).unwrap_or_default()
 }

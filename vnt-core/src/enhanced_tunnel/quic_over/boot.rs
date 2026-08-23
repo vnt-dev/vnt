@@ -145,7 +145,7 @@ async fn create_quic_endpoint(
         quinn::crypto::rustls::QuicClientConfig::try_from(client_config)
             .context("Failed to create QUIC client config")?,
     ));
-    client_config.transport_config(build_transport_config());
+    client_config.transport_config(build_transport_config()?);
     let mut endpoint_config = EndpointConfig::default();
     endpoint_config.max_udp_payload_size(1300)?;
     let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
@@ -159,14 +159,18 @@ async fn create_quic_endpoint(
     Ok((inbound, endpoint))
 }
 
-fn build_transport_config() -> Arc<TransportConfig> {
+fn build_transport_config() -> anyhow::Result<Arc<TransportConfig>> {
     let mut transport = TransportConfig::default();
     transport.congestion_controller_factory(Arc::new(BbrConfig::default()));
     transport.keep_alive_interval(Some(Duration::from_secs(5)));
 
-    transport.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+    transport.max_idle_timeout(Some(
+        Duration::from_secs(10)
+            .try_into()
+            .context("invalid QUIC idle timeout")?,
+    ));
 
-    Arc::new(transport)
+    Ok(Arc::new(transport))
 }
 
 async fn ip_stack_recv_task(

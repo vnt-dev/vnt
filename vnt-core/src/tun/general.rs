@@ -99,12 +99,17 @@ impl DeviceIOManager {
         // 保证失败时调用方状态完整、可以重试
         let device_mode = device_config.device_mode;
         let device = Arc::new(create_device(device_config)?);
-        let receiver = receiver.take().unwrap();
-        let enhanced_outbound = enhanced_outbound.take().unwrap();
+        let Some(receiver_value) = receiver.take() else {
+            bail!("device task already started");
+        };
+        let Some(enhanced_outbound) = enhanced_outbound.take() else {
+            *receiver = Some(receiver_value);
+            bail!("device task already started");
+        };
         let task = create(
             &self.task_group,
             device,
-            receiver.receiver,
+            receiver_value.receiver,
             enhanced_outbound,
             device_mode,
         );
