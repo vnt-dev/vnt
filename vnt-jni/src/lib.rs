@@ -68,6 +68,16 @@ where
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(panic_message)
 }
 
+fn encryption_state(local_key: Option<&str>, peer_key: Option<&str>) -> i32 {
+    match (local_key, peer_key) {
+        (Some(local), Some(peer)) if local == peer => 1,
+        (None, None) => 2,
+        (Some(_), None) => 3,
+        (None, Some(_)) => 4,
+        (Some(_), Some(_)) => 5,
+    }
+}
+
 /// JNI 导出函数的 panic 防护：panic 时向 JVM 抛出异常并返回默认值
 macro_rules! jni_guard {
     ($env:ident, $default_ret:expr, { $($body:tt)* }) => {{
@@ -479,21 +489,88 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
 ) -> jstring {
     jni_guard!(env, std::ptr::null_mut(), {
         let result: anyhow::Result<String> = (|| {
-            let global_state = GLOBAL_STATE.lock();
-            let state = global_state.as_ref().context("VNT not initialized")?;
+            let (api, runtime) = {
+                let global_state = GLOBAL_STATE.lock();
+                let state = global_state.as_ref().context("VNT not initialized")?;
+                (
+                    state
+                        .vnt_apis
+                        .get(&api_handle)
+                        .context("Invalid API handle")?
+                        .clone(),
+                    state.runtime.clone(),
+                )
+            };
 
-            let api = state
-                .vnt_apis
-                .get(&api_handle)
-                .context("Invalid API handle")?;
-
-            let client_ips = api.client_ips();
-            let json_array: Vec<_> = client_ips
+            let local_clients: HashMap<_, _> = api
+                .client_ips()
                 .into_iter()
-                .map(|client| {
+                .map(|client| (client.ip, client.online))
+                .collect();
+            let server_clients: HashMap<_, _> = runtime
+                .block_on(api.server_rpc().client_list())
+                .map(|response| {
+                    response
+                        .list
+                        .into_iter()
+                        .map(|client| (Ipv4Addr::from(client.ip), client))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let local_key = api.get_config().and_then(|config| config.key_sign());
+            let mut ips: Vec<_> = local_clients
+                .keys()
+                .chain(server_clients.keys())
+                .copied()
+                .collect();
+            ips.sort_unstable();
+            ips.dedup();
+
+            let json_array: Vec<_> = ips
+                .into_iter()
+                .map(|ip| {
+                    let server_client = server_clients.get(&ip);
+                    let route = api.find_route(&ip);
+                    let has_route = route.is_some();
+                    let direct = route
+                        .as_ref()
+                        .map(|route| route.metric() == 1)
+                        .unwrap_or(false);
+                    let route_protocol = route
+                        .as_ref()
+                        .map(|route| route.route_key().protocol().to_string());
+                    let route_metric = route.as_ref().map(|route| route.metric());
+                    let rtt = route.as_ref().map(|route| route.rtt());
+                    let online = local_clients.get(&ip).copied().unwrap_or(false)
+                        || server_client.map(|client| client.online).unwrap_or(false)
+                        || has_route;
+                    let packet_loss = api.packet_loss_info(&ip).map(|info| {
+                        serde_json::json!({
+                            "sent": info.sent,
+                            "received": info.received,
+                            "loss_rate": info.loss_rate,
+                        })
+                    });
+                    let traffic = api.traffic_info(&ip).map(|info| {
+                        serde_json::json!({
+                            "tx_bytes": info.tx_bytes,
+                            "rx_bytes": info.rx_bytes,
+                        })
+                    });
                     serde_json::json!({
-                        "ip": client.ip.to_string(),
-                        "online": client.online,
+                        "ip": ip.to_string(),
+                        "name": server_client.map(|client| client.name.as_str()).unwrap_or(""),
+                        "version": server_client.map(|client| client.version.as_str()).unwrap_or(""),
+                        "online": online,
+                        "direct": direct,
+                        "route_protocol": route_protocol,
+                        "route_metric": route_metric,
+                        "rtt": rtt,
+                        "key_equal": server_client
+                            .map(|client| encryption_state(local_key.as_deref(), client.key_sign.as_deref()))
+                            .unwrap_or(0),
+                        "packet_loss": packet_loss,
+                        "traffic": traffic,
                     })
                 })
                 .collect();
@@ -1033,5 +1110,14 @@ mod tests {
     fn catch_jni_panic_captures_string_message() {
         let result: Result<(), String> = catch_jni_panic(|| panic!("{}", "kaboom"));
         assert_eq!(result.unwrap_err(), "kaboom");
+    }
+
+    #[test]
+    fn maps_peer_encryption_states() {
+        assert_eq!(encryption_state(Some("same"), Some("same")), 1);
+        assert_eq!(encryption_state(None, None), 2);
+        assert_eq!(encryption_state(Some("local"), None), 3);
+        assert_eq!(encryption_state(None, Some("peer")), 4);
+        assert_eq!(encryption_state(Some("local"), Some("peer")), 5);
     }
 }
