@@ -2,6 +2,7 @@
 name = "vnt-jni"
 version = "2.0.2"
 edition = "2024"
+license = "Apache-2.0"
 
 [lib]
 crate-type = ["cdylib"]

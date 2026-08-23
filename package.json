@@ -1,6 +1,7 @@
 {
   "name": "vnt-workspace",
   "private": true,
+  "license": "Apache-2.0",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
     "dev:web": "pnpm --filter vnt-web-ui dev",
