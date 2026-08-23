@@ -188,13 +188,15 @@ impl ServerTurnManager {
                                 || reg.prefix_len != initial_response.prefix_len
                                 || reg.gateway != initial_response.gateway
                             {
-                                // 该服务器分配的虚拟网络与当前不一致，无法重连，
-                                // 只结束本服务器的任务，不影响其他服务器
+                                // 该服务器分配的虚拟网络与当前不一致，
+                                // 断开本次连接并降低重试频率，不影响其他服务器。
                                 log::error!(
-                                    "服务器{}虚拟网络发生变化，放弃重连",
+                                    "服务器{}虚拟网络发生变化，1分钟后重试",
                                     self.config.server_addr
                                 );
-                                break;
+                                self.disconnect();
+                                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                                continue;
                             }
                             // 保存服务器版本
                             if !reg.server_version.is_empty() {
@@ -224,8 +226,6 @@ impl ServerTurnManager {
                 already_connected = false;
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-            self.disconnect();
-            data_handler.handle_disconnected();
         });
     }
 
