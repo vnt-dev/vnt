@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "pinia": "catalog:",
+    "qrcode": "1.5.4",
     "vue": "catalog:",
     "vue-router": "catalog:"
   },
