@@ -31,6 +31,22 @@ impl TaskGroupInner {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
+        self.spawn_inner(f, false)
+    }
+
+    fn spawn_stop_all<F>(self: &Arc<Self>, f: F) -> Option<Id>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.spawn_inner(f, true)
+    }
+
+    fn spawn_inner<F>(self: &Arc<Self>, f: F, stop_all_on_exit: bool) -> Option<Id>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
         let mut state = self.state.lock();
         if state.stopped {
             return None;
@@ -45,6 +61,7 @@ impl TaskGroupInner {
             let _guard = TaskGuard {
                 inner: weak,
                 task_id: tokio::task::id(),
+                stop_all_on_exit,
             };
             f.await;
         });
@@ -113,11 +130,16 @@ struct TaskGuard {
     inner: Weak<TaskGroupInner>,
     /// 创建时（任务上下文内）获取的自身任务 id
     task_id: Id,
+    /// 当前任务结束（包括 panic 或 abort）时停止组内所有任务
+    stop_all_on_exit: bool,
 }
 
 impl Drop for TaskGuard {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.upgrade() {
+            if self.stop_all_on_exit {
+                inner.stop();
+            }
             inner.remove_task(self.task_id);
         }
     }
@@ -149,6 +171,18 @@ impl TaskGroup {
         F::Output: Send + 'static,
     {
         match self.inner.spawn(f) {
+            Some(task_id) => SubTask::new(task_id, Arc::downgrade(&self.inner)),
+            None => SubTask::empty(),
+        }
+    }
+
+    /// 启动一个任务；该任务一旦结束，就停止组内所有任务。
+    pub fn spawn_stop_all<F>(&self, f: F) -> SubTask
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        match self.inner.spawn_stop_all(f) {
             Some(task_id) => SubTask::new(task_id, Arc::downgrade(&self.inner)),
             None => SubTask::empty(),
         }
@@ -266,6 +300,7 @@ impl Drop for TaskGroupGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::pending;
 
     /// 所有任务自然结束后 wait_all_stopped 必须返回。
     /// 覆盖两个关键点：任务自然耗尽时 remove_task 置 stopped 并唤醒；
@@ -324,5 +359,31 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(2), group.wait_all_stopped())
             .await
             .expect("wait_all_stopped should return after observer exits");
+    }
+
+    /// spawn_stop_all 的任务结束后必须终止同组的其他任务。
+    #[tokio::test]
+    async fn test_spawn_stop_all_stops_sibling_tasks() {
+        let manager = TaskGroupManager::new();
+        let (group, _guard) = manager.create_task().unwrap();
+
+        let (alive_tx, alive_rx) = tokio::sync::oneshot::channel::<()>();
+        let sibling = group.spawn(async move {
+            let _alive_tx = alive_tx;
+            pending::<()>().await;
+        });
+        assert!(sibling.is_running());
+
+        group.spawn_stop_all(async {});
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), group.wait_all_stopped())
+            .await
+            .expect("task group should stop when spawn_stop_all task exits");
+        tokio::time::timeout(std::time::Duration::from_secs(2), alive_rx)
+            .await
+            .expect("sibling task should be aborted")
+            .expect_err("sibling task must not complete normally");
+        assert!(group.is_stopped());
+        assert!(!sibling.is_running());
     }
 }

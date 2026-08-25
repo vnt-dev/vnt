@@ -2,7 +2,7 @@ use crate::context::config::DeviceMode;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
 use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
 use crate::protocol::transmission::TransmissionBytes;
-use crate::utils::task_control::{SubTask, TaskGroup};
+use crate::utils::task_control::TaskGroup;
 use anyhow::{Context, bail};
 use bytes::BytesMut;
 use futures::{SinkExt, StreamExt};
@@ -15,7 +15,6 @@ use tun_rs::async_framed::{Decoder, DeviceFramedRead, DeviceFramedWrite, Encoder
 #[cfg(not(target_os = "android"))]
 use tun_rs::{DeviceBuilder, Layer};
 
-#[derive(Clone)]
 pub struct DeviceIOManager {
     task_group: TaskGroup,
     device: DeviceMutex,
@@ -24,7 +23,6 @@ type DeviceMutex = Arc<tokio::sync::Mutex<(Option<DeviceTask>, Option<(Ipv4Addr,
 pub struct DeviceTask {
     #[cfg_attr(target_os = "android", allow(dead_code))]
     device: Arc<AsyncDevice>,
-    task: SubTask,
 }
 #[derive(Debug, Default)]
 pub struct DeviceConfig {
@@ -79,12 +77,7 @@ impl DeviceIOManager {
             device: Arc::new(Default::default()),
         }
     }
-    pub async fn stop_task(&self) {
-        let mut guard = self.device.lock().await;
-        if let Some(dev) = guard.0.take() {
-            dev.task.stop().await;
-        }
-    }
+
     pub async fn start_task(
         &self,
         device_config: DeviceConfig,
@@ -94,7 +87,6 @@ impl DeviceIOManager {
         if receiver.is_none() || enhanced_outbound.is_none() {
             bail!("device task already started");
         }
-        self.stop_task().await;
         // 先执行可能失败的 TUN/TAP 设备创建，成功后才消费 receiver/outbound，
         // 保证失败时调用方状态完整、可以重试
         let device_mode = device_config.device_mode;
@@ -224,28 +216,31 @@ fn create(
     let device_framed_write = DeviceFramedWrite::new(device.clone(), BytesCodec::new());
     let outbound_device = device.clone();
 
-    // 读写两个方向合并为一个任务：任一方向结束（出错或设备关闭）即
-    // 通过 select! 取消另一方向，避免单侧失败后另一侧继续运行的半开状态
-    let task = task_group.spawn(async move {
-        tokio::select! {
-            rs = in_device_loop(receiver, device_framed_write) => {
-                if let Err(e) = rs {
-                    log::error!("in_device_loop error, stopping out_device_loop: {e:?}");
-                } else {
-                    log::warn!("in_device_loop exited, stopping out_device_loop");
-                }
-            }
-            rs = out_device_loop(device_framed_read, outbound_device, enhanced_outbound, device_mode) => {
-                if let Err(e) = rs {
-                    log::error!("out_device_loop error, stopping in_device_loop: {e:?}");
-                } else {
-                    log::warn!("out_device_loop exited, stopping in_device_loop");
-                }
-            }
+    // 读写两个方向独立运行；任一方向结束（出错或设备关闭）都会停止整个任务组，
+    // 避免虚拟网卡失效后其他任务继续运行。
+    task_group.spawn_stop_all(async move {
+        if let Err(e) = in_device_loop(receiver, device_framed_write).await {
+            log::error!("in_device_loop error, stopping all tasks: {e:?}");
+        } else {
+            log::warn!("in_device_loop exited, stopping all tasks");
+        }
+    });
+    task_group.spawn_stop_all(async move {
+        if let Err(e) = out_device_loop(
+            device_framed_read,
+            outbound_device,
+            enhanced_outbound,
+            device_mode,
+        )
+        .await
+        {
+            log::error!("out_device_loop error, stopping all tasks: {e:?}");
+        } else {
+            log::warn!("out_device_loop exited, stopping all tasks");
         }
     });
 
-    DeviceTask { device, task }
+    DeviceTask { device }
 }
 
 fn framed_read_buffer_size(device_mode: DeviceMode, mtu: usize) -> usize {
