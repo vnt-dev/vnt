@@ -28,19 +28,19 @@ const TOOL_TARGETS = [
   ["Linux", "MIPS big-endian", "mips-unknown-linux-musl"],
   ["macOS", "Apple Silicon", "aarch64-apple-darwin"],
   ["macOS", "Intel", "x86_64-apple-darwin"],
-  ["FreeBSD 13.2", "x86_64", "x86_64-unknown-freebsd"],
+  ["FreeBSD", "x86_64", "x86_64-unknown-freebsd"],
 ];
 
 const DOWNLOADS = [
   {
-    product: "VNT Desktop",
+    product: "VNT 桌面客户端",
     platform: "Windows",
     architecture: "x86_64",
     format: "EXE 安装包",
     filename: ({ version }) => `VNT.Desktop_${version}_windows_x64-setup.exe`,
   },
   {
-    product: "VNT Desktop",
+    product: "VNT 桌面客户端",
     platform: "Windows",
     architecture: "x86_64",
     format: "MSI 安装包",
