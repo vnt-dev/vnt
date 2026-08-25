@@ -6,11 +6,11 @@
 
 ## 第一步：选择适合的程序
 
-| 程序 | 适用对象 | 特点 |
-| --- | --- | --- |
-| **VNT 桌面客户端** | 一般用户（推荐） | 图形化界面，操作简单，Windows 安装包开箱即用 |
-| **vnt2_web** | 偏好网页管理的用户 | 启动后通过浏览器操作，适合无桌面环境的服务器/NAS |
-| **vnt2_cli + vnt2_ctrl** | 进阶用户 | 纯命令行，适合脚本化、自动化部署 |
+| 程序                       | 适用对象      | 特点                         |
+|--------------------------|-----------|----------------------------|
+| **VNT 桌面客户端**            | 一般用户（推荐）  | 图形化界面，操作简单，Windows 安装包开箱即用 |
+| **vnt2_web**             | 偏好网页管理的用户 | 启动后通过浏览器操作，适合无桌面环境的服务器/NAS |
+| **vnt2_cli + vnt2_ctrl** | 进阶用户      | 纯命令行，适合脚本化、自动化部署           |
 
 各平台的安装包请到 [GitHub Releases](https://github.com/vnt-dev/vnt/releases) 下载。
 
@@ -116,11 +116,12 @@ pnpm dev:desktop
 
 vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
 
-其他平台后续再推出。
+更多平台后续再推出。
 
-### 相关库
+### 相关项目
 1. tun 虚拟网卡（https://github.com/tun-rs/tun-rs）
 2. 路由设置（https://github.com/tun-rs/route_manager）
 3. 用户态协议栈（用于 quic 代理和无 tun 模式出口）（https://github.com/rustp2p/tcp_ip）
 4. 打洞通道处理（https://github.com/rustp2p/rustp2p/tree/master/rustp2p-core）
-5. 安卓端2.0已发布（https://github.com/vnt-dev/VntApp）
+5. VNT安卓端2.0已发布（https://github.com/vnt-dev/VntApp）
+6. VNT服务端（https://github.com/vnt-dev/vnts）
