@@ -1,15 +1,20 @@
 use crate::context::NetworkAddr;
 use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
 use crate::protocol::transmission::TransmissionBytes;
+use pnet_packet::arp::{ArpHardwareTypes, ArpPacket};
+use pnet_packet::ethernet::{EtherTypes, EthernetPacket};
+use pnet_packet::vlan::VlanPacket;
 use std::net::Ipv4Addr;
 
 pub const ETHERNET_HEADER_LEN: usize = 14;
+pub const VLAN_HEADER_LEN: usize = 4;
+pub const MAX_VLAN_TAGS: usize = 4;
+pub const MAX_ETHERNET_HEADER_LEN: usize = ETHERNET_HEADER_LEN + VLAN_HEADER_LEN * MAX_VLAN_TAGS;
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
 pub const ETHERTYPE_ARP: u16 = 0x0806;
 const ETHERTYPE_VLAN: u16 = 0x8100;
 const ETHERTYPE_QINQ: u16 = 0x88a8;
 const ETHERTYPE_VLAN_9100: u16 = 0x9100;
-const ARP_IPV4_LEN: usize = 28;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct FrameInfo {
@@ -38,59 +43,51 @@ pub fn ip_from_mac(mac: [u8; 6]) -> Option<Ipv4Addr> {
 }
 
 pub fn parse_frame(frame: &[u8]) -> Option<FrameInfo> {
-    if frame.len() < ETHERNET_HEADER_LEN {
-        return None;
-    }
-    let destination = frame[0..6].try_into().ok()?;
-    let source = frame[6..12].try_into().ok()?;
-    let mut ethertype = u16::from_be_bytes(frame[12..14].try_into().ok()?);
+    let ethernet = EthernetPacket::new(frame)?;
+    let destination = ethernet.get_destination().octets();
+    let source = ethernet.get_source().octets();
+    let mut ethertype = ethernet.get_ethertype();
     let mut payload_offset = ETHERNET_HEADER_LEN;
     // Support stacked VLAN tags. Four tags is already beyond normal Q-in-Q usage
     // and bounds work performed for an untrusted frame.
-    for _ in 0..4 {
+    for _ in 0..MAX_VLAN_TAGS {
         if !matches!(
-            ethertype,
+            ethertype.0,
             ETHERTYPE_VLAN | ETHERTYPE_QINQ | ETHERTYPE_VLAN_9100
         ) {
             break;
         }
-        if frame.len() < payload_offset + 4 {
-            return None;
-        }
-        ethertype = u16::from_be_bytes(
-            frame[payload_offset + 2..payload_offset + 4]
-                .try_into()
-                .ok()?,
-        );
-        payload_offset += 4;
+        let vlan = VlanPacket::new(&frame[payload_offset..])?;
+        ethertype = vlan.get_ethertype();
+        payload_offset += VLAN_HEADER_LEN;
     }
-    (frame.len() >= payload_offset).then_some(FrameInfo {
+    Some(FrameInfo {
         destination,
         source,
-        ethertype,
+        ethertype: ethertype.0,
         payload_offset,
     })
 }
 
 pub fn parse_arp_ipv4(frame: &[u8]) -> Option<ArpIpv4> {
     let info = parse_frame(frame)?;
-    if info.ethertype != ETHERTYPE_ARP || frame.len() < info.payload_offset + ARP_IPV4_LEN {
+    if info.ethertype != EtherTypes::Arp.0 {
         return None;
     }
-    let arp = &frame[info.payload_offset..];
-    if u16::from_be_bytes(arp[0..2].try_into().ok()?) != 1
-        || u16::from_be_bytes(arp[2..4].try_into().ok()?) != ETHERTYPE_IPV4
-        || arp[4] != 6
-        || arp[5] != 4
+    let arp = ArpPacket::new(&frame[info.payload_offset..])?;
+    if arp.get_hardware_type() != ArpHardwareTypes::Ethernet
+        || arp.get_protocol_type() != EtherTypes::Ipv4
+        || arp.get_hw_addr_len() != 6
+        || arp.get_proto_addr_len() != 4
     {
         return None;
     }
     Some(ArpIpv4 {
-        operation: u16::from_be_bytes(arp[6..8].try_into().ok()?),
-        sender_mac: arp[8..14].try_into().ok()?,
-        sender_ip: Ipv4Addr::from(<[u8; 4]>::try_from(&arp[14..18]).ok()?),
-        target_mac: arp[18..24].try_into().ok()?,
-        target_ip: Ipv4Addr::from(<[u8; 4]>::try_from(&arp[24..28]).ok()?),
+        operation: arp.get_operation().0,
+        sender_mac: arp.get_sender_hw_addr().octets(),
+        sender_ip: arp.get_sender_proto_addr(),
+        target_mac: arp.get_target_hw_addr().octets(),
+        target_ip: arp.get_target_proto_addr(),
     })
 }
 
@@ -100,7 +97,9 @@ pub fn build_arp_reply(request: &[u8], own_ip: Ipv4Addr) -> Option<TransmissionB
     if arp.operation != 1 || arp.target_ip != own_ip {
         return None;
     }
-    let frame_len = request.len().max(info.payload_offset + ARP_IPV4_LEN);
+    let frame_len = request
+        .len()
+        .max(info.payload_offset + ArpPacket::minimum_packet_size());
     let mut bytes = TransmissionBytes::with_capacity(HEAD_LENGTH, HEAD_LENGTH + frame_len);
     bytes.put(request).ok()?;
     if bytes.len() < frame_len {
@@ -177,6 +176,36 @@ mod tests {
         let mut truncated_vlan = vec![0u8; 16];
         truncated_vlan[12..14].copy_from_slice(&ETHERTYPE_VLAN.to_be_bytes());
         assert!(parse_frame(&truncated_vlan).is_none());
+    }
+
+    #[test]
+    fn parses_stacked_vlan_arp_with_pnet_packets() {
+        let sender_ip = Ipv4Addr::new(10, 26, 0, 8);
+        let target_ip = Ipv4Addr::new(10, 26, 0, 9);
+        let sender_mac = mac_from_ip(sender_ip);
+        let mut request = vec![0u8; ETHERNET_HEADER_LEN + VLAN_HEADER_LEN * 2 + 28];
+        request[0..6].copy_from_slice(&[0xff; 6]);
+        request[6..12].copy_from_slice(&sender_mac);
+        request[12..14].copy_from_slice(&ETHERTYPE_QINQ.to_be_bytes());
+        request[16..18].copy_from_slice(&ETHERTYPE_VLAN.to_be_bytes());
+        request[20..22].copy_from_slice(&ETHERTYPE_ARP.to_be_bytes());
+        let arp_offset = ETHERNET_HEADER_LEN + VLAN_HEADER_LEN * 2;
+        request[arp_offset..arp_offset + 2].copy_from_slice(&1u16.to_be_bytes());
+        request[arp_offset + 2..arp_offset + 4].copy_from_slice(&ETHERTYPE_IPV4.to_be_bytes());
+        request[arp_offset + 4] = 6;
+        request[arp_offset + 5] = 4;
+        request[arp_offset + 6..arp_offset + 8].copy_from_slice(&1u16.to_be_bytes());
+        request[arp_offset + 8..arp_offset + 14].copy_from_slice(&sender_mac);
+        request[arp_offset + 14..arp_offset + 18].copy_from_slice(&sender_ip.octets());
+        request[arp_offset + 24..arp_offset + 28].copy_from_slice(&target_ip.octets());
+
+        let info = parse_frame(&request).unwrap();
+        assert_eq!(info.ethertype, ETHERTYPE_ARP);
+        assert_eq!(info.payload_offset, arp_offset);
+        let arp = parse_arp_ipv4(&request).unwrap();
+        assert_eq!(arp.sender_mac, sender_mac);
+        assert_eq!(arp.sender_ip, sender_ip);
+        assert_eq!(arp.target_ip, target_ip);
     }
 
     #[test]
