@@ -35,6 +35,7 @@ const deviceModeOptions = [
   { value: "tun", label: "TUN(三层)" },
   { value: "tap", label: "TAP(二层)" },
 ];
+const isWindows = /Windows/i.test(globalThis.navigator?.userAgent || "");
 
 // 打开时加载内容
 watch(
@@ -452,7 +453,15 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                   <div class="flex-1">
                     <div class="text-sm font-medium text-slate-800 dark:text-white">虚拟网卡模式</div>
-                    <div class="text-xs text-slate-400 mt-0.5">TAP 为二层网卡；Windows 需要 tap-windows 驱动</div>
+                    <div class="mt-0.5 text-xs text-slate-400">
+                      <template v-if="formData.device_mode === 'no'">使用端口转发，无需管理员权限</template>
+                      <template v-else-if="formData.device_mode === 'tap'">
+                        构建虚拟以太网<template v-if="isWindows"
+                          >；需要安装tap-windows驱动，建议指定<span class="font-medium text-slate-500 dark:text-slate-300">虚拟网卡名</span></template
+                        >
+                      </template>
+                      <template v-else>构建虚拟IP网络</template>
+                    </div>
                   </div>
                   <AppSelect v-model="formData.device_mode" :options="deviceModeOptions" class="mt-2" aria-label="虚拟网卡模式" />
                 </div>
@@ -535,7 +544,7 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               </div>
               <div>
                 <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">虚拟网卡名</label>
-                <input v-model="formData.tun_name" type="text" placeholder="默认为vnt-tun" class="input" />
+                <input v-model="formData.tun_name" type="text" placeholder="可选" class="input" />
               </div>
               <div>
                 <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">绑定出口网卡</label>
