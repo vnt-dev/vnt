@@ -186,6 +186,10 @@ body,
       hover:shadow-md dark:border-slate-700/80 dark:bg-slate-900;
   }
 
+  .page-stack {
+    @apply space-y-6;
+  }
+
   .input {
     @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
       placeholder-slate-400 transition-colors

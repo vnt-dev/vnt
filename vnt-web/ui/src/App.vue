@@ -83,6 +83,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
         </div>
 
         <div class="ml-auto flex items-center gap-2">
+          <div id="page-actions" class="flex items-center gap-2"></div>
           <div class="flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-500 sm:px-3 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
             <span
               class="h-1.5 w-1.5 rounded-full"

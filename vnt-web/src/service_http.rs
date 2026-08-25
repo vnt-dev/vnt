@@ -96,6 +96,11 @@ impl HttpAppState {
             return;
         };
         inst.vnt.take();
+        // 启动流程会先释放网络资源，再由外层记录具体的失败原因。
+        // 此时保持 Starting，避免实例及其启动日志被提前清理。
+        if inst.status == VntStatus::Starting {
+            return;
+        }
         inst.status = VntStatus::Stopped;
         inst.start_config = None;
         // 已完成任务的句柄只是残留，不算运行内容
@@ -998,12 +1003,16 @@ async fn start_vnt_network(
     if network_manager.device_mode().has_device() {
         let mode = network_manager.device_mode();
         state.record_log(&file_name, format!("正在创建 {} 虚拟网卡", mode));
-        network_manager.start_device().await?;
+        network_manager
+            .start_device()
+            .await
+            .with_context(|| format!("创建 {} 虚拟网卡失败", mode))?;
 
         state.record_log(&file_name, format!("创建 {} 虚拟网卡成功，设置 IP", mode));
         network_manager
             .set_device_network_ip(reg_msg.ip, reg_msg.prefix_len)
-            .await?;
+            .await
+            .with_context(|| format!("设置 {} 虚拟网卡 IP 失败", mode))?;
         state.record_log(&file_name, "设置 IP 成功");
 
         // 配置子网路由
@@ -1801,8 +1810,7 @@ network_code = "test"
         let legacy: StartConfig = toml::from_str(&format!("{base}no_tun = true\n")).unwrap();
         assert!(legacy.reject_legacy_no_tun().is_err());
 
-        let legacy_false: StartConfig =
-            toml::from_str(&format!("{base}no_tun = false\n")).unwrap();
+        let legacy_false: StartConfig = toml::from_str(&format!("{base}no_tun = false\n")).unwrap();
         assert!(legacy_false.reject_legacy_no_tun().is_ok());
     }
 
@@ -1829,6 +1837,30 @@ network_code = "test"
         let b = lock.instances.get("b.toml").unwrap();
         assert_eq!(b.start_logs.len(), 1);
         assert!(b.start_logs[0].contains("b 的日志"));
+    }
+
+    /// 网卡创建等启动步骤失败时，网络资源清理发生在错误日志写入之前。
+    /// 清理阶段必须保留 Starting 实例，外层才能把具体错误返回给前端日志。
+    #[test]
+    fn test_starting_cleanup_preserves_failure_log() {
+        let state = new_test_state();
+        state.starting("a.toml").unwrap();
+        state.record_log("a.toml", "正在创建 tun 虚拟网卡");
+
+        state.stopped("a.toml");
+        assert_eq!(state.status("a.toml"), VntStatus::Starting);
+
+        state.record_log_and_stopped("a.toml", "启动失败: 创建 tun 虚拟网卡失败");
+
+        let lock = state.inner.lock();
+        let instance = lock.instances.get("a.toml").unwrap();
+        assert_eq!(instance.status, VntStatus::Stopped);
+        assert!(
+            instance
+                .start_logs
+                .iter()
+                .any(|log| log.contains("创建 tun 虚拟网卡失败"))
+        );
     }
 
     /// 移除已停止实例：Stopped 可移除，Starting 拒绝

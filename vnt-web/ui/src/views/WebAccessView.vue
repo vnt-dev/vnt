@@ -100,14 +100,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="mx-auto max-w-4xl space-y-5">
-    <div class="page-title">
-      <div>
-        <h2>Web 访问</h2>
-        <p>从浏览器访问当前 VNT 进程，API 请求由持久访问令牌保护。</p>
-      </div>
-    </div>
-
+  <div class="page-stack">
     <div v-if="loading" class="card text-sm text-slate-400">正在读取 Web 服务状态…</div>
     <div v-else-if="!bridge" class="card border-red-200 text-sm text-red-600 dark:border-red-900 dark:text-red-300">{{ error }}</div>
     <template v-else>

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
 import { useAppStore } from "../stores/app";
+import { useStartLogStore } from "../stores/startLog";
 import { useUiStore } from "../stores/ui";
 
 const props = defineProps({
@@ -10,6 +11,7 @@ const props = defineProps({
 });
 
 const app = useAppStore();
+const startLog = useStartLogStore();
 const ui = useUiStore();
 
 const info = computed(() => app.infoOf(props.inst.file_name));
@@ -132,6 +134,13 @@ const confirmDismiss = async () => {
         </span>
       </template>
       <template v-else>
+        <button
+          v-if="inst.status === 'stopped'"
+          class="btn-ghost btn-sm"
+          @click.stop="startLog.openStartLog(inst.file_name)"
+        >
+          日志
+        </button>
         <button
           v-if="inst.status === 'running' || inst.status === 'stopped'"
           class="btn-primary btn-sm"

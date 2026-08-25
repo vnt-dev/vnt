@@ -157,12 +157,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-3xl space-y-5">
-    <div>
-      <h1 class="page-title">关于</h1>
-      <p class="page-subtitle">VNT 客户端信息与软件更新</p>
-    </div>
-
+  <div class="page-stack">
     <section class="card flex items-center gap-4">
       <img :src="vntIcon" alt="VNT" class="h-16 w-16 shrink-0 rounded-2xl" />
       <div class="min-w-0">

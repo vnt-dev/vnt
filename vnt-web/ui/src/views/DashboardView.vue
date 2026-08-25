@@ -25,24 +25,10 @@ const serverConnected = computed(() => {
   return { connected: connected.length, total: running.length };
 });
 
-const statusSummary = computed(() => {
-  if (app.runningCount > 0) return `运行中 ${app.runningCount} 个实例`;
-  if (app.startingCount > 0) return "有实例正在启动...";
-  return "全部实例已停止";
-});
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- 欢迎/状态区 -->
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="page-title">总览</h1>
-        <p class="page-subtitle">{{ statusSummary }}</p>
-      </div>
-      <router-link to="/config" class="btn-ghost btn-sm">管理配置</router-link>
-    </div>
-
+  <div class="page-stack">
     <!-- 统计卡片 -->
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <div class="card">

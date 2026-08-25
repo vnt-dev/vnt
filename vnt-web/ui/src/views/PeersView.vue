@@ -144,12 +144,7 @@ const switcherClass = (fileName) =>
 </script>
 
 <template>
-  <div class="space-y-4">
-    <div>
-      <h1 class="page-title">设备列表</h1>
-      <p class="page-subtitle">查看各实例的设备连接与流量状况</p>
-    </div>
-
+  <div class="page-stack">
     <!-- 实例切换器 -->
     <div v-if="app.instanceList.length > 0" class="scrollbar-hide flex items-center gap-2 overflow-x-auto">
       <button
