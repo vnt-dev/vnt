@@ -923,7 +923,7 @@ async fn start_vnt_internal(
 
         if let Err(e) = result {
             log::error!("Failed to start VNT network: {:?}", e);
-            state_clone.record_log_and_stopped(&file_name_clone, format!("启动失败: {}", e));
+            state_clone.record_log_and_stopped(&file_name_clone, format!("启动失败: {:?}", e));
         }
         drop(on_error_guard);
     });
