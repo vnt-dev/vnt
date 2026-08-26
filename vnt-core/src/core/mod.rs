@@ -349,7 +349,7 @@ impl NetworkManager {
                 .app_state
                 .get_network()
                 .context("network is not registered")?;
-            config = config.set_mac_addr(crate::ethernet::mac_from_ip(net.ip));
+            config = config.set_mac_addr(crate::ethernet::mac_from_ip(net.ip).octets());
         }
         if let Some(tun_name) = self.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
@@ -372,7 +372,7 @@ impl NetworkManager {
                 .app_state
                 .get_network()
                 .context("network is not registered")?;
-            config = config.set_mac_addr(crate::ethernet::mac_from_ip(net.ip));
+            config = config.set_mac_addr(crate::ethernet::mac_from_ip(net.ip).octets());
         }
         if let Some(tun_fd) = tun_fd {
             config = config.set_tun_fd(tun_fd);

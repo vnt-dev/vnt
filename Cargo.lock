@@ -6308,6 +6308,7 @@ dependencies = [
  "lz4_flex",
  "machine-uid",
  "parking_lot 0.12.5",
+ "pnet_base",
  "pnet_packet",
  "prost",
  "prost-build",

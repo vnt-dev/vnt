@@ -57,10 +57,11 @@ impl EnhancedTunInbound {
 mod tests {
     use super::*;
     use crate::context::config::DeviceMode;
-    use crate::ethernet::{ETHERTYPE_IPV4, parse_frame, wrap_ipv4};
+    use crate::ethernet::{parse_frame, wrap_ipv4};
     use crate::nat::AllowSubnetExternalRoute;
     use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
     use crate::tun::{TunDataInbound, tun_channel};
+    use pnet_packet::ethernet::EtherTypes;
 
     fn network() -> NetworkAddr {
         NetworkAddr {
@@ -97,7 +98,7 @@ mod tests {
         let frame = tap_rx.receiver.recv().await.unwrap();
         assert_eq!(
             parse_frame(frame.as_ref()).unwrap().ethertype,
-            ETHERTYPE_IPV4
+            EtherTypes::Ipv4
         );
 
         let (tun_tx, mut tun_rx) = tun_channel();

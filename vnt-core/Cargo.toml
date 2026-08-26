@@ -30,6 +30,7 @@ bytes = "1.11.0"
 rand = "0.10"
 time = { workspace = true, features = ["macros", "formatting", "local-offset"] }
 pnet_packet = "0.35"
+pnet_base = "0.35"
 ring = "0.17.14"
 
 prost.workspace = true

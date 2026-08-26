@@ -1,11 +1,12 @@
 use crate::context::SharedNetworkAddr;
 use crate::enhanced_tunnel::quic_over::quic_outbound::EnhancedQuicOutbound;
 use crate::ethernet::{
-    ETHERTYPE_ARP, ETHERTYPE_IPV4, build_arp_reply, ip_from_mac, is_broadcast_or_multicast,
-    parse_arp_ipv4, parse_frame,
+    build_arp_reply, ip_from_mac, is_broadcast_or_multicast, parse_arp_ipv4, parse_frame,
 };
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::HybridOutbound;
+use pnet_packet::arp::ArpOperations;
+use pnet_packet::ethernet::EtherTypes;
 use pnet_packet::ipv4::Ipv4Packet;
 
 pub struct EnhancedOutbound {
@@ -54,7 +55,7 @@ impl EnhancedOutbound {
             return Ok(None);
         };
         match frame.ethertype {
-            ETHERTYPE_IPV4 => {
+            EtherTypes::Ipv4 => {
                 let Some(ipv4) = Ipv4Packet::new(&data[frame.payload_offset..]) else {
                     return Ok(None);
                 };
@@ -67,14 +68,14 @@ impl EnhancedOutbound {
                     .ethernet_ipv4_outbound(net, data, dest)
                     .await?;
             }
-            ETHERTYPE_ARP => {
+            EtherTypes::Arp => {
                 let Some(arp) = parse_arp_ipv4(data.as_ref()) else {
                     return Ok(None);
                 };
-                if arp.operation == 1 && arp.target_ip == net.gateway {
+                if arp.operation == ArpOperations::Request && arp.target_ip == net.gateway {
                     return Ok(build_arp_reply(data.as_ref(), net.gateway));
                 }
-                if arp.operation == 2 {
+                if arp.operation == ArpOperations::Reply {
                     let dest = ip_from_mac(frame.destination).unwrap_or(arp.target_ip);
                     self.hybrid_outbound
                         .ethernet_unicast_outbound(net, dest, data)
