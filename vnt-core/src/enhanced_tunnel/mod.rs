@@ -2,6 +2,7 @@ use crate::context::AppState;
 use crate::context::config::DeviceMode;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
+use crate::ethernet::MacTable;
 use crate::nat::SubnetExternalRoute;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::port_mapping::PortMapping;
@@ -59,6 +60,7 @@ pub(crate) async fn enhanced_ipv4_tunnel(
         },
     )
     .await?;
+    let mac_table = MacTable::default();
     let enhanced_inbound = EnhancedInbound::new(
         tun_data_sender,
         inbound,
@@ -66,6 +68,7 @@ pub(crate) async fn enhanced_ipv4_tunnel(
         app_state.traffic_stats.clone(),
         config.device_mode,
         components.hybrid_outbound.clone(),
+        mac_table.clone(),
     );
 
     let enhanced_outbound = outbound.map(|outbound| {
@@ -73,6 +76,7 @@ pub(crate) async fn enhanced_ipv4_tunnel(
             app_state.network.clone(),
             outbound,
             components.hybrid_outbound,
+            mac_table,
         )
     });
     Ok((enhanced_inbound, enhanced_outbound))

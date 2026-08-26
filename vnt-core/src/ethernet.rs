@@ -1,18 +1,117 @@
 use crate::context::NetworkAddr;
 use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
 use crate::protocol::transmission::TransmissionBytes;
+use parking_lot::RwLock;
 use pnet_base::MacAddr;
 use pnet_packet::arp::{
     ArpHardwareTypes, ArpOperation, ArpOperations, ArpPacket, MutableArpPacket,
 };
 use pnet_packet::ethernet::{EtherType, EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet_packet::vlan::VlanPacket;
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub const ETHERNET_HEADER_LEN: usize = 14;
 pub const VLAN_HEADER_LEN: usize = 4;
 pub const MAX_VLAN_TAGS: usize = 4;
 pub const MAX_ETHERNET_HEADER_LEN: usize = ETHERNET_HEADER_LEN + VLAN_HEADER_LEN * MAX_VLAN_TAGS;
+const MAC_ENTRY_TTL: Duration = Duration::from_secs(300);
+const MAC_TABLE_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_MAC_ENTRIES: usize = 65_536;
+
+#[derive(Debug, Copy, Clone)]
+struct MacEntry {
+    peer: Ipv4Addr,
+    last_seen: Instant,
+}
+
+#[derive(Debug)]
+struct MacTableInner {
+    entries: HashMap<MacAddr, MacEntry>,
+    last_cleanup: Instant,
+}
+
+impl Default for MacTableInner {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            last_cleanup: Instant::now(),
+        }
+    }
+}
+
+/// Ethernet forwarding database. It maps an inner source MAC address to the
+/// authenticated overlay peer from which the frame was received.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct MacTable {
+    inner: Arc<RwLock<MacTableInner>>,
+}
+
+impl MacTable {
+    pub fn learn_remote(&self, mac: MacAddr, peer: Ipv4Addr) {
+        if mac.is_zero() || mac.is_multicast() {
+            return;
+        }
+        let now = Instant::now();
+        let mut inner = self.inner.write();
+        if now.duration_since(inner.last_cleanup) >= MAC_TABLE_CLEANUP_INTERVAL {
+            inner
+                .entries
+                .retain(|_, entry| now.duration_since(entry.last_seen) < MAC_ENTRY_TTL);
+            inner.last_cleanup = now;
+        }
+        if inner.entries.len() >= MAX_MAC_ENTRIES
+            && !inner.entries.contains_key(&mac)
+            && let Some(oldest) = inner
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_seen)
+                .map(|(mac, _)| *mac)
+        {
+            inner.entries.remove(&oldest);
+        }
+        inner.entries.insert(
+            mac,
+            MacEntry {
+                peer,
+                last_seen: now,
+            },
+        );
+    }
+
+    pub fn lookup(&self, mac: MacAddr) -> Option<Ipv4Addr> {
+        let entry = self.inner.read().entries.get(&mac).copied()?;
+        if entry.last_seen.elapsed() < MAC_ENTRY_TTL {
+            return Some(entry.peer);
+        }
+        let mut inner = self.inner.write();
+        if inner
+            .entries
+            .get(&mac)
+            .is_some_and(|current| current.last_seen == entry.last_seen)
+        {
+            inner.entries.remove(&mac);
+        }
+        None
+    }
+
+    /// A source MAC read from the local TAP is now local to this tunnel edge,
+    /// so discard any stale remote location learned before a MAC move.
+    pub fn observe_local_source(&self, mac: MacAddr) {
+        if !mac.is_zero() && !mac.is_multicast() {
+            self.inner.write().entries.remove(&mac);
+        }
+    }
+
+    pub fn remove_peer(&self, peer: Ipv4Addr) {
+        self.inner
+            .write()
+            .entries
+            .retain(|_, entry| entry.peer != peer);
+    }
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct FrameInfo {
@@ -34,12 +133,6 @@ pub struct ArpIpv4 {
 pub fn mac_from_ip(ip: Ipv4Addr) -> MacAddr {
     let octets = ip.octets();
     MacAddr::new(0x02, 0x00, octets[0], octets[1], octets[2], octets[3])
-}
-
-pub fn ip_from_mac(mac: MacAddr) -> Option<Ipv4Addr> {
-    let octets = mac.octets();
-    (octets[0] == 0x02 && octets[1] == 0x00)
-        .then(|| Ipv4Addr::new(octets[2], octets[3], octets[4], octets[5]))
 }
 
 pub fn parse_frame(frame: &[u8]) -> Option<FrameInfo> {
@@ -159,11 +252,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn node_mac_round_trip() {
+    fn node_mac_is_stable() {
         let ip = Ipv4Addr::new(10, 26, 1, 9);
         assert_eq!(mac_from_ip(ip), MacAddr::new(2, 0, 10, 26, 1, 9));
-        assert_eq!(ip_from_mac(mac_from_ip(ip)), Some(ip));
-        assert_eq!(ip_from_mac(MacAddr::zero()), None);
+    }
+
+    #[test]
+    fn mac_table_learns_bridge_macs_and_handles_moves() {
+        let table = MacTable::default();
+        let mac = MacAddr::new(0x0a, 0xbb, 0xcc, 0xdd, 0xee, 0x01);
+        let second_mac = MacAddr::new(0x0a, 0xbb, 0xcc, 0xdd, 0xee, 0x02);
+        let first_peer = Ipv4Addr::new(10, 26, 0, 8);
+        let second_peer = Ipv4Addr::new(10, 26, 0, 9);
+
+        table.learn_remote(mac, first_peer);
+        table.learn_remote(second_mac, first_peer);
+        assert_eq!(table.lookup(mac), Some(first_peer));
+        assert_eq!(table.lookup(second_mac), Some(first_peer));
+
+        table.learn_remote(mac, second_peer);
+        assert_eq!(table.lookup(mac), Some(second_peer));
+
+        table.observe_local_source(mac);
+        assert_eq!(table.lookup(mac), None);
+
+        table.remove_peer(first_peer);
+        assert_eq!(table.lookup(second_mac), None);
+    }
+
+    #[test]
+    fn mac_table_ignores_non_unicast_sources() {
+        let table = MacTable::default();
+        let peer = Ipv4Addr::new(10, 26, 0, 8);
+
+        table.learn_remote(MacAddr::zero(), peer);
+        table.learn_remote(MacAddr::broadcast(), peer);
+
+        assert_eq!(table.lookup(MacAddr::zero()), None);
+        assert_eq!(table.lookup(MacAddr::broadcast()), None);
     }
 
     #[test]

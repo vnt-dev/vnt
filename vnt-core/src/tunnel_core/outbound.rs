@@ -364,7 +364,6 @@ impl HybridOutbound {
             .send_raw_broadcast(exclude_ips, packet_bytes)
             .await
     }
-    #[allow(dead_code)]
     pub fn has_route(&self, dest: &Ipv4Addr) -> bool {
         self.basic_outbound.exists_route(dest)
     }
