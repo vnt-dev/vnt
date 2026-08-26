@@ -9,6 +9,7 @@ node_modules
 vnt-web/ui/dist
 vnt-desktop/dist
 vnt-desktop/src-tauri/gen
+vnt-desktop/src-tauri/binaries
 vnt-desktop/src-tauri/icons/android
 vnt-desktop/src-tauri/icons/ios
 

@@ -4,9 +4,9 @@
   "version": "2.0.3",
   "identifier": "com.vnt.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm prepare:sidecar:dev && pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm prepare:sidecar && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -32,6 +32,7 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
+    "externalBin": ["binaries/vnt2-web"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,8 +44,14 @@
     "shortDescription": "轻量、高效的虚拟局域网桌面客户端",
     "longDescription": "VNT Desktop 用于创建和管理安全、快速的虚拟局域网连接。",
     "windows": {
-      "wix": { "language": "zh-CN" },
-      "nsis": { "displayLanguageSelector": false }
+      "wix": {
+        "language": "zh-CN",
+        "fragmentPaths": ["./windows/wix-service.wxs"]
+      },
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installerHooks": "./windows/nsis-hooks.nsh"
+      }
     }
   },
   "plugins": {

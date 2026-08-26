@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "prepare:sidecar": "node scripts/prepare-sidecar.mjs release",
+    "prepare:sidecar:dev": "node scripts/prepare-sidecar.mjs debug",
     "tauri": "tauri"
   },
   "dependencies": {

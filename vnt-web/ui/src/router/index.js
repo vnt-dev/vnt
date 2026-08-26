@@ -14,7 +14,8 @@ const routes = [
   { path: "/config", component: ConfigView },
   { path: "/peers", component: PeersView },
   { path: "/routes", component: RoutesView },
-  { path: "/web-access", component: WebAccessView },
+  { path: "/settings", component: WebAccessView },
+  { path: "/web-access", redirect: "/settings" },
   { path: "/about", component: AboutView },
 ];
 

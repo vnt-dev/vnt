@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <!-- MSI 卸载在提升后的执行阶段调用桌面程序删除服务，再移除安装文件。 -->
+    <CustomAction
+      Id="UninstallVntWebService"
+      FileKey="Path"
+      ExeCommand="--vnt-service-control uninstall --desktop-config &quot;C:\vnt-desktop-service-control&quot;"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="UninstallVntWebService" Before="RemoveFiles">
+        <![CDATA[(REMOVE = "ALL") AND NOT UPGRADINGPRODUCTCODE]]>
+      </Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

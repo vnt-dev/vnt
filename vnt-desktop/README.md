@@ -1,8 +1,8 @@
 # VNT Desktop
 
-基于 Tauri 2 + Vue 3 的 VNT PC 客户端。桌面端直接内置 `vnt-web` 的服务能力，不需要另行启动 `vnt2_web`。
+基于 Tauri 2 + Vue 3 的 VNT PC 客户端。安装包内置独立的 `vnt2_web` 内核程序，桌面壳通过带访问令牌的本机 HTTP 接口管理内核。
 
-桌面端与 Web 端共用 `vnt-web/ui/src/` 下的同一套 Vue 应用、路由、状态、组件和样式。`vnt-desktop/src/main.js` 只负责注册 Tauri IPC 桥接，不维护第二套界面代码。
+桌面端与 Web 端共用 `vnt-web/ui/src/` 下的同一套 Vue 应用、路由、状态、组件和样式。`vnt-desktop/src/main.js` 只负责注册 Tauri 命令桥接，不维护第二套界面代码。
 
 ## 功能
 
@@ -13,12 +13,16 @@
 - 关闭主窗口时隐藏到托盘，托盘菜单可彻底退出
 - 深浅主题与 `Ctrl/Cmd + 1~5` 页面快捷键
 - 响应式布局：桌面侧栏、移动端顶部栏和抽屉导航
-- 桌面工作台通过 Tauri IPC 直接调用进程内 `vnt-core`，不监听本地 API 端口
-- 可选 Web 访问：启停、端口、本机/局域网监听范围、访问令牌、打开浏览器
+- 桌面工作台默认启动内置 `vnt2_web`，通过 HTTP API 访问独立内核
+- 设置页可修改监听地址、端口和访问令牌，并保存配置后重启内核
+- Windows 可由桌面程序将安装目录内的 `vnt2_web` 注册为系统服务，由服务接管内核运行；卸载服务后自动切回桌面进程托管
+- 安装服务后可启用开机启动；服务安装、配置、启停、卸载及更新均由桌面程序统一管理，并按需请求管理员权限
 - Web API 强制使用 Bearer 令牌鉴权，令牌可在桌面端重新生成
-- 关于页提供 GitHub 开源地址与更新检查；桌面端可通过 Tauri Updater 下载并安装更新
+- 关于页提供 GitHub 开源地址与更新检查；桌面端可通过 Tauri Updater 下载并安装更新，已安装的 Windows 服务会在更新前停止，并在新版本启动时同步刷新和恢复运行
 
-桌面数据存放在系统应用数据目录的 `com.vnt.desktop` 下，包括 `vnt_config`、自启动记录、`web_access.toml`、日志及 Windows 下的 `wintun.dll`。
+桌面数据存放在系统应用数据目录的 `com.vnt.desktop` 下，包括 `vnt_config`、组网自启动记录、`web_access.toml`、日志及 Windows 下的 `wintun.dll`。未安装服务时内核随桌面程序启动和退出；安装服务后由 Windows 服务保持运行。
+
+Windows 安装包卸载时会先通过桌面程序删除 `VntWeb` 服务：NSIS 使用卸载前钩子，MSI 使用提升后的 WiX 自定义操作，避免服务残留并指向已删除的 sidecar。
 
 ## 开发
 

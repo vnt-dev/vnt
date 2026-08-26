@@ -18,7 +18,7 @@ const submit = () => {
         <img :src="vntIcon" alt="" class="h-10 w-10 shrink-0" />
         <div>
           <h1 class="text-lg font-bold text-slate-900 dark:text-white">访问 VNT 控制台</h1>
-          <p class="mt-0.5 text-xs text-slate-400">请输入桌面端 Web 访问设置中的令牌</p>
+          <p class="mt-0.5 text-xs text-slate-400">请输入桌面端“设置”页面中的访问令牌</p>
         </div>
       </div>
       <label class="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200" for="access-token">访问令牌</label>

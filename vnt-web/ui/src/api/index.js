@@ -1,9 +1,9 @@
 import { clearAccessToken, getAccessToken } from "../auth";
 
-// HTTP 与 Tauri IPC 共用相同的 ApiResponse{code,msg,data} 协议。
+// Web 页面直接请求当前地址；桌面端由 Tauri 通过 HTTP 转发给内置 vnt2_web。
 const request = async (url, options = {}) => {
-  if (globalThis.__VNT_IPC_REQUEST__) {
-    const json = await globalThis.__VNT_IPC_REQUEST__({
+  if (globalThis.__VNT_API_REQUEST__) {
+    const json = await globalThis.__VNT_API_REQUEST__({
       method: options.method || "GET",
       path: url,
       body: options.body || null,

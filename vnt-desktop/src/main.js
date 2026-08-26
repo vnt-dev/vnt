@@ -5,11 +5,13 @@ import { check } from "@tauri-apps/plugin-updater";
 let pendingUpdate = null;
 
 globalThis.__VNT_DESKTOP__ = true;
-globalThis.__VNT_IPC_REQUEST__ = ({ method, path, body }) =>
+globalThis.__VNT_API_REQUEST__ = ({ method, path, body }) =>
   invoke("api_request", { method, path, body });
-globalThis.__VNT_WEB_ACCESS__ = {
-  status: () => invoke("web_access_status"),
-  update: (config) => invoke("update_web_access", { config }),
+globalThis.__VNT_SETTINGS__ = {
+  status: () => invoke("kernel_status"),
+  saveAndRestart: (config) => invoke("save_and_restart_kernel", { config }),
+  installService: () => invoke("install_kernel_service"),
+  uninstallService: () => invoke("uninstall_kernel_service"),
   generateToken: () => invoke("generate_web_token"),
   openUrl: (url) => invoke("open_web_url", { url }),
 };
@@ -28,7 +30,7 @@ globalThis.__VNT_UPDATER__ = {
     if (!pendingUpdate) throw new Error("请先检查更新");
     let downloaded = 0;
     let contentLength = 0;
-    await pendingUpdate.downloadAndInstall((event) => {
+    await pendingUpdate.download((event) => {
       if (event.event === "Started") {
         contentLength = event.data.contentLength || 0;
       } else if (event.event === "Progress") {
@@ -36,7 +38,24 @@ globalThis.__VNT_UPDATER__ = {
       }
       onProgress?.({ event: event.event, downloaded, contentLength });
     });
-    await relaunch();
+
+    const servicePrepared = await invoke("prepare_app_update");
+    try {
+      // Windows 更新器会在启动安装程序后直接退出；新版本启动时会用新 sidecar
+      // 刷新服务注册并恢复运行。其他平台安装完成后继续走 relaunch。
+      await pendingUpdate.install();
+      if (servicePrepared) await invoke("restore_service_after_update");
+      await relaunch();
+    } catch (error) {
+      if (servicePrepared) {
+        try {
+          await invoke("restore_service_after_update");
+        } catch (restoreError) {
+          throw new Error(`${error?.message || error}；同时恢复 VNT Web 服务失败：${restoreError}`);
+        }
+      }
+      throw error;
+    }
   },
 };
 

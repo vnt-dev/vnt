@@ -484,7 +484,7 @@ async fn logging_middleware(req: Request, next: axum::middleware::Next) -> Respo
 #[folder = "static/"]
 struct Asset;
 
-/// 进程内 VNT 业务服务。HTTP 和 Tauri IPC 共用同一组 handler 与状态。
+/// VNT 业务服务。独立 Web 程序与需要进程内嵌入的调用方共用同一组 handler。
 #[derive(Clone)]
 pub struct VntService {
     router: Router,
@@ -510,6 +510,7 @@ impl VntService {
         Self::new_with_runtime(start_config_file_name, ServiceRuntime::StandaloneWeb).await
     }
 
+    /// 保留给需要进程内嵌入 VNT Web handler 的调用方。
     pub async fn new_desktop(start_config_file_name: Option<PathBuf>) -> anyhow::Result<Self> {
         Self::new_with_runtime(start_config_file_name, ServiceRuntime::DesktopWeb).await
     }
