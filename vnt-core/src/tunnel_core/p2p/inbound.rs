@@ -12,6 +12,7 @@ use rust_p2p_core::route::RouteKey;
 use rust_p2p_core::tunnel::Tunnel;
 use std::net::{IpAddr, Ipv4Addr};
 
+#[derive(Clone, Copy)]
 struct PacketContext {
     msg_type: MsgType,
     src_ip: Ipv4Addr,
@@ -22,6 +23,10 @@ struct PacketContext {
 
 fn valid_punch_source(net: &NetworkAddr, source: Ipv4Addr) -> bool {
     !source.is_unspecified() && source != net.ip && net.network().contains(&source)
+}
+
+fn valid_relay_probe(net: &NetworkAddr, ctx: &PacketContext) -> bool {
+    valid_punch_source(net, ctx.src_ip) && ctx.dest_ip == net.ip && ctx.max_ttl == 2 && ctx.ttl == 0
 }
 
 fn build_handshake_response(
@@ -202,13 +207,13 @@ impl P2pInboundHandler {
             MsgType::Ping => {
                 let metric = ctx.max_ttl - ctx.ttl;
                 self.route_table
-                    .add_route_if_absent(ctx.src_ip, Route::from_default_rt(route_key, metric));
+                    .add_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
                 let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
                     HEAD_LENGTH + 8,
                     self.packet_crypto.encrypt_reserve(),
                 ))?;
                 packet.set_msg_type(MsgType::Pong);
-                packet.set_ttl(1);
+                packet.set_ttl(metric);
                 packet.set_src_id(ctx.dest_ip.into());
                 packet.set_dest_id(ctx.src_ip.into());
                 packet.set_payload(net_packet.payload())?;
@@ -335,9 +340,19 @@ impl P2pInboundHandler {
             MsgType::PingTurn => {}
             MsgType::PongTurn => {}
             MsgType::RelayProbe => {
+                if !valid_relay_probe(net, ctx) {
+                    log::debug!(
+                        "ignore invalid RelayProbe from {} to {} with ttl {}/{}",
+                        ctx.src_ip,
+                        ctx.dest_ip,
+                        ctx.ttl,
+                        ctx.max_ttl
+                    );
+                    return Ok(());
+                }
                 let metric = ctx.max_ttl - ctx.ttl;
                 self.route_table
-                    .add_route_if_absent(ctx.src_ip, Route::from_default_rt(route_key, metric));
+                    .add_relay_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
                 let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
                     HEAD_LENGTH,
                     self.packet_crypto.encrypt_reserve(),
@@ -353,9 +368,19 @@ impl P2pInboundHandler {
                     .await?;
             }
             MsgType::RelayProbeReply => {
+                if !valid_relay_probe(net, ctx) {
+                    log::debug!(
+                        "ignore invalid RelayProbeReply from {} to {} with ttl {}/{}",
+                        ctx.src_ip,
+                        ctx.dest_ip,
+                        ctx.ttl,
+                        ctx.max_ttl
+                    );
+                    return Ok(());
+                }
                 let metric = ctx.max_ttl - ctx.ttl;
                 self.route_table
-                    .add_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
+                    .add_relay_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
             }
             _ => {}
         }
@@ -401,6 +426,46 @@ mod tests {
             assert_eq!(Ipv4Addr::from(packet.src_id()), local);
             assert_eq!(Ipv4Addr::from(packet.dest_id()), peer);
             assert_eq!(packet.payload().len(), 8);
+        }
+    }
+
+    #[test]
+    fn relay_probe_requires_valid_virtual_endpoints_and_exactly_two_hops() {
+        let net = network();
+        let valid = PacketContext {
+            msg_type: MsgType::RelayProbe,
+            src_ip: Ipv4Addr::new(10, 26, 0, 3),
+            dest_ip: net.ip,
+            max_ttl: 2,
+            ttl: 0,
+        };
+        assert!(valid_relay_probe(&net, &valid));
+
+        for invalid in [
+            PacketContext {
+                src_ip: Ipv4Addr::UNSPECIFIED,
+                ..valid
+            },
+            PacketContext {
+                src_ip: net.ip,
+                ..valid
+            },
+            PacketContext {
+                src_ip: Ipv4Addr::new(10, 27, 0, 3),
+                ..valid
+            },
+            PacketContext {
+                dest_ip: Ipv4Addr::new(10, 26, 0, 4),
+                ..valid
+            },
+            PacketContext {
+                max_ttl: 1,
+                ttl: 0,
+                ..valid
+            },
+            PacketContext { ttl: 1, ..valid },
+        ] {
+            assert!(!valid_relay_probe(&net, &invalid));
         }
     }
 }

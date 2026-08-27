@@ -65,6 +65,17 @@ impl P2pOutbound {
             .await?;
         Ok(())
     }
+
+    pub fn try_send_to(
+        &self,
+        mut buf: NetPacket<TransmissionBytes>,
+        route_key: &RouteKey,
+    ) -> anyhow::Result<()> {
+        self.packet_crypto.encrypt_in_place(&mut buf)?;
+        self.manager
+            .try_send_to(buf.into_buffer().into_bytes().freeze(), route_key)?;
+        Ok(())
+    }
     pub async fn send_to_addr(
         &self,
         mut buf: NetPacket<TransmissionBytes>,

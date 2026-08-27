@@ -107,6 +107,7 @@ struct RouteTableInner {
     route_table: RwLock<HashMap<Ipv4Addr, Vec<Route>>>,
     route_key_time: Mutex<HashMap<(Ipv4Addr, RouteKey), Instant>>,
     route_key_owner: Mutex<HashMap<RouteKey, Ipv4Addr>>,
+    first_direct_route_notify: Arc<tokio::sync::Notify>,
 }
 
 impl Default for RouteTable {
@@ -120,6 +121,10 @@ impl RouteTable {
         Self {
             inner: Arc::new(RouteTableInner::default()),
         }
+    }
+
+    pub fn first_direct_route_notify(&self) -> Arc<tokio::sync::Notify> {
+        self.inner.first_direct_route_notify.clone()
     }
 
     /// 获取指定 ID 的最优路由
@@ -167,22 +172,24 @@ impl RouteTable {
 
     /// 添加 owner 路由（打洞请求响应时调用）
     pub fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) {
-        self.inner.add_owner_route(id, key);
+        if self.inner.add_owner_route(id, key) {
+            self.inner.first_direct_route_notify.notify_one();
+        }
     }
 
     /// 添加路由（心跳时调用，用于更新路由时间和添加跨节点转发路由）
     pub fn add_route(&self, id: Ipv4Addr, route: Route) {
-        self.inner.add_route(id, route);
+        if self.inner.add_route(id, route, false) {
+            self.inner.first_direct_route_notify.notify_one();
+        }
     }
 
-    /// 如果路由不存在则添加（用于 Ping 消息）
-    pub fn add_route_if_absent(&self, id: Ipv4Addr, route: Route) {
-        let guard = self.inner.route_table.read();
-        if guard.contains_key(&id) {
+    /// 添加由 RelayProbe 验证得到的中继路由，允许为目标建立第一条路由。
+    pub fn add_relay_route(&self, id: Ipv4Addr, route: Route) {
+        if route.is_direct() {
             return;
         }
-        drop(guard);
-        self.inner.add_route(id, route);
+        self.inner.add_route(id, route, true);
     }
 
     /// 获取所有路由表
@@ -232,32 +239,24 @@ impl RouteTableInner {
         list.first().cloned()
     }
 
-    fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) {
-        let route = Route::from_default_rt(key, 1);
-        let mut guard = self.route_table.write();
-
+    fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) -> bool {
         self.route_key_owner.lock().insert(key, id);
-        self.route_key_time.lock().insert((id, key), Instant::now());
-
-        let list = guard.entry(id).or_insert_with(|| Vec::with_capacity(6));
-        if list.iter().any(|v| v.route_key() == key) {
-            return;
-        }
-        list.push(route);
+        self.add_route(id, Route::from_default_rt(key, 1), false)
     }
 
-    fn add_route(&self, id: Ipv4Addr, route: Route) {
+    fn add_route(&self, id: Ipv4Addr, route: Route, allow_relay_bootstrap: bool) -> bool {
         let key = route.route_key();
         let mut guard = self.route_table.write();
+        let had_direct = guard
+            .get(&id)
+            .is_some_and(|routes| routes.iter().any(Route::is_direct));
 
         // 检查是否是 owner 路由
         let mut route_key_owner = self.route_key_owner.lock();
         if route.is_direct() {
             route_key_owner.entry(key).or_insert(id);
-        } else {
-            if !guard.contains_key(&id) {
-                return;
-            }
+        } else if !allow_relay_bootstrap && !guard.contains_key(&id) {
+            return false;
         }
 
         // 更新时间
@@ -279,7 +278,7 @@ impl RouteTableInner {
                 list.swap(i, i + 1);
                 i += 1;
             }
-            return;
+            return route.is_direct() && !had_direct;
         }
 
         // 插入新路由，保持按评分降序排序（评分高的在前）
@@ -291,6 +290,7 @@ impl RouteTableInner {
             }
         }
         list.insert(pos, route);
+        route.is_direct() && !had_direct
     }
 
     fn remove_oldest_route(&self, expired_time: Instant) -> Vec<(Ipv4Addr, RouteKey)> {
@@ -336,6 +336,7 @@ impl RouteTableInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
 
     /// rtt 极大（>39s）时分母不能 u32 溢出（debug 构建下溢出会 panic）
     #[test]
@@ -348,5 +349,39 @@ mod tests {
         let good = get_channel_score(10, 0, false);
         let bad = get_channel_score(1000, 5000, true);
         assert!(good > bad);
+    }
+
+    #[test]
+    fn relay_probe_can_bootstrap_route_but_regular_updates_cannot() {
+        let table = RouteTable::new();
+        let target = Ipv4Addr::new(10, 0, 0, 8);
+        let route = Route::from_default_rt(RouteKey::default(), 2);
+
+        table.add_route(target, route);
+        assert!(!table.exists(&target));
+
+        table.add_relay_route(target, route);
+        let inserted = table.get_route_by_id(&target).unwrap();
+        assert_eq!(inserted.metric(), 2);
+    }
+
+    #[test]
+    fn route_notification_only_fires_for_first_direct_route() {
+        let table = RouteTable::new();
+        let notify = table.first_direct_route_notify();
+        let peer = Ipv4Addr::new(10, 0, 0, 2);
+        let key = RouteKey::default();
+
+        table.add_relay_route(peer, Route::from_default_rt(key, 2));
+        assert!(notify.notified().now_or_never().is_none());
+
+        table.add_owner_route(peer, key);
+        assert!(notify.notified().now_or_never().is_some());
+
+        table.add_route(peer, Route::from(key, 1, 25));
+        assert!(notify.notified().now_or_never().is_none());
+
+        table.remove_route(&peer, &key);
+        assert!(notify.notified().now_or_never().is_none());
     }
 }
