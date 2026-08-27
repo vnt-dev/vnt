@@ -3,9 +3,10 @@ use crate::protocol::ip_packet_protocol::NetPacket;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
 use bytes::Bytes;
+use rust_p2p_core::route::ConnectProtocol;
 use rust_p2p_core::route::RouteKey;
 use rust_p2p_core::tunnel::SocketManager;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 #[derive(Clone)]
 pub(crate) struct P2pOutbound {
@@ -61,6 +62,18 @@ impl P2pOutbound {
         self.packet_crypto.encrypt_in_place(&mut buf)?;
         self.manager
             .send_to(buf.into_buffer().into_bytes().freeze(), route_key)
+            .await?;
+        Ok(())
+    }
+    pub async fn send_to_addr(
+        &self,
+        mut buf: NetPacket<TransmissionBytes>,
+        protocol: ConnectProtocol,
+        address: SocketAddr,
+    ) -> anyhow::Result<()> {
+        self.packet_crypto.encrypt_in_place(&mut buf)?;
+        self.manager
+            .send_to_addr(protocol, buf.into_buffer().into_bytes().freeze(), address)
             .await?;
         Ok(())
     }

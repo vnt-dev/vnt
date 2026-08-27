@@ -5,9 +5,10 @@ use crate::tls::verifier::CertValidationMode;
 use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAddress};
 use anyhow::bail;
 use ipnet::Ipv4Net;
+use rust_p2p_core::route::ConnectProtocol;
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 
 pub const MAX_NETWORK_CODE_LEN: usize = 32;
@@ -15,6 +16,75 @@ pub const MAX_DEVICE_ID_LEN: usize = 64;
 pub const MAX_NAME_LEN: usize = 128;
 pub const MAX_VERSION_LEN: usize = 32;
 pub const MAX_MTU: u16 = 1500;
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum PeerProtocol {
+    Both,
+    Tcp,
+    Udp,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct PeerAddress {
+    protocol: PeerProtocol,
+    address: SocketAddr,
+}
+
+impl PeerAddress {
+    pub fn protocol(&self) -> PeerProtocol {
+        self.protocol
+    }
+
+    pub fn address(&self) -> SocketAddr {
+        self.address
+    }
+
+    pub(crate) fn endpoints(&self) -> Vec<(ConnectProtocol, SocketAddr)> {
+        match self.protocol {
+            PeerProtocol::Both => vec![
+                (ConnectProtocol::TCP, self.address),
+                (ConnectProtocol::UDP, self.address),
+            ],
+            PeerProtocol::Tcp => vec![(ConnectProtocol::TCP, self.address)],
+            PeerProtocol::Udp => vec![(ConnectProtocol::UDP, self.address)],
+        }
+    }
+}
+
+impl FromStr for PeerAddress {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim();
+        let lower = value.to_ascii_lowercase();
+        let (protocol, address) = if lower.starts_with("tcp://") {
+            (PeerProtocol::Tcp, &value[6..])
+        } else if lower.starts_with("udp://") {
+            (PeerProtocol::Udp, &value[6..])
+        } else if value.contains("://") {
+            bail!("invalid peer protocol in '{value}', expected tcp:// or udp://")
+        } else {
+            (PeerProtocol::Both, value)
+        };
+        let address = address
+            .parse::<SocketAddr>()
+            .map_err(|error| anyhow::anyhow!("invalid peer address '{value}': {error}"))?;
+        if address.port() == 0 {
+            bail!("invalid peer address '{value}': port must not be 0")
+        }
+        Ok(Self { protocol, address })
+    }
+}
+
+impl Display for PeerAddress {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.protocol {
+            PeerProtocol::Both => write!(f, "{}", self.address),
+            PeerProtocol::Tcp => write!(f, "tcp://{}", self.address),
+            PeerProtocol::Udp => write!(f, "udp://{}", self.address),
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +127,7 @@ impl FromStr for DeviceMode {
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub server_addr: Vec<ProtocolAddress>,
+    pub peer_address: Vec<PeerAddress>,
     pub cert_mode: CertValidationMode,
     pub network_code: String,
     pub device_id: String,
@@ -168,5 +239,40 @@ mod tests {
         }
         assert!("bridge".parse::<DeviceMode>().is_err());
         assert_eq!(DeviceMode::default(), DeviceMode::Tun);
+    }
+
+    #[test]
+    fn peer_address_parse_and_display() {
+        let both = " 127.0.0.1:29872 ".parse::<PeerAddress>().unwrap();
+        assert_eq!(both.protocol(), PeerProtocol::Both);
+        assert_eq!(both.address(), "127.0.0.1:29872".parse().unwrap());
+        assert_eq!(both.to_string(), "127.0.0.1:29872");
+        let endpoints = both.endpoints();
+        assert_eq!(endpoints.len(), 2);
+        assert!(endpoints.iter().any(|(protocol, _)| protocol.is_tcp()));
+        assert!(endpoints.iter().any(|(protocol, _)| protocol.is_udp()));
+
+        let tcp = "TCP://127.0.0.1:29872".parse::<PeerAddress>().unwrap();
+        assert_eq!(tcp.protocol(), PeerProtocol::Tcp);
+        assert_eq!(tcp.to_string(), "tcp://127.0.0.1:29872");
+
+        let udp = "udp://[::1]:29872".parse::<PeerAddress>().unwrap();
+        assert_eq!(udp.protocol(), PeerProtocol::Udp);
+        assert_eq!(udp.to_string(), "udp://[::1]:29872");
+    }
+
+    #[test]
+    fn peer_address_rejects_invalid_values() {
+        for value in [
+            "quic://127.0.0.1:29872",
+            "example.com:29872",
+            "127.0.0.1",
+            "127.0.0.1:0",
+        ] {
+            assert!(
+                value.parse::<PeerAddress>().is_err(),
+                "{value} must be rejected"
+            );
+        }
     }
 }

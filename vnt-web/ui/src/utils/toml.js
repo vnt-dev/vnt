@@ -4,6 +4,7 @@ export const emptyFormData = () => ({
   config_name: "",
   network_code: "",
   server: [""],
+  peer_address: [],
   ip: "",
   mtu: null,
   rtx: false,
@@ -48,6 +49,12 @@ export const parseTomlToForm = (toml) => {
       if (match) {
         const items = match[1].match(/"([^"]*)"/g);
         if (items) data.server = items.map((s) => s.replace(/"/g, ""));
+      }
+    } else if (trimmed.startsWith("peer_address")) {
+      const match = trimmed.match(/peer_address\s*=\s*\[(.*)\]/);
+      if (match) {
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.peer_address = items.map((s) => s.replace(/"/g, ""));
       }
     } else if (trimmed.includes("ip =")) {
       const match = trimmed.match(/ip\s*=\s*"([^"]*)"/);
@@ -154,6 +161,13 @@ export const formToToml = (formData) => {
     toml += "# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)\n";
     toml += "# dynamic 协议使用dns txt解析记录值\n";
     toml += `server = [${servers.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
+  const peerAddresses = formData.peer_address.filter((s) => s.trim());
+  if (peerAddresses.length > 0) {
+    toml += "\n# 可直连节点地址；无协议时同时尝试 TCP 和 UDP\n";
+    toml += "# 端口应为对端配置的 tunnel_port\n";
+    toml += `peer_address = [${peerAddresses.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
   if (formData.ip) {
@@ -285,6 +299,9 @@ network_code = "your_network_code"
 # 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)
 # dynamic 协议使用dns txt解析记录值
 server = ["quic://1.2.3.4:29872"]
+
+# 可直连节点地址列表 (可选)
+# peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873"]
 
 # ===简单使用以下参数可以不动===
 

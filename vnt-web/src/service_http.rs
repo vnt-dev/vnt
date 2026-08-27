@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 use vnt_core::api::VntApi;
-use vnt_core::context::config::{Config as CoreConfig, DeviceMode};
+use vnt_core::context::config::{Config as CoreConfig, DeviceMode, PeerAddress};
 use vnt_core::core::{DEFAULT_MTU, NetworkManager, RegisterResponse};
 use vnt_core::nat::NetInput;
 use vnt_core::port_mapping::PortMapping;
@@ -253,6 +253,8 @@ impl<T> ApiResponse<T> {
 pub struct StartConfig {
     pub config_name: Option<String>,
     pub server: Vec<String>,
+    #[serde(default)]
+    pub peer_address: Vec<String>,
     pub cert_mode: Option<String>,
     pub network_code: String,
     pub device_id: Option<String>,
@@ -1400,6 +1402,16 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         })
         .collect::<anyhow::Result<_>>()?;
 
+    let peer_address: Vec<PeerAddress> = cfg
+        .peer_address
+        .iter()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| anyhow!("invalid peer address '{}': {}", value, error))
+        })
+        .collect::<anyhow::Result<_>>()?;
+
     let port_mapping: Vec<PortMapping> = cfg
         .port_mapping
         .iter()
@@ -1442,6 +1454,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
     }
     Ok(CoreConfig {
         server_addr: server_addrs,
+        peer_address,
         network_code: cfg.network_code,
         ip: cfg.ip,
         no_punch: cfg.no_punch,
@@ -1769,6 +1782,7 @@ mod tests {
         StartConfig {
             config_name: None,
             server: Vec::new(),
+            peer_address: Vec::new(),
             cert_mode: None,
             network_code: "test".to_string(),
             device_id: Some("device-a".to_string()),
@@ -1813,6 +1827,20 @@ network_code = "test"
 
         let legacy_false: StartConfig = toml::from_str(&format!("{base}no_tun = false\n")).unwrap();
         assert!(legacy_false.reject_legacy_no_tun().is_ok());
+    }
+
+    #[test]
+    fn test_convert_config_keeps_peer_addresses() {
+        let mut config = new_test_config();
+        config.server = vec!["quic://127.0.0.1:29872".to_string()];
+        config.peer_address = vec![
+            "127.0.0.1:30001".to_string(),
+            "tcp://127.0.0.1:30002".to_string(),
+        ];
+        let core = convert_config(config).unwrap();
+        assert_eq!(core.peer_address.len(), 2);
+        assert_eq!(core.peer_address[0].to_string(), "127.0.0.1:30001");
+        assert_eq!(core.peer_address[1].to_string(), "tcp://127.0.0.1:30002");
     }
 
     /// 两个实例同时处于 Starting 互不影响

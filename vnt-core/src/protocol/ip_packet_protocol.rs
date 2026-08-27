@@ -109,6 +109,8 @@ pub enum MsgType {
     Quic = 17,
     RelayProbe = 18,
     RelayProbeReply = 19,
+    DirectConnectReq = 20,
+    DirectConnectRes = 21,
 }
 impl From<MsgType> for u8 {
     fn from(val: MsgType) -> Self {
@@ -144,6 +146,8 @@ impl TryFrom<u8> for MsgType {
             17 => MsgType::Quic,
             18 => MsgType::RelayProbe,
             19 => MsgType::RelayProbeReply,
+            20 => MsgType::DirectConnectReq,
+            21 => MsgType::DirectConnectRes,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -342,6 +346,8 @@ mod tests {
             MsgType::Quic,
             MsgType::RelayProbe,
             MsgType::RelayProbeReply,
+            MsgType::DirectConnectReq,
+            MsgType::DirectConnectRes,
         ];
         for msg_type in all {
             let byte = u8::from(msg_type);
@@ -354,7 +360,7 @@ mod tests {
         // 未分配的取值必须报错
         assert!(MsgType::try_from(0u8).is_err());
         assert!(MsgType::try_from(16u8).is_err());
-        assert!(MsgType::try_from(20u8).is_err());
+        assert!(MsgType::try_from(22u8).is_err());
     }
 
     #[test]

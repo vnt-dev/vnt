@@ -1,3 +1,4 @@
+use crate::context::config::PeerAddress;
 use crate::context::nat::MyNatInfo;
 use crate::context::{AppState, PacketLossStats, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
@@ -13,22 +14,30 @@ use crate::tunnel_core::p2p::transport::punch::{PunchTaskContext, punch_task};
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::utils::task_control::TaskGroup;
 use rust_p2p_core::punch::Puncher;
+use rust_p2p_core::route::ConnectProtocol;
 use rust_p2p_core::socket::LocalInterface;
 use rust_p2p_core::tunnel::{Tunnel, TunnelDispatcher, new_tunnel_component};
-use std::net::Ipv4Addr;
+use std::collections::HashSet;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
+
+pub(crate) struct P2pInitConfig {
+    pub tunnel_port: Option<u16>,
+    pub automatic_punch: bool,
+    pub peer_address: Vec<PeerAddress>,
+    pub default_interface: Option<LocalInterface>,
+    pub outbound_interface_name: Option<String>,
+}
 
 pub async fn init_tunnel(
     task_group: TaskGroup,
     app_state: AppState,
     tunnel_to_server: ServerOutbound,
     packet_crypto: PacketCrypto,
-    tunnel_port: Option<u16>,
-    default_interface: Option<LocalInterface>,
-    outbound_interface_name: Option<String>,
+    config: P2pInitConfig,
 ) -> anyhow::Result<(Puncher, P2pOutbound, P2pTask)> {
-    let tunnel_port = tunnel_port.unwrap_or(0);
+    let tunnel_port = config.tunnel_port.unwrap_or(0);
     let mut udp_config = rust_p2p_core::tunnel::config::UdpTunnelConfig::default()
         .set_main_udp_count(2)
         .set_sub_udp_count(82)
@@ -38,7 +47,7 @@ pub async fn init_tunnel(
     ))
     .set_tcp_multiplexing_limit(2)
     .set_tcp_port(tunnel_port);
-    if let Some(interface) = default_interface.clone() {
+    if let Some(interface) = config.default_interface.clone() {
         // rust-p2p-core 当前的接口绑定实现针对 IPv4；指定出口网卡时关闭
         // 未绑定的 IPv6 Socket，避免流量绕过所选网卡。
         udp_config = udp_config
@@ -48,41 +57,45 @@ pub async fn init_tunnel(
             .set_default_interface(interface)
             .set_use_v6(false);
     }
-    let config = rust_p2p_core::tunnel::config::TunnelConfig::empty()
+    let tunnel_config = rust_p2p_core::tunnel::config::TunnelConfig::empty()
         .set_udp_tunnel_config(udp_config)
         .set_tcp_tunnel_config(tcp_config);
-    let (tunnel_dispatcher, puncher) = new_tunnel_component(config)?;
+    let (tunnel_dispatcher, puncher) = new_tunnel_component(tunnel_config)?;
     let route_table = app_state.route_table.clone();
     let socket_manager = P2pOutbound::new(
         tunnel_dispatcher.socket_manager(),
         route_table.clone(),
         packet_crypto,
     );
-    task_group.spawn(my_nat_info(
-        app_state.clone(),
-        tunnel_dispatcher.socket_manager(),
-        default_interface,
-        outbound_interface_name,
-    ));
-    let manager = tunnel_dispatcher.socket_manager();
-    task_group.spawn(query_udp_public_addr_loop(
-        app_state.clone(),
-        manager.clone(),
-    ));
-    task_group.spawn(query_tcp_public_addr_loop(app_state.clone(), manager));
+    if config.automatic_punch {
+        task_group.spawn(my_nat_info(
+            app_state.clone(),
+            tunnel_dispatcher.socket_manager(),
+            config.default_interface,
+            config.outbound_interface_name,
+        ));
+        let manager = tunnel_dispatcher.socket_manager();
+        task_group.spawn(query_udp_public_addr_loop(
+            app_state.clone(),
+            manager.clone(),
+        ));
+        task_group.spawn(query_tcp_public_addr_loop(app_state.clone(), manager));
+    }
 
     task_group.spawn(route_timeout_task(
         route_table.clone(),
         app_state.packet_loss_stats.clone(),
     ));
-    let app_state_for_punch = app_state.clone();
-    let punch_ctx = PunchTaskContext {
-        network: app_state.network.clone(),
-        server_info: app_state.server_info_collection.clone(),
-        punch_backoff: app_state.punch_backoff.clone(),
-        punch_info_getter: Arc::new(move || app_state_for_punch.get_punch_info()),
-    };
-    task_group.spawn(punch_task(tunnel_to_server, route_table.clone(), punch_ctx));
+    if config.automatic_punch {
+        let app_state_for_punch = app_state.clone();
+        let punch_ctx = PunchTaskContext {
+            network: app_state.network.clone(),
+            server_info: app_state.server_info_collection.clone(),
+            punch_backoff: app_state.punch_backoff.clone(),
+            punch_info_getter: Arc::new(move || app_state_for_punch.get_punch_info()),
+        };
+        task_group.spawn(punch_task(tunnel_to_server, route_table.clone(), punch_ctx));
+    }
     task_group.spawn(ping_all(
         app_state.network.clone(),
         app_state.packet_loss_stats.clone(),
@@ -95,6 +108,20 @@ pub async fn init_tunnel(
         route_table.clone(),
         socket_manager.clone(),
     ));
+    let endpoints: HashSet<_> = config
+        .peer_address
+        .iter()
+        .flat_map(PeerAddress::endpoints)
+        .collect();
+    for (protocol, address) in endpoints {
+        task_group.spawn(direct_peer_probe_task(
+            app_state.network.clone(),
+            route_table.clone(),
+            socket_manager.clone(),
+            protocol,
+            address,
+        ));
+    }
     let p2p_task = P2pTask {
         task_group,
         nat_info: app_state.nat_info.clone(),
@@ -102,6 +129,52 @@ pub async fn init_tunnel(
         tunnel_dispatcher,
     };
     Ok((puncher, socket_manager, p2p_task))
+}
+
+async fn direct_peer_probe_task(
+    network: SharedNetworkAddr,
+    route_table: RouteTable,
+    socket_manager: P2pOutbound,
+    protocol: ConnectProtocol,
+    address: SocketAddr,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        let Some(src_ip) = network.ip() else {
+            continue;
+        };
+        if route_table.has_direct_endpoint(protocol, address) {
+            continue;
+        }
+        let packet = match build_direct_peer_probe(src_ip, socket_manager.encrypt_reserve()) {
+            Ok(packet) => packet,
+            Err(error) => {
+                log::warn!("failed to build direct peer probe for {protocol}://{address}: {error}");
+                continue;
+            }
+        };
+        if let Err(error) = socket_manager.send_to_addr(packet, protocol, address).await {
+            log::debug!("direct peer probe failed for {protocol}://{address}: {error:?}");
+        }
+    }
+}
+
+fn build_direct_peer_probe(
+    src_ip: Ipv4Addr,
+    encrypt_reserve: usize,
+) -> anyhow::Result<NetPacket<TransmissionBytes>> {
+    let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+        HEAD_LENGTH + 8,
+        encrypt_reserve,
+    ))?;
+    packet.set_msg_type(MsgType::DirectConnectReq);
+    packet.set_ttl(1);
+    packet.set_src_id(src_ip.into());
+    packet.set_dest_id(Ipv4Addr::UNSPECIFIED.into());
+    packet.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())?;
+    Ok(packet)
 }
 pub struct P2pTask {
     task_group: TaskGroup,
@@ -353,5 +426,22 @@ pub async fn tunnel_dispatch_task(
                 p2p_inbound_handler.tcp_disconnect(tcp.route_key()).await;
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_peer_probe_uses_unspecified_destination() {
+        let source = Ipv4Addr::new(10, 26, 0, 2);
+        let packet = build_direct_peer_probe(source, 0).unwrap();
+        assert_eq!(packet.msg_type().unwrap(), MsgType::DirectConnectReq);
+        assert_eq!(Ipv4Addr::from(packet.src_id()), source);
+        assert_eq!(Ipv4Addr::from(packet.dest_id()), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(packet.max_ttl(), 1);
+        assert_eq!(packet.ttl(), 1);
+        assert_eq!(packet.payload().len(), 8);
     }
 }

@@ -1,7 +1,7 @@
 use parking_lot::{Mutex, RwLock};
-use rust_p2p_core::route::{DEFAULT_RTT, RouteKey};
+use rust_p2p_core::route::{ConnectProtocol, DEFAULT_RTT, RouteKey};
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -151,6 +151,18 @@ impl RouteTable {
             return 0;
         };
         list.iter().filter(|r| r.is_direct()).count()
+    }
+
+    /// 检查指定传输协议和物理地址是否已有直连路由。
+    pub fn has_direct_endpoint(&self, protocol: ConnectProtocol, address: SocketAddr) -> bool {
+        let guard = self.inner.route_table.read();
+        guard.values().any(|routes| {
+            routes.iter().any(|route| {
+                route.is_direct()
+                    && route.route_key().protocol() == protocol
+                    && route.route_key().addr() == address
+            })
+        })
     }
 
     /// 添加 owner 路由（打洞请求响应时调用）

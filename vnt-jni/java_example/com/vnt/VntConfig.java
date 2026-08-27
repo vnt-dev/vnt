@@ -13,6 +13,7 @@ import java.util.List;
 public class VntConfig {
 
     private final List<String> servers;
+    private final List<String> peerAddresses;
     private final String networkCode;
     private final String password;
     private final String deviceId;
@@ -35,6 +36,7 @@ public class VntConfig {
 
     private VntConfig(Builder builder) {
         this.servers = builder.servers;
+        this.peerAddresses = builder.peerAddresses;
         this.networkCode = builder.networkCode;
         this.password = builder.password;
         this.deviceId = builder.deviceId;
@@ -69,6 +71,14 @@ public class VntConfig {
         }
         json.put("server", serverArray);
         json.put("network_code", networkCode);
+
+        if (!peerAddresses.isEmpty()) {
+            JSONArray peerArray = new JSONArray();
+            for (String peerAddress : peerAddresses) {
+                peerArray.put(peerAddress);
+            }
+            json.put("peer_address", peerArray);
+        }
 
         // 可选项
         if (password != null) json.put("password", password);
@@ -122,6 +132,7 @@ public class VntConfig {
      */
     public static class Builder {
         private List<String> servers = new ArrayList<>();
+        private List<String> peerAddresses = new ArrayList<>();
         private String networkCode;
         private String password;
         private String deviceId;
@@ -148,6 +159,15 @@ public class VntConfig {
          */
         public Builder addServer(String server) {
             this.servers.add(server);
+            return this;
+        }
+
+        /**
+         * 添加可直连节点地址（可选）。
+         * @param peerAddress 格式：ip:port、tcp://ip:port 或 udp://ip:port
+         */
+        public Builder addPeerAddress(String peerAddress) {
+            this.peerAddresses.add(peerAddress);
             return this;
         }
 

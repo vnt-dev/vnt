@@ -4,7 +4,7 @@ use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
-use vnt_core::context::config::{Config, DeviceMode};
+use vnt_core::context::config::{Config, DeviceMode, PeerAddress};
 use vnt_core::nat::NetInput;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
@@ -14,6 +14,7 @@ use vnt_ipc::port_mapping::PortMapping;
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct FileConfig {
     pub server: Option<Vec<String>>,
+    pub peer_address: Option<Vec<String>>,
     pub network_code: Option<String>,
     pub ip: Option<Ipv4Addr>,
     pub no_punch: Option<bool>,
@@ -67,6 +68,18 @@ impl FileConfig {
             Ok(Vec::new())
         }
     }
+    pub fn to_peer_address(&self) -> anyhow::Result<Vec<PeerAddress>> {
+        self.peer_address
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|value| {
+                value
+                    .parse::<PeerAddress>()
+                    .map_err(|error| anyhow!("invalid peer address '{}': {}", value, error))
+            })
+            .collect()
+    }
     pub fn to_port_mapping(&self) -> anyhow::Result<Vec<PortMapping>> {
         if let Some(port_mapping_raw) = &self.port_mapping {
             let mut port_mapping = Vec::with_capacity(port_mapping_raw.len());
@@ -89,6 +102,9 @@ pub struct Args {
     /// 服务器地址 例如 `-s quic://127.0.0.1:29872`, 支持quic/tcp/wss/dynamic
     #[clap(short, long)]
     pub server: Vec<ProtocolAddress>,
+    /// 可直连节点地址，可重复指定；支持 ip:端口、tcp://ip:端口、udp://ip:端口
+    #[clap(long)]
+    pub peer_address: Vec<PeerAddress>,
     /// 网络编号，相同编号的会组同一个局域网
     #[clap(short, long)]
     pub network_code: Option<String>,
@@ -121,7 +137,7 @@ pub struct Args {
     /// 设备id
     #[clap(long, alias = "id")]
     pub device_id: Option<String>,
-    /// 关闭打洞
+    /// 关闭自动 P2P 打洞；显式 peer-address 仍可直连
     #[clap(long)]
     pub no_punch: bool,
     /// 服务端证书验证
@@ -201,6 +217,11 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
     } else {
         args.server
     };
+    let peer_address = if args.peer_address.is_empty() {
+        file.to_peer_address()?
+    } else {
+        args.peer_address
+    };
     let port_mapping = if args.port_mapping.is_empty() {
         file.to_port_mapping()?
     } else {
@@ -248,6 +269,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
 
     let config = Config {
         server_addr,
+        peer_address,
         network_code,
         ip: args.ip.or(file.ip),
         no_punch: args.no_punch || file.no_punch.unwrap_or(false),
@@ -290,6 +312,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
     };
     let config = Config {
         server_addr: args.server,
+        peer_address: args.peer_address,
         network_code: args
             .network_code
             .ok_or_else(|| anyhow!("network_code is required"))?,
@@ -329,6 +352,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         ));
     }
     let server_addr = file.to_server_addr()?;
+    let peer_address = file.to_peer_address()?;
     let port_mapping = file.to_port_mapping()?;
 
     let cert_mode = file
@@ -356,6 +380,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
 
     let config = Config {
         server_addr,
+        peer_address,
         network_code: file
             .network_code
             .ok_or_else(|| anyhow!("network_code is required"))?,
@@ -411,6 +436,11 @@ network_code = "your_network_code"
 # dynamic 协议使用dns txt解析记录值
 server = ["quic://1.2.3.4:29872"]
 
+# 可直连节点地址列表 (可选)
+# 不带协议时同时尝试 TCP 和 UDP；也可用 tcp:// 或 udp:// 指定协议
+# 地址端口应为对端配置的 tunnel_port
+# peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873", "udp://[::1]:29873"]
+
 # ===简单使用以下参数可以不动===
 
 # 自定义虚拟 IP (可选)
@@ -422,7 +452,7 @@ server = ["quic://1.2.3.4:29872"]
 # 是否启用 FEC 前向纠错，损失一定带宽来提升网络稳定性(默认 false,设置为true时开启)
 # fec = false
 
-# 是否关闭 P2P 打洞 (默认 false,设置为true时关闭)
+# 是否关闭自动 P2P 打洞 (默认 false；显式 peer_address 仍可直连)
 # no_punch = false
 
 # 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
@@ -526,6 +556,38 @@ mod tests {
         let (config, _) = build_from_args_only(args).unwrap();
         assert_eq!(config.tunnel_port, Some(12345));
         assert_eq!(config.outbound_interface.as_deref(), Some("Ethernet"));
+    }
+
+    #[test]
+    fn test_peer_address_cli_and_file_precedence() {
+        let file: FileConfig = toml::from_str(
+            "peer_address = [\"udp://127.0.0.1:30001\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
+        )
+        .unwrap();
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--peer-address",
+            "tcp://127.0.0.1:30002",
+            "--peer-address",
+            "127.0.0.1:30003",
+        ])
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(Some(args), Some(file)).unwrap();
+        assert_eq!(config.peer_address.len(), 2);
+        assert_eq!(config.peer_address[0].to_string(), "tcp://127.0.0.1:30002");
+        assert_eq!(config.peer_address[1].to_string(), "127.0.0.1:30003");
+
+        let file: FileConfig = toml::from_str(
+            "peer_address = [\"udp://127.0.0.1:30001\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
+        )
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
+        assert_eq!(config.peer_address.len(), 1);
+        assert_eq!(config.peer_address[0].to_string(), "udp://127.0.0.1:30001");
     }
 
     #[test]

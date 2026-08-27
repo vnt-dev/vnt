@@ -269,6 +269,39 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 </button>
               </div>
             </div>
+            <div class="mt-4">
+              <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+                可直连节点地址
+                <span class="text-xs text-slate-500 ml-2">支持 ip:端口、tcp://、udp://</span>
+              </label>
+              <div class="space-y-2">
+                <div v-for="(peerAddress, idx) in formData.peer_address" :key="idx" class="flex gap-2">
+                  <input
+                    v-model="formData.peer_address[idx]"
+                    type="text"
+                    placeholder="例如: 192.168.1.10:29873"
+                    class="input flex-1"
+                  />
+                  <button @click="formData.peer_address.splice(idx, 1)" :class="removeBtnClass">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <button @click="formData.peer_address.push('')" :class="addBtnClass">
+                  <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                  </svg>
+                  添加可直连节点
+                </button>
+              </div>
+              <p class="mt-2 text-xs text-slate-400">不带协议时会同时尝试 TCP 和 UDP；端口填写对端的隧道端口。</p>
+            </div>
           </div>
 
           <!-- 网络设置 -->
@@ -336,7 +369,7 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               <label :class="toggleLabelClass">
                 <div class="flex-1">
                   <div class="text-sm font-medium text-slate-800 dark:text-white">关闭P2P打洞</div>
-                  <div class="text-xs text-slate-400 mt-0.5">仅通过服务器中转</div>
+                  <div class="text-xs text-slate-400 mt-0.5">关闭自动打洞；显式节点地址仍可直连</div>
                 </div>
                 <input v-model="formData.no_punch" type="checkbox" :class="checkboxClass" />
               </label>

@@ -15,7 +15,7 @@ use crate::tun::{DeviceConfig, DeviceIOManager, TunDataInbound, TunReceiver, tun
 use crate::tunnel_core::outbound::{BasicOutbound, HybridOutbound};
 use crate::tunnel_core::p2p::inbound::{P2pInboundConfig, P2pInboundHandler};
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
-use crate::tunnel_core::p2p::transport::task::init_tunnel;
+use crate::tunnel_core::p2p::transport::task::{P2pInitConfig, init_tunnel};
 use crate::tunnel_core::server::connection_manager::{
     InboundHandlerConfig, ServerTurnManager, coordinated_registration, create_server_tunnel,
 };
@@ -90,19 +90,28 @@ impl NetworkManager {
         let device_io_manager = DeviceIOManager::new(task_group.clone());
         let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
 
-        let (puncher, p2p_socket, p2p_task) = if !config.no_punch {
+        let p2p_enabled = !config.no_punch || !config.peer_address.is_empty();
+        let (puncher, p2p_socket, p2p_task) = if p2p_enabled {
             let (puncher, p2p_socket_manager, p2p_task) = init_tunnel(
                 task_group.clone(),
                 app_state.clone(),
                 tunnel_to_server.clone(),
                 packet_crypto.clone(),
-                config.tunnel_port,
-                default_interface.clone(),
-                canonical_interface_name,
+                P2pInitConfig {
+                    tunnel_port: config.tunnel_port,
+                    automatic_punch: !config.no_punch,
+                    peer_address: config.peer_address.clone(),
+                    default_interface: default_interface.clone(),
+                    outbound_interface_name: canonical_interface_name,
+                },
             )
             .await?;
 
-            (Some(puncher), Some(p2p_socket_manager), Some(p2p_task))
+            (
+                (!config.no_punch).then_some(puncher),
+                Some(p2p_socket_manager),
+                Some(p2p_task),
+            )
         } else {
             (None, None, None)
         };
