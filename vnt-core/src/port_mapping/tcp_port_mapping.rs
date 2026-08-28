@@ -59,7 +59,16 @@ async fn listen(
     quic_tunnel_client: QuicTunnelClient,
 ) -> anyhow::Result<()> {
     loop {
-        let (stream, addr) = listener.accept().await?;
+        // 单次 accept 失败不能拖垮整个监听任务：
+        // 记录日志后继续，短暂休眠避免持续性错误造成空转
+        let (stream, addr) = match listener.accept().await {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("tcp port mapping accept error: {e:?}");
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+        };
         let tunnel_client = quic_tunnel_client.clone();
         let target_ip = mapping.virtual_target_ip;
         let dst_host = mapping.dst_host.clone();
