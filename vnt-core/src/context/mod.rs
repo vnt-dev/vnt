@@ -364,11 +364,17 @@ impl PeerInfoMap {
         self.inner.lock().get(ip).cloned()
     }
 
-    pub fn update_nat_info(&self, ip: Ipv4Addr, nat_info: NatInfo) {
+    /// 更新对端 NAT 信息；返回 true 表示发生了“身份级”变化
+    /// （网络切换/NAT 重启等，对称 NAT 的端口抖动不算）。
+    pub fn update_nat_info(&self, ip: Ipv4Addr, nat_info: NatInfo) -> bool {
         let mut guard = self.inner.lock();
         if let Some(v) = guard.get_mut(&ip) {
+            let changed = v
+                .nat_info
+                .as_ref()
+                .is_some_and(|old| nat::nat_identity_changed(old, &nat_info));
             v.nat_info = Some(nat_info);
-            return;
+            return changed;
         }
         guard.insert(
             ip,
@@ -376,6 +382,7 @@ impl PeerInfoMap {
                 nat_info: Some(nat_info),
             },
         );
+        false
     }
 
     pub fn clear(&self) {

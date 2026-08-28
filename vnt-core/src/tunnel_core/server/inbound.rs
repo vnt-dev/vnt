@@ -72,7 +72,10 @@ impl ServerTurnInboundHandler {
         })
     }
     fn update_peer_nat_info(&self, ip: Ipv4Addr, nat_info: NatInfo) {
-        self.peer_map.update_nat_info(ip, nat_info);
+        if self.peer_map.update_nat_info(ip, nat_info) {
+            // 对端 NAT 变化时，把该对端的退避截止时刻压缩到 10 分钟内
+            self.punch_backoff.cap(ip);
+        }
     }
 
     pub async fn handle_server_data(
