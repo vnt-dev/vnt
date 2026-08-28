@@ -147,15 +147,13 @@ impl P2pInboundHandler {
                 let packets = self.fec_decoder.receive(net_packet)?;
                 if let Some(packets) = packets {
                     for pkt in packets {
-                        self.enhanced_inbound
-                            .inbound(&net, msg_type, src_ip, pkt)
+                        self.process_plain_packet(&net, route_key, tunnel, pkt)
                             .await?;
                     }
                 }
                 return Ok(());
             }
-            self.enhanced_inbound
-                .inbound(&net, msg_type, src_ip, net_packet)
+            self.process_plain_packet(&net, route_key, tunnel, net_packet)
                 .await?;
             return Ok(());
         }
@@ -163,30 +161,51 @@ impl P2pInboundHandler {
         // 解密
         self.packet_crypto.decrypt_in_place(&mut net_packet)?;
 
-        let ctx = PacketContext {
-            msg_type,
-            src_ip,
-            dest_ip,
-            max_ttl,
-            ttl,
-        };
-
         // FEC 解码（始终尝试解码，如果有 FEC 标志）
         if net_packet.is_fec() {
             let packets = self.fec_decoder.receive(net_packet)?;
             if let Some(packets) = packets {
                 for pkt in packets {
-                    let pkt = self.packet_compression.decompress(pkt)?;
-                    self.process_decompressed_packet(&net, route_key, tunnel, pkt, &ctx)
+                    self.process_plain_packet(&net, route_key, tunnel, pkt)
                         .await?;
                 }
             }
             return Ok(());
         }
 
-        // 解压缩
+        self.process_plain_packet(&net, route_key, tunnel, net_packet)
+            .await
+    }
+
+    /// 处理已经完成外层解密/FEC 解码的原始 NetPacket。
+    /// FEC 一次可能返回不同消息类型的包，必须逐包读取完整包头后分发。
+    async fn process_plain_packet(
+        &self,
+        net: &crate::context::NetworkAddr,
+        route_key: RouteKey,
+        tunnel: &mut Tunnel,
+        net_packet: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        let msg_type = net_packet.msg_type()?;
+        let src_ip = Ipv4Addr::from(net_packet.src_id());
+        let dest_ip = Ipv4Addr::from(net_packet.dest_id());
+
+        if msg_type == MsgType::Quic {
+            return self
+                .enhanced_inbound
+                .inbound(net, msg_type, src_ip, net_packet)
+                .await;
+        }
+
+        let ctx = PacketContext {
+            msg_type,
+            src_ip,
+            dest_ip,
+            max_ttl: net_packet.max_ttl(),
+            ttl: net_packet.ttl(),
+        };
         let net_packet = self.packet_compression.decompress(net_packet)?;
-        self.process_decompressed_packet(&net, route_key, tunnel, net_packet, &ctx)
+        self.process_decompressed_packet(net, route_key, tunnel, net_packet, &ctx)
             .await
     }
 

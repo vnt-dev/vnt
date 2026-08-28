@@ -166,15 +166,13 @@ impl ServerTurnInboundHandler {
                 let packets = self.fec_decoder.receive(net_packet)?;
                 if let Some(packets) = packets {
                     for pkt in packets {
-                        self.enhanced_inbound
-                            .inbound(&network_addr, msg_type, src, pkt)
+                        self.process_plain_packet(network_addr, transport_client, pkt)
                             .await?;
                     }
                 }
                 return Ok(());
             }
-            self.enhanced_inbound
-                .inbound(&network_addr, msg_type, src, net_packet)
+            self.process_plain_packet(network_addr, transport_client, net_packet)
                 .await?;
             return Ok(());
         }
@@ -190,22 +188,36 @@ impl ServerTurnInboundHandler {
             let packets = self.fec_decoder.receive(net_packet)?;
             if let Some(packets) = packets {
                 for pkt in packets {
-                    let pkt = self.packet_compression.decompress(pkt)?;
-                    self.process_decompressed_packet(
-                        network_addr,
-                        transport_client,
-                        pkt,
-                        msg_type,
-                        src,
-                        dest,
-                    )
-                    .await?;
+                    self.process_plain_packet(network_addr, transport_client, pkt)
+                        .await?;
                 }
             }
             return Ok(());
         }
 
-        // 解压缩
+        self.process_plain_packet(network_addr, transport_client, net_packet)
+            .await
+    }
+
+    /// 处理已经完成外层解密/FEC 解码的原始 NetPacket。
+    /// FEC 一次可能返回不同消息类型的包，必须逐包读取完整包头后分发。
+    async fn process_plain_packet(
+        &self,
+        network_addr: NetworkAddr,
+        transport_client: &mut TransportClient,
+        net_packet: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        let msg_type = net_packet.msg_type()?;
+        let src = Ipv4Addr::from(net_packet.src_id());
+        let dest = Ipv4Addr::from(net_packet.dest_id());
+
+        if msg_type == MsgType::Quic {
+            return self
+                .enhanced_inbound
+                .inbound(&network_addr, msg_type, src, net_packet)
+                .await;
+        }
+
         let net_packet = self.packet_compression.decompress(net_packet)?;
         self.process_decompressed_packet(
             network_addr,

@@ -1,7 +1,7 @@
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use parking_lot::Mutex;
 use prost::Message;
 use reed_solomon_erasure::galois_8::ReedSolomon;
@@ -24,6 +24,7 @@ const REDUNDANCY_RATE: f32 = 0.2;
 const BATCH_TIMEOUT_MS: u64 = 20;
 const MIN_PARITY: usize = 1;
 const BATCH_CHANNEL_SIZE: usize = 1024;
+const PACKET_LENGTH_SIZE: usize = size_of::<u16>();
 
 #[derive(Clone)]
 pub struct FecEncoder {
@@ -59,22 +60,16 @@ impl FecEncoder {
     ) -> Result<NetPacket<TransmissionBytes>> {
         let src_ip = Ipv4Addr::from(packet.src_id());
         let dest = Ipv4Addr::from(packet.dest_id());
-        if packet.payload().len() > u16::MAX as usize {
-            bail!("Payload too big");
-        }
-        let original_payload = packet.payload().to_vec();
-        let original_payload_len = original_payload.len();
-
-        let type_byte = packet.head()[0];
-        let flags_byte = packet.head()[2];
-
-        // 组装FEC数据: [type_byte, flags_byte, payload_len(u16), payload...]
-        let batch_len = 4 + original_payload_len;
+        // FEC 编码完整的原始 NetPacket。长度前缀用于去除 RS 等长 shard 的尾部填充。
+        let original_packet = packet.buffer().to_vec();
+        let original_packet_len = u16::try_from(original_packet.len())
+            .map_err(|_| anyhow::anyhow!("Packet too big: {}", original_packet.len()))?;
+        let batch_len = PACKET_LENGTH_SIZE
+            .checked_add(original_packet.len())
+            .ok_or_else(|| anyhow::anyhow!("FEC packet length overflow"))?;
         let mut batch_buffer = TransmissionBytes::zeroed(batch_len);
-        batch_buffer[0] = type_byte;
-        batch_buffer[1] = flags_byte;
-        batch_buffer[2..4].copy_from_slice(&(original_payload_len as u16).to_be_bytes());
-        batch_buffer[4..batch_len].copy_from_slice(&original_payload);
+        batch_buffer[..PACKET_LENGTH_SIZE].copy_from_slice(&original_packet_len.to_be_bytes());
+        batch_buffer[PACKET_LENGTH_SIZE..].copy_from_slice(&original_packet);
 
         let (group_id, packet_index) = {
             let mut states = self.batch_states.lock();
@@ -114,7 +109,7 @@ impl FecEncoder {
         let fec_packet = FecPacket {
             group_id,
             packet_index: packet_index as u32,
-            payload: original_payload,
+            payload: original_packet,
             parity_data: None,
         };
 
@@ -246,4 +241,59 @@ async fn encode_and_send_parity(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_fec_payload_and_shard_contain_complete_packet() {
+        let (batch_tx, _batch_rx) = mpsc::channel(BATCH_CHANNEL_SIZE);
+        let encoder = FecEncoder {
+            batch_states: Arc::new(Mutex::new(HashMap::new())),
+            batch_tx,
+        };
+
+        let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + 5);
+        let mut packet = NetPacket::new(buffer).unwrap();
+        packet.set_msg_type(MsgType::Quic);
+        packet.set_ttl(3);
+        packet.set_seq(0x1234_5678);
+        packet.set_src_id(0x0A00_0001);
+        packet.set_dest_id(0x0A00_0002);
+        packet.set_ethernet_flag(true);
+        packet.head_mut()[3] = 0xA5;
+        packet.set_payload(&[1, 2, 3, 4, 5]).unwrap();
+        let original = packet.buffer().to_vec();
+
+        let encoded = encoder.encode(packet).unwrap();
+        let fec_packet = FecPacket::decode(encoded.payload()).unwrap();
+        assert_eq!(fec_packet.payload, original);
+
+        let states = encoder.batch_states.lock();
+        let state = states.get(&Ipv4Addr::from(0x0A00_0002u32)).unwrap();
+        let shard = state.current_batch.first().unwrap();
+        let packet_len = u16::from_be_bytes(shard[..PACKET_LENGTH_SIZE].try_into().unwrap());
+        assert_eq!(packet_len as usize, original.len());
+        assert_eq!(&shard[PACKET_LENGTH_SIZE..], original.as_slice());
+    }
+
+    #[test]
+    fn rejects_complete_packet_larger_than_u16() {
+        let (batch_tx, _batch_rx) = mpsc::channel(BATCH_CHANNEL_SIZE);
+        let encoder = FecEncoder {
+            batch_states: Arc::new(Mutex::new(HashMap::new())),
+            batch_tx,
+        };
+        let mut packet = NetPacket::new(TransmissionBytes::zeroed(u16::MAX as usize + 1)).unwrap();
+        packet.set_src_id(0x0A00_0001);
+        packet.set_dest_id(0x0A00_0002);
+
+        let err = match encoder.encode(packet) {
+            Err(err) => err,
+            Ok(_) => panic!("oversized complete packet must be rejected"),
+        };
+        assert!(err.to_string().contains("Packet too big"));
+    }
 }

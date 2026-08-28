@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 const GROUP_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_GROUPS: usize = 1000;
 const MAX_NUM: usize = 50;
+const PACKET_LENGTH_SIZE: usize = size_of::<u16>();
 
 #[derive(Clone)]
 pub struct FecDecoder {
@@ -167,35 +168,43 @@ impl FecDecoder {
                 );
                 return Ok(None);
             }
-            let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + payload.len());
+            // 数据 FEC 包携带编码前的完整 NetPacket，直接还原，不再从外层包借用头部。
+            let buffer = TransmissionBytes::from(payload.as_slice());
             let mut result_packet = NetPacket::new(buffer)?;
-            result_packet.head_mut().copy_from_slice(net_packet.head());
             result_packet.set_fec_flag(false);
-            result_packet.set_payload(&payload)?;
-            packet = Some(result_packet);
+
+            if result_packet.src_id() != net_packet.src_id()
+                || result_packet.dest_id() != net_packet.dest_id()
+            {
+                bail!(
+                    "fec inner packet endpoint mismatch, outer={}->{} inner={}->{}",
+                    Ipv4Addr::from(net_packet.src_id()),
+                    Ipv4Addr::from(net_packet.dest_id()),
+                    Ipv4Addr::from(result_packet.src_id()),
+                    Ipv4Addr::from(result_packet.dest_id())
+                );
+            }
 
             if group.received_shards.len() <= packet_index {
                 group.received_shards.resize(packet_index + 1, None);
             }
 
-            // 保存FEC数据: [type_byte, flags_byte, payload_len(u16), payload...]
-            let type_byte = net_packet.head()[0];
-            let flags_byte = net_packet.head()[2];
-            // 长度字段为 u16，超限必须拒绝而非静默截断（实际 payload 远小于此值，
-            // 这里是防御性检查）
-            let payload_len = u16::try_from(payload.len())
-                .map_err(|_| anyhow::anyhow!("fec payload too large: {}", payload.len()))?;
-            let mut batch_data = vec![0u8; 4 + payload.len()];
-            batch_data[0] = type_byte;
-            batch_data[1] = flags_byte;
-            batch_data[2..4].copy_from_slice(&payload_len.to_be_bytes());
-            batch_data[4..].copy_from_slice(&payload);
+            // 保存FEC数据: [packet_len(u16), 完整 NetPacket...]
+            let packet_len = u16::try_from(payload.len())
+                .map_err(|_| anyhow::anyhow!("fec packet too large: {}", payload.len()))?;
+            let batch_len = PACKET_LENGTH_SIZE
+                .checked_add(payload.len())
+                .ok_or_else(|| anyhow::anyhow!("fec packet length overflow"))?;
+            let mut batch_data = vec![0u8; batch_len];
+            batch_data[..PACKET_LENGTH_SIZE].copy_from_slice(&packet_len.to_be_bytes());
+            batch_data[PACKET_LENGTH_SIZE..].copy_from_slice(&payload);
             // 校验包先到时 shard 尺寸已知，补齐保持所有 shard 等长
             if group.shard_size != 0 && batch_data.len() < group.shard_size {
                 batch_data.resize(group.shard_size, 0);
             }
             group.received_shards[packet_index] = Some(batch_data);
             group.received_original_count += 1;
+            packet = Some(result_packet);
         }
         group.last_update = Instant::now();
 
@@ -211,7 +220,7 @@ impl FecDecoder {
         // 解码失败（如对端构造的异常 group）只放弃该 group，
         // 不能向上传播错误——否则当前完好接收的包会被连带丢弃
         let decode_failed;
-        let result = match Self::try_decode(group, (src_ip, group_id), &net_packet) {
+        let result = match Self::try_decode(group, (src_ip, group_id)) {
             Ok(result) => {
                 decode_failed = false;
                 result
@@ -248,7 +257,6 @@ impl FecDecoder {
     fn try_decode(
         group: &mut FecGroup,
         key: (Ipv4Addr, u64),
-        net_packet: &NetPacket<TransmissionBytes>,
     ) -> Result<Option<Vec<NetPacket<TransmissionBytes>>>> {
         if group.data_shards == 0 {
             return Ok(None);
@@ -262,14 +270,13 @@ impl FecDecoder {
             return Ok(None);
         }
 
-        Self::decode_with_rs(group, key, net_packet)
+        Self::decode_with_rs(group, key)
     }
 
     /// Reed-Solomon解码恢复丢失的包
     fn decode_with_rs(
         group: &mut FecGroup,
         key: (Ipv4Addr, u64),
-        net_packet: &NetPacket<TransmissionBytes>,
     ) -> Result<Option<Vec<NetPacket<TransmissionBytes>>>> {
         let (src_ip, group_id) = key;
 
@@ -307,7 +314,7 @@ impl FecDecoder {
                     continue;
                 }
 
-                let net_packet = Self::rebuild_net_packet(net_packet, shard)?;
+                let net_packet = Self::rebuild_net_packet(shard)?;
                 result.push(net_packet);
             }
         }
@@ -318,34 +325,30 @@ impl FecDecoder {
     }
 
     /// 从恢复的数据重建NetPacket
-    fn rebuild_net_packet(
-        current_packet: &NetPacket<TransmissionBytes>,
-        recovered_data: &[u8],
-    ) -> Result<NetPacket<TransmissionBytes>> {
-        if recovered_data.len() < 4 {
+    fn rebuild_net_packet(recovered_data: &[u8]) -> Result<NetPacket<TransmissionBytes>> {
+        if recovered_data.len() < PACKET_LENGTH_SIZE {
             bail!("recovered_data too short");
         }
 
-        let type_byte = recovered_data[0];
-        let flags_byte = recovered_data[1];
-        let payload_len = u16::from_be_bytes([recovered_data[2], recovered_data[3]]) as usize;
+        let packet_len = u16::from_be_bytes(
+            recovered_data[..PACKET_LENGTH_SIZE]
+                .try_into()
+                .expect("length checked above"),
+        ) as usize;
 
-        if payload_len + 4 > recovered_data.len() {
-            bail!("invalid payload_len in recovered_data");
+        if packet_len < HEAD_LENGTH
+            || PACKET_LENGTH_SIZE
+                .checked_add(packet_len)
+                .is_none_or(|end| end > recovered_data.len())
+        {
+            bail!("invalid packet_len in recovered_data");
         }
 
-        let payload = &recovered_data[4..4 + payload_len];
-
-        let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + payload.len());
+        let buffer = TransmissionBytes::from(
+            &recovered_data[PACKET_LENGTH_SIZE..PACKET_LENGTH_SIZE + packet_len],
+        );
         let mut net_packet = NetPacket::new(buffer)?;
-
-        net_packet.head_mut()[0] = type_byte;
-        net_packet.head_mut()[2] = flags_byte;
-        net_packet.set_src_id(current_packet.src_id());
-        net_packet.set_dest_id(current_packet.dest_id());
-        net_packet.set_ttl(current_packet.ttl());
         net_packet.set_fec_flag(false);
-        net_packet.set_payload(payload)?;
 
         Ok(net_packet)
     }
@@ -383,10 +386,11 @@ mod tests {
         flags_byte: u8,
         payload: &[u8],
     ) -> NetPacket<TransmissionBytes> {
+        let packet = make_inner_packet(type_byte, flags_byte, payload);
         let fec = FecPacket {
             group_id,
             packet_index,
-            payload: payload.to_vec(),
+            payload: packet,
             parity_data: None,
         };
         build_packet(fec, type_byte, flags_byte)
@@ -426,13 +430,28 @@ mod tests {
         pkt
     }
 
-    /// 按编码端格式组装 shard：[type_byte, flags_byte, len(u16), payload...]，填充到 max_len
+    fn make_inner_packet(type_byte: u8, flags_byte: u8, payload: &[u8]) -> Vec<u8> {
+        let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + payload.len());
+        let mut packet = NetPacket::new(buffer).unwrap();
+        packet.head_mut()[0] = type_byte;
+        packet.head_mut()[2] = flags_byte;
+        packet.set_src_id(SRC);
+        packet.set_dest_id(DST);
+        packet.set_ttl(5);
+        packet.set_payload(payload).unwrap();
+        packet.buffer().to_vec()
+    }
+
+    /// 按编码端格式组装 shard：[packet_len(u16), 完整 NetPacket...]，填充到 max_len
     fn make_shard(type_byte: u8, flags_byte: u8, payload: &[u8], max_len: usize) -> Vec<u8> {
+        let packet = make_inner_packet(type_byte, flags_byte, payload);
+        make_packet_shard(&packet, max_len)
+    }
+
+    fn make_packet_shard(packet: &[u8], max_len: usize) -> Vec<u8> {
         let mut shard = vec![0u8; max_len];
-        shard[0] = type_byte;
-        shard[1] = flags_byte;
-        shard[2..4].copy_from_slice(&(payload.len() as u16).to_be_bytes());
-        shard[4..4 + payload.len()].copy_from_slice(payload);
+        shard[..PACKET_LENGTH_SIZE].copy_from_slice(&(packet.len() as u16).to_be_bytes());
+        shard[PACKET_LENGTH_SIZE..PACKET_LENGTH_SIZE + packet.len()].copy_from_slice(packet);
         shard
     }
 
@@ -455,8 +474,8 @@ mod tests {
         let group_id = 1u64;
 
         let payloads: [&[u8]; 3] = [&[0xAA; 10], &[0xBB; 30], &[0xCC; 20]];
-        let type_bytes = [0x81u8, 0x82, 0x83];
-        let max_len = 4 + 30; // 编码端按最长 shard 填充
+        let type_bytes = [0x81u8, 0x82, 0x91];
+        let max_len = PACKET_LENGTH_SIZE + HEAD_LENGTH + 30; // 编码端按最长 shard 填充
 
         // 编码端：3 数据 + 1 校验
         let mut shards: Vec<Vec<u8>> = payloads
@@ -505,6 +524,10 @@ mod tests {
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].payload(), payloads[2]);
         assert_eq!(recovered[0].head()[0], type_bytes[2]);
+        assert_eq!(
+            recovered[0].msg_type().unwrap(),
+            crate::protocol::ip_packet_protocol::MsgType::Quic
+        );
         assert_eq!(recovered[0].src_id(), SRC);
         assert_eq!(recovered[0].dest_id(), DST);
         assert!(!recovered[0].is_fec());
@@ -517,7 +540,7 @@ mod tests {
         let group_id = 2u64;
 
         let payloads: [&[u8]; 2] = [&[0x11; 8], &[0x22; 24]];
-        let max_len = 4 + 24;
+        let max_len = PACKET_LENGTH_SIZE + HEAD_LENGTH + 24;
 
         let mut shards = [
             make_shard(0x81, 0, payloads[0], max_len),
@@ -549,6 +572,59 @@ mod tests {
             .find(|p| p.payload() == payloads[0])
             .expect("recovered pkt0 missing");
         assert_eq!(recovered_pkt0.head()[0], 0x81);
+    }
+
+    /// FEC 恢复的是完整 NetPacket，不能再从触发恢复的冗余包借用头部字段。
+    #[test]
+    fn test_reconstruct_preserves_complete_packet_header() {
+        let decoder = FecDecoder::new();
+        let group_id = 21u64;
+
+        let mut packet0 = make_inner_packet(0x91, 0x90, &[0xA1; 12]);
+        packet0[1] = 0x53; // max_ttl=5, ttl=3
+        packet0[3] = 0xA5;
+        packet0[4..8].copy_from_slice(&0x1234_5678u32.to_be_bytes());
+
+        let mut packet1 = make_inner_packet(0x81, 0, &[0xB2; 20]);
+        packet1[1] = 0x42;
+        packet1[3] = 0x5A;
+        packet1[4..8].copy_from_slice(&0x8765_4321u32.to_be_bytes());
+
+        let max_len = PACKET_LENGTH_SIZE + packet1.len();
+        let mut shards = [
+            make_packet_shard(&packet0, max_len),
+            make_packet_shard(&packet1, max_len),
+            vec![0u8; max_len],
+        ];
+        let rs = ReedSolomon::new(2, 1).unwrap();
+        {
+            let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut()).collect();
+            rs.encode(&mut refs).unwrap();
+        }
+
+        let data1 = FecPacket {
+            group_id,
+            packet_index: 1,
+            payload: packet1,
+            parity_data: None,
+        };
+        assert!(
+            decoder
+                .receive(build_packet(data1, 0x81, 0))
+                .unwrap()
+                .is_some()
+        );
+
+        let recovered = decoder
+            .receive(build_parity_packet(group_id, 2, shards[2].clone(), 2, 1))
+            .unwrap()
+            .expect("packet0 should be reconstructed");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].buffer(), packet0.as_slice());
+        assert_eq!(recovered[0].max_ttl(), 5);
+        assert_eq!(recovered[0].ttl(), 3);
+        assert_eq!(recovered[0].seq(), 0x1234_5678);
+        assert_eq!(recovered[0].head()[3], 0xA5);
     }
 
     /// 异常 group（校验 shard 比数据 shard 短）导致重建失败时：
@@ -587,7 +663,7 @@ mod tests {
     fn test_out_of_range_data_index_does_not_poison_group() {
         let decoder = FecDecoder::new();
         let group_id = 1u64;
-        let shard = make_shard(0x81, 0, &[0xAA; 10], 14);
+        let shard = make_shard(0x81, 0, &[0xAA; 10], PACKET_LENGTH_SIZE + HEAD_LENGTH + 10);
         // 校验包先到：data_shards=2, parity_shards=1，索引 2
         let parity = build_parity_packet(group_id, 2, shard, 2, 1);
         decoder.receive(parity).unwrap();
@@ -611,7 +687,7 @@ mod tests {
     fn test_parity_index_in_data_region_rejected() {
         let decoder = FecDecoder::new();
         let group_id = 1u64;
-        let shard = make_shard(0x81, 0, &[0xAA; 10], 14);
+        let shard = make_shard(0x81, 0, &[0xAA; 10], PACKET_LENGTH_SIZE + HEAD_LENGTH + 10);
         // 索引 0 < data_shards=2 的"校验包"：必须拒绝
         let bad_parity = build_parity_packet(group_id, 0, shard.clone(), 2, 1);
         assert!(decoder.receive(bad_parity).unwrap().is_none());
