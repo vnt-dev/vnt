@@ -9,6 +9,7 @@ use prost::Message;
 use quinn::{Connection, Endpoint, RecvStream, SendStream};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 use tcp_ip::IpStack;
 use tcp_ip::ip::IpSocket;
 use tokio::io::AsyncReadExt;
@@ -180,11 +181,20 @@ async fn quic_stream_bi_handle(
     Ok(())
 }
 
+/// QUIC 流握手读取超时：对端建流后不发/不完整发送握手数据时，
+/// 避免任务与流无限期挂起造成无界泄漏
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 async fn recv_handshake(recv_stream: &mut RecvStream) -> anyhow::Result<QuicProxyHandshake> {
-    let len = recv_stream.read_u16().await?;
-    let mut buf = vec![0u8; len as usize];
-    recv_stream.read_exact(&mut buf).await?;
-    let handshake = QuicProxyHandshake::decode(&buf[..])?;
+    let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let len = recv_stream.read_u16().await?;
+        let mut buf = vec![0u8; len as usize];
+        recv_stream.read_exact(&mut buf).await?;
+        let handshake = QuicProxyHandshake::decode(&buf[..])?;
+        anyhow::Ok(handshake)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("recv quic handshake timed out after {HANDSHAKE_TIMEOUT:?}"))??;
     Ok(handshake)
 }
 async fn quic_stream_uni_handle(
