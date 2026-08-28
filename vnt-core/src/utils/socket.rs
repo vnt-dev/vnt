@@ -3,6 +3,10 @@ use rust_p2p_core::socket::LocalInterface;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::SocketAddr;
+use std::time::Duration;
+
+/// TCP 连接建立（connect + 可写确认）超时
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedInterface {
@@ -150,7 +154,16 @@ pub(crate) async fn connect_tcp(
     }
 
     let stream = tokio::net::TcpStream::from_std(socket.into())?;
-    stream.writable().await?;
+    // connect 后的可写确认必须在超时内完成，否则不可达地址会挂住任务直到
+    // 操作系统超时（Windows 约 21s、Linux 约 127s）
+    tokio::time::timeout(CONNECT_TIMEOUT, stream.writable())
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("connect to {addr} timed out after {CONNECT_TIMEOUT:?}"),
+            )
+        })??;
     if let Some(error) = stream.take_error()? {
         return Err(error);
     }

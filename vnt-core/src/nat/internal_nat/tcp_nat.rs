@@ -1,4 +1,5 @@
 use crate::context::SharedNetworkAddr;
+use crate::utils::socket::connect_tcp;
 use crate::utils::task_control::TaskGroup;
 use anyhow::Context;
 use rust_p2p_core::socket::LocalInterface;
@@ -78,7 +79,7 @@ async fn stream_task(
     addr: SocketAddr,
     default_interface: Option<&LocalInterface>,
 ) -> anyhow::Result<()> {
-    let mut tokio_stream = crate::utils::socket::connect_tcp(addr, default_interface).await?;
+    let mut tokio_stream = connect_tcp(addr, default_interface).await?;
     tokio::io::copy_bidirectional(&mut inner_stream, &mut tokio_stream).await?;
     Ok(())
 }
