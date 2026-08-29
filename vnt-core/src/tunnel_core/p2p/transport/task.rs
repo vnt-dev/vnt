@@ -127,7 +127,6 @@ pub async fn init_tunnel(
     let p2p_task = P2pTask {
         task_group,
         nat_info: app_state.nat_info.clone(),
-        socket_manager: socket_manager.clone(),
         tunnel_dispatcher,
     };
     Ok((puncher, socket_manager, p2p_task))
@@ -181,7 +180,6 @@ fn build_direct_peer_probe(
 pub struct P2pTask {
     task_group: TaskGroup,
     nat_info: MyNatInfo,
-    socket_manager: P2pOutbound,
     tunnel_dispatcher: TunnelDispatcher,
 }
 impl P2pTask {
@@ -191,7 +189,6 @@ impl P2pTask {
             self.task_group.clone(),
             self.tunnel_dispatcher,
             p2p_inbound_handler,
-            self.socket_manager,
         ));
     }
 }
@@ -566,7 +563,6 @@ pub async fn tunnel_dispatch_task(
     task_group: TaskGroup,
     mut tunnel_factory: TunnelDispatcher,
     p2p_inbound_handler: P2pInboundHandler,
-    p2p_socket_manager: P2pOutbound,
 ) {
     loop {
         let mut tunnel = match tunnel_factory.dispatch().await {
@@ -579,7 +575,6 @@ pub async fn tunnel_dispatch_task(
         log::info!("tunnel {:?}-{:?}", tunnel.protocol(), tunnel.remote_addr());
         let p2p_inbound_handler = p2p_inbound_handler.clone();
         let nat_info = nat_info.clone();
-        let p2p_socket_manager = p2p_socket_manager.clone();
         task_group.spawn(async move {
             let mut buf = vec![0; 65536];
             while let Some(rs) = tunnel.recv_from(&mut buf).await {
@@ -603,7 +598,7 @@ pub async fn tunnel_dispatch_task(
                 let mut bytes = TransmissionBytes::zeroed(len);
                 bytes.copy_from_slice(&buf[..len]);
                 p2p_inbound_handler
-                    .next_handle(bytes, route_key, &p2p_socket_manager, &mut tunnel)
+                    .next_handle(bytes, route_key, &mut tunnel)
                     .await;
             }
             log::info!(

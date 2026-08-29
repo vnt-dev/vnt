@@ -155,7 +155,7 @@ impl NetworkManager {
             app_state.network.clone(),
             app_state.server_info_collection.clone(),
             app_state.traffic_stats.clone(),
-            basic_outbound,
+            basic_outbound.clone(),
             packet_compression.clone(),
             subnet_external_route.clone(),
             fec_encoder,
@@ -237,6 +237,7 @@ impl NetworkManager {
                 enhanced_inbound: enhanced_inbound.clone(),
                 fec_decoder: fec_decoder.clone(),
                 turn: turn.clone(),
+                basic_outbound,
             });
             p2p_task.start(handler);
         }
