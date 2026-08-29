@@ -82,10 +82,7 @@ impl QuicTunnelClient {
                     // 否则可能在并发重建时误删他人刚插入的新连接，
                     // 导致新连接脱离跟踪变成永不回收的孤儿连接
                     let mut map = self.connection_map.lock();
-                    if map
-                        .get(&dest)
-                        .is_some_and(|cur| Arc::ptr_eq(cur, &cell))
-                    {
+                    if map.get(&dest).is_some_and(|cur| Arc::ptr_eq(cur, &cell)) {
                         map.remove(&dest);
                     }
                     drop(map);
@@ -131,10 +128,7 @@ impl QuicTunnelClient {
                     // 仅当缓存中仍是本调用持有的这条连接时才移除，
                     // 避免并发重建时误删他人刚插入的新连接（孤儿连接泄漏）
                     let mut map = self.connection_map.lock();
-                    if map
-                        .get(&dest)
-                        .is_some_and(|cur| Arc::ptr_eq(cur, &cell))
-                    {
+                    if map.get(&dest).is_some_and(|cur| Arc::ptr_eq(cur, &cell)) {
                         map.remove(&dest);
                     }
                     drop(map);

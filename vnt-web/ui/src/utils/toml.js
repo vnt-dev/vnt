@@ -5,6 +5,7 @@ export const emptyFormData = () => ({
   network_code: "",
   server: [""],
   peer_address: [],
+  turn: [],
   ip: "",
   mtu: null,
   rtx: false,
@@ -55,6 +56,12 @@ export const parseTomlToForm = (toml) => {
       if (match) {
         const items = match[1].match(/"([^"]*)"/g);
         if (items) data.peer_address = items.map((s) => s.replace(/"/g, ""));
+      }
+    } else if (trimmed.match(/^turn\s*=/)) {
+      const match = trimmed.match(/turn\s*=\s*\[(.*)\]/);
+      if (match) {
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.turn = items.map((s) => s.replace(/"/g, ""));
       }
     } else if (trimmed.includes("ip =")) {
       const match = trimmed.match(/ip\s*=\s*"([^"]*)"/);
@@ -168,6 +175,13 @@ export const formToToml = (formData) => {
     toml += "\n# 可直连节点地址；无协议时同时尝试 TCP 和 UDP\n";
     toml += "# 端口应为对端配置的 tunnel_port\n";
     toml += `peer_address = [${peerAddresses.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
+  const turnRules = formData.turn.filter((s) => s.trim());
+  if (turnRules.length > 0) {
+    toml += "\n# 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继\n";
+    toml += "# 命中目标不参与 P2P 打洞\n";
+    toml += `turn = [${turnRules.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
   if (formData.ip) {
@@ -302,6 +316,10 @@ server = ["quic://1.2.3.4:29872"]
 
 # 可直连节点地址列表 (可选)
 # peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873"]
+
+# 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继
+# 命中目标不参与 P2P 打洞
+# turn = ["10.26.0.0/24,10.26.0.2", "10.26.1.9,10.26.0.3"]
 
 # ===简单使用以下参数可以不动===
 

@@ -1,3 +1,4 @@
+use crate::context::SharedNetworkAddr;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
@@ -41,7 +42,11 @@ struct DestBatchState {
 }
 
 impl FecEncoder {
-    pub fn new(task_group: &TaskGroup, basic_outbound: BasicOutbound) -> Self {
+    pub fn new(
+        task_group: &TaskGroup,
+        basic_outbound: BasicOutbound,
+        network: SharedNetworkAddr,
+    ) -> Self {
         let (batch_tx, batch_rx) = mpsc::channel(BATCH_CHANNEL_SIZE);
         let batch_states = Arc::new(Mutex::new(HashMap::new()));
         let encoder = Self {
@@ -50,7 +55,12 @@ impl FecEncoder {
             fec_auth_reserve: basic_outbound.fec_auth_reserve(),
         };
 
-        task_group.spawn(fec_encoder_worker(batch_rx, basic_outbound, batch_states));
+        task_group.spawn(fec_encoder_worker(
+            batch_rx,
+            basic_outbound,
+            batch_states,
+            network,
+        ));
 
         encoder
     }
@@ -142,13 +152,14 @@ async fn fec_encoder_worker(
     mut batch_rx: mpsc::Receiver<(Ipv4Addr, Ipv4Addr, u64, Vec<TransmissionBytes>)>,
     basic_outbound: BasicOutbound,
     batch_states: Arc<Mutex<HashMap<Ipv4Addr, DestBatchState>>>,
+    network: SharedNetworkAddr,
 ) {
     let mut timer = tokio::time::interval(Duration::from_millis(5));
 
     loop {
         tokio::select! {
             Some((src,dest, group_id, mut items)) = batch_rx.recv() => {
-                if let Err(e) = encode_and_send_parity(src,dest, group_id, &mut items, &basic_outbound).await {
+                if let Err(e) = encode_and_send_parity(&network, src, dest, group_id, &mut items, &basic_outbound).await {
                     log::warn!("encode_and_send_parity error for {} group {}: {:?}", dest, group_id, e);
                 }
             }
@@ -171,7 +182,7 @@ async fn fec_encoder_worker(
                 };
 
                 for (src,dest, group_id, mut items) in timeout_batches {
-                    if let Err(e) = encode_and_send_parity(src, dest, group_id, &mut items, &basic_outbound).await {
+                    if let Err(e) = encode_and_send_parity(&network, src, dest, group_id, &mut items, &basic_outbound).await {
                         log::warn!("encode_and_send_parity timeout error for {} group {}: {:?}", dest, group_id, e);
                     }
                 }
@@ -182,6 +193,7 @@ async fn fec_encoder_worker(
 
 /// Reed-Solomon编码并发送冗余包
 async fn encode_and_send_parity(
+    network: &SharedNetworkAddr,
     src: Ipv4Addr,
     dest: Ipv4Addr,
     group_id: u64,
@@ -191,6 +203,7 @@ async fn encode_and_send_parity(
     if items.is_empty() {
         return Ok(());
     }
+    let net = network.get().ok_or_else(|| anyhow::anyhow!("Not src ip"))?;
 
     let data_shards = items.len();
     let parity_shards = (data_shards as f32 * REDUNDANCY_RATE).ceil() as usize;
@@ -244,7 +257,7 @@ async fn encode_and_send_parity(
         net_packet.set_payload(&fec_payload)?;
         net_packet.set_fec_flag(true);
 
-        if let Err(e) = basic_outbound.send_fec_packet(dest, net_packet).await {
+        if let Err(e) = basic_outbound.send_fec_packet(net, dest, net_packet).await {
             log::warn!(
                 "failed to send parity packet {}: {:?}, dest={}, group_id={}",
                 packet_index,

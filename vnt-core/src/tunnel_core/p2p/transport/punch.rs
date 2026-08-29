@@ -1,3 +1,4 @@
+use crate::context::config::{TurnRule, allow_punch};
 use crate::context::nat::PunchBackoff;
 use crate::context::{ServerInfoCollection, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
@@ -11,6 +12,7 @@ use log::error;
 use rand::seq::SliceRandom;
 use rust_p2p_core::punch::{PunchModel, Puncher};
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub struct PunchTaskContext {
@@ -18,6 +20,7 @@ pub struct PunchTaskContext {
     pub server_info: ServerInfoCollection,
     pub punch_backoff: PunchBackoff,
     pub punch_info_getter: PunchInfoGetter,
+    pub turn: Arc<Vec<TurnRule>>,
 }
 
 pub type PunchInfoGetter = std::sync::Arc<dyn Fn() -> Option<PunchInfo> + Send + Sync>;
@@ -40,6 +43,9 @@ pub async fn punch_task(
         list.truncate(5);
         for dest_ip in list {
             if dest_ip <= src_ip {
+                continue;
+            }
+            if !allow_punch(&ctx.turn, &dest_ip) {
                 continue;
             }
             if ctx.server_info.is_any_server_connected(None) && route_table.need_punch(&dest_ip) {

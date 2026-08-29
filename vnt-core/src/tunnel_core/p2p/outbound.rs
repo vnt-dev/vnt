@@ -95,7 +95,10 @@ impl P2pOutbound {
         self.route_table
             .get_route_by_id(id)
             .ok()
-            .filter(|v| v.is_direct())
+            .filter(|route| route.is_direct())
+    }
+    pub fn get_direct_route_by_id(&self, id: &Ipv4Addr) -> Option<Route> {
+        self.route_table.get_direct_route_by_id(id)
     }
     pub fn exists_route_by_id(&self, id: &Ipv4Addr) -> bool {
         self.route_table.exists(id)

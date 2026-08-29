@@ -1,4 +1,5 @@
 use crate::compression::PacketCompression;
+use crate::context::config::{TurnRule, is_turn_ip, turn_ip_for};
 use crate::context::{NetworkAddr, ServerInfoCollection, SharedNetworkAddr, TrafficStats};
 use crate::crypto::PacketCrypto;
 use crate::fec::FecEncoder;
@@ -11,12 +12,32 @@ use anyhow::bail;
 use bytes::Bytes;
 use pnet_packet::ipv4::Ipv4Packet;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum PreferredTurn {
+    Server,
+    Peer(Ipv4Addr),
+}
+
+fn preferred_turn(net: NetworkAddr, rules: &[TurnRule], dest: &Ipv4Addr) -> Option<PreferredTurn> {
+    if is_turn_ip(rules, dest) {
+        return None;
+    }
+    let turn_ip = turn_ip_for(rules, dest)?;
+    if net.gateway == turn_ip {
+        Some(PreferredTurn::Server)
+    } else {
+        Some(PreferredTurn::Peer(turn_ip))
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct BasicOutbound {
     server_outbound: ServerOutbound,
     p2p_outbound: Option<P2pOutbound>,
     packet_crypto: PacketCrypto,
+    turn: Arc<Vec<TurnRule>>,
 }
 
 impl BasicOutbound {
@@ -24,11 +45,13 @@ impl BasicOutbound {
         server_outbound: ServerOutbound,
         p2p_outbound: Option<P2pOutbound>,
         packet_crypto: PacketCrypto,
+        turn: Arc<Vec<TurnRule>>,
     ) -> Self {
         Self {
             server_outbound,
             p2p_outbound,
             packet_crypto,
+            turn,
         }
     }
 
@@ -52,17 +75,31 @@ impl BasicOutbound {
     /// 发送原始数据包到指定目标（通过P2P或服务器）
     pub async fn send_raw(
         &self,
+        net: NetworkAddr,
         dest: Ipv4Addr,
         packet: NetPacket<TransmissionBytes>,
     ) -> anyhow::Result<()> {
         let packet = packet.into_bytes();
-        if let Some(p2p) = self.p2p_outbound.as_ref()
-            && let Some(route) = p2p.get_route_by_id(&dest)
-        {
-            p2p.send_raw_to(packet, &route.route_key()).await?;
-        } else {
-            self.server_outbound.send_raw(dest, packet).await?;
+        if let Some(p2p) = self.p2p_outbound.as_ref() {
+            match preferred_turn(net, &self.turn, &dest) {
+                Some(PreferredTurn::Server) => {
+                    self.server_outbound.send_raw(dest, packet).await?;
+                    return Ok(());
+                }
+                Some(PreferredTurn::Peer(turn_ip))
+                    if let Some(route) = p2p.get_direct_route_by_id(&turn_ip) =>
+                {
+                    p2p.send_raw_to(packet, &route.route_key()).await?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+            if let Some(route) = p2p.get_route_by_id(&dest) {
+                p2p.send_raw_to(packet, &route.route_key()).await?;
+                return Ok(());
+            }
         }
+        self.server_outbound.send_raw(dest, packet).await?;
         Ok(())
     }
 
@@ -116,37 +153,55 @@ impl BasicOutbound {
     /// 发送加密后的数据包
     pub async fn send_encrypted_packet(
         &self,
+        net: NetworkAddr,
         dest: Ipv4Addr,
         mut packet: NetPacket<TransmissionBytes>,
     ) -> anyhow::Result<()> {
         // 加密
         self.packet_crypto.encrypt_in_place(&mut packet)?;
-
-        // 发送
-        if let Some(p2p) = self.p2p_outbound.as_ref()
-            && let Some(route) = p2p.get_route_by_id(&dest)
-        {
-            let bytes = packet.into_buffer().into_bytes().freeze();
-            p2p.send_raw_to(NetPacket::new(bytes)?, &route.route_key())
-                .await?;
-        } else {
-            let bytes = packet.into_buffer().into_bytes().freeze();
-            self.server_outbound
-                .send_raw(dest, NetPacket::new(bytes)?)
-                .await?;
-        }
-        Ok(())
+        self.send_raw(net, dest, packet).await
     }
 
     /// 认证并发送 FEC 外层包。FEC 内层已经是普通 AEAD 密文或 QUIC 密文，
     /// 外层只追加认证标签，不再重复加密。
     pub async fn send_fec_packet(
         &self,
+        net: NetworkAddr,
         dest: Ipv4Addr,
         mut packet: NetPacket<TransmissionBytes>,
     ) -> anyhow::Result<()> {
         self.packet_crypto.authenticate_fec_in_place(&mut packet)?;
-        self.send_raw(dest, packet).await
+        self.send_raw(net, dest, packet).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_gateway_turn_forces_server_and_peer_turn_stays_p2p() {
+        let rules = vec!["10.26.1.0/24,10.26.0.1".parse().unwrap()];
+        let target = Ipv4Addr::new(10, 26, 1, 9);
+        let network = NetworkAddr {
+            gateway: Ipv4Addr::new(10, 26, 0, 1),
+            broadcast: Ipv4Addr::new(10, 26, 255, 255),
+            ip: Ipv4Addr::new(10, 26, 0, 8),
+            prefix_len: 16,
+        };
+        assert_eq!(
+            preferred_turn(network, &rules, &target),
+            Some(PreferredTurn::Server)
+        );
+        let peer_network = NetworkAddr {
+            gateway: Ipv4Addr::new(10, 26, 0, 254),
+            ..network
+        };
+        assert_eq!(
+            preferred_turn(peer_network, &rules, &target),
+            Some(PreferredTurn::Peer(Ipv4Addr::new(10, 26, 0, 1)))
+        );
+        assert_eq!(preferred_turn(network, &rules, &network.gateway), None);
     }
 }
 
@@ -185,21 +240,22 @@ impl HybridOutbound {
         dest: Ipv4Addr,
         mut packet: NetPacket<TransmissionBytes>,
     ) -> anyhow::Result<()> {
+        let Some(net) = self.network.get() else {
+            bail!("Not src ip")
+        };
         if packet.src_id() == 0 {
-            if let Some(ip) = self.network.ip() {
-                packet.set_src_id(ip.into());
-            } else {
-                bail!("Not src ip")
-            }
+            packet.set_src_id(net.ip.into());
         }
 
         let len = packet.buffer().len() as u64;
 
         if let Some(fec_encoder) = &self.fec_encoder {
             packet = fec_encoder.encode(packet)?;
-            self.basic_outbound.send_fec_packet(dest, packet).await?;
+            self.basic_outbound
+                .send_fec_packet(net, dest, packet)
+                .await?;
         } else {
-            self.basic_outbound.send_raw(dest, packet).await?;
+            self.basic_outbound.send_raw(net, dest, packet).await?;
         }
         self.traffic_stats.record_tx(dest, len);
         Ok(())
@@ -242,10 +298,12 @@ impl HybridOutbound {
         if let Some(fec_encoder) = &self.fec_encoder {
             self.basic_outbound.encrypt_in_place(&mut packet)?;
             packet = fec_encoder.encode(packet)?;
-            self.basic_outbound.send_fec_packet(dest, packet).await?;
+            self.basic_outbound
+                .send_fec_packet(net, dest, packet)
+                .await?;
         } else {
             self.basic_outbound
-                .send_encrypted_packet(dest, packet)
+                .send_encrypted_packet(net, dest, packet)
                 .await?;
         }
         self.traffic_stats.record_tx(dest, len);
@@ -297,10 +355,12 @@ impl HybridOutbound {
         if let Some(fec_encoder) = &self.fec_encoder {
             self.basic_outbound.encrypt_in_place(&mut packet)?;
             let packet = fec_encoder.encode(packet)?;
-            self.basic_outbound.send_fec_packet(dest, packet).await?;
+            self.basic_outbound
+                .send_fec_packet(net, dest, packet)
+                .await?;
         } else {
             self.basic_outbound
-                .send_encrypted_packet(dest, packet)
+                .send_encrypted_packet(net, dest, packet)
                 .await?;
         }
         self.traffic_stats.record_tx(dest, len);

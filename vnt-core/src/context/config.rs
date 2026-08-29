@@ -17,6 +17,80 @@ pub const MAX_NAME_LEN: usize = 128;
 pub const MAX_VERSION_LEN: usize = 32;
 pub const MAX_MTU: u16 = 1500;
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct TurnRule {
+    target: Ipv4Net,
+    turn_ip: Ipv4Addr,
+}
+
+impl TurnRule {
+    pub fn target(&self) -> Ipv4Net {
+        self.target
+    }
+
+    pub fn turn_ip(&self) -> Ipv4Addr {
+        self.turn_ip
+    }
+
+    pub fn matches(&self, ip: &Ipv4Addr) -> bool {
+        self.target.contains(ip)
+    }
+}
+
+impl FromStr for TurnRule {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let parts = value.split(',').map(str::trim).collect::<Vec<_>>();
+        if parts.len() != 2 {
+            bail!("invalid turn rule '{value}', expected target_ip_or_cidr,turn_ip")
+        }
+
+        let target = if parts[0].contains('/') {
+            parts[0]
+                .parse::<Ipv4Net>()
+                .map_err(|error| anyhow::anyhow!("invalid turn target '{}': {error}", parts[0]))?
+        } else {
+            let ip = parts[0]
+                .parse::<Ipv4Addr>()
+                .map_err(|error| anyhow::anyhow!("invalid turn target '{}': {error}", parts[0]))?;
+            Ipv4Net::new(ip, 32)?
+        };
+        let turn_ip = parts[1]
+            .parse::<Ipv4Addr>()
+            .map_err(|error| anyhow::anyhow!("invalid turn IP '{}': {error}", parts[1]))?;
+
+        Ok(Self { target, turn_ip })
+    }
+}
+
+impl Display for TurnRule {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.target.prefix_len() == 32 {
+            write!(f, "{},{}", self.target.addr(), self.turn_ip)
+        } else {
+            write!(f, "{},{}", self.target, self.turn_ip)
+        }
+    }
+}
+
+pub fn turn_ip_for(rules: &[TurnRule], target: &Ipv4Addr) -> Option<Ipv4Addr> {
+    rules
+        .iter()
+        .filter(|rule| rule.matches(target))
+        .max_by_key(|rule| rule.target.prefix_len())
+        .map(TurnRule::turn_ip)
+}
+
+pub fn is_turn_ip(rules: &[TurnRule], ip: &Ipv4Addr) -> bool {
+    rules.iter().any(|rule| rule.turn_ip == *ip)
+}
+
+/// A configured relay remains punchable even when it is covered by a target rule.
+pub fn allow_punch(rules: &[TurnRule], ip: &Ipv4Addr) -> bool {
+    is_turn_ip(rules, ip) || turn_ip_for(rules, ip).is_none()
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum PeerProtocol {
     Both,
@@ -128,6 +202,7 @@ impl FromStr for DeviceMode {
 pub struct Config {
     pub server_addr: Vec<ProtocolAddress>,
     pub peer_address: Vec<PeerAddress>,
+    pub turn: Vec<TurnRule>,
     pub cert_mode: CertValidationMode,
     pub network_code: String,
     pub device_id: String,
@@ -153,6 +228,30 @@ pub struct Config {
     pub tunnel_port: Option<u16>,
 }
 impl Config {
+    pub fn normalize(&mut self) -> anyhow::Result<()> {
+        self.check_turn_rules()?;
+        let mut seen = HashSet::new();
+        self.turn.retain(|rule| seen.insert(rule.clone()));
+        Ok(())
+    }
+
+    fn check_turn_rules(&self) -> anyhow::Result<()> {
+        for (index, rule) in self.turn.iter().enumerate() {
+            if let Some(conflict) = self.turn[index + 1..]
+                .iter()
+                .find(|other| other.target == rule.target && other.turn_ip != rule.turn_ip)
+            {
+                bail!(
+                    "conflicting turn rules for {}: {} and {}",
+                    rule.target,
+                    rule.turn_ip,
+                    conflict.turn_ip
+                )
+            }
+        }
+        Ok(())
+    }
+
     pub fn check(&self) -> anyhow::Result<()> {
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         if self.device_mode == DeviceMode::Tap {
@@ -170,6 +269,7 @@ impl Config {
                 }
             }
         }
+        self.check_turn_rules()?;
 
         if self.network_code.len() > MAX_NETWORK_CODE_LEN {
             bail!(
@@ -274,5 +374,56 @@ mod tests {
                 "{value} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn turn_rule_parses_ip_and_cidr_and_uses_longest_prefix() {
+        let host = "10.26.1.9,10.26.0.3".parse::<TurnRule>().unwrap();
+        assert_eq!(host.target().prefix_len(), 32);
+        assert_eq!(host.to_string(), "10.26.1.9,10.26.0.3");
+
+        let broad = "10.26.0.0/16,10.26.0.2".parse::<TurnRule>().unwrap();
+        let narrow = "10.26.1.0/24,10.26.0.4".parse::<TurnRule>().unwrap();
+        let rules = vec![narrow, broad];
+        assert_eq!(
+            turn_ip_for(&rules, &Ipv4Addr::new(10, 26, 1, 8)),
+            Some(Ipv4Addr::new(10, 26, 0, 4))
+        );
+        assert_eq!(
+            turn_ip_for(&rules, &Ipv4Addr::new(10, 26, 2, 8)),
+            Some(Ipv4Addr::new(10, 26, 0, 2))
+        );
+        assert_eq!(turn_ip_for(&rules, &Ipv4Addr::new(10, 27, 1, 8)), None);
+    }
+
+    #[test]
+    fn turn_rule_rejects_invalid_values_and_conflicts() {
+        for value in ["10.26.0.0/24", "bad,10.26.0.2", "10.26.0.1,bad"] {
+            assert!(value.parse::<TurnRule>().is_err(), "{value} must fail");
+        }
+
+        let mut config = Config {
+            turn: vec![
+                "10.26.0.0/24,10.26.0.2".parse().unwrap(),
+                "10.26.0.0/24,10.26.0.3".parse().unwrap(),
+            ],
+            ..Default::default()
+        };
+        assert!(config.normalize().is_err());
+
+        config.turn = vec![
+            "10.26.0.0/24,10.26.0.2".parse().unwrap(),
+            "10.26.0.0/24,10.26.0.2".parse().unwrap(),
+        ];
+        config.normalize().unwrap();
+        assert_eq!(config.turn.len(), 1);
+    }
+
+    #[test]
+    fn configured_turn_ip_remains_punchable_inside_target_network() {
+        let rules = vec!["10.26.0.0/16,10.26.0.2".parse().unwrap()];
+        assert!(!allow_punch(&rules, &Ipv4Addr::new(10, 26, 0, 9)));
+        assert!(allow_punch(&rules, &Ipv4Addr::new(10, 26, 0, 2)));
+        assert!(allow_punch(&rules, &Ipv4Addr::new(10, 27, 0, 9)));
     }
 }

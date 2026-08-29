@@ -37,6 +37,7 @@ struct RegistrationContext {
     packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
+    turn: std::sync::Arc<Vec<crate::context::config::TurnRule>>,
 }
 
 pub struct NetworkManager {
@@ -56,7 +57,7 @@ pub enum RegisterResponse {
 
 impl NetworkManager {
     pub async fn create_network(
-        config: Box<Config>,
+        mut config: Box<Config>,
         task_group: TaskGroup,
     ) -> anyhow::Result<NetworkManager> {
         let app_state = AppState::default();
@@ -65,7 +66,9 @@ impl NetworkManager {
         // 不算变化（见 nat_identity_changed）
         let backoff = app_state.punch_backoff.clone();
         app_state.nat_info.set_on_change(move || backoff.cap_all());
+        config.normalize()?;
         config.check()?;
+        let turn = std::sync::Arc::new(config.turn.clone());
         let outbound_interface_name = config
             .outbound_interface
             .as_deref()
@@ -95,7 +98,8 @@ impl NetworkManager {
         let device_io_manager = DeviceIOManager::new(task_group.clone());
         let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
 
-        let p2p_enabled = !config.no_punch || !config.peer_address.is_empty();
+        let p2p_enabled =
+            !config.no_punch || !config.peer_address.is_empty() || !config.turn.is_empty();
         let (puncher, p2p_socket, p2p_task) = if p2p_enabled {
             let (puncher, p2p_socket_manager, p2p_task) = init_tunnel(
                 task_group.clone(),
@@ -106,6 +110,7 @@ impl NetworkManager {
                     tunnel_port: config.tunnel_port,
                     automatic_punch: !config.no_punch,
                     peer_address: config.peer_address.clone(),
+                    turn: turn.clone(),
                     default_interface: default_interface.clone(),
                     outbound_interface_name: canonical_interface_name,
                 },
@@ -134,9 +139,14 @@ impl NetworkManager {
             tunnel_to_server.clone(),
             p2p_socket.clone(),
             packet_crypto.clone(),
+            turn.clone(),
         );
         let fec_encoder = if config.fec {
-            Some(FecEncoder::new(&task_group, basic_outbound.clone()))
+            Some(FecEncoder::new(
+                &task_group,
+                basic_outbound.clone(),
+                app_state.network.clone(),
+            ))
         } else {
             None
         };
@@ -225,6 +235,7 @@ impl NetworkManager {
                 packet_compression: packet_compression.clone(),
                 enhanced_inbound: enhanced_inbound.clone(),
                 fec_decoder: fec_decoder.clone(),
+                turn: turn.clone(),
             });
             p2p_task.start(handler);
         }
@@ -237,6 +248,7 @@ impl NetworkManager {
             packet_compression,
             enhanced_inbound,
             fec_decoder,
+            turn,
         });
 
         app_state.set_config(config.clone());
@@ -339,6 +351,7 @@ impl NetworkManager {
                 packet_compression: ctx.packet_compression.clone(),
                 enhanced_inbound: ctx.enhanced_inbound.clone(),
                 fec_decoder: ctx.fec_decoder.clone(),
+                turn: ctx.turn.clone(),
             });
             turn_manager.data_handle_task_connected(task_group, handler_config, network_addr);
         }

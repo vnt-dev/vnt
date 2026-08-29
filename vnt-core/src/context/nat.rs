@@ -170,9 +170,10 @@ impl PunchBackoff {
     pub fn record(&self, ip: Ipv4Addr) {
         let now = Instant::now();
         let mut map = self.inner.write();
-        let entry = map
-            .entry(ip)
-            .or_insert(PunchState { count: 0, backoff_until: now });
+        let entry = map.entry(ip).or_insert(PunchState {
+            count: 0,
+            backoff_until: now,
+        });
         entry.count += 1;
         entry.backoff_until = now + (Self::BASE * entry.count).min(Self::MAX_BACKOFF);
     }
@@ -419,7 +420,12 @@ mod tests {
         });
         let local = Ipv4Addr::new(192, 168, 1, 2);
         let exit_ip = Ipv4Addr::new(8, 8, 8, 8);
-        nat.replace_nat_info(nat_info(NatType::Symmetric, vec![exit_ip], vec![1000], local));
+        nat.replace_nat_info(nat_info(
+            NatType::Symmetric,
+            vec![exit_ip],
+            vec![1000],
+            local,
+        ));
         assert_eq!(notified.load(Ordering::SeqCst), 0);
 
         let addr: SocketAddr = "8.8.8.8:2222".parse().unwrap();

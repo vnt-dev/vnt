@@ -8,7 +8,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
-use vnt_core::context::config::{Config, DeviceMode, PeerAddress};
+use vnt_core::context::config::{Config, DeviceMode, PeerAddress, TurnRule};
 use vnt_core::core::{NetworkManager, RegisterResponse};
 use vnt_core::nat::NetInput;
 use vnt_core::port_mapping::PortMapping;
@@ -965,6 +965,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         server: Vec<String>,
         #[serde(default)]
         peer_address: Vec<String>,
+        #[serde(default)]
+        turn: Vec<String>,
         network_code: String,
         #[serde(default)]
         device_id: Option<String>,
@@ -1031,6 +1033,16 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         })
         .collect::<anyhow::Result<_>>()?;
 
+    let turn: Vec<TurnRule> = cfg
+        .turn
+        .iter()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| anyhow::anyhow!("invalid turn rule '{}': {}", value, error))
+        })
+        .collect::<anyhow::Result<_>>()?;
+
     let port_mapping: Vec<PortMapping> = cfg
         .port_mapping
         .iter()
@@ -1077,6 +1089,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
     Ok(Config {
         server_addr: server_addrs,
         peer_address,
+        turn,
         network_code: cfg.network_code,
         ip: cfg.ip,
         no_punch: cfg.no_punch,
@@ -1147,5 +1160,20 @@ mod tests {
         assert_eq!(config.peer_address.len(), 2);
         assert_eq!(config.peer_address[0].to_string(), "127.0.0.1:30001");
         assert_eq!(config.peer_address[1].to_string(), "udp://127.0.0.1:30002");
+    }
+
+    #[test]
+    fn parses_turn_rules_from_json() {
+        let config = parse_config_from_json(
+            r#"{
+                "server":["tcp://127.0.0.1:29872"],
+                "network_code":"test",
+                "turn":["10.26.0.0/16,10.26.0.2","10.26.1.9,10.26.0.3"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.turn.len(), 2);
+        assert_eq!(config.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
+        assert_eq!(config.turn[1].to_string(), "10.26.1.9,10.26.0.3");
     }
 }

@@ -134,6 +134,12 @@ impl RouteTable {
             .ok_or_else(|| anyhow::anyhow!("route not found for {}", id))
     }
 
+    /// 获取指定节点评分最高的直连路由，不受中继路由评分排序影响。
+    pub fn get_direct_route_by_id(&self, id: &Ipv4Addr) -> Option<Route> {
+        let guard = self.inner.route_table.read();
+        best_direct_route(guard.get(id)?)
+    }
+
     /// 检查是否存在到指定 ID 的路由
     pub fn exists(&self, id: &Ipv4Addr) -> bool {
         self.inner.get_by_id(id).is_some()
@@ -333,6 +339,14 @@ impl RouteTableInner {
     }
 }
 
+fn best_direct_route(routes: &[Route]) -> Option<Route> {
+    routes
+        .iter()
+        .filter(|route| route.is_direct())
+        .max_by_key(|route| route.score())
+        .copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +397,13 @@ mod tests {
 
         table.remove_route(&peer, &key);
         assert!(notify.notified().now_or_never().is_none());
+    }
+
+    #[test]
+    fn direct_route_lookup_ignores_higher_scored_relay_route() {
+        let relay = Route::from(RouteKey::default(), 2, 1);
+        let direct = Route::from(RouteKey::default(), 1, 1000);
+        assert!(relay.score() > direct.score());
+        assert_eq!(best_direct_route(&[relay, direct]).unwrap().metric(), 1);
     }
 }

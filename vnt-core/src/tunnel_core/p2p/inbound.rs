@@ -1,4 +1,5 @@
 use crate::compression::PacketCompression;
+use crate::context::config::{TurnRule, allow_punch};
 use crate::context::{NetworkAddr, NetworkRoute, PacketLossStats};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
@@ -11,6 +12,7 @@ use anyhow::bail;
 use rust_p2p_core::route::RouteKey;
 use rust_p2p_core::tunnel::Tunnel;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 struct PacketContext {
@@ -55,6 +57,7 @@ pub(crate) struct P2pInboundConfig {
     pub packet_compression: PacketCompression,
     pub enhanced_inbound: EnhancedInbound,
     pub fec_decoder: FecDecoder,
+    pub turn: Arc<Vec<TurnRule>>,
 }
 
 #[derive(Clone)]
@@ -66,6 +69,7 @@ pub(crate) struct P2pInboundHandler {
     packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
+    turn: Arc<Vec<TurnRule>>,
 }
 
 impl P2pInboundHandler {
@@ -78,6 +82,7 @@ impl P2pInboundHandler {
             packet_compression: config.packet_compression,
             enhanced_inbound: config.enhanced_inbound,
             fec_decoder: config.fec_decoder,
+            turn: config.turn,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -260,6 +265,10 @@ impl P2pInboundHandler {
             MsgType::PunchStart1 => {}
             MsgType::PunchStart2 => {}
             MsgType::PunchReq => {
+                if !allow_punch(&self.turn, &ctx.src_ip) {
+                    log::debug!("ignore configured turn target PunchReq from {}", ctx.src_ip);
+                    return Ok(());
+                }
                 if !valid_punch_source(net, ctx.src_ip) {
                     log::debug!(
                         "ignore invalid PunchReq from {} via {route_key:?}",
@@ -292,6 +301,10 @@ impl P2pInboundHandler {
                     .await?;
             }
             MsgType::PunchRes => {
+                if !allow_punch(&self.turn, &ctx.src_ip) {
+                    log::debug!("ignore configured turn target PunchRes from {}", ctx.src_ip);
+                    return Ok(());
+                }
                 if !valid_punch_source(net, ctx.src_ip) {
                     log::debug!(
                         "ignore invalid PunchRes from {} via {route_key:?}",

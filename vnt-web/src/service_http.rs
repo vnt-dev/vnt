@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 use vnt_core::api::VntApi;
-use vnt_core::context::config::{Config as CoreConfig, DeviceMode, PeerAddress};
+use vnt_core::context::config::{Config as CoreConfig, DeviceMode, PeerAddress, TurnRule};
 use vnt_core::core::{DEFAULT_MTU, NetworkManager, RegisterResponse};
 use vnt_core::nat::NetInput;
 use vnt_core::port_mapping::PortMapping;
@@ -255,6 +255,8 @@ pub struct StartConfig {
     pub server: Vec<String>,
     #[serde(default)]
     pub peer_address: Vec<String>,
+    #[serde(default)]
+    pub turn: Vec<String>,
     pub cert_mode: Option<String>,
     pub network_code: String,
     pub device_id: Option<String>,
@@ -1412,6 +1414,16 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         })
         .collect::<anyhow::Result<_>>()?;
 
+    let turn: Vec<TurnRule> = cfg
+        .turn
+        .iter()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| anyhow!("invalid turn rule '{}': {}", value, error))
+        })
+        .collect::<anyhow::Result<_>>()?;
+
     let port_mapping: Vec<PortMapping> = cfg
         .port_mapping
         .iter()
@@ -1455,6 +1467,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
     Ok(CoreConfig {
         server_addr: server_addrs,
         peer_address,
+        turn,
         network_code: cfg.network_code,
         ip: cfg.ip,
         no_punch: cfg.no_punch,
@@ -1783,6 +1796,7 @@ mod tests {
             config_name: None,
             server: Vec::new(),
             peer_address: Vec::new(),
+            turn: Vec::new(),
             cert_mode: None,
             network_code: "test".to_string(),
             device_id: Some("device-a".to_string()),
@@ -1841,6 +1855,19 @@ network_code = "test"
         assert_eq!(core.peer_address.len(), 2);
         assert_eq!(core.peer_address[0].to_string(), "127.0.0.1:30001");
         assert_eq!(core.peer_address[1].to_string(), "tcp://127.0.0.1:30002");
+    }
+
+    #[test]
+    fn test_convert_config_keeps_turn_rules() {
+        let mut config = new_test_config();
+        config.turn = vec![
+            "10.26.0.0/16,10.26.0.2".to_string(),
+            "10.26.1.9,10.26.0.3".to_string(),
+        ];
+        let core = convert_config(config).unwrap();
+        assert_eq!(core.turn.len(), 2);
+        assert_eq!(core.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
+        assert_eq!(core.turn[1].to_string(), "10.26.1.9,10.26.0.3");
     }
 
     /// 两个实例同时处于 Starting 互不影响

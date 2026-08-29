@@ -14,6 +14,7 @@ public class VntConfig {
 
     private final List<String> servers;
     private final List<String> peerAddresses;
+    private final List<String> turnRules;
     private final String networkCode;
     private final String password;
     private final String deviceId;
@@ -37,6 +38,7 @@ public class VntConfig {
     private VntConfig(Builder builder) {
         this.servers = builder.servers;
         this.peerAddresses = builder.peerAddresses;
+        this.turnRules = builder.turnRules;
         this.networkCode = builder.networkCode;
         this.password = builder.password;
         this.deviceId = builder.deviceId;
@@ -78,6 +80,14 @@ public class VntConfig {
                 peerArray.put(peerAddress);
             }
             json.put("peer_address", peerArray);
+        }
+
+        if (!turnRules.isEmpty()) {
+            JSONArray turnArray = new JSONArray();
+            for (String turnRule : turnRules) {
+                turnArray.put(turnRule);
+            }
+            json.put("turn", turnArray);
         }
 
         // 可选项
@@ -133,6 +143,7 @@ public class VntConfig {
     public static class Builder {
         private List<String> servers = new ArrayList<>();
         private List<String> peerAddresses = new ArrayList<>();
+        private List<String> turnRules = new ArrayList<>();
         private String networkCode;
         private String password;
         private String deviceId;
@@ -168,6 +179,15 @@ public class VntConfig {
          */
         public Builder addPeerAddress(String peerAddress) {
             this.peerAddresses.add(peerAddress);
+            return this;
+        }
+
+        /**
+         * 添加指定中转规则（可选）。
+         * @param turnRule 格式：目标虚拟IP或CIDR,中转虚拟IP
+         */
+        public Builder addTurnRule(String turnRule) {
+            this.turnRules.add(turnRule);
             return this;
         }
 

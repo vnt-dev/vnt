@@ -1,4 +1,5 @@
 use crate::compression::PacketCompression;
+use crate::context::config::{TurnRule, allow_punch};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection};
 use crate::crypto::PacketCrypto;
@@ -19,6 +20,7 @@ use pnet_packet::ipv4::Ipv4Packet;
 use prost::Message;
 use rust_p2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 pub(crate) struct ServerTurnInboundHandler {
     server_id: u32,
@@ -33,6 +35,7 @@ pub(crate) struct ServerTurnInboundHandler {
     packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
+    turn: Arc<Vec<TurnRule>>,
 }
 impl ServerTurnInboundHandler {
     pub fn new(
@@ -54,6 +57,7 @@ impl ServerTurnInboundHandler {
             packet_compression: config.packet_compression,
             enhanced_inbound: config.enhanced_inbound,
             fec_decoder: config.fec_decoder,
+            turn: config.turn,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -242,6 +246,10 @@ impl ServerTurnInboundHandler {
                     .await?;
             }
             MsgType::PunchStart1 => {
+                if !allow_punch(&self.turn, &src) {
+                    log::debug!("ignore configured turn target PunchStart1 from {src}");
+                    return Ok(());
+                }
                 // 对方发起打洞
                 let peer_punch_info = PunchInfo::from_slice(net_packet.payload())?;
                 let Some(self_punch_info) = self.get_punch_info() else {
@@ -270,6 +278,10 @@ impl ServerTurnInboundHandler {
                 }
             }
             MsgType::PunchStart2 => {
+                if !allow_punch(&self.turn, &src) {
+                    log::debug!("ignore configured turn target PunchStart2 from {src}");
+                    return Ok(());
+                }
                 self.punch_backoff.record(src);
                 // 对方回复开始打洞
                 let peer_punch_info = PunchInfo::from_slice(net_packet.payload())?;
