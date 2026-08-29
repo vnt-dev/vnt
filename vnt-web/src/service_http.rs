@@ -268,6 +268,8 @@ pub struct StartConfig {
     #[serde(default)]
     pub no_punch: bool,
     #[serde(default)]
+    pub no_broadcast: bool,
+    #[serde(default)]
     pub compress: bool,
     #[serde(default)]
     pub rtx: bool,
@@ -1471,6 +1473,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         network_code: cfg.network_code,
         ip: cfg.ip,
         no_punch: cfg.no_punch,
+        no_broadcast: cfg.no_broadcast,
         rtx: cfg.rtx,
         compress: cfg.compress,
         device_id,
@@ -1806,6 +1809,7 @@ mod tests {
             ip: None,
             password: None,
             no_punch: false,
+            no_broadcast: false,
             compress: false,
             rtx: false,
             fec: false,
@@ -1868,6 +1872,14 @@ network_code = "test"
         assert_eq!(core.turn.len(), 2);
         assert_eq!(core.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
         assert_eq!(core.turn[1].to_string(), "10.26.1.9,10.26.0.3");
+    }
+
+    #[test]
+    fn test_convert_config_keeps_broadcast_switch() {
+        let mut config = new_test_config();
+        config.no_broadcast = true;
+        let core = convert_config(config).unwrap();
+        assert!(core.no_broadcast);
     }
 
     /// 两个实例同时处于 Starting 互不影响

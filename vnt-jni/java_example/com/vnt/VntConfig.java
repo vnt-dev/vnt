@@ -24,6 +24,7 @@ public class VntConfig {
     private final String ip;
     private final String certMode;
     private final boolean noPunch;
+    private final boolean noBroadcast;
     private final boolean compress;
     private final boolean rtx;
     private final boolean fec;
@@ -48,6 +49,7 @@ public class VntConfig {
         this.ip = builder.ip;
         this.certMode = builder.certMode;
         this.noPunch = builder.noPunch;
+        this.noBroadcast = builder.noBroadcast;
         this.compress = builder.compress;
         this.rtx = builder.rtx;
         this.fec = builder.fec;
@@ -102,6 +104,7 @@ public class VntConfig {
 
         // 布尔值
         json.put("no_punch", noPunch);
+        json.put("no_broadcast", noBroadcast);
         json.put("compress", compress);
         json.put("rtx", rtx);
         json.put("fec", fec);
@@ -153,6 +156,7 @@ public class VntConfig {
         private String ip;
         private String certMode;
         private boolean noPunch = false;
+        private boolean noBroadcast = false;
         private boolean compress = false;
         private boolean rtx = false;
         private boolean fec = false;
@@ -262,6 +266,14 @@ public class VntConfig {
          */
         public Builder setNoPunch(boolean noPunch) {
             this.noPunch = noPunch;
+            return this;
+        }
+
+        /**
+         * 禁用 IPv4 广播和组播转发（默认false，即开启）
+         */
+        public Builder setNoBroadcast(boolean noBroadcast) {
+            this.noBroadcast = noBroadcast;
             return this;
         }
 

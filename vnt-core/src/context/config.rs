@@ -213,6 +213,7 @@ pub struct Config {
     pub ip: Option<Ipv4Addr>,
     pub password: Option<String>,
     pub no_punch: bool,
+    pub no_broadcast: bool,
     pub compress: bool,
     pub rtx: bool,
     pub fec: bool,

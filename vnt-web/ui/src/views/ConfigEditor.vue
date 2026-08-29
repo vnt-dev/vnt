@@ -406,6 +406,13 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 </div>
                 <input v-model="formData.no_punch" type="checkbox" :class="checkboxClass" />
               </label>
+              <label :class="toggleLabelClass">
+                <div class="flex-1">
+                  <div class="text-sm font-medium text-slate-800 dark:text-white">关闭IPv4广播和组播</div>
+                  <div class="text-xs text-slate-400 mt-0.5">停止转发本机发出的 IPv4 广播和组播</div>
+                </div>
+                <input v-model="formData.no_broadcast" type="checkbox" :class="checkboxClass" />
+              </label>
             </div>
           </div>
 

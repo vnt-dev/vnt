@@ -214,6 +214,7 @@ pub(crate) struct HybridOutbound {
     packet_compression: PacketCompression,
     external_route: SubnetExternalRoute,
     fec_encoder: Option<FecEncoder>,
+    no_broadcast: bool,
 }
 impl HybridOutbound {
     pub fn new(
@@ -233,7 +234,13 @@ impl HybridOutbound {
             packet_compression,
             external_route,
             fec_encoder,
+            no_broadcast: false,
         }
+    }
+
+    pub fn with_no_broadcast(mut self, no_broadcast: bool) -> Self {
+        self.no_broadcast = no_broadcast;
+        self
     }
     pub async fn outbound_raw(
         &self,
@@ -323,6 +330,9 @@ impl HybridOutbound {
             return self.ipv4_gateway_outbound(net, ip).await;
         }
         if dest.is_multicast() || dest == net.broadcast || dest.is_broadcast() {
+            if self.no_broadcast {
+                return Ok(());
+            }
             return self.ethernet_broadcast_outbound(net, data).await;
         }
         if !net.network().contains(&dest) {
@@ -444,5 +454,9 @@ impl HybridOutbound {
     }
     pub fn has_route(&self, dest: &Ipv4Addr) -> bool {
         self.basic_outbound.exists_route(dest)
+    }
+
+    pub fn no_broadcast(&self) -> bool {
+        self.no_broadcast
     }
 }

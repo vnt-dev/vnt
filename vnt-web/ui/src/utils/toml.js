@@ -12,6 +12,7 @@ export const emptyFormData = () => ({
   fec: false,
   compress: false,
   no_punch: false,
+  no_broadcast: false,
   input: [],
   output: [],
   no_nat: false,
@@ -77,6 +78,8 @@ export const parseTomlToForm = (toml) => {
       data.compress = trimmed.includes("true");
     } else if (trimmed.match(/^no_punch\s*=/)) {
       data.no_punch = trimmed.includes("true");
+    } else if (trimmed.match(/^no_broadcast\s*=/)) {
+      data.no_broadcast = trimmed.includes("true");
     } else if (trimmed.startsWith("input")) {
       const match = trimmed.match(/input\s*=\s*\[(.*)\]/);
       if (match) {
@@ -204,6 +207,11 @@ export const formToToml = (formData) => {
   if (formData.no_punch) {
     toml += "\n# 是否关闭 P2P 打洞 (默认 false)\n";
     toml += "no_punch = true\n";
+  }
+
+  if (formData.no_broadcast) {
+    toml += "\n# 是否关闭 IPv4 广播和组播转发 (默认 false，即开启)\n";
+    toml += "no_broadcast = true\n";
   }
 
   if (formData.compress) {
@@ -336,6 +344,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 是否关闭 P2P 打洞 (默认 false,设置为true时关闭)
 # no_punch = false
+
+# 是否关闭 IPv4 广播和组播转发 (默认 false，即开启)
+# no_broadcast = false
 
 # 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
 # compress = false

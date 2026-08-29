@@ -159,7 +159,8 @@ impl NetworkManager {
             packet_compression.clone(),
             subnet_external_route.clone(),
             fec_encoder,
-        );
+        )
+        .with_no_broadcast(config.no_broadcast);
         let port_mapping_manager = PortMappingManager::new(
             config.device_mode == DeviceMode::No,
             config.allow_port_mapping,

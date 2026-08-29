@@ -985,6 +985,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         no_punch: bool,
         #[serde(default)]
+        no_broadcast: bool,
+        #[serde(default)]
         compress: bool,
         #[serde(default)]
         rtx: bool,
@@ -1093,6 +1095,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         network_code: cfg.network_code,
         ip: cfg.ip,
         no_punch: cfg.no_punch,
+        no_broadcast: cfg.no_broadcast,
         rtx: cfg.rtx,
         compress: cfg.compress,
         device_id,
@@ -1160,6 +1163,20 @@ mod tests {
         assert_eq!(config.peer_address.len(), 2);
         assert_eq!(config.peer_address[0].to_string(), "127.0.0.1:30001");
         assert_eq!(config.peer_address[1].to_string(), "udp://127.0.0.1:30002");
+        assert!(!config.no_broadcast);
+    }
+
+    #[test]
+    fn parses_broadcast_switch_from_json() {
+        let config = parse_config_from_json(
+            r#"{
+                "server":["tcp://127.0.0.1:29872"],
+                "network_code":"test",
+                "no_broadcast":true
+            }"#,
+        )
+        .unwrap();
+        assert!(config.no_broadcast);
     }
 
     #[test]

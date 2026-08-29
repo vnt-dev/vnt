@@ -136,7 +136,10 @@ impl EnhancedOutbound {
             return self.hybrid_outbound.ipv4_gateway_outbound(net, data).await;
         }
         if dest.is_multicast() || dest == net.broadcast || dest.is_broadcast() {
-            // 广播
+            // 广播或组播
+            if self.hybrid_outbound.no_broadcast() {
+                return Ok(());
+            }
             return self
                 .hybrid_outbound
                 .ipv4_broadcast_outbound(net, data)

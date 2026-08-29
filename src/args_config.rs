@@ -19,6 +19,7 @@ pub struct FileConfig {
     pub network_code: Option<String>,
     pub ip: Option<Ipv4Addr>,
     pub no_punch: Option<bool>,
+    pub no_broadcast: Option<bool>,
     pub rtx: Option<bool>,
     pub compress: Option<bool>,
     pub fec: Option<bool>,
@@ -156,6 +157,9 @@ pub struct Args {
     /// 关闭自动 P2P 打洞；显式 peer-address 仍可直连
     #[clap(long)]
     pub no_punch: bool,
+    /// 关闭虚拟网络内的 IPv4 广播和组播转发
+    #[clap(long)]
+    pub no_broadcast: bool,
     /// 服务端证书验证
     #[clap(long)]
     pub cert_mode: Option<CertValidationMode>,
@@ -295,6 +299,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         network_code,
         ip: args.ip.or(file.ip),
         no_punch: args.no_punch || file.no_punch.unwrap_or(false),
+        no_broadcast: args.no_broadcast || file.no_broadcast.unwrap_or(false),
         rtx: args.rtx || file.rtx.unwrap_or(false),
         compress: args.compress || file.compress.unwrap_or(false),
         fec: args.fec || file.fec.unwrap_or(false),
@@ -341,6 +346,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
             .ok_or_else(|| anyhow!("network_code is required"))?,
         ip: args.ip,
         no_punch: args.no_punch,
+        no_broadcast: args.no_broadcast,
         rtx: args.rtx,
         input: args.input,
         compress: args.compress,
@@ -411,6 +417,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
             .ok_or_else(|| anyhow!("network_code is required"))?,
         ip: file.ip,
         no_punch: file.no_punch.unwrap_or(false),
+        no_broadcast: file.no_broadcast.unwrap_or(false),
         rtx: file.rtx.unwrap_or(false),
         input: file.input.unwrap_or_default(),
         compress: file.compress.unwrap_or(false),
@@ -483,6 +490,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 是否关闭自动 P2P 打洞 (默认 false；显式 peer_address 仍可直连)
 # no_punch = false
+
+# 是否关闭 IPv4 广播和组播转发 (默认 false，即开启)
+# no_broadcast = false
 
 # 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
 # compress = false
@@ -585,6 +595,33 @@ mod tests {
         let (config, _) = build_from_args_only(args).unwrap();
         assert_eq!(config.tunnel_port, Some(12345));
         assert_eq!(config.outbound_interface.as_deref(), Some("Ethernet"));
+    }
+
+    #[test]
+    fn test_ipv4_broadcast_is_enabled_by_default_and_can_be_disabled() {
+        let args = Args::try_parse_from(["vnt", "-s", "quic://127.0.0.1:29872", "-n", "test-net"])
+            .unwrap();
+        let (config, _) = build_from_args_only(args).unwrap();
+        assert!(!config.no_broadcast);
+
+        let file: FileConfig = toml::from_str(
+            "no_broadcast = true\nserver = [\"quic://127.0.0.1:29872\"]\nnetwork_code = \"test-net\"",
+        )
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
+        assert!(config.no_broadcast);
+
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--no-broadcast",
+        ])
+        .unwrap();
+        let (config, _) = build_from_args_only(args).unwrap();
+        assert!(config.no_broadcast);
     }
 
     #[test]
