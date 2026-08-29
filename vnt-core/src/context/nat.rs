@@ -7,6 +7,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+type NatChangeCallback = Arc<dyn Fn() + Send + Sync>;
+
 /// 判断 NAT 信息是否发生了“身份级”变化（网络切换/NAT 重启等）。
 /// 对称 NAT 的公网映射端口会随每次连接重新分配，
 /// 因此仅端口类字段的变化不算 NAT 变化。
@@ -31,7 +33,7 @@ pub(crate) fn nat_identity_changed(a: &NatInfo, b: &NatInfo) -> bool {
 pub struct MyNatInfo {
     nat_info: Arc<RwLock<Option<NatInfo>>>,
     /// 本机 NAT 信息实际变化时触发（用于压缩打洞退避）
-    on_change: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+    on_change: Arc<Mutex<Option<NatChangeCallback>>>,
 }
 impl MyNatInfo {
     pub fn get(&self) -> Option<NatInfo> {
