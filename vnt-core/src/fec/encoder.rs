@@ -76,9 +76,16 @@ impl FecEncoder {
             let state = states.entry(dest).or_insert_with(|| DestBatchState {
                 group_id: 0,
                 current_batch: Vec::with_capacity(BATCH_SIZE),
-                deadline: Instant::now() + Duration::from_millis(BATCH_TIMEOUT_MS),
+                deadline: Instant::now(),
                 src_ip,
             });
+
+            // 批处理窗口从首包到达时开始。上一批结束后的空闲时间不能消耗
+            // 下一批的 20ms 窗口，否则空闲后的首包会在下一个 5ms tick 被立即刷走。
+            if state.current_batch.is_empty() {
+                state.deadline = Instant::now() + Duration::from_millis(BATCH_TIMEOUT_MS);
+                state.src_ip = src_ip;
+            }
 
             let group_id = state.group_id;
             let packet_index = state.current_batch.len();
@@ -88,7 +95,6 @@ impl FecEncoder {
             if state.current_batch.len() >= BATCH_SIZE {
                 let batch = std::mem::take(&mut state.current_batch);
                 state.group_id = state.group_id.wrapping_add(1);
-                state.deadline = Instant::now() + Duration::from_millis(BATCH_TIMEOUT_MS);
 
                 if self
                     .batch_tx
@@ -151,7 +157,6 @@ async fn fec_encoder_worker(
                             let items = std::mem::take(&mut state.current_batch);
                             let group_id = state.group_id;
                             state.group_id = state.group_id.wrapping_add(1);
-                            state.deadline = Instant::now() + Duration::from_millis(BATCH_TIMEOUT_MS);
                             batches.push((state.src_ip,*dest, group_id, items));
                         }
                     }
@@ -296,5 +301,46 @@ mod tests {
             Ok(_) => panic!("oversized complete packet must be rejected"),
         };
         assert!(err.to_string().contains("Packet too big"));
+    }
+
+    #[test]
+    fn first_packet_after_idle_restarts_full_batch_window() {
+        let (batch_tx, _batch_rx) = mpsc::channel(BATCH_CHANNEL_SIZE);
+        let batch_states = Arc::new(Mutex::new(HashMap::new()));
+        let encoder = FecEncoder {
+            batch_states: batch_states.clone(),
+            batch_tx,
+        };
+        let src = Ipv4Addr::new(10, 0, 0, 1);
+        let dest = Ipv4Addr::new(10, 0, 0, 2);
+        batch_states.lock().insert(
+            dest,
+            DestBatchState {
+                group_id: 7,
+                current_batch: Vec::new(),
+                deadline: Instant::now() - Duration::from_secs(1),
+                src_ip: Ipv4Addr::UNSPECIFIED,
+            },
+        );
+
+        let mut packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH + 1)).unwrap();
+        packet.set_msg_type(MsgType::Turn);
+        packet.set_src_id(src.into());
+        packet.set_dest_id(dest.into());
+        packet.set_payload(&[1]).unwrap();
+        let before_encode = Instant::now();
+
+        let encoded = encoder.encode(packet).unwrap();
+        let fec_packet = FecPacket::decode(encoded.payload()).unwrap();
+        assert_eq!(fec_packet.group_id, 7);
+        assert_eq!(fec_packet.packet_index, 0);
+
+        let states = batch_states.lock();
+        let state = states.get(&dest).unwrap();
+        assert!(
+            state.deadline >= before_encode + Duration::from_millis(BATCH_TIMEOUT_MS),
+            "first packet after idle did not receive a full batch window"
+        );
+        assert_eq!(state.src_ip, src);
     }
 }
