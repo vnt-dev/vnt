@@ -1,3 +1,4 @@
+use crate::crypto::PacketCrypto;
 use crate::fec::encoder::FecPacket;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
@@ -17,6 +18,7 @@ const PACKET_LENGTH_SIZE: usize = size_of::<u16>();
 #[derive(Clone)]
 pub struct FecDecoder {
     inner: Arc<parking_lot::Mutex<FecDecoderInner>>,
+    packet_crypto: PacketCrypto,
 }
 
 struct FecDecoderInner {
@@ -56,20 +58,26 @@ impl Default for FecGroup {
 }
 
 impl FecDecoder {
-    pub fn new() -> Self {
+    pub fn new(packet_crypto: PacketCrypto) -> Self {
         Self {
             inner: Arc::new(parking_lot::Mutex::new(FecDecoderInner {
                 groups: HashMap::new(),
                 last_cleanup: Instant::now(),
             })),
+            packet_crypto,
         }
     }
 
     /// 接收FEC包并尝试恢复丢失的包
     pub fn receive(
         &self,
-        net_packet: NetPacket<TransmissionBytes>,
+        mut net_packet: NetPacket<TransmissionBytes>,
     ) -> Result<Option<Vec<NetPacket<TransmissionBytes>>>> {
+        // 任何 shard 都必须先通过外层认证，未经认证的数据不能创建或污染 FEC group。
+        if let Err(e) = self.packet_crypto.verify_fec_in_place(&mut net_packet) {
+            log::debug!("drop unauthenticated FEC packet: {e}");
+            return Ok(None);
+        }
         let mut inner = self.inner.lock();
         let src_ip = Ipv4Addr::from(net_packet.src_id());
         let fec_packet = FecPacket::decode(net_packet.payload())?;
@@ -176,7 +184,7 @@ impl FecDecoder {
                 );
                 return Ok(None);
             }
-            // 数据 FEC 包携带编码前的完整 NetPacket，直接还原，不再从外层包借用头部。
+            // 数据 FEC 包携带完整内层 NetPacket，直接还原，不再从外层信封借用头部。
             let buffer = TransmissionBytes::from(payload.as_slice());
             let mut result_packet = NetPacket::new(buffer)?;
             result_packet.set_fec_flag(false);
@@ -197,7 +205,7 @@ impl FecDecoder {
                 group.received_shards.resize(packet_index + 1, None);
             }
 
-            // 保存FEC数据: [packet_len(u16), 完整 NetPacket...]
+            // 保存FEC数据: [packet_len(u16), 完整内层 NetPacket...]
             let packet_len = u16::try_from(payload.len())
                 .map_err(|_| anyhow::anyhow!("fec packet too large: {}", payload.len()))?;
             let batch_len = PACKET_LENGTH_SIZE
@@ -378,6 +386,10 @@ mod tests {
     const SRC: u32 = 0x0A000001;
     const DST: u32 = 0x0A000002;
 
+    fn new_decoder() -> FecDecoder {
+        FecDecoder::new(PacketCrypto::new_from_str(None).unwrap())
+    }
+
     /// 构造线上的 FEC 数据包（payload 为 prost 编码的 FecPacket）
     fn build_data_packet(
         group_id: u64,
@@ -457,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_original_fec_packet_preserves_ethernet_flag() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let packets = decoder
             .receive(build_data_packet(99, 0, 0x81, 0x10, &[1, 2, 3]))
             .unwrap()
@@ -470,7 +482,7 @@ mod tests {
     /// 变长批次：丢一个数据包，靠校验包必须能恢复（修复前必报 IncorrectShardSize）
     #[test]
     fn test_reconstruct_variable_length_batch() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let group_id = 1u64;
 
         let payloads: [&[u8]; 3] = [&[0xAA; 10], &[0xBB; 30], &[0xCC; 20]];
@@ -536,7 +548,7 @@ mod tests {
     /// 校验包先到时，后到的数据 shard 也要补齐（等长）后能恢复
     #[test]
     fn test_reconstruct_when_parity_arrives_first() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let group_id = 2u64;
 
         let payloads: [&[u8]; 2] = [&[0x11; 8], &[0x22; 24]];
@@ -577,7 +589,7 @@ mod tests {
     /// FEC 恢复的是完整 NetPacket，不能再从触发恢复的冗余包借用头部字段。
     #[test]
     fn test_reconstruct_preserves_complete_packet_header() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let group_id = 21u64;
 
         let mut packet0 = make_inner_packet(0x91, 0x90, &[0xA1; 12]);
@@ -628,8 +640,95 @@ mod tests {
     }
 
     #[test]
+    fn test_mixed_encrypted_turn_and_quic_group_recovers_inner_packets() {
+        let decoder = new_decoder();
+        let inner_crypto = PacketCrypto::new_from_str(Some("fec-mixed-group")).unwrap();
+        let group_id = 30u64;
+
+        let plaintext = [0xAB; 24];
+        let mut turn_packet = NetPacket::new(TransmissionBytes::zeroed_size(
+            HEAD_LENGTH + plaintext.len(),
+            inner_crypto.encrypt_reserve(),
+        ))
+        .unwrap();
+        turn_packet.set_msg_type(crate::protocol::ip_packet_protocol::MsgType::Turn);
+        turn_packet.set_ttl(5);
+        turn_packet.set_src_id(SRC);
+        turn_packet.set_dest_id(DST);
+        turn_packet.set_payload(&plaintext).unwrap();
+        inner_crypto.encrypt_in_place(&mut turn_packet).unwrap();
+        let encrypted_turn = turn_packet.buffer().to_vec();
+
+        let quic_packet = make_inner_packet(0x91, 0, &[0xCD; 13]);
+        let max_len = PACKET_LENGTH_SIZE + encrypted_turn.len().max(quic_packet.len());
+        let mut shards = [
+            make_packet_shard(&encrypted_turn, max_len),
+            make_packet_shard(&quic_packet, max_len),
+            vec![0u8; max_len],
+        ];
+        let rs = ReedSolomon::new(2, 1).unwrap();
+        {
+            let mut refs: Vec<&mut [u8]> = shards.iter_mut().map(|s| s.as_mut()).collect();
+            rs.encode(&mut refs).unwrap();
+        }
+
+        let quic_data = FecPacket {
+            group_id,
+            packet_index: 1,
+            payload: quic_packet,
+            parity_data: None,
+        };
+        let delivered_quic = decoder
+            .receive(build_packet(quic_data, 0x81, 0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            delivered_quic[0].msg_type().unwrap(),
+            crate::protocol::ip_packet_protocol::MsgType::Quic
+        );
+
+        let mut recovered_turn = decoder
+            .receive(build_parity_packet(group_id, 2, shards[2].clone(), 2, 1))
+            .unwrap()
+            .expect("encrypted Turn packet should be recovered")
+            .pop()
+            .unwrap();
+        assert_eq!(
+            recovered_turn.msg_type().unwrap(),
+            crate::protocol::ip_packet_protocol::MsgType::Turn
+        );
+        inner_crypto
+            .decrypt_in_place(&mut recovered_turn)
+            .expect("recovered inner AEAD tag must remain valid");
+        assert_eq!(recovered_turn.payload(), plaintext);
+    }
+
+    #[test]
+    fn test_invalid_fec_auth_does_not_create_group() {
+        let packet_crypto = PacketCrypto::new_from_str(Some("fec-auth-test")).unwrap();
+        let decoder = FecDecoder::new(packet_crypto.clone());
+        let group_id = 31u64;
+
+        let mut tampered = build_data_packet(group_id, 0, 0x81, 0, &[1, 2, 3]);
+        packet_crypto
+            .authenticate_fec_in_place(&mut tampered)
+            .unwrap();
+        tampered.payload_mut()[0] ^= 1;
+        assert!(decoder.receive(tampered).unwrap().is_none());
+        assert!(decoder.inner.lock().groups.is_empty());
+
+        let mut valid = build_data_packet(group_id, 0, 0x81, 0, &[1, 2, 3]);
+        packet_crypto.authenticate_fec_in_place(&mut valid).unwrap();
+        let packets = decoder
+            .receive(valid)
+            .unwrap()
+            .expect("valid packet must still be accepted after a forged shard");
+        assert_eq!(packets[0].payload(), &[1, 2, 3]);
+    }
+
+    #[test]
     fn test_expired_done_group_is_removed_before_duplicate_check() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let group_id = 22u64;
         let key = (Ipv4Addr::from(SRC), group_id);
         let now = Instant::now();
@@ -661,7 +760,7 @@ mod tests {
     /// 当前包不被连带丢弃，坏 group 被移除，后续数据包正常透传
     #[test]
     fn test_decode_failure_does_not_swallow_good_packets() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let group_id = 3u64;
 
         // 先到一个较大的数据包
@@ -691,7 +790,7 @@ mod tests {
     /// 不能把 received_shards 撑出 data_shards+parity_shards 导致整组解码失败
     #[test]
     fn test_out_of_range_data_index_does_not_poison_group() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let group_id = 1u64;
         let shard = make_shard(0x81, 0, &[0xAA; 10], PACKET_LENGTH_SIZE + HEAD_LENGTH + 10);
         // 校验包先到：data_shards=2, parity_shards=1，索引 2
@@ -715,7 +814,7 @@ mod tests {
     /// 落在数据区的校验包索引必须被拒绝，且不能破坏 group
     #[test]
     fn test_parity_index_in_data_region_rejected() {
-        let decoder = FecDecoder::new();
+        let decoder = new_decoder();
         let group_id = 1u64;
         let shard = make_shard(0x81, 0, &[0xAA; 10], PACKET_LENGTH_SIZE + HEAD_LENGTH + 10);
         // 索引 0 < data_shards=2 的"校验包"：必须拒绝

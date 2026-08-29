@@ -1,14 +1,19 @@
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, NetPacket};
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
+use ring::hmac;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use subtle::ConstantTimeEq;
 
 pub const TAG_LEN: usize = 16;
+pub const FEC_AUTH_TAG_LEN: usize = 16;
+const FEC_AUTH_KEY_LABEL: &[u8] = b"vnt-fec-auth-v1";
 
 #[derive(Clone)]
 pub struct PacketCrypto {
     key: LessSafeKey,
+    fec_auth_key: hmac::Key,
     /// 出站包序号，用于构造唯一 nonce。Clone 共享同一计数器。
     /// 随机起始值可避免进程重启后（相同密钥）复用低序号段的 nonce。
     seq: Arc<AtomicU32>,
@@ -34,11 +39,15 @@ impl PacketCrypto {
             .collect::<String>()
     }
     pub fn new(key_bytes: [u8; 32]) -> io::Result<Self> {
+        let derivation_key = hmac::Key::new(hmac::HMAC_SHA256, &key_bytes);
+        let derived_auth_key = hmac::sign(&derivation_key, FEC_AUTH_KEY_LABEL);
+        let fec_auth_key = hmac::Key::new(hmac::HMAC_SHA256, derived_auth_key.as_ref());
         let unbound = UnboundKey::new(&CHACHA20_POLY1305, &key_bytes)
             .map_err(|_| io::Error::other("failed to initialize ChaCha20-Poly1305 key"))?;
         let key = LessSafeKey::new(unbound);
         Ok(Self {
             key,
+            fec_auth_key,
             seq: Arc::new(AtomicU32::new(rand::random())),
         })
     }
@@ -84,6 +93,74 @@ impl PacketCrypto {
             return [0; 3];
         }
         [buf[0], buf[2], buf[3]]
+    }
+
+    /// 计算 FEC 外层认证标签。只排除中继会递减的当前 TTL（低四位），
+    /// 最大 TTL、其余头字段和完整 FEC payload 均参与认证。
+    fn fec_auth_tag<B: AsRef<[u8]>>(
+        &self,
+        pkt: &NetPacket<B>,
+        payload_len: usize,
+    ) -> io::Result<[u8; FEC_AUTH_TAG_LEN]> {
+        let buf = pkt.buffer();
+        let packet_len = HEAD_LENGTH
+            .checked_add(payload_len)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "packet too large"))?;
+        if buf.len() < packet_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "buffer too small for FEC authentication",
+            ));
+        }
+
+        let mut ctx = hmac::Context::with_key(&self.fec_auth_key);
+        ctx.update(&buf[0..1]);
+        ctx.update(&[buf[1] & 0xF0]);
+        ctx.update(&buf[2..HEAD_LENGTH]);
+        ctx.update(&buf[HEAD_LENGTH..packet_len]);
+        let full_tag = ctx.sign();
+        let mut tag = [0u8; FEC_AUTH_TAG_LEN];
+        tag.copy_from_slice(&full_tag.as_ref()[..FEC_AUTH_TAG_LEN]);
+        Ok(tag)
+    }
+
+    pub fn authenticate_fec_in_place<B: AsRef<[u8]> + AsMut<[u8]>>(
+        &self,
+        pkt: &mut NetPacket<B>,
+    ) -> io::Result<()> {
+        let payload_len = pkt
+            .payload()
+            .len()
+            .checked_sub(FEC_AUTH_TAG_LEN)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "missing FEC authentication reserve",
+                )
+            })?;
+        let tag = self.fec_auth_tag(pkt, payload_len)?;
+        pkt.payload_mut()[payload_len..].copy_from_slice(&tag);
+        Ok(())
+    }
+
+    pub fn verify_fec<B: AsRef<[u8]>>(&self, pkt: &NetPacket<B>) -> io::Result<()> {
+        let payload_len = pkt
+            .payload()
+            .len()
+            .checked_sub(FEC_AUTH_TAG_LEN)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "missing FEC authentication tag")
+            })?;
+        let expected = self.fec_auth_tag(pkt, payload_len)?;
+        let actual = &pkt.payload()[payload_len..];
+        if bool::from(expected.as_slice().ct_eq(actual)) {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid FEC authentication tag",
+            ))
+        }
     }
 
     /// 原地加密（in-place）
@@ -333,6 +410,77 @@ mod tests {
         assert_eq!(
             &pkt.buffer()[HEAD_LENGTH..HEAD_LENGTH + payload_len],
             &original[..]
+        );
+    }
+
+    fn build_fec_auth_packet(payload_len: usize) -> NetPacket<BytesMut> {
+        let mut packet = NetPacket::new(BytesMut::zeroed(
+            HEAD_LENGTH + payload_len + FEC_AUTH_TAG_LEN,
+        ))
+        .unwrap();
+        packet.set_msg_type(MsgType::Turn);
+        packet.set_ttl(5);
+        packet.set_seq(0x1234_5678);
+        packet.set_src_id(0x0A00_0001);
+        packet.set_dest_id(0x0A00_0002);
+        packet.set_fec_flag(true);
+        for (i, byte) in packet.payload_mut()[..payload_len].iter_mut().enumerate() {
+            *byte = i as u8 ^ 0xA5;
+        }
+        packet
+    }
+
+    #[test]
+    fn fec_auth_accepts_current_ttl_change() {
+        let crypto = PacketCrypto::new([7u8; 32]).unwrap();
+        let mut packet = build_fec_auth_packet(32);
+        crypto.authenticate_fec_in_place(&mut packet).unwrap();
+
+        packet.decr_ttl();
+        crypto.verify_fec(&packet).unwrap();
+    }
+
+    #[test]
+    fn fec_auth_rejects_authenticated_field_tampering() {
+        let crypto = PacketCrypto::new([7u8; 32]).unwrap();
+
+        let assert_rejected = |mutate: fn(&mut NetPacket<BytesMut>)| {
+            let mut packet = build_fec_auth_packet(32);
+            crypto.authenticate_fec_in_place(&mut packet).unwrap();
+            mutate(&mut packet);
+            assert!(crypto.verify_fec(&packet).is_err());
+        };
+
+        assert_rejected(|packet| packet.set_msg_type(MsgType::Pong));
+        assert_rejected(|packet| packet.head_mut()[1] ^= 0x10);
+        assert_rejected(|packet| packet.set_ethernet_flag(true));
+        assert_rejected(|packet| packet.set_src_id(0x0A00_0003));
+        assert_rejected(|packet| packet.set_dest_id(0x0A00_0004));
+        assert_rejected(|packet| packet.payload_mut()[0] ^= 1);
+    }
+
+    #[test]
+    fn fec_auth_rejects_wrong_missing_truncated_and_random_tags() {
+        let crypto = PacketCrypto::new([7u8; 32]).unwrap();
+        let wrong_crypto = PacketCrypto::new([8u8; 32]).unwrap();
+        let mut packet = build_fec_auth_packet(32);
+        crypto.authenticate_fec_in_place(&mut packet).unwrap();
+        assert!(wrong_crypto.verify_fec(&packet).is_err());
+
+        packet.payload_mut()[32..].fill(0x5A);
+        assert!(crypto.verify_fec(&packet).is_err());
+
+        let missing = NetPacket::new(BytesMut::zeroed(HEAD_LENGTH + 8)).unwrap();
+        assert!(crypto.verify_fec(&missing).is_err());
+
+        let mut truncated = build_fec_auth_packet(32);
+        crypto.authenticate_fec_in_place(&mut truncated).unwrap();
+        let mut truncated = truncated.into_buffer();
+        truncated.truncate(truncated.len() - 1);
+        assert!(
+            crypto
+                .verify_fec(&NetPacket::new(truncated).unwrap())
+                .is_err()
         );
     }
 }

@@ -37,6 +37,10 @@ impl BasicOutbound {
         self.packet_crypto.encrypt_reserve()
     }
 
+    pub fn fec_auth_reserve(&self) -> usize {
+        self.packet_crypto.fec_auth_reserve()
+    }
+
     /// 加密数据包
     pub fn encrypt_in_place(
         &self,
@@ -133,6 +137,17 @@ impl BasicOutbound {
         }
         Ok(())
     }
+
+    /// 认证并发送 FEC 外层包。FEC 内层已经是普通 AEAD 密文或 QUIC 密文，
+    /// 外层只追加认证标签，不再重复加密。
+    pub async fn send_fec_packet(
+        &self,
+        dest: Ipv4Addr,
+        mut packet: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        self.packet_crypto.authenticate_fec_in_place(&mut packet)?;
+        self.send_raw(dest, packet).await
+    }
 }
 
 #[derive(Clone)]
@@ -182,9 +197,10 @@ impl HybridOutbound {
 
         if let Some(fec_encoder) = &self.fec_encoder {
             packet = fec_encoder.encode(packet)?;
+            self.basic_outbound.send_fec_packet(dest, packet).await?;
+        } else {
+            self.basic_outbound.send_raw(dest, packet).await?;
         }
-
-        self.basic_outbound.send_raw(dest, packet).await?;
         self.traffic_stats.record_tx(dest, len);
         Ok(())
     }
@@ -224,13 +240,14 @@ impl HybridOutbound {
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
 
         if let Some(fec_encoder) = &self.fec_encoder {
+            self.basic_outbound.encrypt_in_place(&mut packet)?;
             packet = fec_encoder.encode(packet)?;
+            self.basic_outbound.send_fec_packet(dest, packet).await?;
+        } else {
+            self.basic_outbound
+                .send_encrypted_packet(dest, packet)
+                .await?;
         }
-
-        // 发送
-        self.basic_outbound
-            .send_encrypted_packet(dest, packet)
-            .await?;
         self.traffic_stats.record_tx(dest, len);
         Ok(())
     }
@@ -274,17 +291,18 @@ impl HybridOutbound {
         packet.set_dest_id(dest.into());
         packet.set_ttl(5);
         packet.set_ethernet_flag(true);
-        let packet = self
+        let mut packet = self
             .packet_compression
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
-        let packet = if let Some(fec_encoder) = &self.fec_encoder {
-            fec_encoder.encode(packet)?
+        if let Some(fec_encoder) = &self.fec_encoder {
+            self.basic_outbound.encrypt_in_place(&mut packet)?;
+            let packet = fec_encoder.encode(packet)?;
+            self.basic_outbound.send_fec_packet(dest, packet).await?;
         } else {
-            packet
-        };
-        self.basic_outbound
-            .send_encrypted_packet(dest, packet)
-            .await?;
+            self.basic_outbound
+                .send_encrypted_packet(dest, packet)
+                .await?;
+        }
         self.traffic_stats.record_tx(dest, len);
         Ok(())
     }

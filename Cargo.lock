@@ -6418,6 +6418,7 @@ dependencies = [
  "serde",
  "sha2 0.11.0",
  "socket2 0.6.2",
+ "subtle",
  "tcp_ip",
  "time",
  "tokio",

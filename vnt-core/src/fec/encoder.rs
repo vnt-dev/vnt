@@ -30,6 +30,7 @@ const PACKET_LENGTH_SIZE: usize = size_of::<u16>();
 pub struct FecEncoder {
     batch_states: Arc<Mutex<HashMap<Ipv4Addr, DestBatchState>>>,
     batch_tx: mpsc::Sender<(Ipv4Addr, Ipv4Addr, u64, Vec<TransmissionBytes>)>,
+    fec_auth_reserve: usize,
 }
 
 struct DestBatchState {
@@ -46,6 +47,7 @@ impl FecEncoder {
         let encoder = Self {
             batch_states: batch_states.clone(),
             batch_tx,
+            fec_auth_reserve: basic_outbound.fec_auth_reserve(),
         };
 
         task_group.spawn(fec_encoder_worker(batch_rx, basic_outbound, batch_states));
@@ -56,11 +58,12 @@ impl FecEncoder {
     /// 将数据包加入FEC批次并返回包装后的包
     pub fn encode(
         &self,
-        mut packet: NetPacket<TransmissionBytes>,
+        packet: NetPacket<TransmissionBytes>,
     ) -> Result<NetPacket<TransmissionBytes>> {
         let src_ip = Ipv4Addr::from(packet.src_id());
         let dest = Ipv4Addr::from(packet.dest_id());
-        // FEC 编码完整的原始 NetPacket。长度前缀用于去除 RS 等长 shard 的尾部填充。
+        // FEC 编码完整内层 NetPacket：普通包已完成 AEAD 加密，QUIC 包由 QUIC 加密。
+        // 长度前缀用于去除 RS 等长 shard 的尾部填充。
         let original_packet = packet.buffer().to_vec();
         let original_packet_len = u16::try_from(original_packet.len())
             .map_err(|_| anyhow::anyhow!("Packet too big: {}", original_packet.len()))?;
@@ -120,13 +123,17 @@ impl FecEncoder {
         };
 
         let fec_payload = fec_packet.encode_to_vec();
-        packet
-            .source_buf_mut()
-            .resize(HEAD_LENGTH + fec_payload.len(), 0);
-        packet.set_payload(&fec_payload)?;
-        packet.set_fec_flag(true);
+        let buffer =
+            TransmissionBytes::zeroed_size(HEAD_LENGTH + fec_payload.len(), self.fec_auth_reserve);
+        let mut outer_packet = NetPacket::new(buffer)?;
+        outer_packet.set_msg_type(MsgType::Turn);
+        outer_packet.set_src_id(src_ip.into());
+        outer_packet.set_dest_id(dest.into());
+        outer_packet.set_ttl(packet.max_ttl());
+        outer_packet.set_fec_flag(true);
+        outer_packet.set_payload(&fec_payload)?;
 
-        Ok(packet)
+        Ok(outer_packet)
     }
 }
 
@@ -225,7 +232,10 @@ async fn encode_and_send_parity(
 
         let fec_payload = fec_packet.encode_to_vec();
 
-        let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + fec_payload.len());
+        let buffer = TransmissionBytes::zeroed_size(
+            HEAD_LENGTH + fec_payload.len(),
+            basic_outbound.fec_auth_reserve(),
+        );
         let mut net_packet = NetPacket::new(buffer)?;
         net_packet.set_msg_type(MsgType::Turn);
         net_packet.set_src_id(src.into());
@@ -234,7 +244,7 @@ async fn encode_and_send_parity(
         net_packet.set_payload(&fec_payload)?;
         net_packet.set_fec_flag(true);
 
-        if let Err(e) = basic_outbound.send_encrypted_packet(dest, net_packet).await {
+        if let Err(e) = basic_outbound.send_fec_packet(dest, net_packet).await {
             log::warn!(
                 "failed to send parity packet {}: {:?}, dest={}, group_id={}",
                 packet_index,
@@ -251,6 +261,7 @@ async fn encode_and_send_parity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::PacketCrypto;
 
     #[test]
     fn data_fec_payload_and_shard_contain_complete_packet() {
@@ -258,6 +269,7 @@ mod tests {
         let encoder = FecEncoder {
             batch_states: Arc::new(Mutex::new(HashMap::new())),
             batch_tx,
+            fec_auth_reserve: 0,
         };
 
         let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + 5);
@@ -273,6 +285,11 @@ mod tests {
         let original = packet.buffer().to_vec();
 
         let encoded = encoder.encode(packet).unwrap();
+        assert_eq!(encoded.msg_type().unwrap(), MsgType::Turn);
+        assert!(encoded.is_fec());
+        assert!(!encoded.is_ethernet());
+        assert!(!encoded.is_compressed());
+        assert_eq!(encoded.head()[3], 0);
         let fec_packet = FecPacket::decode(encoded.payload()).unwrap();
         assert_eq!(fec_packet.group_id, 0);
         assert_eq!(fec_packet.payload, original);
@@ -291,6 +308,7 @@ mod tests {
         let encoder = FecEncoder {
             batch_states: Arc::new(Mutex::new(HashMap::new())),
             batch_tx,
+            fec_auth_reserve: 0,
         };
         let mut packet = NetPacket::new(TransmissionBytes::zeroed(u16::MAX as usize + 1)).unwrap();
         packet.set_src_id(0x0A00_0001);
@@ -304,12 +322,46 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_turn_packet_is_the_fec_inner_payload() {
+        let (batch_tx, _batch_rx) = mpsc::channel(BATCH_CHANNEL_SIZE);
+        let encoder = FecEncoder {
+            batch_states: Arc::new(Mutex::new(HashMap::new())),
+            batch_tx,
+            fec_auth_reserve: 0,
+        };
+        let crypto = PacketCrypto::new_from_str(Some("fec-encrypted-inner")).unwrap();
+        let plaintext = [9, 8, 7, 6, 5];
+        let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+            HEAD_LENGTH + plaintext.len(),
+            crypto.encrypt_reserve(),
+        ))
+        .unwrap();
+        packet.set_msg_type(MsgType::Turn);
+        packet.set_ttl(5);
+        packet.set_src_id(0x0A00_0001);
+        packet.set_dest_id(0x0A00_0002);
+        packet.set_payload(&plaintext).unwrap();
+        crypto.encrypt_in_place(&mut packet).unwrap();
+        let encrypted = packet.buffer().to_vec();
+
+        let encoded = encoder.encode(packet).unwrap();
+        let fec_packet = FecPacket::decode(encoded.payload()).unwrap();
+        assert_eq!(fec_packet.payload, encrypted);
+
+        let mut recovered =
+            NetPacket::new(TransmissionBytes::from(fec_packet.payload.as_slice())).unwrap();
+        crypto.decrypt_in_place(&mut recovered).unwrap();
+        assert_eq!(recovered.payload(), plaintext);
+    }
+
+    #[test]
     fn first_packet_after_idle_restarts_full_batch_window() {
         let (batch_tx, _batch_rx) = mpsc::channel(BATCH_CHANNEL_SIZE);
         let batch_states = Arc::new(Mutex::new(HashMap::new()));
         let encoder = FecEncoder {
             batch_states: batch_states.clone(),
             batch_tx,
+            fec_auth_reserve: 0,
         };
         let src = Ipv4Addr::new(10, 0, 0, 1);
         let dest = Ipv4Addr::new(10, 0, 0, 2);

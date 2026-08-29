@@ -160,11 +160,6 @@ impl TransmissionBytes {
         self.end = new_end;
         Ok(())
     }
-    pub fn resize(&mut self, new_len: usize, value: u8) {
-        let new_end = self.start + new_len;
-        self.buf.resize(new_end, value);
-        self.end = new_end;
-    }
     pub fn extend_end(&mut self, n: usize) {
         if self.end + n > self.buf.len() {
             self.buf.resize(self.end + n, 0);

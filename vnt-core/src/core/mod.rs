@@ -129,7 +129,7 @@ impl NetworkManager {
         let subnet_external_route = app_state.subnet_route.clone();
         subnet_external_route.set_route_table(config.input.clone());
 
-        let fec_decoder = FecDecoder::new();
+        let fec_decoder = FecDecoder::new(packet_crypto.clone());
         let basic_outbound = BasicOutbound::new(
             tunnel_to_server.clone(),
             p2p_socket.clone(),

@@ -32,6 +32,7 @@ time = { workspace = true, features = ["macros", "formatting", "local-offset"] }
 pnet_packet = "0.35"
 pnet_base = "0.35"
 ring = "0.17.14"
+subtle = "2.6"
 
 prost.workspace = true
 tokio-tungstenite = "0.30"

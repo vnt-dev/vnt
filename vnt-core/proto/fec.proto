@@ -5,7 +5,7 @@ package protocol.fec;
 message FecPacket {
     uint64 group_id = 1;              // FEC 组号（按目标IP分组）
     uint32 packet_index = 2;          // 包在组内的序号（0-based）
-    bytes payload = 3;                // 数据包：完整原始 NetPacket；冗余包：RS parity shard
+    bytes payload = 3;                // 数据包：完整内层密文 NetPacket；冗余包：RS parity shard
     optional ParityData parity_data = 4;
 }
 

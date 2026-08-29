@@ -108,7 +108,7 @@ impl P2pInboundHandler {
         tunnel: &mut Tunnel,
     ) -> anyhow::Result<()> {
         let mut net_packet = NetPacket::new(buf)?;
-        let msg_type = net_packet.msg_type()?;
+        let _ = net_packet.msg_type()?;
         let src_ip = Ipv4Addr::from(net_packet.src_id());
         let dest_ip = Ipv4Addr::from(net_packet.dest_id());
         if src_ip == dest_ip {
@@ -142,43 +142,39 @@ impl P2pInboundHandler {
             return Ok(());
         }
 
-        if msg_type == MsgType::Quic {
-            if net_packet.is_fec() {
-                let packets = self.fec_decoder.receive(net_packet)?;
-                if let Some(packets) = packets {
-                    for pkt in packets {
-                        self.process_plain_packet(&net, route_key, tunnel, pkt)
-                            .await?;
-                    }
-                }
-                return Ok(());
-            }
-            self.process_plain_packet(&net, route_key, tunnel, net_packet)
-                .await?;
-            return Ok(());
-        }
-
-        // 解密
-        self.packet_crypto.decrypt_in_place(&mut net_packet)?;
-
-        // FEC 解码（始终尝试解码，如果有 FEC 标志）
+        // FEC 外层只有认证、没有 AEAD 加密，必须先验证认证并恢复内层密文包。
         if net_packet.is_fec() {
             let packets = self.fec_decoder.receive(net_packet)?;
             if let Some(packets) = packets {
                 for pkt in packets {
-                    self.process_plain_packet(&net, route_key, tunnel, pkt)
+                    self.process_inner_packet(&net, route_key, tunnel, pkt)
                         .await?;
                 }
             }
             return Ok(());
         }
 
-        self.process_plain_packet(&net, route_key, tunnel, net_packet)
+        self.process_inner_packet(&net, route_key, tunnel, net_packet)
             .await
     }
 
-    /// 处理已经完成外层解密/FEC 解码的原始 NetPacket。
-    /// FEC 一次可能返回不同消息类型的包，必须逐包读取完整包头后分发。
+    /// 处理网络直接收到或由 FEC 恢复的内层包。普通包在进入 FEC 前已经完成
+    /// AEAD 加密，需要在这里解密；QUIC payload 由 QUIC 自己负责解密。
+    async fn process_inner_packet(
+        &self,
+        net: &crate::context::NetworkAddr,
+        route_key: RouteKey,
+        tunnel: &mut Tunnel,
+        mut net_packet: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        if net_packet.msg_type()? != MsgType::Quic {
+            self.packet_crypto.decrypt_in_place(&mut net_packet)?;
+        }
+        self.process_plain_packet(net, route_key, tunnel, net_packet)
+            .await
+    }
+
+    /// 处理已经完成普通包解密/FEC 解码的原始 NetPacket。
     async fn process_plain_packet(
         &self,
         net: &crate::context::NetworkAddr,
