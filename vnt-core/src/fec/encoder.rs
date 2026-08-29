@@ -87,7 +87,7 @@ impl FecEncoder {
 
             if state.current_batch.len() >= BATCH_SIZE {
                 let batch = std::mem::take(&mut state.current_batch);
-                state.group_id += 1;
+                state.group_id = state.group_id.wrapping_add(1);
                 state.deadline = Instant::now() + Duration::from_millis(BATCH_TIMEOUT_MS);
 
                 if self
@@ -150,7 +150,7 @@ async fn fec_encoder_worker(
                         if !state.current_batch.is_empty() && now >= state.deadline {
                             let items = std::mem::take(&mut state.current_batch);
                             let group_id = state.group_id;
-                            state.group_id += 1;
+                            state.group_id = state.group_id.wrapping_add(1);
                             state.deadline = Instant::now() + Duration::from_millis(BATCH_TIMEOUT_MS);
                             batches.push((state.src_ip,*dest, group_id, items));
                         }
@@ -269,6 +269,7 @@ mod tests {
 
         let encoded = encoder.encode(packet).unwrap();
         let fec_packet = FecPacket::decode(encoded.payload()).unwrap();
+        assert_eq!(fec_packet.group_id, 0);
         assert_eq!(fec_packet.payload, original);
 
         let states = encoder.batch_states.lock();

@@ -84,6 +84,14 @@ impl FecDecoder {
             );
             bail!("packet_index overflow {src_ip}");
         }
+
+        // 清理必须发生在 is_done/重复包的提前返回之前。否则发送端重启后如果组号
+        // 恰好与旧完成组重合，旧组即使已经超时也会一直拦截新包。
+        if inner.last_cleanup.elapsed() > Duration::from_secs(1) {
+            Self::cleanup_old_groups(&mut inner.groups);
+            inner.last_cleanup = Instant::now();
+        }
+
         let mut packet = None;
         let group = inner.groups.entry((src_ip, group_id)).or_default();
         if group.is_done() {
@@ -210,10 +218,6 @@ impl FecDecoder {
 
         if group.is_done() {
             group.done();
-            if inner.last_cleanup.elapsed() > Duration::from_secs(1) {
-                Self::cleanup_old_groups(&mut inner.groups);
-                inner.last_cleanup = Instant::now();
-            }
             return Ok(packet.map(|v| vec![v]));
         }
 
@@ -238,10 +242,6 @@ impl FecDecoder {
             inner.groups.remove(&(src_ip, group_id));
         }
 
-        if inner.last_cleanup.elapsed() > Duration::from_secs(1) {
-            Self::cleanup_old_groups(&mut inner.groups);
-            inner.last_cleanup = Instant::now();
-        }
         match (packet, result) {
             (Some(packet), Some(mut result)) => {
                 result.push(packet);
@@ -625,6 +625,36 @@ mod tests {
         assert_eq!(recovered[0].ttl(), 3);
         assert_eq!(recovered[0].seq(), 0x1234_5678);
         assert_eq!(recovered[0].head()[3], 0xA5);
+    }
+
+    #[test]
+    fn test_expired_done_group_is_removed_before_duplicate_check() {
+        let decoder = FecDecoder::new();
+        let group_id = 22u64;
+        let key = (Ipv4Addr::from(SRC), group_id);
+        let now = Instant::now();
+        {
+            let mut inner = decoder.inner.lock();
+            inner.groups.insert(
+                key,
+                FecGroup {
+                    data_shards: 1,
+                    parity_shards: 1,
+                    shard_size: 0,
+                    received_original_count: 1,
+                    received_shards: Vec::new(),
+                    last_update: now - GROUP_TIMEOUT,
+                },
+            );
+            inner.last_cleanup = now - Duration::from_secs(2);
+        }
+
+        let packets = decoder
+            .receive(build_data_packet(group_id, 0, 0x81, 0, &[1, 2, 3]))
+            .unwrap()
+            .expect("expired completed group must not swallow a reused group id");
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].payload(), &[1, 2, 3]);
     }
 
     /// 异常 group（校验 shard 比数据 shard 短）导致重建失败时：
