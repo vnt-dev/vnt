@@ -1,19 +1,28 @@
 use crate::compression::PacketCompression;
-use crate::context::config::{TurnRule, allow_punch};
+use crate::context::config::{DeviceMode, TurnRule, allow_punch};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
-use crate::context::{NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection};
+use crate::context::{
+    NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection, SharedNetworkAddr,
+};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::PunchInfo;
-use crate::protocol::control_message::ClientSimpleInfoList;
+use crate::protocol::control_message::{ClientSimpleInfoList, ResponseMessage};
+#[cfg(not(target_os = "android"))]
+use crate::protocol::control_message::{FastRegRequestMsg, RequestMessage};
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::rpc_message::RpcMessageResponse;
 use crate::protocol::transmission::TransmissionBytes;
+use crate::tun::DeviceIOManager;
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
+use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::tunnel_core::server::rpc::RpcNotifier;
 use crate::tunnel_core::server::transport::TransportClient;
+use crate::tunnel_core::server::transport::config::SharedRegistrationIp;
 use anyhow::bail;
+#[cfg(not(target_os = "android"))]
+use bytes::Bytes;
 use pnet_packet::Packet;
 use pnet_packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet_packet::ipv4::Ipv4Packet;
@@ -21,11 +30,130 @@ use prost::Message;
 use rust_p2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+#[cfg(not(target_os = "android"))]
+use std::time::Duration;
+
+#[derive(Clone)]
+pub(crate) struct IpUpdateContext {
+    network: SharedNetworkAddr,
+    #[cfg(not(target_os = "android"))]
+    registration_ip: SharedRegistrationIp,
+    #[cfg(not(target_os = "android"))]
+    server_outbound: ServerOutbound,
+    update_lock: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(not(target_os = "android"))]
+    device_io_manager: DeviceIOManager,
+    #[cfg(not(target_os = "android"))]
+    device_mode: DeviceMode,
+}
+
+impl IpUpdateContext {
+    pub fn new(
+        network: SharedNetworkAddr,
+        registration_ip: SharedRegistrationIp,
+        server_outbound: ServerOutbound,
+        device_io_manager: DeviceIOManager,
+        device_mode: DeviceMode,
+    ) -> Self {
+        #[cfg(target_os = "android")]
+        let _ = (
+            registration_ip,
+            server_outbound,
+            device_io_manager,
+            device_mode,
+        );
+        Self {
+            network,
+            #[cfg(not(target_os = "android"))]
+            registration_ip,
+            #[cfg(not(target_os = "android"))]
+            server_outbound,
+            update_lock: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(not(target_os = "android"))]
+            device_io_manager,
+            #[cfg(not(target_os = "android"))]
+            device_mode,
+        }
+    }
+
+    fn validate_target(current: NetworkAddr, new_ip: Ipv4Addr) -> anyhow::Result<NetworkAddr> {
+        let net = current.network();
+        if !net.contains(&new_ip) {
+            bail!("更新 IP {new_ip} 不属于当前网段 {net}");
+        }
+        if new_ip == current.gateway {
+            bail!("更新 IP 不能使用网关地址 {new_ip}");
+        }
+        if new_ip == net.network() || new_ip == net.broadcast() {
+            bail!("更新 IP 不能使用网络地址或广播地址 {new_ip}");
+        }
+        Ok(NetworkAddr {
+            ip: new_ip,
+            broadcast: net.broadcast(),
+            prefix_len: current.prefix_len,
+            gateway: current.gateway,
+        })
+    }
+
+    fn parse_update_ip(payload: &[u8]) -> anyhow::Result<Ipv4Addr> {
+        let octets: [u8; 4] = payload
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("UpdateIp payload 必须为 4 字节"))?;
+        Ok(Ipv4Addr::from(octets))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn fast_reg_packet(ip: Ipv4Addr) -> anyhow::Result<Bytes> {
+        let payload = RequestMessage::FastReg(FastRegRequestMsg { ip }).encode();
+        let mut packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH + payload.len()))?;
+        packet.set_msg_type(MsgType::FastReg);
+        packet.set_ttl(1);
+        packet.set_gateway_flag(true);
+        packet.set_payload(&payload)?;
+        Ok(packet.into_buffer().into_bytes().freeze())
+    }
+
+    pub async fn apply_and_fast_register(&self, new_ip: Ipv4Addr) -> anyhow::Result<bool> {
+        let _guard = self.update_lock.lock().await;
+        let current = self
+            .network
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("客户端尚未完成网络注册"))?;
+        let updated = Self::validate_target(current, new_ip)?;
+
+        #[cfg(target_os = "android")]
+        {
+            let _ = updated;
+            log::warn!("Android 暂不支持运行时更新 VPN IP: {new_ip}");
+            return Ok(false);
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            if self.device_mode.has_device() {
+                self.device_io_manager
+                    .set_network(new_ip, current.prefix_len)
+                    .await?;
+            }
+
+            self.network.set(updated);
+            self.registration_ip.set(new_ip);
+
+            let packet = Self::fast_reg_packet(new_ip)?;
+            let sent = self
+                .server_outbound
+                .send_gateway_to_all(packet, Duration::from_secs(2))
+                .await?;
+            log::info!("已更新虚拟 IP 为 {new_ip}，快速注册已发送到 {sent} 台服务端");
+            Ok(true)
+        }
+    }
+}
 
 pub(crate) struct ServerTurnInboundHandler {
     server_id: u32,
-    network_addr: Option<NetworkAddr>,
     network_route: NetworkRoute,
+    ip_update: IpUpdateContext,
     server_info: ServerInfoCollection,
     nat_info: MyNatInfo,
     peer_map: PeerInfoMap,
@@ -40,14 +168,13 @@ pub(crate) struct ServerTurnInboundHandler {
 impl ServerTurnInboundHandler {
     pub fn new(
         server_id: u32,
-        network_addr: NetworkAddr,
         config: Box<super::connection_manager::InboundHandlerConfig>,
     ) -> Self {
         let config = *config;
         Self {
             server_id,
-            network_addr: Some(network_addr),
             network_route: config.network_route,
+            ip_update: config.ip_update,
             server_info: config.server_info,
             nat_info: config.nat_info,
             peer_map: config.peer_map,
@@ -149,6 +276,35 @@ impl ServerTurnInboundHandler {
                 let response = RpcMessageResponse::decode(net_packet.payload())?;
                 rpc_notifier.notify_response(response);
             }
+            MsgType::UpdateIp => {
+                self.ip_update
+                    .apply_and_fast_register(IpUpdateContext::parse_update_ip(
+                        net_packet.payload(),
+                    )?)
+                    .await?;
+            }
+            MsgType::FastReg => match ResponseMessage::from_slice(net_packet.payload())? {
+                ResponseMessage::FastReg(response) if response.success => {
+                    log::info!("服务端 {} 快速注册成功", self.server_id);
+                }
+                ResponseMessage::FastReg(_) => {
+                    log::warn!("服务端 {} 快速注册返回失败", self.server_id);
+                }
+                ResponseMessage::Error(error) => {
+                    log::warn!(
+                        "服务端 {} 快速注册失败: {} ({})",
+                        self.server_id,
+                        error.message,
+                        error.code
+                    );
+                }
+                response => {
+                    log::warn!(
+                        "服务端 {} 返回了非预期的快速注册响应: {response:?}",
+                        self.server_id
+                    );
+                }
+            },
             _ => {}
         }
         Ok(())
@@ -302,7 +458,7 @@ impl ServerTurnInboundHandler {
         now: i64,
     ) -> anyhow::Result<()> {
         let net_packet = NetPacket::new(&data)?;
-        let Some(network_addr) = self.network_addr else {
+        let Some(network_addr) = self.network_route.network.get() else {
             bail!("未找到自身IP")
         };
 
@@ -346,10 +502,192 @@ impl ServerTurnInboundHandler {
     pub fn set_server_version(&self, version: String) {
         self.server_info.set_server_version(self.server_id, version);
     }
+    pub fn network_addr(&self) -> Option<NetworkAddr> {
+        self.network_route.network.get()
+    }
     pub fn handle_disconnected(&self) {
         if self.server_info.set_server_connected(self.server_id, false) {
             self.server_info
                 .set_disconnected_time(self.server_id, Some(crate::utils::time::now_ts_ms()));
         }
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tests {
+    use super::*;
+    use crate::context::ServerInfoCollection;
+    use crate::crypto::PacketCrypto;
+    use crate::tunnel_core::server::transport::config::ProtocolAddress;
+    use crate::utils::task_control::TaskGroupManager;
+    use std::collections::HashMap;
+    use tokio::sync::mpsc::Receiver;
+
+    struct TestUpdateContext {
+        context: IpUpdateContext,
+        network: SharedNetworkAddr,
+        registration_ip: SharedRegistrationIp,
+        receivers: Vec<Receiver<(Bytes, std::time::Instant)>>,
+    }
+
+    fn network(ip: Ipv4Addr) -> NetworkAddr {
+        NetworkAddr {
+            ip,
+            prefix_len: 24,
+            gateway: Ipv4Addr::new(10, 26, 0, 1),
+            broadcast: Ipv4Addr::new(10, 26, 0, 255),
+        }
+    }
+
+    fn update_context(
+        device_mode: DeviceMode,
+        connected: bool,
+        server_count: usize,
+    ) -> TestUpdateContext {
+        let task_group_manager = TaskGroupManager::new();
+        let (task_group, _guard) = task_group_manager.create_task().unwrap();
+        let device_io_manager = DeviceIOManager::new(task_group);
+        let shared_network = SharedNetworkAddr::default();
+        let initial_ip = Ipv4Addr::new(10, 26, 0, 2);
+        shared_network.set(network(initial_ip));
+        let registration_ip = SharedRegistrationIp::new(Some(initial_ip));
+
+        let server_info = ServerInfoCollection::default();
+        server_info.update_server(
+            (0..server_count)
+                .map(|id| (id as u32, ProtocolAddress::default()))
+                .collect(),
+        );
+        let mut senders = HashMap::new();
+        let mut receivers = Vec::new();
+        for id in 0..server_count {
+            let (sender, receiver) = tokio::sync::mpsc::channel(4);
+            senders.insert(id as u32, sender);
+            receivers.push(receiver);
+            if connected {
+                server_info.set_server_connected(id as u32, true);
+            }
+        }
+        let outbound = ServerOutbound::new(
+            Arc::new(senders),
+            server_info,
+            PacketCrypto::new_from_str(None).unwrap(),
+        );
+        let context = IpUpdateContext::new(
+            shared_network.clone(),
+            registration_ip.clone(),
+            outbound,
+            device_io_manager,
+            device_mode,
+        );
+        TestUpdateContext {
+            context,
+            network: shared_network,
+            registration_ip,
+            receivers,
+        }
+    }
+
+    #[test]
+    fn update_ip_validation_preserves_network_shape() {
+        let current = network(Ipv4Addr::new(10, 26, 0, 2));
+        let updated =
+            IpUpdateContext::validate_target(current, Ipv4Addr::new(10, 26, 0, 9)).unwrap();
+        assert_eq!(updated.ip, Ipv4Addr::new(10, 26, 0, 9));
+        assert_eq!(updated.gateway, current.gateway);
+        assert_eq!(updated.prefix_len, current.prefix_len);
+        assert_eq!(updated.broadcast, current.broadcast);
+
+        for invalid in [
+            Ipv4Addr::new(10, 26, 0, 0),
+            Ipv4Addr::new(10, 26, 0, 1),
+            Ipv4Addr::new(10, 26, 0, 255),
+            Ipv4Addr::new(10, 27, 0, 9),
+        ] {
+            assert!(IpUpdateContext::validate_target(current, invalid).is_err());
+        }
+
+        assert_eq!(
+            IpUpdateContext::parse_update_ip(&[10, 26, 0, 9]).unwrap(),
+            Ipv4Addr::new(10, 26, 0, 9)
+        );
+        assert!(IpUpdateContext::parse_update_ip(&[10, 26, 0]).is_err());
+        assert!(IpUpdateContext::parse_update_ip(&[10, 26, 0, 9, 1]).is_err());
+    }
+
+    #[test]
+    fn fast_registration_uses_gateway_packet_type_22_and_ttl_one() {
+        let ip = Ipv4Addr::new(10, 26, 0, 9);
+        let bytes = IpUpdateContext::fast_reg_packet(ip).unwrap();
+        let packet = NetPacket::new(bytes).unwrap();
+        assert_eq!(packet.msg_type().unwrap(), MsgType::FastReg);
+        assert!(packet.is_gateway());
+        assert_eq!(packet.ttl(), 1);
+        assert_eq!(
+            packet.payload(),
+            RequestMessage::FastReg(FastRegRequestMsg { ip })
+                .encode()
+                .as_ref()
+        );
+    }
+
+    #[tokio::test]
+    async fn no_device_update_changes_shared_state_and_broadcasts_every_time() {
+        let TestUpdateContext {
+            context,
+            network: shared_network,
+            registration_ip,
+            mut receivers,
+        } = update_context(DeviceMode::No, true, 2);
+        let new_ip = Ipv4Addr::new(10, 26, 0, 9);
+
+        assert!(context.apply_and_fast_register(new_ip).await.unwrap());
+        assert_eq!(shared_network.ip(), Some(new_ip));
+        assert_eq!(registration_ip.get(), Some(new_ip));
+        for receiver in &mut receivers {
+            let (bytes, _) = receiver.recv().await.unwrap();
+            assert_eq!(
+                NetPacket::new(bytes).unwrap().msg_type().unwrap(),
+                MsgType::FastReg
+            );
+        }
+
+        assert!(context.apply_and_fast_register(new_ip).await.unwrap());
+        for receiver in &mut receivers {
+            assert!(receiver.recv().await.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_tun_device_does_not_change_client_state() {
+        let TestUpdateContext {
+            context,
+            network: shared_network,
+            registration_ip,
+            ..
+        } = update_context(DeviceMode::Tun, true, 1);
+        let old_ip = shared_network.ip().unwrap();
+        assert!(
+            context
+                .apply_and_fast_register(Ipv4Addr::new(10, 26, 0, 9))
+                .await
+                .is_err()
+        );
+        assert_eq!(shared_network.ip(), Some(old_ip));
+        assert_eq!(registration_ip.get(), Some(old_ip));
+    }
+
+    #[tokio::test]
+    async fn send_failure_keeps_already_applied_ip() {
+        let TestUpdateContext {
+            context,
+            network: shared_network,
+            registration_ip,
+            ..
+        } = update_context(DeviceMode::No, false, 1);
+        let new_ip = Ipv4Addr::new(10, 26, 0, 9);
+        assert!(context.apply_and_fast_register(new_ip).await.is_err());
+        assert_eq!(shared_network.ip(), Some(new_ip));
+        assert_eq!(registration_ip.get(), Some(new_ip));
     }
 }

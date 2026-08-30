@@ -309,6 +309,7 @@ impl Config {
         &self,
         index: usize,
         default_interface: Option<rust_p2p_core::socket::LocalInterface>,
+        registration_ip: crate::tunnel_core::server::transport::config::SharedRegistrationIp,
     ) -> ConnectRegConfig {
         ConnectRegConfig {
             server_addr: self.server_addr[index].clone(),
@@ -316,7 +317,7 @@ impl Config {
             network_code: self.network_code.clone(),
             device_id: self.device_id.clone(),
             device_name: self.device_name.clone(),
-            ip: self.ip,
+            ip: registration_ip,
             key_sign: self.key_sign(),
             ip_variable: self.ip.is_none(),
             default_interface,

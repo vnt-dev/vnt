@@ -43,6 +43,43 @@ impl ServerOutbound {
         self.packet_crypto.encrypt_reserve()
     }
 
+    /// 向所有当前已连接的控制服务端发送同一个网关控制包。
+    /// 单个服务端发送失败不会阻止其他服务端接收。
+    pub async fn send_gateway_to_all(
+        &self,
+        buf: Bytes,
+        expired: Duration,
+    ) -> anyhow::Result<usize> {
+        let mut sent = 0usize;
+        let mut connected = 0usize;
+        for server_id in self.server_id_list.iter().copied() {
+            if !self.server_info_collection.is_server_connected(server_id) {
+                continue;
+            }
+            connected += 1;
+            let Some(sender) = self.sender.get(&server_id) else {
+                log::warn!("快速注册发送失败：未找到服务端 {server_id} 的发送通道");
+                continue;
+            };
+            match sender
+                .send_timeout((buf.clone(), Instant::now() + expired), expired)
+                .await
+            {
+                Ok(()) => sent += 1,
+                Err(error) => {
+                    log::warn!("向服务端 {server_id} 发送快速注册失败: {error}");
+                }
+            }
+        }
+        if connected == 0 {
+            bail!("没有已连接的服务端");
+        }
+        if sent == 0 {
+            bail!("快速注册未能发送到任何服务端");
+        }
+        Ok(sent)
+    }
+
     pub async fn send_to_gateway_expired(
         &self,
         server_id: u32,

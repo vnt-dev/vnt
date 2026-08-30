@@ -733,7 +733,16 @@ fn toggle_main_window(app: &AppHandle) {
     }
 }
 
+fn install_rustls_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 pub fn run() -> Result<(), tauri::Error> {
+    // reqwest 使用 rustls-no-provider，必须在 Tauri 插件或 HTTP 客户端初始化前
+    // 明确选择整个桌面进程统一使用的 ring Provider。
+    install_rustls_crypto_provider();
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             api_request,
@@ -840,6 +849,13 @@ pub fn run() -> Result<(), tauri::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installs_ring_before_building_reqwest_client() {
+        install_rustls_crypto_provider();
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+        reqwest::Client::builder().build().unwrap();
+    }
 
     #[test]
     fn migrates_old_global_setting() {

@@ -34,6 +34,14 @@ message ConfirmRegResponseMsg {
   bool success = 1;
 }
 
+message FastRegRequestMsg {
+  fixed32 ip = 1;
+}
+
+message FastRegResponseMsg {
+  bool success = 1;
+}
+
 message ErrorResponseMsg {
   uint32 code = 1;
   string message = 2;
@@ -43,6 +51,7 @@ message RequestMessage{
   oneof request_payload{
     RegRequestMsg reg = 1;
     ConfirmRegMsg confirm_reg = 2;
+    FastRegRequestMsg fast_reg = 3;
   }
 }
 message ResponseMessage{
@@ -50,6 +59,7 @@ message ResponseMessage{
     RegResponseMsg reg = 1;
     ErrorResponseMsg error = 2;
     ConfirmRegResponseMsg confirm_reg = 3;
+    FastRegResponseMsg fast_reg = 4;
   }
 }
 

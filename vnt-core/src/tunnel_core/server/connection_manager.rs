@@ -1,7 +1,7 @@
 use crate::compression::PacketCompression;
 use crate::context::config::{Config, TurnRule};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
-use crate::context::{AppState, NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection};
+use crate::context::{AppState, NetworkRoute, PeerInfoMap, ServerInfoCollection};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::fec::FecDecoder;
@@ -9,11 +9,11 @@ use crate::protocol::control_message::{
     ConfirmRegResponseMsg, RegistrationMode, RequestMessage, ResponseMessage,
 };
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
-use crate::tunnel_core::server::inbound::ServerTurnInboundHandler;
+use crate::tunnel_core::server::inbound::{IpUpdateContext, ServerTurnInboundHandler};
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::tunnel_core::server::rpc::{RpcNotifier, ServerRPC};
 use crate::tunnel_core::server::transport::TransportClient;
-use crate::tunnel_core::server::transport::config::ConnectRegConfig;
+use crate::tunnel_core::server::transport::config::{ConnectRegConfig, SharedRegistrationIp};
 use crate::utils::task_control::TaskGroup;
 use anyhow::bail;
 use bytes::Bytes;
@@ -25,6 +25,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 pub struct InboundHandlerConfig {
     pub network_route: NetworkRoute,
+    pub ip_update: IpUpdateContext,
     pub server_info: ServerInfoCollection,
     pub nat_info: MyNatInfo,
     pub peer_map: PeerInfoMap,
@@ -49,13 +50,20 @@ pub(crate) fn create_server_tunnel(
     config: &Config,
     packet_crypto: PacketCrypto,
     default_interface: Option<rust_p2p_core::socket::LocalInterface>,
-) -> (Vec<ServerTurnManager>, ServerOutbound, ServerRPC) {
+) -> (
+    Vec<ServerTurnManager>,
+    ServerOutbound,
+    ServerRPC,
+    SharedRegistrationIp,
+) {
     let mut rpc_notifier: HashMap<u32, RpcNotifier> = HashMap::new();
     let mut sender_map: HashMap<u32, Sender<(Bytes, Instant)>> = HashMap::new();
     let mut server_manager_list = Vec::with_capacity(config.server_addr.len());
     let mut server_addr_list = Vec::with_capacity(config.server_addr.len());
+    let registration_ip = SharedRegistrationIp::new(config.ip);
     for (index, server_addr) in config.server_addr.iter().enumerate() {
-        let connect_reg_config = config.to_connect_config(index, default_interface.clone());
+        let connect_reg_config =
+            config.to_connect_config(index, default_interface.clone(), registration_ip.clone());
 
         let server_id = index as u32;
 
@@ -76,7 +84,12 @@ pub(crate) fn create_server_tunnel(
 
     let server_rpc = ServerRPC::new(tunnel_to_server.clone(), rpc_notifier);
 
-    (server_manager_list, tunnel_to_server, server_rpc)
+    (
+        server_manager_list,
+        tunnel_to_server,
+        server_rpc,
+        registration_ip,
+    )
 }
 
 impl ServerTurnManager {
@@ -133,6 +146,9 @@ impl ServerTurnManager {
             ResponseMessage::ConfirmReg(_) => {
                 self.disconnect();
             }
+            ResponseMessage::FastReg(_) => {
+                self.disconnect();
+            }
         }
         Ok(response)
     }
@@ -154,7 +170,7 @@ impl ServerTurnManager {
     }
 
     pub fn set_ip(&mut self, ip: Ipv4Addr) {
-        self.config.ip = Some(ip);
+        self.config.ip.set(ip);
     }
 
     /// Start data handling task with an already established connection.
@@ -162,9 +178,8 @@ impl ServerTurnManager {
         mut self,
         task_group: &TaskGroup,
         config: Box<InboundHandlerConfig>,
-        initial_response: NetworkAddr,
     ) {
-        let data_handler = ServerTurnInboundHandler::new(self.server_id, initial_response, config);
+        let data_handler = ServerTurnInboundHandler::new(self.server_id, config);
         let Some(mut receiver) = self.receiver.take() else {
             unreachable!()
         };
@@ -185,9 +200,15 @@ impl ServerTurnManager {
                     };
                     match &msg {
                         ResponseMessage::Reg(reg) => {
-                            if reg.ip != initial_response.ip
-                                || reg.prefix_len != initial_response.prefix_len
-                                || reg.gateway != initial_response.gateway
+                            let Some(current_network) = data_handler.network_addr() else {
+                                log::error!("客户端当前虚拟网络状态不存在，5秒后重试");
+                                self.disconnect();
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                continue;
+                            };
+                            if reg.ip != current_network.ip
+                                || reg.prefix_len != current_network.prefix_len
+                                || reg.gateway != current_network.gateway
                             {
                                 // 该服务器分配的虚拟网络与当前不一致，
                                 // 断开本次连接并降低重试频率，不影响其他服务器。
@@ -297,6 +318,10 @@ pub async fn coordinated_registration(
         _ => bail!("Unexpected response from first server"),
     };
     log::info!("Got IP {} from first server", ip);
+
+    // Persist the assigned IP in the shared registration state immediately.
+    // This also makes a single-server reconnect carry the current runtime IP.
+    managers[0].set_ip(ip);
 
     // Step 2: Set IP and pre-register with other servers
     for manager in managers.iter_mut().skip(1) {

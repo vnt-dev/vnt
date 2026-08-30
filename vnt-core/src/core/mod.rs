@@ -19,6 +19,7 @@ use crate::tunnel_core::p2p::transport::task::{P2pInitConfig, init_tunnel};
 use crate::tunnel_core::server::connection_manager::{
     InboundHandlerConfig, ServerTurnManager, coordinated_registration, create_server_tunnel,
 };
+use crate::tunnel_core::server::inbound::IpUpdateContext;
 use crate::tunnel_core::server::rpc::ServerRPC;
 use crate::utils::task_control::TaskGroup;
 use anyhow::{Context, bail};
@@ -31,6 +32,7 @@ pub const DEFAULT_MTU: u16 = 1380;
 /// Context for deferred registration
 struct RegistrationContext {
     server_managers: Vec<ServerTurnManager>,
+    ip_update: IpUpdateContext,
     subnet_external_route: SubnetExternalRoute,
     puncher: NatPuncher,
     packet_crypto: PacketCrypto,
@@ -89,13 +91,21 @@ impl NetworkManager {
         let mtu = config.mtu.unwrap_or(DEFAULT_MTU);
         let packet_crypto = PacketCrypto::new_from_str(config.password.as_deref())?;
         let packet_compression = PacketCompression::new(config.compress);
-        let (server_manager_list, tunnel_to_server, server_rpc) = create_server_tunnel(
-            app_state.clone(),
-            &config,
-            packet_crypto.clone(),
-            default_interface.clone(),
-        );
+        let (server_manager_list, tunnel_to_server, server_rpc, registration_ip) =
+            create_server_tunnel(
+                app_state.clone(),
+                &config,
+                packet_crypto.clone(),
+                default_interface.clone(),
+            );
         let device_io_manager = DeviceIOManager::new(task_group.clone());
+        let ip_update = IpUpdateContext::new(
+            app_state.network.clone(),
+            registration_ip,
+            tunnel_to_server.clone(),
+            device_io_manager.clone(),
+            config.device_mode,
+        );
         let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
 
         let p2p_enabled =
@@ -244,6 +254,7 @@ impl NetworkManager {
 
         let registration_context = Box::new(RegistrationContext {
             server_managers: server_manager_list,
+            ip_update,
             subnet_external_route,
             puncher,
             packet_crypto,
@@ -319,6 +330,9 @@ impl NetworkManager {
             crate::protocol::control_message::ResponseMessage::ConfirmReg(_) => {
                 bail!("Unexpected ConfirmReg response");
             }
+            crate::protocol::control_message::ResponseMessage::FastReg(_) => {
+                bail!("Unexpected FastReg response");
+            }
         };
         let network_addr = NetworkAddr {
             gateway: reg_response.gateway,
@@ -344,6 +358,7 @@ impl NetworkManager {
                     app_state.network.clone(),
                     ctx.subnet_external_route.clone(),
                 ),
+                ip_update: ctx.ip_update.clone(),
                 server_info: app_state.server_info_collection.clone(),
                 nat_info: app_state.nat_info.clone(),
                 peer_map: app_state.peer_map.clone(),
@@ -355,7 +370,7 @@ impl NetworkManager {
                 fec_decoder: ctx.fec_decoder.clone(),
                 turn: ctx.turn.clone(),
             });
-            turn_manager.data_handle_task_connected(task_group, handler_config, network_addr);
+            turn_manager.data_handle_task_connected(task_group, handler_config);
         }
 
         Ok(RegisterResponse::Success(network_addr))
@@ -415,6 +430,13 @@ impl NetworkManager {
     }
     #[cfg(not(target_os = "android"))]
     pub async fn set_device_network_ip(&self, ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<()> {
+        // 服务端数据处理任务早于虚拟网卡初始化启动。若此间已经收到 UpdateIp，
+        // 必须以共享状态中的最新地址为准，不能再用最初注册响应覆盖新地址。
+        let (ip, prefix_len) = self
+            .app_state
+            .get_network()
+            .map(|network| (network.ip, network.prefix_len))
+            .unwrap_or((ip, prefix_len));
         self.device_io_manager.set_network(ip, prefix_len).await?;
         Ok(())
     }

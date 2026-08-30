@@ -1,11 +1,31 @@
 use crate::protocol::control_message::{RegRequestMsg, RegistrationMode};
 use crate::tls::verifier::CertValidationMode;
 use anyhow::Context;
+use parking_lot::Mutex;
 use rand::seq::SliceRandom;
 use rust_p2p_core::socket::LocalInterface;
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SharedRegistrationIp {
+    inner: Arc<Mutex<Option<Ipv4Addr>>>,
+}
+impl SharedRegistrationIp {
+    pub fn new(ip: Option<Ipv4Addr>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(ip)),
+        }
+    }
+    pub fn get(&self) -> Option<Ipv4Addr> {
+        *self.inner.lock()
+    }
+    pub fn set(&self, ip: Ipv4Addr) {
+        *self.inner.lock() = Some(ip);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectRegConfig {
@@ -14,7 +34,7 @@ pub(crate) struct ConnectRegConfig {
     pub network_code: String,
     pub device_id: String,
     pub device_name: String,
-    pub ip: Option<Ipv4Addr>,
+    pub ip: SharedRegistrationIp,
     pub key_sign: Option<String>,
     pub ip_variable: bool,
     pub default_interface: Option<LocalInterface>,
@@ -98,7 +118,7 @@ impl ConnectRegConfig {
         RegRequestMsg {
             network_code: self.network_code.to_string(),
             device_id: self.device_id.to_string(),
-            ip: self.ip,
+            ip: self.ip.get(),
             name: self.device_name.to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             key_sign: self.key_sign.clone(),
@@ -190,6 +210,34 @@ impl ConnectConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_request_reads_latest_shared_ip() {
+        let initial_ip = Ipv4Addr::new(10, 26, 0, 2);
+        let updated_ip = Ipv4Addr::new(10, 26, 0, 9);
+        let shared_ip = SharedRegistrationIp::new(Some(initial_ip));
+        let config = ConnectRegConfig {
+            server_addr: ProtocolAddress::default(),
+            cert_mode: CertValidationMode::default(),
+            network_code: "test".to_string(),
+            device_id: "device".to_string(),
+            device_name: "device".to_string(),
+            ip: shared_ip.clone(),
+            key_sign: None,
+            ip_variable: true,
+            default_interface: None,
+        };
+
+        assert_eq!(
+            config.reg_msg_request(0, RegistrationMode::Normal).ip,
+            Some(initial_ip)
+        );
+        shared_ip.set(updated_ip);
+        assert_eq!(
+            config.reg_msg_request(0, RegistrationMode::Normal).ip,
+            Some(updated_ip)
+        );
+    }
 
     /// 动态 DNS TXT 记录中的 wss:// 必须映射为 Wss，
     /// 其余前缀维持原有映射不变

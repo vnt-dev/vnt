@@ -15,6 +15,7 @@ use tun_rs::async_framed::{Decoder, DeviceFramedRead, DeviceFramedWrite, Encoder
 #[cfg(not(target_os = "android"))]
 use tun_rs::{DeviceBuilder, Layer};
 
+#[derive(Clone)]
 pub struct DeviceIOManager {
     task_group: TaskGroup,
     device: DeviceMutex,
