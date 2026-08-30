@@ -303,9 +303,7 @@ fn create(
     device_mode: DeviceMode,
 ) -> DeviceTask {
     let mut device_framed_read = DeviceFramedRead::new(device.clone(), BytesCodec::new());
-    let read_buffer_size =
-        framed_read_buffer_size(device_mode, device_framed_read.read_buffer_size());
-    device_framed_read.set_read_buffer_size(read_buffer_size);
+    device_framed_read.set_read_buffer_size(2048);
     let device_framed_write = DeviceFramedWrite::new(device.clone(), BytesCodec::new());
     let outbound_device = device.clone();
 
@@ -349,14 +347,6 @@ fn create(
         inbound_task,
         outbound_task,
         intentional_stop,
-    }
-}
-
-fn framed_read_buffer_size(device_mode: DeviceMode, mtu: usize) -> usize {
-    if device_mode == DeviceMode::Tap {
-        mtu.saturating_add(crate::ethernet::MAX_ETHERNET_HEADER_LEN)
-    } else {
-        mtu
     }
 }
 
@@ -432,19 +422,5 @@ impl Encoder<TransmissionBytes> for BytesCodec {
         buf.reserve(data.len());
         buf.extend_from_slice(&data);
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tap_read_buffer_includes_ethernet_and_vlan_headers() {
-        assert_eq!(
-            framed_read_buffer_size(DeviceMode::Tap, 1380),
-            1380 + crate::ethernet::MAX_ETHERNET_HEADER_LEN
-        );
-        assert_eq!(framed_read_buffer_size(DeviceMode::Tun, 1380), 1380);
     }
 }

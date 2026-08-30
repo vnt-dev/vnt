@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 pub const ETHERNET_HEADER_LEN: usize = 14;
 pub const VLAN_HEADER_LEN: usize = 4;
 pub const MAX_VLAN_TAGS: usize = 4;
-pub const MAX_ETHERNET_HEADER_LEN: usize = ETHERNET_HEADER_LEN + VLAN_HEADER_LEN * MAX_VLAN_TAGS;
 const MAC_ENTRY_TTL: Duration = Duration::from_secs(300);
 const MAC_TABLE_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_MAC_ENTRIES: usize = 65_536;
