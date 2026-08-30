@@ -208,7 +208,7 @@ pub async fn ping_all(
 
         for (id, list) in vec {
             for (index, route) in list.iter().enumerate() {
-                if index > 2 {
+                if index > 4 {
                     break;
                 }
                 let ping = match build_route_ping(

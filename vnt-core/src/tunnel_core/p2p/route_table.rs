@@ -184,8 +184,8 @@ impl RouteTable {
     }
 
     /// 添加路由（心跳时调用，用于更新路由时间和添加跨节点转发路由）
-    pub fn add_route(&self, id: Ipv4Addr, route: Route) {
-        if self.inner.add_route(id, route, false) {
+    pub fn add_route(&self, id: Ipv4Addr, route: Route, is_default: bool) {
+        if self.inner.add_route(id, route, false, is_default) {
             self.inner.first_direct_route_notify.notify_one();
         }
     }
@@ -195,7 +195,7 @@ impl RouteTable {
         if route.is_direct() {
             return;
         }
-        self.inner.add_route(id, route, true);
+        self.inner.add_route(id, route, true, true);
     }
 
     /// 获取所有路由表
@@ -247,10 +247,16 @@ impl RouteTableInner {
 
     fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) -> bool {
         self.route_key_owner.lock().insert(key, id);
-        self.add_route(id, Route::from_default_rt(key, 1), false)
+        self.add_route(id, Route::from_default_rt(key, 1), false, false)
     }
 
-    fn add_route(&self, id: Ipv4Addr, route: Route, allow_relay_bootstrap: bool) -> bool {
+    fn add_route(
+        &self,
+        id: Ipv4Addr,
+        route: Route,
+        allow_relay_bootstrap: bool,
+        is_default: bool,
+    ) -> bool {
         let key = route.route_key();
         let mut guard = self.route_table.write();
         let had_direct = guard
@@ -272,6 +278,9 @@ impl RouteTableInner {
 
         // 如果路由已存在，更新并重新排序
         if let Some(idx) = list.iter().position(|v| v.route_key() == key) {
+            if is_default {
+                return false;
+            }
             list[idx] = route;
             // 向前冒泡（如果评分更高）
             let mut i = idx;
@@ -371,7 +380,7 @@ mod tests {
         let target = Ipv4Addr::new(10, 0, 0, 8);
         let route = Route::from_default_rt(RouteKey::default(), 2);
 
-        table.add_route(target, route);
+        table.add_route(target, route, true);
         assert!(!table.exists(&target));
 
         table.add_relay_route(target, route);
@@ -392,7 +401,7 @@ mod tests {
         table.add_owner_route(peer, key);
         assert!(notify.notified().now_or_never().is_some());
 
-        table.add_route(peer, Route::from(key, 1, 25));
+        table.add_route(peer, Route::from(key, 1, 25), false);
         assert!(notify.notified().now_or_never().is_none());
 
         table.remove_route(&peer, &key);

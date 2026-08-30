@@ -31,7 +31,7 @@ impl TaskGroupInner {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.spawn_inner(f, false)
+        self.spawn_inner(f, false, false)
     }
 
     fn spawn_stop_all<F>(self: &Arc<Self>, f: F) -> Option<Id>
@@ -39,10 +39,23 @@ impl TaskGroupInner {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.spawn_inner(f, true)
+        self.spawn_inner(f, true, false)
     }
 
-    fn spawn_inner<F>(self: &Arc<Self>, f: F, stop_all_on_exit: bool) -> Option<Id>
+    fn spawn_restartable<F>(self: &Arc<Self>, f: F) -> Option<Id>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.spawn_inner(f, false, true)
+    }
+
+    fn spawn_inner<F>(
+        self: &Arc<Self>,
+        f: F,
+        stop_all_on_exit: bool,
+        keep_group_alive_on_exit: bool,
+    ) -> Option<Id>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
@@ -62,6 +75,7 @@ impl TaskGroupInner {
                 inner: weak,
                 task_id: tokio::task::id(),
                 stop_all_on_exit,
+                keep_group_alive_on_exit,
             };
             f.await;
         });
@@ -72,27 +86,30 @@ impl TaskGroupInner {
     }
 
     fn stop(&self) {
-        let mut state = self.state.lock();
-        state.stopped = true;
-        for (_, handle) in state.tasks.drain() {
-            handle.abort();
+        {
+            let mut state = self.state.lock();
+            state.stopped = true;
+            for (_, handle) in state.tasks.drain() {
+                handle.abort();
+            }
         }
+        // `spawn_restartable` 允许任务组在暂停期暂时为空，此时没有 TaskGuard
+        // 会负责发送通知，因此 stop 本身必须唤醒等待者。
+        self.all_stopped_notify.notify_waiters();
     }
 
     fn is_stopped(&self) -> bool {
         self.state.lock().stopped
     }
 
-    fn remove_task(&self, task_id: Id) {
+    fn remove_task(&self, task_id: Id, keep_group_alive_on_exit: bool) {
         let all_stopped = {
             let mut state = self.state.lock();
             state.tasks.remove(&task_id);
-            if state.tasks.is_empty() {
+            if state.tasks.is_empty() && !keep_group_alive_on_exit {
                 state.stopped = true;
-                true
-            } else {
-                false
             }
+            state.stopped && state.tasks.is_empty()
         };
         if all_stopped {
             self.all_stopped_notify.notify_waiters();
@@ -132,6 +149,8 @@ struct TaskGuard {
     task_id: Id,
     /// 当前任务结束（包括 panic 或 abort）时停止组内所有任务
     stop_all_on_exit: bool,
+    /// 该任务可以被有意停止后重新创建；它单独耗尽时不结束任务组。
+    keep_group_alive_on_exit: bool,
 }
 
 impl Drop for TaskGuard {
@@ -140,7 +159,7 @@ impl Drop for TaskGuard {
             if self.stop_all_on_exit {
                 inner.stop();
             }
-            inner.remove_task(self.task_id);
+            inner.remove_task(self.task_id, self.keep_group_alive_on_exit);
         }
     }
 }
@@ -183,6 +202,19 @@ impl TaskGroup {
         F::Output: Send + 'static,
     {
         match self.inner.spawn_stop_all(f) {
+            Some(task_id) => SubTask::new(task_id, Arc::downgrade(&self.inner)),
+            None => SubTask::empty(),
+        }
+    }
+
+    /// 启动可重建的子任务。该任务结束时不会仅因任务组暂时为空而把组永久关闭；
+    /// 任务若非预期退出，应在任务体内显式调用 `TaskGroup::stop`。
+    pub fn spawn_restartable<F>(&self, f: F) -> SubTask
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        match self.inner.spawn_restartable(f) {
             Some(task_id) => SubTask::new(task_id, Arc::downgrade(&self.inner)),
             None => SubTask::empty(),
         }
@@ -385,5 +417,38 @@ mod tests {
             .expect_err("sibling task must not complete normally");
         assert!(group.is_stopped());
         assert!(!sibling.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_restartable_task_can_be_stopped_and_started_again() {
+        let manager = TaskGroupManager::new();
+        let (group, _guard) = manager.create_task().unwrap();
+
+        let first = group.spawn_restartable(std::future::pending::<()>());
+        first.stop().await;
+        assert!(!group.is_stopped());
+
+        let second = group.spawn_restartable(std::future::pending::<()>());
+        assert!(second.is_running());
+        group.stop();
+    }
+
+    #[tokio::test]
+    async fn test_stopping_empty_restartable_group_wakes_waiter() {
+        let manager = TaskGroupManager::new();
+        let (group, _guard) = manager.create_task().unwrap();
+        let task = group.spawn_restartable(std::future::pending::<()>());
+        task.stop().await;
+
+        let waiter = {
+            let group = group.clone();
+            tokio::spawn(async move { group.wait_all_stopped().await })
+        };
+        tokio::task::yield_now().await;
+        group.stop();
+        tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("stopping a suspended group must wake its waiter")
+            .unwrap();
     }
 }

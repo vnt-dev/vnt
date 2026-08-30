@@ -1,10 +1,14 @@
 use anyhow::Context;
 use jni::JNIEnv;
+#[cfg(target_os = "android")]
+use jni::objects::JValue;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+#[cfg(target_os = "android")]
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
@@ -133,6 +137,7 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     config_json: JString<'local>,
+    ip_update_listener: JObject<'local>,
 ) -> jlong {
     jni_guard!(env, -1, {
         let result: anyhow::Result<i64> = (|| {
@@ -156,6 +161,36 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
             let network_manager = runtime.block_on(async {
                 NetworkManager::create_network(Box::new(config), task_group).await
             })?;
+
+            #[cfg(target_os = "android")]
+            if !ip_update_listener.is_null() {
+                let java_vm = Arc::new(env.get_java_vm()?);
+                let listener = env.new_global_ref(&ip_update_listener)?;
+                network_manager.set_android_ip_update_callback(Arc::new(move |request| {
+                    let mut env = java_vm.attach_current_thread()?;
+                    let ip = env.new_string(request.ip.to_string())?;
+                    let call_result = env.call_method(
+                        listener.as_obj(),
+                        "onIpUpdate",
+                        "(JLjava/lang/String;I)V",
+                        &[
+                            JValue::Long(request.request_id as i64),
+                            JValue::Object(&ip),
+                            JValue::Int(request.prefix_len as i32),
+                        ],
+                    );
+                    if env.exception_check()? {
+                        env.exception_describe()?;
+                        env.exception_clear()?;
+                        anyhow::bail!("Android IP 更新监听器抛出异常");
+                    }
+                    call_result?;
+                    Ok(())
+                }));
+            }
+
+            #[cfg(not(target_os = "android"))]
+            let _ = ip_update_listener;
 
             // 分配ID
             let id = state.next_id;
@@ -1116,6 +1151,110 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         fec: cfg.fec,
         tunnel_port: cfg.tunnel_port,
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntNetwork_nativePrepareIpUpdate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    request_id: jlong,
+    ip: JString<'local>,
+) -> jboolean {
+    #[cfg(target_os = "android")]
+    {
+        jni_guard!(env, 0, {
+            let result: anyhow::Result<()> = (|| {
+                let (manager, runtime) = {
+                    let state = GLOBAL_STATE.lock();
+                    let state = state.as_ref().context("VNT not initialized")?;
+                    (
+                        state
+                            .network_managers
+                            .get(&handle)
+                            .context("Invalid handle")?
+                            .clone(),
+                        state.runtime.clone(),
+                    )
+                };
+                let ip: Ipv4Addr = String::from(env.get_string(&ip)?).parse()?;
+                let manager = manager.lock();
+                let manager = manager
+                    .as_ref()
+                    .context("Network manager already destroyed")?;
+                runtime.block_on(manager.prepare_android_ip_update(request_id as u64, ip))
+            })();
+            match result {
+                Ok(()) => 1,
+                Err(error) => {
+                    let _ = env.throw(format!("Failed to prepare IP update: {error:#}"));
+                    0
+                }
+            }
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (handle, request_id, ip);
+        let _ = env.throw("Android IP update is not supported on this platform");
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntNetwork_nativeCompleteIpUpdate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    request_id: jlong,
+    ip: JString<'local>,
+    tun_fd: jint,
+) -> jboolean {
+    #[cfg(target_os = "android")]
+    {
+        jni_guard!(env, 0, {
+            // Ownership transfers at the JNI boundary, including every failure path.
+            let tun_fd = if tun_fd < 0 {
+                None
+            } else {
+                // SAFETY: Java passes a detached ParcelFileDescriptor exactly once.
+                Some(unsafe { OwnedFd::from_raw_fd(tun_fd) })
+            };
+            let result: anyhow::Result<()> = (|| {
+                let (manager, runtime) = {
+                    let state = GLOBAL_STATE.lock();
+                    let state = state.as_ref().context("VNT not initialized")?;
+                    (
+                        state
+                            .network_managers
+                            .get(&handle)
+                            .context("Invalid handle")?
+                            .clone(),
+                        state.runtime.clone(),
+                    )
+                };
+                let ip: Ipv4Addr = String::from(env.get_string(&ip)?).parse()?;
+                let manager = manager.lock();
+                let manager = manager
+                    .as_ref()
+                    .context("Network manager already destroyed")?;
+                runtime.block_on(manager.complete_android_ip_update(request_id as u64, ip, tun_fd))
+            })();
+            match result {
+                Ok(()) => 1,
+                Err(error) => {
+                    let _ = env.throw(format!("Failed to complete IP update: {error:#}"));
+                    0
+                }
+            }
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (handle, request_id, ip, tun_fd);
+        let _ = env.throw("Android IP update is not supported on this platform");
+        0
+    }
 }
 
 #[cfg(test)]

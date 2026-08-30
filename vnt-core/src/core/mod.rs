@@ -24,7 +24,6 @@ use crate::tunnel_core::server::rpc::ServerRPC;
 use crate::utils::task_control::TaskGroup;
 use anyhow::{Context, bail};
 use ipnet::Ipv4Net;
-#[cfg(not(target_os = "android"))]
 use std::net::Ipv4Addr;
 
 pub const DEFAULT_MTU: u16 = 1380;
@@ -47,6 +46,8 @@ pub struct NetworkManager {
     app_state: AppState,
     task_group: TaskGroup,
     device_io_manager: DeviceIOManager,
+    #[cfg(target_os = "android")]
+    ip_update: IpUpdateContext,
     enhanced_outbound: Option<EnhancedOutbound>,
     server_rpc: ServerRPC,
     tun_receiver: Option<TunReceiver>,
@@ -254,7 +255,7 @@ impl NetworkManager {
 
         let registration_context = Box::new(RegistrationContext {
             server_managers: server_manager_list,
-            ip_update,
+            ip_update: ip_update.clone(),
             subnet_external_route,
             puncher,
             packet_crypto,
@@ -270,6 +271,8 @@ impl NetworkManager {
             app_state,
             task_group,
             device_io_manager,
+            #[cfg(target_os = "android")]
+            ip_update,
             enhanced_outbound,
             server_rpc,
             tun_receiver,
@@ -439,6 +442,35 @@ impl NetworkManager {
             .unwrap_or((ip, prefix_len));
         self.device_io_manager.set_network(ip, prefix_len).await?;
         Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_android_ip_update_callback(
+        &self,
+        callback: crate::tunnel_core::server::inbound::AndroidIpUpdateCallback,
+    ) {
+        self.ip_update.set_android_callback(callback);
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn prepare_android_ip_update(
+        &self,
+        request_id: u64,
+        ip: Ipv4Addr,
+    ) -> anyhow::Result<()> {
+        self.ip_update.prepare_android_update(request_id, ip).await
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn complete_android_ip_update(
+        &self,
+        request_id: u64,
+        ip: Ipv4Addr,
+        tun_fd: Option<std::os::fd::OwnedFd>,
+    ) -> anyhow::Result<()> {
+        self.ip_update
+            .complete_android_update(request_id, ip, tun_fd)
+            .await
     }
 
     fn stop_network(&mut self) {

@@ -8,9 +8,9 @@ use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::PunchInfo;
-use crate::protocol::control_message::{ClientSimpleInfoList, ResponseMessage};
-#[cfg(not(target_os = "android"))]
-use crate::protocol::control_message::{FastRegRequestMsg, RequestMessage};
+use crate::protocol::control_message::{
+    ClientSimpleInfoList, FastRegRequestMsg, RequestMessage, ResponseMessage,
+};
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::rpc_message::RpcMessageResponse;
 use crate::protocol::transmission::TransmissionBytes;
@@ -20,8 +20,9 @@ use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::tunnel_core::server::rpc::RpcNotifier;
 use crate::tunnel_core::server::transport::TransportClient;
 use crate::tunnel_core::server::transport::config::SharedRegistrationIp;
+#[cfg(target_os = "android")]
+use anyhow::Context;
 use anyhow::bail;
-#[cfg(not(target_os = "android"))]
 use bytes::Bytes;
 use pnet_packet::Packet;
 use pnet_packet::icmp::{IcmpPacket, IcmpTypes};
@@ -30,21 +31,39 @@ use prost::Message;
 use rust_p2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-#[cfg(not(target_os = "android"))]
 use std::time::Duration;
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AndroidIpUpdateRequest {
+    pub request_id: u64,
+    pub ip: Ipv4Addr,
+    pub prefix_len: u8,
+}
+
+#[cfg(target_os = "android")]
+pub type AndroidIpUpdateCallback =
+    Arc<dyn Fn(AndroidIpUpdateRequest) -> anyhow::Result<()> + Send + Sync + 'static>;
+
+#[cfg(target_os = "android")]
+#[derive(Default)]
+struct AndroidIpUpdateState {
+    next_request_id: u64,
+    pending: Vec<AndroidIpUpdateRequest>,
+    prepared: Option<AndroidIpUpdateRequest>,
+    callback: Option<AndroidIpUpdateCallback>,
+}
 
 #[derive(Clone)]
 pub(crate) struct IpUpdateContext {
     network: SharedNetworkAddr,
-    #[cfg(not(target_os = "android"))]
     registration_ip: SharedRegistrationIp,
-    #[cfg(not(target_os = "android"))]
     server_outbound: ServerOutbound,
     update_lock: Arc<tokio::sync::Mutex<()>>,
-    #[cfg(not(target_os = "android"))]
     device_io_manager: DeviceIOManager,
-    #[cfg(not(target_os = "android"))]
     device_mode: DeviceMode,
+    #[cfg(target_os = "android")]
+    android: Arc<parking_lot::Mutex<AndroidIpUpdateState>>,
 }
 
 impl IpUpdateContext {
@@ -55,24 +74,15 @@ impl IpUpdateContext {
         device_io_manager: DeviceIOManager,
         device_mode: DeviceMode,
     ) -> Self {
-        #[cfg(target_os = "android")]
-        let _ = (
-            registration_ip,
-            server_outbound,
-            device_io_manager,
-            device_mode,
-        );
         Self {
             network,
-            #[cfg(not(target_os = "android"))]
             registration_ip,
-            #[cfg(not(target_os = "android"))]
             server_outbound,
             update_lock: Arc::new(tokio::sync::Mutex::new(())),
-            #[cfg(not(target_os = "android"))]
             device_io_manager,
-            #[cfg(not(target_os = "android"))]
             device_mode,
+            #[cfg(target_os = "android")]
+            android: Arc::new(parking_lot::Mutex::new(AndroidIpUpdateState::default())),
         }
     }
 
@@ -102,7 +112,6 @@ impl IpUpdateContext {
         Ok(Ipv4Addr::from(octets))
     }
 
-    #[cfg(not(target_os = "android"))]
     fn fast_reg_packet(ip: Ipv4Addr) -> anyhow::Result<Bytes> {
         let payload = RequestMessage::FastReg(FastRegRequestMsg { ip }).encode();
         let mut packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH + payload.len()))?;
@@ -113,6 +122,21 @@ impl IpUpdateContext {
         Ok(packet.into_buffer().into_bytes().freeze())
     }
 
+    async fn send_fast_reg(&self, ip: Ipv4Addr) {
+        let result = match Self::fast_reg_packet(ip) {
+            Ok(packet) => {
+                self.server_outbound
+                    .send_gateway_to_all(packet, Duration::from_secs(2))
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(sent) => log::info!("快速注册已发送到 {sent} 台服务端，新 IP: {ip}"),
+            Err(error) => log::warn!("发送快速注册失败，保留新 IP {ip}: {error:#}"),
+        }
+    }
+
     pub async fn apply_and_fast_register(&self, new_ip: Ipv4Addr) -> anyhow::Result<bool> {
         let _guard = self.update_lock.lock().await;
         let current = self
@@ -120,13 +144,6 @@ impl IpUpdateContext {
             .get()
             .ok_or_else(|| anyhow::anyhow!("客户端尚未完成网络注册"))?;
         let updated = Self::validate_target(current, new_ip)?;
-
-        #[cfg(target_os = "android")]
-        {
-            let _ = updated;
-            log::warn!("Android 暂不支持运行时更新 VPN IP: {new_ip}");
-            return Ok(false);
-        }
 
         #[cfg(not(target_os = "android"))]
         {
@@ -138,15 +155,119 @@ impl IpUpdateContext {
 
             self.network.set(updated);
             self.registration_ip.set(new_ip);
-
-            let packet = Self::fast_reg_packet(new_ip)?;
-            let sent = self
-                .server_outbound
-                .send_gateway_to_all(packet, Duration::from_secs(2))
-                .await?;
-            log::info!("已更新虚拟 IP 为 {new_ip}，快速注册已发送到 {sent} 台服务端");
+            self.send_fast_reg(new_ip).await;
             Ok(true)
         }
+
+        #[cfg(target_os = "android")]
+        {
+            let _ = updated;
+            if current.ip == new_ip {
+                self.send_fast_reg(new_ip).await;
+                return Ok(true);
+            }
+            let (request, callback) = {
+                let mut state = self.android.lock();
+                let request = if let Some(existing) = state
+                    .pending
+                    .iter()
+                    .find(|request| request.ip == new_ip)
+                    .copied()
+                {
+                    existing
+                } else {
+                    state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
+                    let request = AndroidIpUpdateRequest {
+                        request_id: state.next_request_id,
+                        ip: new_ip,
+                        prefix_len: current.prefix_len,
+                    };
+                    state.pending.push(request);
+                    request
+                };
+                (request, state.callback.clone())
+            };
+            let callback = callback.context("Android IP 更新监听器尚未注册")?;
+            callback(request)?;
+            Ok(false)
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_android_callback(&self, callback: AndroidIpUpdateCallback) {
+        self.android.lock().callback = Some(callback);
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn prepare_android_update(
+        &self,
+        request_id: u64,
+        ip: Ipv4Addr,
+    ) -> anyhow::Result<()> {
+        let _guard = self.update_lock.lock().await;
+        let request = {
+            let state = self.android.lock();
+            if state.prepared.is_some() {
+                bail!("另一个 IP 更新请求正在切换");
+            }
+            state
+                .pending
+                .iter()
+                .find(|request| request.request_id == request_id && request.ip == ip)
+                .copied()
+                .context("IP 更新请求不存在或已经失效")?
+        };
+        Self::validate_target(
+            self.network.get().context("客户端尚未完成网络注册")?,
+            request.ip,
+        )?;
+        if self.device_mode.has_device() {
+            self.device_io_manager.suspend_android().await?;
+        }
+        self.android.lock().prepared = Some(request);
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn complete_android_update(
+        &self,
+        request_id: u64,
+        ip: Ipv4Addr,
+        tun_fd: Option<std::os::fd::OwnedFd>,
+    ) -> anyhow::Result<()> {
+        let _guard = self.update_lock.lock().await;
+        let request = self
+            .android
+            .lock()
+            .prepared
+            .filter(|request| request.request_id == request_id && request.ip == ip)
+            .context("IP 更新请求尚未准备或已经失效")?;
+        let updated = Self::validate_target(
+            self.network.get().context("客户端尚未完成网络注册")?,
+            request.ip,
+        )?;
+        if self.device_mode.has_device() {
+            self.device_io_manager
+                .resume_android(
+                    tun_fd.context("缺少新的 Android VPN fd")?,
+                    ip,
+                    request.prefix_len,
+                )
+                .await?;
+        } else if tun_fd.is_some() {
+            bail!("无 TUN 模式不能传入 VPN fd");
+        }
+        self.network.set(updated);
+        self.registration_ip.set(ip);
+        {
+            let mut state = self.android.lock();
+            state
+                .pending
+                .retain(|pending| pending.request_id > request_id);
+            state.prepared = None;
+        }
+        self.send_fast_reg(ip).await;
+        Ok(())
     }
 }
 
@@ -686,7 +807,7 @@ mod tests {
             ..
         } = update_context(DeviceMode::No, false, 1);
         let new_ip = Ipv4Addr::new(10, 26, 0, 9);
-        assert!(context.apply_and_fast_register(new_ip).await.is_err());
+        assert!(context.apply_and_fast_register(new_ip).await.unwrap());
         assert_eq!(shared_network.ip(), Some(new_ip));
         assert_eq!(registration_ip.get(), Some(new_ip));
     }

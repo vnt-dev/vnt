@@ -220,8 +220,11 @@ impl P2pInboundHandler {
             }
             MsgType::Ping => {
                 let metric = ctx.max_ttl - ctx.ttl;
-                self.route_table
-                    .add_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
+                self.route_table.add_route(
+                    ctx.src_ip,
+                    Route::from_default_rt(route_key, metric),
+                    true,
+                );
                 let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
                     HEAD_LENGTH + 8,
                     self.packet_crypto.encrypt_reserve(),
@@ -252,6 +255,7 @@ impl P2pInboundHandler {
                         self.route_table.add_route(
                             ctx.src_ip,
                             Route::from_with_loss(route_key, metric, (now - time) as _, loss_rate),
+                            false,
                         );
                     }
                 }
