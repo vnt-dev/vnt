@@ -19,7 +19,7 @@ const message = ref("");
 const downloaded = ref(0);
 const contentLength = ref(0);
 
-const currentVersion = computed(() => app.version || "2.0.4");
+const currentVersion = computed(() => app.version || "2.0.5");
 const progress = computed(() => {
   if (!contentLength.value) return 0;
   return Math.min(100, Math.round((downloaded.value / contentLength.value) * 100));

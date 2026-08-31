@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VNT Desktop",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "identifier": "com.vnt.desktop",
   "build": {
     "beforeDevCommand": "pnpm prepare:sidecar:dev && pnpm dev",
