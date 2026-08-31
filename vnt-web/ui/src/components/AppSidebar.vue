@@ -20,17 +20,6 @@ const items = visibleNavItems();
       </div>
     </div>
 
-    <div class="mx-3 mt-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-800/60">
-      <span
-        class="h-2.5 w-2.5 shrink-0 rounded-full"
-        :class="app.runningCount > 0 ? 'bg-green-500' : app.startingCount > 0 ? 'animate-pulse bg-amber-400' : 'bg-slate-300 dark:bg-slate-600'"
-      ></span>
-      <div class="min-w-0">
-        <div class="text-[9px] font-semibold tracking-wider text-slate-400">虚拟网络</div>
-        <div class="mt-0.5 truncate text-xs font-medium text-slate-700 dark:text-slate-200">{{ app.headerStatusText }}</div>
-      </div>
-    </div>
-
     <nav class="mt-4 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3" aria-label="主导航">
       <router-link
         v-for="item in items"
