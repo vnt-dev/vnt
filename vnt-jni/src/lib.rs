@@ -1047,6 +1047,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         tcp_stun: Vec<String>,
         #[serde(default)]
         tunnel_port: Option<u16>,
+        #[serde(default)]
+        event_script: Option<String>,
     }
 
     let cfg: ConfigJson = serde_json::from_str(json_str)?;
@@ -1150,6 +1152,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         tcp_stun,
         fec: cfg.fec,
         tunnel_port: cfg.tunnel_port,
+        event_script: cfg.event_script,
     })
 }
 

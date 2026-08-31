@@ -248,7 +248,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let local_port = p2p_listener.local_tcp_port();
+        let local_port = p2p_listener
+            .local_tcp_addr()
+            .map(|addr| addr.port())
+            .unwrap_or_default();
         let stun_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let stun_addr = stun_listener.local_addr().unwrap();
 
@@ -270,7 +273,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let local_port = p2p_listener.local_tcp_port();
+        let local_port = p2p_listener
+            .local_tcp_addr()
+            .map(|addr| addr.port())
+            .unwrap_or_default();
         let closed_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let closed_addr = closed_listener.local_addr().unwrap();
         drop(closed_listener);
@@ -289,7 +295,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let local_port = p2p_listener.local_tcp_port();
+        let local_port = p2p_listener
+            .local_tcp_addr()
+            .map(|addr| addr.port())
+            .unwrap_or_default();
         let first_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let second_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let first_addr = first_listener.local_addr().unwrap();

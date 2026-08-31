@@ -49,7 +49,10 @@ pub async fn init_tunnel(
     }
     let tunnel_incoming = TunnelIncoming::bind(tunnel_config).await?;
     let puncher = tunnel_incoming.puncher();
-    let local_tcp_port = tunnel_incoming.local_tcp_port();
+    let local_tcp_port = tunnel_incoming
+        .local_tcp_addr()
+        .map(|addr| addr.port())
+        .unwrap_or_default();
     let route_table = app_state.route_table.clone();
     let socket_manager = P2pOutbound::new(puncher.clone(), route_table.clone(), packet_crypto);
     if config.automatic_punch {
