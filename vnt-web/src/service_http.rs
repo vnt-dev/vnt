@@ -295,6 +295,8 @@ pub struct StartConfig {
     #[serde(default)]
     pub tcp_stun: Vec<String>,
     pub tunnel_port: Option<u16>,
+    #[serde(default)]
+    pub event_script: Option<String>,
 }
 
 impl StartConfig {
@@ -1493,6 +1495,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         tcp_stun,
         fec: cfg.fec,
         tunnel_port: cfg.tunnel_port,
+        event_script: cfg.event_script,
     })
 }
 
@@ -1825,6 +1828,7 @@ mod tests {
             udp_stun: Vec::new(),
             tcp_stun: Vec::new(),
             tunnel_port: None,
+            event_script: None,
         }
     }
 

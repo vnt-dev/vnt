@@ -6,6 +6,7 @@ use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::enhanced_ipv4_tunnel;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
+use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::{FecDecoder, FecEncoder};
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute};
@@ -43,6 +44,7 @@ struct RegistrationContext {
 
 pub struct NetworkManager {
     config: Box<Config>,
+    event_script: EventScript,
     app_state: AppState,
     task_group: TaskGroup,
     device_io_manager: DeviceIOManager,
@@ -106,6 +108,12 @@ impl NetworkManager {
             tunnel_to_server.clone(),
             device_io_manager.clone(),
             config.device_mode,
+            EventScript::new(config.event_script.clone()),
+            config
+                .server_addr
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect(),
         );
         let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
 
@@ -265,8 +273,10 @@ impl NetworkManager {
         });
 
         app_state.set_config(config.clone());
+        let event_script = EventScript::new(config.event_script.clone());
         Ok(Self {
             config,
+            event_script,
             app_state,
             task_group,
             device_io_manager,
@@ -440,6 +450,28 @@ impl NetworkManager {
             .map(|network| (network.ip, network.prefix_len))
             .unwrap_or((ip, prefix_len));
         self.device_io_manager.set_network(ip, prefix_len).await?;
+        // 网卡设置成功（应用 IP）后触发事件脚本
+        if let Some(network) = self.app_state.get_network() {
+            let server = self
+                .config
+                .server_addr
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            self.event_script
+                .notify(
+                    EventScriptType::NetCardCreated,
+                    &[
+                        ("ip", network.ip.to_string()),
+                        ("prefix-length", network.prefix_len.to_string()),
+                        ("gateway", network.gateway.to_string()),
+                        ("broadcast", network.broadcast.to_string()),
+                        ("server", server),
+                    ],
+                )
+                .await;
+        }
         Ok(())
     }
 

@@ -6,6 +6,7 @@ use crate::context::{
 };
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
+use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
@@ -62,6 +63,8 @@ pub(crate) struct IpUpdateContext {
     update_lock: Arc<tokio::sync::Mutex<()>>,
     device_io_manager: DeviceIOManager,
     device_mode: DeviceMode,
+    event_script: EventScript,
+    server_addrs: Vec<String>,
     #[cfg(target_os = "android")]
     android: Arc<parking_lot::Mutex<AndroidIpUpdateState>>,
 }
@@ -73,6 +76,8 @@ impl IpUpdateContext {
         server_outbound: ServerOutbound,
         device_io_manager: DeviceIOManager,
         device_mode: DeviceMode,
+        event_script: EventScript,
+        server_addrs: Vec<String>,
     ) -> Self {
         Self {
             network,
@@ -81,6 +86,8 @@ impl IpUpdateContext {
             update_lock: Arc::new(tokio::sync::Mutex::new(())),
             device_io_manager,
             device_mode,
+            event_script,
+            server_addrs,
             #[cfg(target_os = "android")]
             android: Arc::new(parking_lot::Mutex::new(AndroidIpUpdateState::default())),
         }
@@ -155,6 +162,22 @@ impl IpUpdateContext {
 
             self.network.set(updated);
             self.registration_ip.set(new_ip);
+            // IP 实际发生变化时触发事件脚本（多服务器重复下发同 IP 时不会重复触发）
+            if updated.ip != current.ip {
+                self.event_script
+                    .notify(
+                        EventScriptType::IpUpdated,
+                        &[
+                            ("old-ip", current.ip.to_string()),
+                            ("new-ip", updated.ip.to_string()),
+                            ("prefix-length", updated.prefix_len.to_string()),
+                            ("gateway", updated.gateway.to_string()),
+                            ("broadcast", updated.broadcast.to_string()),
+                            ("server", self.server_addrs.join(",")),
+                        ],
+                    )
+                    .await;
+            }
             self.send_fast_reg(new_ip).await;
             Ok(true)
         }
@@ -700,6 +723,8 @@ mod tests {
             outbound,
             device_io_manager,
             device_mode,
+            EventScript::new(None),
+            Vec::new(),
         );
         TestUpdateContext {
             context,

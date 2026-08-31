@@ -4,6 +4,7 @@ use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{AppState, NetworkRoute, PeerInfoMap, ServerInfoCollection};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
+use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
 use crate::protocol::control_message::{
     ConfirmRegResponseMsg, RegistrationMode, RequestMessage, ResponseMessage,
@@ -44,6 +45,7 @@ pub struct ServerTurnManager {
     receiver: Option<Receiver<(Bytes, Instant)>>,
     notifier: RpcNotifier,
     transport_client: TransportClient,
+    event_script: EventScript,
 }
 pub(crate) fn create_server_tunnel(
     app_state: AppState,
@@ -70,8 +72,13 @@ pub(crate) fn create_server_tunnel(
         let (s, r) = tokio::sync::mpsc::channel(1024);
 
         let notifier = RpcNotifier::new();
-        let manager =
-            ServerTurnManager::new(server_id, connect_reg_config.clone(), r, notifier.clone());
+        let manager = ServerTurnManager::new(
+            server_id,
+            connect_reg_config.clone(),
+            r,
+            notifier.clone(),
+            EventScript::new(config.event_script.clone()),
+        );
         server_addr_list.push((server_id, server_addr.clone()));
         rpc_notifier.insert(server_id, notifier);
         sender_map.insert(server_id, s);
@@ -98,6 +105,7 @@ impl ServerTurnManager {
         config: ConnectRegConfig,
         receiver: Receiver<(Bytes, Instant)>,
         notifier: RpcNotifier,
+        event_script: EventScript,
     ) -> Self {
         let connector = TransportClient::new();
         Self {
@@ -106,6 +114,7 @@ impl ServerTurnManager {
             config,
             receiver: Some(receiver),
             notifier,
+            event_script,
         }
     }
     pub fn disconnect(&mut self) {
@@ -239,11 +248,33 @@ impl ServerTurnManager {
                         }
                     }
                 }
+                // 重连成功后触发事件脚本（首次连接不算重连）
+                if !already_connected {
+                    let mut params = vec![("server", self.config.server_addr.to_string())];
+                    if let Some(network) = data_handler.network_addr() {
+                        params.push(("ip", network.ip.to_string()));
+                        params.push(("prefix-length", network.prefix_len.to_string()));
+                        params.push(("gateway", network.gateway.to_string()));
+                        params.push(("broadcast", network.broadcast.to_string()));
+                    }
+                    self.event_script
+                        .notify(EventScriptType::Reconnected, &params)
+                        .await;
+                }
                 log::info!("已连接服务器:{}", self.config.server_addr);
                 data_handler.handle_connected();
 
                 if let Err(e) = self.data_handle_loop(&mut receiver, &data_handler).await {
                     log::error!("Error on data_handle_loop: {:?}", e);
+                    // 从已连接状态掉线时触发事件脚本
+                    if already_connected {
+                        self.event_script
+                            .notify(
+                                EventScriptType::Disconnected,
+                                &[("server", self.config.server_addr.to_string())],
+                            )
+                            .await;
+                    }
                 }
                 already_connected = false;
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;

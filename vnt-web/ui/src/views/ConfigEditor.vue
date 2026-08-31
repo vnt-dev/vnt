@@ -629,6 +629,18 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 />
                 <p class="mt-1.5 text-xs leading-5 text-slate-400">服务端通信、P2P 打洞及转发流量将使用此网卡</p>
               </div>
+              <div>
+                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">事件脚本</label>
+                <input
+                  v-model="formData.event_script"
+                  type="text"
+                  placeholder="外部脚本路径，留空不触发"
+                  class="input"
+                />
+                <p class="mt-1.5 text-xs leading-5 text-slate-400">
+                  网卡创建成功、掉线、重连成功、IP 变化时以命令行参数调用事件脚本（例如 C:\scripts\vnt-event.bat）
+                </p>
+              </div>
             </div>
           </div>
 

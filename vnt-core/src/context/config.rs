@@ -226,6 +226,8 @@ pub struct Config {
     pub udp_stun: Vec<String>,
     pub tcp_stun: Vec<String>,
     pub tunnel_port: Option<u16>,
+    /// 事件脚本路径/命令；网卡创建成功、掉线、重连成功、IP 变化时以参数方式调用
+    pub event_script: Option<String>,
 }
 impl Config {
     pub fn normalize(&mut self) -> anyhow::Result<()> {

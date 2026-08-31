@@ -29,6 +29,7 @@ export const emptyFormData = () => ({
   udp_stun: [],
   tcp_stun: [],
   tunnel_port: null,
+  event_script: "",
 });
 
 // 从TOML解析到表单
@@ -122,6 +123,9 @@ export const parseTomlToForm = (toml) => {
     } else if (trimmed.includes("outbound_interface")) {
       const match = trimmed.match(/outbound_interface\s*=\s*"([^"]*)"/);
       if (match) data.outbound_interface = match[1];
+    } else if (trimmed.includes("event_script")) {
+      const match = trimmed.match(/event_script\s*=\s*"([^"]*)"/);
+      if (match) data.event_script = match[1];
     } else if (trimmed.includes("password =")) {
       const match = trimmed.match(/password\s*=\s*"([^"]*)"/);
       if (match) data.password = match[1];
@@ -279,6 +283,10 @@ export const formToToml = (formData) => {
     toml += "\n# 绑定对外通信 Socket 的出口网卡名称（用于服务端通信、P2P 打洞及转发流量）\n";
     toml += `outbound_interface = "${formData.outbound_interface}"\n`;
   }
+  if (formData.event_script) {
+    toml += "\n# 事件脚本路径/命令；网卡创建成功(netcard-created)、掉线(disconnected)、重连成功(reconnected)、IP变化(ip-updated)时以命令行参数调用\n";
+    toml += `event_script = "${formData.event_script}"\n`;
+  }
 
   toml += "\n# --- 安全配置 ---\n";
   if (formData.password) {
@@ -392,6 +400,10 @@ device_mode = "tun"
 
 # 绑定对外通信 Socket 的出口网卡名称（例如 Ethernet、Wi-Fi、eth0）
 # outbound_interface = "Ethernet"
+
+# 事件脚本路径/命令 (可选，留空不触发)；网卡创建成功、掉线、重连成功、IP 变化时以命令行参数调用
+# 例如创建网卡成功时脚本会收到: <脚本> netcard-created --ip ... --prefix-length ... --gateway ... --broadcast ... --server ...
+# event_script = "C:\\\\scripts\\\\vnt-event.bat"
 
 # --- 安全配置 ---
 

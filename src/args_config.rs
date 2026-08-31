@@ -42,6 +42,7 @@ pub struct FileConfig {
     pub udp_stun: Option<Vec<String>>,
     pub tcp_stun: Option<Vec<String>>,
     pub tunnel_port: Option<u16>,
+    pub event_script: Option<String>,
 }
 
 impl FileConfig {
@@ -190,6 +191,9 @@ pub struct Args {
     /// 隧道端口，用于P2P通信
     #[clap(long)]
     pub tunnel_port: Option<u16>,
+    /// 事件脚本路径/命令；网卡创建成功、掉线、重连成功、IP 变化时以参数方式调用
+    #[clap(long)]
+    pub event_script: Option<String>,
     /// 读取配置文件
     #[arg(long)]
     pub conf: Option<PathBuf>,
@@ -324,6 +328,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         udp_stun,
         tcp_stun,
         tunnel_port: args.tunnel_port.or(file.tunnel_port),
+        event_script: args.event_script.or_else(|| file.event_script.clone()),
     };
 
     let ctrl_config = CtrlConfig {
@@ -366,6 +371,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         port_mapping: args.port_mapping,
         allow_port_mapping: args.allow_mapping,
         tunnel_port: args.tunnel_port,
+        event_script: args.event_script,
         ..Default::default()
     };
     let ctrl_config = CtrlConfig {
@@ -437,6 +443,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         udp_stun,
         tcp_stun,
         tunnel_port: file.tunnel_port,
+        event_script: file.event_script.clone(),
     };
     let ctrl_config = CtrlConfig {
         ctrl_port: file.ctrl_port,
@@ -555,6 +562,15 @@ server = ["quic://1.2.3.4:29872"]
 #   finger   使用证书指纹验证，服务端启动时日志会输出指纹，
 #            例如 finger:3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1
 # cert_mode = "skip"
+
+# --- 事件脚本 (可选) ---
+# 指定一个外部脚本/命令，以下事件发生时会被调用（事件名和参数通过命令行传入）：
+#   netcard-created  虚拟网卡创建成功，参数含 --ip --prefix-length --gateway --broadcast --server
+#   disconnected     与服务器断开连接（掉线），参数含 --server
+#   reconnected      重连成功，参数含 --server --ip --prefix-length --gateway --broadcast
+#   ip-updated       服务端下发新IP（IP变化），参数含 --old-ip --new-ip --prefix-length --gateway --broadcast --server
+# 例如脚本收到: event_script netcard-created --ip 10.26.0.2 --prefix-length 24 ...
+# event_script = "C:\\scripts\\vnt-event.bat"
 
 # --- 其他配置 ---
 # 自定义stun地址，分别用于udp打洞和tcp打洞，需要单独配置，不设置则用默认stun

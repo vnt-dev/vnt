@@ -3,6 +3,7 @@ pub mod context;
 pub mod core;
 pub mod crypto;
 pub(crate) mod ethernet;
+pub(crate) mod event_script;
 pub(crate) mod fec;
 pub mod nat;
 pub mod protocol;
