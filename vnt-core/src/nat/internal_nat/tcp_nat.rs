@@ -2,7 +2,7 @@ use crate::context::SharedNetworkAddr;
 use crate::utils::socket::connect_tcp;
 use crate::utils::task_control::TaskGroup;
 use anyhow::Context;
-use rust_p2p_core::socket::LocalInterface;
+use rustp2p_core::socket::LocalInterface;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tcp_ip::IpStack;

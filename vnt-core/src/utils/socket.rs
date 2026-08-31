@@ -1,5 +1,5 @@
 use anyhow::Context;
-use rust_p2p_core::socket::LocalInterface;
+use rustp2p_core::socket::LocalInterface;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::SocketAddr;
@@ -128,7 +128,7 @@ pub(crate) fn bind_udp(
     addr: SocketAddr,
     interface: Option<&LocalInterface>,
 ) -> io::Result<tokio::net::UdpSocket> {
-    let socket = rust_p2p_core::socket::bind_udp(addr, interface)?;
+    let socket = rustp2p_core::socket::bind_udp(addr, interface)?;
     tokio::net::UdpSocket::from_std(socket.into())
 }
 
@@ -170,6 +170,58 @@ pub(crate) async fn connect_tcp(
     Ok(stream)
 }
 
+/// Connects to `addr` while binding the outgoing socket to an existing local
+/// TCP listener port. This is used by TCP STUN so the observed public mapping
+/// belongs to the P2P listener rather than to an unrelated ephemeral port.
+pub(crate) async fn connect_tcp_reuse_port(
+    addr: SocketAddr,
+    local_port: u16,
+    local_ipv4: std::net::Ipv4Addr,
+    interface: Option<&LocalInterface>,
+) -> io::Result<tokio::net::TcpStream> {
+    if !addr.is_ipv4() || local_ipv4.is_unspecified() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "TCP STUN port reuse requires a concrete local IPv4 address",
+        ));
+    }
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    bind_socket_to_interface(
+        &socket,
+        interface,
+        addr.is_ipv4() && !addr.ip().is_loopback(),
+    )?;
+    socket.set_reuse_address(true)?;
+    #[cfg(unix)]
+    socket.set_reuse_port(true)?;
+    let local_addr = SocketAddr::from((local_ipv4, local_port));
+    socket.bind(&local_addr.into())?;
+    socket.set_nonblocking(true)?;
+    socket.set_tcp_nodelay(true)?;
+
+    match socket.connect(&addr.into()) {
+        Ok(()) => {}
+        Err(ref error) if error.kind() == io::ErrorKind::WouldBlock => {}
+        #[cfg(unix)]
+        Err(ref error) if error.raw_os_error() == Some(libc::EINPROGRESS) => {}
+        Err(error) => return Err(error),
+    }
+
+    let stream = tokio::net::TcpStream::from_std(socket.into())?;
+    tokio::time::timeout(CONNECT_TIMEOUT, stream.writable())
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("connect to {addr} timed out after {CONNECT_TIMEOUT:?}"),
+            )
+        })??;
+    if let Some(error) = stream.take_error()? {
+        return Err(error);
+    }
+    Ok(stream)
+}
+
 pub(crate) async fn connect_tcp_resolved<A: tokio::net::ToSocketAddrs>(
     addr: A,
     interface: Option<&LocalInterface>,
@@ -188,6 +240,74 @@ pub(crate) async fn connect_tcp_resolved<A: tokio::net::ToSocketAddrs>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn tcp_stun_connection_reuses_the_p2p_listener_port() {
+        let p2p_listener = rustp2p_core::endpoint::TunnelIncoming::bind(
+            rustp2p_core::endpoint::Config::tcp(0).enable_ipv6(false),
+        )
+        .await
+        .unwrap();
+        let local_port = p2p_listener.local_tcp_port();
+        let stun_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stun_addr = stun_listener.local_addr().unwrap();
+
+        let accept = tokio::spawn(async move { stun_listener.accept().await.unwrap() });
+        let stream =
+            connect_tcp_reuse_port(stun_addr, local_port, std::net::Ipv4Addr::LOCALHOST, None)
+                .await
+                .unwrap();
+        let (_accepted, peer_addr) = accept.await.unwrap();
+
+        assert_eq!(stream.local_addr().unwrap().port(), local_port);
+        assert_eq!(peer_addr.port(), local_port);
+    }
+
+    #[tokio::test]
+    async fn tcp_stun_connection_reports_connect_failure() {
+        let p2p_listener = rustp2p_core::endpoint::TunnelIncoming::bind(
+            rustp2p_core::endpoint::Config::tcp(0).enable_ipv6(false),
+        )
+        .await
+        .unwrap();
+        let local_port = p2p_listener.local_tcp_port();
+        let closed_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_addr = closed_listener.local_addr().unwrap();
+        drop(closed_listener);
+
+        let result =
+            connect_tcp_reuse_port(closed_addr, local_port, std::net::Ipv4Addr::LOCALHOST, None)
+                .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn tcp_stun_connections_can_reuse_the_listener_port_concurrently() {
+        let p2p_listener = rustp2p_core::endpoint::TunnelIncoming::bind(
+            rustp2p_core::endpoint::Config::tcp(0).enable_ipv6(false),
+        )
+        .await
+        .unwrap();
+        let local_port = p2p_listener.local_tcp_port();
+        let first_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let second_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let first_addr = first_listener.local_addr().unwrap();
+        let second_addr = second_listener.local_addr().unwrap();
+
+        let first_accept = tokio::spawn(async move { first_listener.accept().await.unwrap() });
+        let second_accept = tokio::spawn(async move { second_listener.accept().await.unwrap() });
+
+        let (first, second) = tokio::join!(
+            connect_tcp_reuse_port(first_addr, local_port, std::net::Ipv4Addr::LOCALHOST, None,),
+            connect_tcp_reuse_port(second_addr, local_port, std::net::Ipv4Addr::LOCALHOST, None,),
+        );
+
+        assert_eq!(first.unwrap().local_addr().unwrap().port(), local_port);
+        assert_eq!(second.unwrap().local_addr().unwrap().port(), local_port);
+        first_accept.await.unwrap();
+        second_accept.await.unwrap();
+    }
 
     #[test]
     fn empty_interface_name_disables_binding() {

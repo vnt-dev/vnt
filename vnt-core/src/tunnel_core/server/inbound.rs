@@ -28,7 +28,7 @@ use pnet_packet::Packet;
 use pnet_packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet_packet::ipv4::Ipv4Packet;
 use prost::Message;
-use rust_p2p_core::nat::NatInfo;
+use rustp2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;

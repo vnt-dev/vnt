@@ -5,7 +5,7 @@ use pnet_packet::Packet;
 use pnet_packet::icmp::echo_reply::{Identifier, SequenceNumber};
 use pnet_packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet_packet::ipv4::Ipv4Packet;
-use rust_p2p_core::socket::LocalInterface;
+use rustp2p_core::socket::LocalInterface;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::{Duration, Instant};

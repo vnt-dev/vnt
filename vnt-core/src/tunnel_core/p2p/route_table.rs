@@ -1,5 +1,5 @@
 use parking_lot::{Mutex, RwLock};
-use rust_p2p_core::route::{ConnectProtocol, DEFAULT_RTT, RouteKey};
+use rustp2p_core::route_table::{DEFAULT_RTT, Protocol, RouteKey};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -165,13 +165,13 @@ impl RouteTable {
     }
 
     /// 检查指定传输协议和物理地址是否已有直连路由。
-    pub fn has_direct_endpoint(&self, protocol: ConnectProtocol, address: SocketAddr) -> bool {
+    pub fn has_direct_endpoint(&self, protocol: Protocol, address: SocketAddr) -> bool {
         let guard = self.inner.route_table.read();
         guard.values().any(|routes| {
             routes.iter().any(|route| {
                 route.is_direct()
                     && route.route_key().protocol() == protocol
-                    && route.route_key().addr() == address
+                    && route.route_key().peer_addr() == address
             })
         })
     }
@@ -204,32 +204,24 @@ impl RouteTable {
         guard.iter().map(|(k, v)| (*k, v.clone())).collect()
     }
 
-    /// 根据 RouteKey 查找对应的 IP
-    pub fn get_id_by_route_key(&self, route_key: &RouteKey) -> Option<Ipv4Addr> {
-        let owner_map = self.inner.route_key_owner.lock();
-        owner_map.get(route_key).copied()
-    }
-
-    /// 移除指定 IP 和 RouteKey 的路由
-    pub fn remove_route(&self, id: &Ipv4Addr, route_key: &RouteKey) {
+    /// Removes every logical route carried by one physical tunnel.
+    pub fn remove_route_key(&self, route_key: &RouteKey) -> Vec<(Ipv4Addr, RouteKey)> {
         let mut table = self.inner.route_table.write();
         let mut owner_map = self.inner.route_key_owner.lock();
         let mut time_map = self.inner.route_key_time.lock();
+        let mut removed = Vec::new();
 
-        if let Some(list) = table.get_mut(id) {
-            list.retain(|r| r.route_key() != *route_key);
-            if list.is_empty() {
-                table.remove(id);
+        table.retain(|id, routes| {
+            let old_len = routes.len();
+            routes.retain(|route| route.route_key() != *route_key);
+            if routes.len() != old_len {
+                removed.push((*id, *route_key));
             }
-        }
-
-        if let Some(owner_id) = owner_map.get(route_key)
-            && owner_id == id
-        {
-            owner_map.remove(route_key);
-        }
-
-        time_map.remove(&(*id, *route_key));
+            !routes.is_empty()
+        });
+        owner_map.remove(route_key);
+        time_map.retain(|(_, key), _| key != route_key);
+        removed
     }
 
     /// 移除过期的路由
@@ -404,8 +396,58 @@ mod tests {
         table.add_route(peer, Route::from(key, 1, 25), false);
         assert!(notify.notified().now_or_never().is_none());
 
-        table.remove_route(&peer, &key);
+        table.remove_route_key(&key);
         assert!(notify.notified().now_or_never().is_none());
+    }
+
+    #[test]
+    fn remove_route_key_cleans_direct_relay_owner_and_timestamps() {
+        let table = RouteTable::new();
+        let owner = Ipv4Addr::new(10, 0, 0, 2);
+        let relayed = Ipv4Addr::new(10, 0, 0, 3);
+        let unrelated = Ipv4Addr::new(10, 0, 0, 4);
+        let key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2000".parse().unwrap(),
+            "127.0.0.1:3000".parse().unwrap(),
+        );
+        let other_key = RouteKey::new(
+            Protocol::TCP,
+            "127.0.0.1:2001".parse().unwrap(),
+            "127.0.0.1:3001".parse().unwrap(),
+        );
+
+        table.add_owner_route(owner, key);
+        table.add_relay_route(relayed, Route::from_default_rt(key, 2));
+        table.add_owner_route(unrelated, other_key);
+
+        assert_eq!(table.inner.route_key_owner.lock().get(&key), Some(&owner));
+        assert_eq!(
+            table
+                .inner
+                .route_key_time
+                .lock()
+                .keys()
+                .filter(|(_, route_key)| *route_key == key)
+                .count(),
+            2
+        );
+
+        let mut removed = table.remove_route_key(&key);
+        removed.sort_unstable();
+        assert_eq!(removed, vec![(owner, key), (relayed, key)]);
+        assert!(!table.exists(&owner));
+        assert!(!table.exists(&relayed));
+        assert!(table.exists(&unrelated));
+        assert!(!table.inner.route_key_owner.lock().contains_key(&key));
+        assert!(
+            table
+                .inner
+                .route_key_time
+                .lock()
+                .keys()
+                .all(|(_, route_key)| *route_key != key)
+        );
     }
 
     #[test]

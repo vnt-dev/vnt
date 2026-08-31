@@ -1,221 +1,75 @@
 use crate::context::AppState;
-use rust_p2p_core::nat::{NatInfo, NatType};
-use rust_p2p_core::socket::LocalInterface;
-use rust_p2p_core::tunnel::SocketManager;
-use rust_p2p_core::tunnel::udp::Model;
-use std::collections::HashMap;
+use rustp2p_core::nat::NatType;
+use rustp2p_core::punch::Puncher;
+use rustp2p_core::socket::LocalInterface;
+use std::collections::HashSet;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub async fn my_nat_info(
-    app_context: AppState,
-    socket_manager: SocketManager,
-    default_interface: Option<LocalInterface>,
-    outbound_interface_name: Option<String>,
-) {
+pub async fn my_nat_info(app_context: AppState, puncher: Puncher) {
     loop {
-        my_nat_info_impl(
-            &app_context,
-            &socket_manager,
-            default_interface.as_ref(),
-            outbound_interface_name.as_deref(),
-        )
-        .await;
+        my_nat_info_impl(&app_context, &puncher).await;
         tokio::time::sleep(Duration::from_secs(60 * 30)).await;
     }
 }
-async fn my_nat_info_impl(
-    app_context: &AppState,
-    socket_manager: &SocketManager,
-    default_interface: Option<&LocalInterface>,
-    outbound_interface_name: Option<&str>,
-) {
-    let network = app_context.network.network();
-    let mut local_ipv4s = Vec::new();
-    let mut local_ipv6 = Vec::new();
-    match getifaddrs::getifaddrs() {
-        Ok(addrs) => {
-            for x in addrs {
-                if outbound_interface_name.is_some_and(|name| x.name != name) {
-                    continue;
-                }
-                let Some(ip) = x.address.ip_addr() else {
-                    continue;
-                };
-                if ip.is_loopback() {
-                    continue;
-                }
-                if ip.is_unspecified() {
-                    continue;
-                }
-                if ip.is_multicast() {
-                    continue;
-                }
-
-                match ip {
-                    IpAddr::V4(addr) => {
-                        if addr.is_documentation() {
-                            continue;
-                        }
-                        if addr.is_broadcast() {
-                            continue;
-                        }
-                        if let Some(network) = &network
-                            && network.contains(&addr)
-                        {
-                            continue;
-                        }
-                        local_ipv4s.push(addr);
-                    }
-                    IpAddr::V6(addr) => {
-                        if addr.is_unique_local() {
-                            continue;
-                        }
-                        if addr.is_unicast_link_local() {
-                            continue;
-                        }
-                        local_ipv6.push(addr);
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            log::error!("getifaddrs error: {e}");
-        }
-    }
-    log::info!("local_ipv4s: {:?}", local_ipv4s);
-    let detected = if outbound_interface_name.is_none() {
-        rust_p2p_core::extend::addr::local_ipv4()
-            .await
-            .map_err(|e| {
-                log::warn!("local ipv4 failed {e:?}");
-                e
-            })
-            .ok()
-    } else {
-        None
-    };
-    let Some((local_ipv4, merged)) = select_local_ipv4(detected, &local_ipv4s) else {
-        log::warn!("未发现可用本机 IPv4 地址，跳过本次 NAT 信息更新");
-        return;
-    };
-    // 保留网卡扫描结果，主地址排在首位
-    local_ipv4s = merged;
-    let mut ipv6 = if outbound_interface_name.is_none() {
-        rust_p2p_core::extend::addr::local_ipv6().await.ok()
-    } else {
-        local_ipv6.first().cloned()
-    };
-    if let Some(addr) = ipv6 {
-        if addr.is_loopback()
-            || addr.is_unique_local()
-            || addr.is_unicast_link_local()
-            || addr.is_unspecified()
-            || addr.is_multicast()
-        {
-            ipv6 = local_ipv6.first().cloned();
-        }
-    } else {
-        ipv6 = local_ipv6.first().cloned();
-    }
-    let Some(udp_mgr) = socket_manager.udp_socket_manager_as_ref() else {
-        log::warn!("udp socket manager 未就绪，跳过本次 NAT 信息更新");
-        return;
-    };
-    let local_udp_ports = match udp_mgr.local_ports() {
-        Ok(ports) => ports,
-        Err(e) => {
-            log::warn!("获取本地 UDP 端口失败: {e:?}，跳过本次 NAT 信息更新");
-            return;
-        }
-    };
-    let local_tcp_port = socket_manager
-        .tcp_socket_manager_as_ref()
-        .map(|m| m.local_addr().port())
-        .unwrap_or_else(|| {
-            log::warn!("tcp socket manager 未就绪，local_tcp_port 置 0");
-            0
-        });
-    log::info!(
-        "local_ipv4={local_ipv4},ipv6={ipv6:?},local_udp_ports:{local_udp_ports:?},local_tcp_port:{local_tcp_port:?}"
-    );
-    let mut public_ports = local_udp_ports.clone();
-    public_ports.fill(0);
-    let mut nat_info = NatInfo {
-        nat_type: NatType::Cone,
-        public_ips: vec![],
-        public_udp_ports: public_ports,
-        mapping_tcp_addr: vec![],
-        mapping_udp_addr: vec![],
-        public_port_range: 0,
-        local_ipv4s,
-        local_ipv4,
-        ipv6,
-        local_udp_ports,
-        local_tcp_port,
-        public_tcp_port: 0,
-    };
+async fn my_nat_info_impl(app_context: &AppState, puncher: &Puncher) {
     let mut stun_server = app_context.udp_stun();
     if stun_server.is_empty() {
         stun_server = default_udp_stun();
     }
-    let (nat_type, public_ips, port_range) =
-        rust_p2p_core::stun::stun_test_nat(stun_server, default_interface)
-            .await
-            .unwrap_or_else(|e| {
-                log::warn!("stun_test_nat {e:?}");
-                (NatType::Cone, vec![], 0)
-            });
-    log::info!("nat_type:{nat_type:?},public_ips:{public_ips:?},port_range={port_range}");
-    nat_info.nat_type = nat_type;
-    nat_info.public_ips = public_ips;
-    nat_info.public_port_range = port_range;
-    app_context.nat_info.replace_nat_info(nat_info);
-    let model = match nat_type {
-        NatType::Cone => Model::Low,
-        NatType::Symmetric => Model::High,
-    };
-    if let Err(e) = udp_mgr.switch_model(model) {
-        log::error!("switch_model error: {e:?}");
+    match puncher.nat_info_with_servers(&stun_server).await {
+        Ok(mut nat_info) => {
+            // STUN NAT classification uses temporary sockets. The public
+            // mapping of the P2P socket is learned separately by sending a
+            // request through Puncher::send_to.
+            // VNT tracks one public mapping for the Puncher-owned main UDP
+            // endpoint and does not expose the core's IPv4/IPv6 socket layout.
+            nat_info.public_udp_ports = vec![0];
+            nat_info.stun_mapped_ports.clear();
+            let nat_type = nat_info.nat_type;
+            log::info!(
+                "nat_type:{nat_type:?},public_ips:{:?},port_range={}",
+                nat_info.public_ips,
+                nat_info.public_port_range
+            );
+            app_context.nat_info.replace_nat_info(nat_info);
+            if let Err(error) = puncher.apply_nat_model(nat_type) {
+                log::error!("apply_nat_model error: {error:?}");
+            }
+        }
+        Err(error) => log::warn!("nat_info_with_servers {error:?}"),
     }
 }
 
-/// 确定本机主 IPv4 并把它合并到地址列表首位。
-/// detected 为路由探测得到的主地址（可能不可用），scanned 为网卡扫描结果。
-/// 返回 None 表示没有任何可用地址，调用方应跳过本次发布，避免上报 0.0.0.0。
-fn select_local_ipv4(
-    detected: Option<Ipv4Addr>,
-    scanned: &[Ipv4Addr],
-) -> Option<(Ipv4Addr, Vec<Ipv4Addr>)> {
-    let primary = detected
-        .filter(|ip| !ip.is_unspecified())
-        .or_else(|| scanned.first().copied())?;
-    let mut list: Vec<Ipv4Addr> = scanned.iter().copied().filter(|a| *a != primary).collect();
-    list.insert(0, primary);
-    Some((primary, list))
-}
-
-pub async fn query_udp_public_addr_loop(app_context: AppState, socket_manager: SocketManager) {
+pub async fn query_udp_public_addr_loop(app_context: AppState, puncher: Puncher) {
     let mut udp_stun_servers = app_context.udp_stun();
     if udp_stun_servers.is_empty() {
         udp_stun_servers = default_udp_stun();
     }
     let udp_len = udp_stun_servers.len();
     let mut udp_count = 0;
-    let stun_request = rust_p2p_core::stun::send_stun_request();
+    let stun_request = rustp2p_core::stun::send_stun_request();
     loop {
+        if app_context
+            .get_nat_info()
+            .is_some_and(|info| info.nat_type == NatType::Symmetric)
+        {
+            // NAT type can change while the task is alive. Keep polling so
+            // UDP public-port discovery resumes after returning to Cone NAT.
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            continue;
+        }
         let stun = &udp_stun_servers[udp_count % udp_len];
         udp_count += 1;
         match tokio::net::lookup_host(stun.as_str()).await {
             Ok(mut addr) => {
                 if let Some(addr) = addr.next()
-                    && let Some(w) = socket_manager.udp_socket_manager_as_ref()
-                    && let Err(e) = w.detect_pub_addrs(&stun_request, addr).await
+                    && let Err(e) = puncher.send_to(&stun_request, addr)
                 {
-                    log::info!("detect_pub_addrs {e:?} {addr:?}");
+                    log::info!("send STUN request {e:?} {addr:?}");
                 }
             }
             Err(e) => {
@@ -236,165 +90,207 @@ pub async fn query_udp_public_addr_loop(app_context: AppState, socket_manager: S
 
 pub(crate) async fn query_tcp_public_addr_loop(
     app_context: AppState,
-    socket_manager: SocketManager,
+    local_tcp_port: u16,
+    default_interface: Option<LocalInterface>,
 ) {
     use rand::RngExt;
-    use rand::seq::SliceRandom;
 
-    let tcp_stun_servers = {
-        let servers = app_context.tcp_stun();
-        if servers.is_empty() {
-            default_tcp_stun()
-        } else {
-            servers
-        }
-    };
-
-    if tcp_stun_servers.is_empty() {
+    if local_tcp_port == 0 {
+        log::warn!("P2P TCP listener is disabled; skip TCP public address detection");
         return;
     }
-    log::debug!("tcp_stun_servers = {tcp_stun_servers:?}");
 
-    let stun_request = rust_p2p_core::stun::send_stun_request();
-    let target_conn_count = tcp_stun_servers.len().min(2);
-    let mut active_connections: HashMap<SocketAddr, (TcpStream, SocketAddr)> = HashMap::new();
-
-    'outer: loop {
-        while active_connections.len() < target_conn_count {
-            let mut candidates: Vec<&String> = tcp_stun_servers.iter().collect();
-            candidates.shuffle(&mut rand::rng());
-
-            let mut connected = false;
-            for stun in candidates {
-                let addr = match tokio::net::lookup_host(stun.as_str()).await {
-                    Ok(mut addrs) => addrs.next(),
-                    Err(e) => {
-                        log::debug!("lookup_host failed {stun} {e}");
-                        continue;
-                    }
-                };
-
-                let Some(addr) = addr else {
-                    continue;
-                };
-
-                if active_connections.contains_key(&addr) {
-                    continue;
-                }
-
-                let Some(w) = socket_manager.tcp_socket_manager_as_ref() else {
-                    continue;
-                };
-
-                match tokio::time::timeout(Duration::from_secs(5), w.connect_reuse_port_raw(addr))
-                    .await
-                {
-                    Ok(Ok(mut tcp_stream)) => {
-                        let write_result = tokio::time::timeout(
-                            Duration::from_secs(5),
-                            tcp_stream.write_all(&stun_request),
-                        )
-                        .await;
-
-                        if let Ok(Ok(_)) = write_result {
-                            match stun_tcp_read(&mut tcp_stream).await {
-                                Ok(pub_addr) => {
-                                    log::debug!(
-                                        "update_tcp_public_addr {stun} {addr} -> {pub_addr}"
-                                    );
-
-                                    let existing_pub_addr =
-                                        active_connections.values().next().map(|(_, p)| *p);
-
-                                    if let Some(existing) = existing_pub_addr
-                                        && existing != pub_addr
-                                    {
-                                        log::debug!(
-                                            "pub_addr mismatch: {existing} != {pub_addr}, wait 60s"
-                                        );
-                                        active_connections.clear();
-                                        app_context.nat_info.update_tcp_public_addr(
-                                            SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
-                                        );
-                                        tokio::time::sleep(Duration::from_secs(5 * 60)).await;
-                                        continue 'outer;
-                                    }
-
-                                    active_connections.insert(addr, (tcp_stream, pub_addr));
-                                    connected = true;
-                                    break;
-                                }
-                                Err(e) => {
-                                    log::debug!("stun_tcp_read failed {stun} {addr} {e}");
-                                }
-                            }
-                        } else {
-                            log::debug!("write stun request failed {stun} {addr}");
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        log::debug!("connect_reuse_port_raw failed {stun} {addr} {e}");
-                    }
-                    Err(_) => {
-                        log::debug!("connect_reuse_port_raw timeout {stun} {addr}");
-                    }
-                }
+    let stun_request = rustp2p_core::stun::send_stun_request();
+    loop {
+        let tcp_stun_servers = {
+            let servers = app_context.tcp_stun();
+            if servers.is_empty() {
+                default_tcp_stun()
+            } else {
+                servers
             }
+        };
+        let Some(local_ipv4) = app_context
+            .get_nat_info()
+            .map(|info| info.local_ipv4)
+            .filter(|ip| !ip.is_unspecified())
+        else {
+            log::debug!("local IPv4 is not available for TCP STUN port reuse");
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            continue;
+        };
+        let candidates = resolve_tcp_stun_candidates(&tcp_stun_servers).await;
+        if candidates.len() < 2 {
+            log::warn!("TCP public address detection requires two reachable STUN servers");
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            continue;
+        }
 
-            if !connected {
+        let attempts = candidates.into_iter().map(|(stun, addr)| {
+            connect_tcp_stun(
+                stun,
+                addr,
+                local_tcp_port,
+                local_ipv4,
+                default_interface.as_ref(),
+                &stun_request,
+            )
+        });
+        let results = futures::future::join_all(attempts).await;
+        let mut connections = Vec::with_capacity(2);
+        for result in results {
+            match result {
+                Ok(connection) => connections.push(connection),
+                Err(error) => log::debug!("TCP STUN connection failed: {error}"),
+            }
+        }
+        if connections.len() != 2 {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            continue;
+        }
+
+        let first_public_addr = connections[0].public_addr;
+        let second_public_addr = connections[1].public_addr;
+        if first_public_addr.port() != second_public_addr.port() {
+            log::warn!(
+                "TCP STUN public port mismatch: {first_public_addr} != {second_public_addr}; retry later"
+            );
+            app_context
+                .nat_info
+                .update_tcp_public_addr(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into());
+            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+            continue;
+        }
+        app_context
+            .nat_info
+            .update_tcp_public_addr(first_public_addr);
+
+        loop {
+            let sleep_secs = rand::rng().random_range(10u64..=15);
+            tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+            if !keep_tcp_stun_connections_alive(&mut connections, &stun_request).await {
                 break;
             }
         }
-        let existing_pub_addr = active_connections.values().next().map(|(_, p)| *p);
-        if let Some(existing) = existing_pub_addr {
-            app_context.nat_info.update_tcp_public_addr(existing);
-        }
+    }
+}
 
-        let sleep_secs = rand::rng().random_range(10u64..=15);
-        tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+struct TcpStunConnection {
+    stun: String,
+    remote_addr: SocketAddr,
+    stream: TcpStream,
+    public_addr: SocketAddr,
+}
 
-        let mut to_remove = Vec::new();
-        let addrs: Vec<SocketAddr> = active_connections.keys().cloned().collect();
+async fn resolve_tcp_stun_candidates(servers: &[String]) -> Vec<(String, SocketAddr)> {
+    use rand::seq::SliceRandom;
 
-        for addr in addrs {
-            let Some((tcp_stream, _)) = active_connections.get_mut(&addr) else {
-                continue;
-            };
-            let mut buf = [0u8; 1024];
-
-            match tcp_stream.try_read(&mut buf) {
-                Ok(0) => {
-                    log::warn!("stun tcp close {addr} EOF");
-                    to_remove.push(addr);
-                    continue;
-                }
-                Err(e) if e.kind() != std::io::ErrorKind::WouldBlock => {
-                    log::warn!("stun tcp read error {addr} {e}");
-                    to_remove.push(addr);
-                    continue;
-                }
-                _ => {}
-            }
-
-            match tokio::time::timeout(Duration::from_secs(3), tcp_stream.write_all(&stun_request))
-                .await
-            {
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => {
-                    log::warn!("stun tcp write error {addr} {e}");
-                    to_remove.push(addr);
-                }
-                Err(_) => {
-                    log::warn!("stun tcp write timeout {addr}");
-                    to_remove.push(addr);
+    let mut servers = servers.to_vec();
+    servers.shuffle(&mut rand::rng());
+    let mut remote_addrs = HashSet::new();
+    let mut candidates = Vec::with_capacity(2);
+    for stun in servers {
+        match tokio::net::lookup_host(stun.as_str()).await {
+            Ok(addrs) => {
+                if let Some(addr) = addrs
+                    .filter(SocketAddr::is_ipv4)
+                    .find(|addr| remote_addrs.insert(*addr))
+                {
+                    candidates.push((stun.clone(), addr));
+                    if candidates.len() == 2 {
+                        break;
+                    }
                 }
             }
-        }
-
-        for addr in to_remove {
-            active_connections.remove(&addr);
+            Err(error) => log::debug!("lookup_host failed {stun} {error}"),
         }
     }
+    candidates
+}
+
+async fn connect_tcp_stun(
+    stun: String,
+    remote_addr: SocketAddr,
+    local_tcp_port: u16,
+    local_ipv4: Ipv4Addr,
+    default_interface: Option<&LocalInterface>,
+    stun_request: &[u8],
+) -> io::Result<TcpStunConnection> {
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(5),
+        crate::utils::socket::connect_tcp_reuse_port(
+            remote_addr,
+            local_tcp_port,
+            local_ipv4,
+            default_interface,
+        ),
+    )
+    .await
+    .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+    tokio::time::timeout(Duration::from_secs(5), stream.write_all(stun_request))
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+    let public_addr = stun_tcp_read(&mut stream).await?;
+    log::debug!("TCP STUN {stun} {remote_addr} -> {public_addr}");
+    Ok(TcpStunConnection {
+        stun,
+        remote_addr,
+        stream,
+        public_addr,
+    })
+}
+
+async fn keep_tcp_stun_connections_alive(
+    connections: &mut [TcpStunConnection],
+    stun_request: &[u8],
+) -> bool {
+    for connection in connections {
+        let mut buf = [0u8; 1024];
+        match connection.stream.try_read(&mut buf) {
+            Ok(0) => {
+                log::warn!(
+                    "TCP STUN connection closed: {} {}",
+                    connection.stun,
+                    connection.remote_addr
+                );
+                return false;
+            }
+            Err(error) if error.kind() != io::ErrorKind::WouldBlock => {
+                log::warn!(
+                    "TCP STUN read failed: {} {} {error}",
+                    connection.stun,
+                    connection.remote_addr
+                );
+                return false;
+            }
+            _ => {}
+        }
+        match tokio::time::timeout(
+            Duration::from_secs(3),
+            connection.stream.write_all(stun_request),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                log::warn!(
+                    "TCP STUN write failed: {} {} {error}",
+                    connection.stun,
+                    connection.remote_addr
+                );
+                return false;
+            }
+            Err(_) => {
+                log::warn!(
+                    "TCP STUN write timeout: {} {}",
+                    connection.stun,
+                    connection.remote_addr
+                );
+                return false;
+            }
+        }
+    }
+    true
 }
 
 async fn stun_tcp_read(tcp_stream: &mut TcpStream) -> io::Result<SocketAddr> {
@@ -415,7 +311,7 @@ async fn stun_tcp_read(tcp_stream: &mut TcpStream) -> io::Result<SocketAddr> {
         Ok(rs) => rs?,
         Err(_) => Err(io::Error::from(io::ErrorKind::TimedOut))?,
     };
-    if let Some(addr) = rust_p2p_core::stun::recv_stun_response(&buf) {
+    if let Some(addr) = rustp2p_core::stun::recv_stun_response(&buf) {
         Ok(addr)
     } else {
         log::debug!("stun_tcp_read {buf:?}");
@@ -437,52 +333,4 @@ fn default_tcp_stun() -> Vec<String> {
         "stun.sipnet.net:3478".to_string(),
         "stun.nextcloud.com:443".to_string(),
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ip(s: &str) -> Ipv4Addr {
-        s.parse().unwrap()
-    }
-
-    /// 探测地址有效时：主地址在首位，扫描结果保留
-    #[test]
-    fn test_select_local_ipv4_detected_valid() {
-        let scanned = vec![ip("192.168.1.2"), ip("10.0.0.3")];
-        let (primary, list) = select_local_ipv4(Some(ip("172.16.0.2")), &scanned).unwrap();
-        assert_eq!(primary, ip("172.16.0.2"));
-        assert_eq!(
-            list,
-            vec![ip("172.16.0.2"), ip("192.168.1.2"), ip("10.0.0.3")]
-        );
-    }
-
-    /// 探测失败/0.0.0.0 时：回退到扫描结果首个地址
-    #[test]
-    fn test_select_local_ipv4_fallback_to_scanned() {
-        let scanned = vec![ip("192.168.1.2"), ip("10.0.0.3")];
-        let (primary, list) = select_local_ipv4(None, &scanned).unwrap();
-        assert_eq!(primary, ip("192.168.1.2"));
-        assert_eq!(list, scanned);
-
-        let (primary, _) = select_local_ipv4(Some(Ipv4Addr::UNSPECIFIED), &scanned).unwrap();
-        assert_eq!(primary, ip("192.168.1.2"));
-    }
-
-    /// 探测地址已在扫描结果中时不重复
-    #[test]
-    fn test_select_local_ipv4_no_duplicate() {
-        let scanned = vec![ip("192.168.1.2"), ip("10.0.0.3")];
-        let (_, list) = select_local_ipv4(Some(ip("10.0.0.3")), &scanned).unwrap();
-        assert_eq!(list, vec![ip("10.0.0.3"), ip("192.168.1.2")]);
-    }
-
-    /// 两者皆空：返回 None，调用方跳过发布，不会上报 0.0.0.0
-    #[test]
-    fn test_select_local_ipv4_none_when_empty() {
-        assert!(select_local_ipv4(None, &[]).is_none());
-        assert!(select_local_ipv4(Some(Ipv4Addr::UNSPECIFIED), &[]).is_none());
-    }
 }

@@ -10,7 +10,7 @@ use crate::tunnel_core::server::outbound::ServerOutbound;
 use anyhow::bail;
 use log::error;
 use rand::seq::SliceRandom;
-use rust_p2p_core::punch::{PunchModel, Puncher};
+use rustp2p_core::punch::{PunchModel, Puncher};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -147,8 +147,10 @@ async fn punch_now(
     packet.set_dest_id(dest_ip.into());
     packet.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())?;
     packet_crypto.encrypt_in_place(&mut packet)?;
-    let buf = packet.buffer();
-    let punch_info = rust_p2p_core::punch::PunchInfo::new(PunchModel::all(), nat_info.nat_info);
-    puncher.punch_now(Some(buf), buf, punch_info).await?;
+    let buf = packet.into_buffer().into_bytes().freeze();
+    let punch_info = rustp2p_core::punch::PunchInfo::new(PunchModel::all(), nat_info.nat_info);
+    puncher
+        .punch_now(Some(buf.clone()), buf, punch_info)
+        .await?;
     Ok(())
 }

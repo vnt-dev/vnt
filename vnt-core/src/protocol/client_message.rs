@@ -10,10 +10,10 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use crate::protocol::ProtoToBytesMut;
 pub use proto::*;
 
-pub fn encode_nat_info(nat_info: &rust_p2p_core::nat::NatInfo) -> proto::NatInfo {
+pub fn encode_nat_info(nat_info: &rustp2p_core::nat::NatInfo) -> proto::NatInfo {
     let nat_type = match nat_info.nat_type {
-        rust_p2p_core::nat::NatType::Cone => proto::NatType::Cone,
-        rust_p2p_core::nat::NatType::Symmetric => proto::NatType::Symmetric,
+        rustp2p_core::nat::NatType::Cone => proto::NatType::Cone,
+        rustp2p_core::nat::NatType::Symmetric => proto::NatType::Symmetric,
     };
 
     proto::NatInfo {
@@ -36,10 +36,10 @@ pub fn encode_nat_info(nat_info: &rust_p2p_core::nat::NatInfo) -> proto::NatInfo
         public_tcp_port: nat_info.public_tcp_port.into(),
     }
 }
-pub fn decode_nat_info(msg: proto::NatInfo) -> anyhow::Result<rust_p2p_core::nat::NatInfo> {
+pub fn decode_nat_info(msg: proto::NatInfo) -> anyhow::Result<rustp2p_core::nat::NatInfo> {
     let nat_type = match msg.nat_type() {
-        proto::NatType::Cone => rust_p2p_core::nat::NatType::Cone,
-        proto::NatType::Symmetric => rust_p2p_core::nat::NatType::Symmetric,
+        proto::NatType::Cone => rustp2p_core::nat::NatType::Cone,
+        proto::NatType::Symmetric => rustp2p_core::nat::NatType::Symmetric,
     };
     let ipv6: Option<[u8; 16]> = msg.ipv6.and_then(|v| v.as_slice().try_into().ok());
 
@@ -56,7 +56,7 @@ pub fn decode_nat_info(msg: proto::NatInfo) -> anyhow::Result<rust_p2p_core::nat
     let local_udp_ports: Result<Vec<_>, _> =
         msg.local_udp_ports.into_iter().map(validate_port).collect();
 
-    Ok(rust_p2p_core::nat::NatInfo {
+    Ok(rustp2p_core::nat::NatInfo {
         nat_type,
         public_ips: msg.public_ips.into_iter().map(|v| v.into()).collect(),
         public_udp_ports: public_udp_ports?,
@@ -73,11 +73,12 @@ pub fn decode_nat_info(msg: proto::NatInfo) -> anyhow::Result<rust_p2p_core::nat
         local_udp_ports: local_udp_ports?,
         local_tcp_port: validate_port(msg.local_tcp_port)?,
         public_tcp_port: validate_port(msg.public_tcp_port)?,
+        stun_mapped_ports: vec![],
     })
 }
 #[derive(Clone, Debug)]
 pub struct PunchInfo {
-    pub nat_info: rust_p2p_core::nat::NatInfo,
+    pub nat_info: rustp2p_core::nat::NatInfo,
 }
 
 impl PunchInfo {

@@ -123,7 +123,6 @@ impl NetworkManager {
                     peer_address: config.peer_address.clone(),
                     turn: turn.clone(),
                     default_interface: default_interface.clone(),
-                    outbound_interface_name: canonical_interface_name,
                 },
             )
             .await?;

@@ -8,7 +8,7 @@ use anyhow::Context;
 use bytes::BytesMut;
 use pnet_packet::ip::IpNextHeaderProtocol;
 use pnet_packet::ipv4::Ipv4Packet;
-use rust_p2p_core::socket::LocalInterface;
+use rustp2p_core::socket::LocalInterface;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;

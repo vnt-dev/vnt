@@ -12,7 +12,7 @@ futures.workspace = true
 
 tun-rs = { version = "2", features = ["async", "async_framed"] }
 
-rust-p2p-core = { version="0.4" }
+rustp2p-core = { git = "https://github.com/rustp2p/rustp2p" }
 tcp_ip = "0.2"
 
 anyhow.workspace = true

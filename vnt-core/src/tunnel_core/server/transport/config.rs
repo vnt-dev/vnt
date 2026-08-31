@@ -3,7 +3,7 @@ use crate::tls::verifier::CertValidationMode;
 use anyhow::Context;
 use parking_lot::Mutex;
 use rand::seq::SliceRandom;
-use rust_p2p_core::socket::LocalInterface;
+use rustp2p_core::socket::LocalInterface;
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;

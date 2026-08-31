@@ -3,7 +3,7 @@ use crate::context::{AppState, NetworkAddr, PacketLossInfo, ServerNodeInfo, Traf
 use crate::protocol::control_message::ClientSimpleInfo;
 use crate::tunnel_core::p2p::route_table::Route;
 use crate::tunnel_core::server::rpc::ServerRPC;
-use rust_p2p_core::nat::NatInfo;
+use rustp2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
 
 #[derive(Clone)]

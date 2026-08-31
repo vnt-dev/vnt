@@ -49,7 +49,7 @@ pub(crate) fn create_server_tunnel(
     app_state: AppState,
     config: &Config,
     packet_crypto: PacketCrypto,
-    default_interface: Option<rust_p2p_core::socket::LocalInterface>,
+    default_interface: Option<rustp2p_core::socket::LocalInterface>,
 ) -> (
     Vec<ServerTurnManager>,
     ServerOutbound,

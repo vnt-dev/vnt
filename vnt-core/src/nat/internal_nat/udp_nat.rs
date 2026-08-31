@@ -2,7 +2,7 @@ use crate::utils::task_control::{SubTask, TaskGroup};
 use anyhow::Context;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use rust_p2p_core::socket::LocalInterface;
+use rustp2p_core::socket::LocalInterface;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;

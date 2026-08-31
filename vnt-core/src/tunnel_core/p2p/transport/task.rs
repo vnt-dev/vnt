@@ -13,10 +13,10 @@ use crate::tunnel_core::p2p::transport::nat_test::{
 use crate::tunnel_core::p2p::transport::punch::{PunchTaskContext, punch_task};
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::utils::task_control::TaskGroup;
-use rust_p2p_core::punch::Puncher;
-use rust_p2p_core::route::ConnectProtocol;
-use rust_p2p_core::socket::LocalInterface;
-use rust_p2p_core::tunnel::{Tunnel, TunnelDispatcher, new_tunnel_component};
+use rustp2p_core::endpoint::{Config as TunnelConfig, LengthPrefixedInitCodec, TunnelIncoming};
+use rustp2p_core::punch::Puncher;
+use rustp2p_core::route_table::Protocol;
+use rustp2p_core::socket::LocalInterface;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -28,7 +28,6 @@ pub(crate) struct P2pInitConfig {
     pub peer_address: Vec<PeerAddress>,
     pub turn: Arc<Vec<TurnRule>>,
     pub default_interface: Option<LocalInterface>,
-    pub outbound_interface_name: Option<String>,
 }
 
 pub async fn init_tunnel(
@@ -39,48 +38,35 @@ pub async fn init_tunnel(
     config: P2pInitConfig,
 ) -> anyhow::Result<(Puncher, P2pOutbound, P2pTask)> {
     let tunnel_port = config.tunnel_port.unwrap_or(0);
-    let mut udp_config = rust_p2p_core::tunnel::config::UdpTunnelConfig::default()
-        .set_main_udp_count(2)
-        .set_sub_udp_count(82)
-        .set_simple_udp_port(tunnel_port);
-    let mut tcp_config = rust_p2p_core::tunnel::config::TcpTunnelConfig::new(Box::new(
-        rust_p2p_core::tunnel::tcp::LengthPrefixedInitCodec,
-    ))
-    .set_tcp_multiplexing_limit(2)
-    .set_tcp_port(tunnel_port);
+    let mut tunnel_config = TunnelConfig::new()
+        .udp_port(tunnel_port)
+        .tcp_port(tunnel_port)
+        .tcp_codec(Box::new(LengthPrefixedInitCodec))
+        .max_assistant_sockets(82)
+        .max_udp_datagram_size(4096);
     if let Some(interface) = config.default_interface.clone() {
-        // rust-p2p-core 当前的接口绑定实现针对 IPv4；指定出口网卡时关闭
-        // 未绑定的 IPv6 Socket，避免流量绕过所选网卡。
-        udp_config = udp_config
-            .set_default_interface(interface.clone())
-            .set_use_v6(false);
-        tcp_config = tcp_config
-            .set_default_interface(interface)
-            .set_use_v6(false);
+        tunnel_config = tunnel_config.default_interface(interface);
     }
-    let tunnel_config = rust_p2p_core::tunnel::config::TunnelConfig::empty()
-        .set_udp_tunnel_config(udp_config)
-        .set_tcp_tunnel_config(tcp_config);
-    let (tunnel_dispatcher, puncher) = new_tunnel_component(tunnel_config)?;
+    let tunnel_incoming = TunnelIncoming::bind(tunnel_config).await?;
+    let puncher = tunnel_incoming.puncher();
+    let local_tcp_port = tunnel_incoming.local_tcp_port();
     let route_table = app_state.route_table.clone();
-    let socket_manager = P2pOutbound::new(
-        tunnel_dispatcher.socket_manager(),
-        route_table.clone(),
-        packet_crypto,
-    );
+    let socket_manager = P2pOutbound::new(puncher.clone(), route_table.clone(), packet_crypto);
     if config.automatic_punch {
-        task_group.spawn(my_nat_info(
-            app_state.clone(),
-            tunnel_dispatcher.socket_manager(),
-            config.default_interface,
-            config.outbound_interface_name,
-        ));
-        let manager = tunnel_dispatcher.socket_manager();
+        let nat_app_state = app_state.clone();
+        let nat_puncher = puncher.clone();
+        task_group.spawn(async move {
+            my_nat_info(nat_app_state, nat_puncher).await;
+        });
         task_group.spawn(query_udp_public_addr_loop(
             app_state.clone(),
-            manager.clone(),
+            puncher.clone(),
         ));
-        task_group.spawn(query_tcp_public_addr_loop(app_state.clone(), manager));
+        task_group.spawn(query_tcp_public_addr_loop(
+            app_state.clone(),
+            local_tcp_port,
+            config.default_interface.clone(),
+        ));
     }
 
     task_group.spawn(route_timeout_task(
@@ -127,7 +113,8 @@ pub async fn init_tunnel(
     let p2p_task = P2pTask {
         task_group,
         nat_info: app_state.nat_info.clone(),
-        tunnel_dispatcher,
+        tunnel_incoming,
+        outbound: socket_manager.clone(),
     };
     Ok((puncher, socket_manager, p2p_task))
 }
@@ -136,7 +123,7 @@ async fn direct_peer_probe_task(
     network: SharedNetworkAddr,
     route_table: RouteTable,
     socket_manager: P2pOutbound,
-    protocol: ConnectProtocol,
+    protocol: Protocol,
     address: SocketAddr,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -180,14 +167,16 @@ fn build_direct_peer_probe(
 pub struct P2pTask {
     task_group: TaskGroup,
     nat_info: MyNatInfo,
-    tunnel_dispatcher: TunnelDispatcher,
+    tunnel_incoming: TunnelIncoming,
+    outbound: P2pOutbound,
 }
 impl P2pTask {
     pub fn start(self, p2p_inbound_handler: P2pInboundHandler) {
         self.task_group.spawn(tunnel_dispatch_task(
             self.nat_info,
             self.task_group.clone(),
-            self.tunnel_dispatcher,
+            self.tunnel_incoming,
+            self.outbound,
             p2p_inbound_handler,
         ));
     }
@@ -280,14 +269,14 @@ const RELAY_PROBE_BURST: f64 = 30.0;
 #[derive(Clone, Copy, Debug)]
 struct RelayCandidate {
     ip: Ipv4Addr,
-    route_key: rust_p2p_core::route::RouteKey,
+    route_key: rustp2p_core::route_table::RouteKey,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RelayProbeAction {
     target_ip: Ipv4Addr,
     relay_ip: Ipv4Addr,
-    route_key: rust_p2p_core::route::RouteKey,
+    route_key: rustp2p_core::route_table::RouteKey,
 }
 
 #[derive(Debug)]
@@ -561,54 +550,38 @@ pub async fn relay_probe_task(
 pub async fn tunnel_dispatch_task(
     nat_info: MyNatInfo,
     task_group: TaskGroup,
-    mut tunnel_factory: TunnelDispatcher,
+    mut tunnel_incoming: TunnelIncoming,
+    outbound: P2pOutbound,
     p2p_inbound_handler: P2pInboundHandler,
 ) {
-    loop {
-        let mut tunnel = match tunnel_factory.dispatch().await {
-            Ok(rs) => rs,
-            Err(e) => {
-                log::error!("tunnel disptach :{e:?}");
-                return;
-            }
-        };
-        log::info!("tunnel {:?}-{:?}", tunnel.protocol(), tunnel.remote_addr());
+    while let Some(tunnel) = tunnel_incoming.next().await {
+        let route_key = tunnel.route_key();
+        let protocol = tunnel.protocol();
+        let remote_addr = tunnel.remote_addr();
+        let (mut reader, writer) = tunnel.split();
+        outbound.register_tunnel(route_key, writer.clone());
+        log::info!("tunnel {protocol:?}-{remote_addr:?}");
         let p2p_inbound_handler = p2p_inbound_handler.clone();
         let nat_info = nat_info.clone();
+        let outbound = outbound.clone();
         task_group.spawn(async move {
-            let mut buf = vec![0; 65536];
-            while let Some(rs) = tunnel.recv_from(&mut buf).await {
-                let (len, route_key) = match rs {
-                    Ok(rs) => rs,
-                    Err(e) => {
-                        log::warn!("recv_from {e:?}");
-                        if tunnel.protocol().is_udp() {
-                            continue;
-                        }
-                        break;
-                    }
-                };
-                if tunnel.protocol().is_udp()
-                    && rust_p2p_core::stun::is_stun_response(&buf[..len])
-                    && let Some(pub_addr) = rust_p2p_core::stun::recv_stun_response(&buf[..len])
+            while let Some(buf) = reader.recv().await {
+                if protocol.is_udp()
+                    && rustp2p_core::stun::is_stun_response(&buf)
+                    && let Some(pub_addr) = rustp2p_core::stun::recv_stun_response(&buf)
                 {
-                    nat_info.update_public_addr(route_key.index(), pub_addr);
+                    nat_info.update_public_addr(pub_addr);
                     continue;
                 }
-                let mut bytes = TransmissionBytes::zeroed(len);
-                bytes.copy_from_slice(&buf[..len]);
+                let mut bytes = TransmissionBytes::zeroed(buf.len());
+                bytes.copy_from_slice(&buf);
                 p2p_inbound_handler
-                    .next_handle(bytes, route_key, &mut tunnel)
+                    .next_handle(bytes, route_key, &writer)
                     .await;
             }
-            log::info!(
-                "drop tunnel {:?}-{:?}",
-                tunnel.protocol(),
-                tunnel.remote_addr()
-            );
-            if let Tunnel::Tcp(tcp) = tunnel {
-                p2p_inbound_handler.tcp_disconnect(tcp.route_key()).await;
-            }
+            outbound.remove_tunnel(&route_key);
+            p2p_inbound_handler.tunnel_disconnect(route_key);
+            log::info!("drop tunnel {protocol:?}-{remote_addr:?}");
         });
     }
 }
@@ -621,7 +594,7 @@ mod tests {
         (
             ip,
             vec![crate::tunnel_core::p2p::route_table::Route::from(
-                rust_p2p_core::route::RouteKey::default(),
+                rustp2p_core::route_table::RouteKey::default(),
                 1,
                 10,
             )],
@@ -630,7 +603,7 @@ mod tests {
 
     fn relay_route() -> crate::tunnel_core::p2p::route_table::Route {
         crate::tunnel_core::p2p::route_table::Route::from(
-            rust_p2p_core::route::RouteKey::default(),
+            rustp2p_core::route_table::RouteKey::default(),
             2,
             20,
         )
@@ -708,7 +681,7 @@ mod tests {
                 vec![
                     relay_route(),
                     crate::tunnel_core::p2p::route_table::Route::from(
-                        rust_p2p_core::route::RouteKey::default(),
+                        rustp2p_core::route_table::RouteKey::default(),
                         1,
                         10,
                     ),

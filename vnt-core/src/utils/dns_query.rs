@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 
-use rust_p2p_core::socket::LocalInterface;
+use rustp2p_core::socket::LocalInterface;
 
 pub async fn dns_query_txt(
     domain: &str,
@@ -232,7 +232,7 @@ fn bind_udp(
     } else {
         SocketAddr::from(([0; 8], 0))
     };
-    let socket = rust_p2p_core::socket::bind_udp(addr, default_interface.as_ref())?;
+    let socket = rustp2p_core::socket::bind_udp(addr, default_interface.as_ref())?;
     UdpSocket::from_std(socket.into())
 }
 

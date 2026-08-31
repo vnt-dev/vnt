@@ -1,7 +1,5 @@
 use parking_lot::{Mutex, RwLock};
-use rust_p2p_core::nat::{NatInfo, NatType};
-use rust_p2p_core::route::Index;
-use rust_p2p_core::tunnel::udp::UDPIndex;
+use rustp2p_core::nat::{NatInfo, NatType};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -49,19 +47,19 @@ impl MyNatInfo {
             cb();
         }
     }
-    pub fn update_public_addr(&self, index: Index, addr: SocketAddr) {
+    pub fn update_public_addr(&self, addr: SocketAddr) {
         let (ip, port) = if let Some(r) = mapping_addr(addr) {
             r
         } else {
             return;
         };
-        log::debug!("public_addr:{},{},index={index:?}", ip, port);
+        log::debug!("public_addr:{ip},{port}");
         let changed = {
             let mut guard = self.nat_info.write();
             let Some(info) = guard.as_mut() else {
                 return;
             };
-            if !rust_p2p_core::extend::addr::is_ipv4_global(&ip) {
+            if !rustp2p_core::util::addr::is_ipv4_global(&ip) {
                 log::debug!("not public addr: {addr:?}");
                 return;
             }
@@ -69,21 +67,10 @@ impl MyNatInfo {
             if !info.public_ips.contains(&ip) {
                 info.public_ips.push(ip);
             }
-            match index {
-                Index::Udp(index) => {
-                    let index = match index {
-                        UDPIndex::MainV4(index) => index,
-                        UDPIndex::MainV6(index) => index,
-                        UDPIndex::SubV4(_) => return,
-                    };
-                    if let Some(p) = info.public_udp_ports.get_mut(index) {
-                        *p = port;
-                    }
-                }
-                Index::Tcp(_) => {
-                    info.public_tcp_port = port;
-                }
-                _ => {}
+            if let Some(public_port) = info.public_udp_ports.first_mut() {
+                *public_port = port;
+            } else {
+                info.public_udp_ports.push(port);
             }
             nat_identity_changed(&old, info)
         }; // 写锁在此释放
@@ -107,7 +94,7 @@ impl MyNatInfo {
                 info.public_tcp_port = 0;
                 return;
             }
-            if !rust_p2p_core::extend::addr::is_ipv4_global(&ip) {
+            if !rustp2p_core::util::addr::is_ipv4_global(&ip) {
                 log::debug!("not public addr: {addr:?}");
                 return;
             }
@@ -250,6 +237,7 @@ mod tests {
             local_udp_ports: vec![],
             local_tcp_port: 0,
             public_tcp_port: 0,
+            stun_mapped_ports: vec![],
         }
     }
 
@@ -430,13 +418,13 @@ mod tests {
 
         let addr: SocketAddr = "8.8.8.8:2222".parse().unwrap();
         // 对称 NAT：公网 IP 不变、仅同索引端口更新 → 不触发
-        nat.update_public_addr(Index::Udp(UDPIndex::MainV4(0)), addr);
+        nat.update_public_addr(addr);
         assert_eq!(notified.load(Ordering::SeqCst), 0);
 
         // Cone：端口更新 → 触发
         nat.replace_nat_info(nat_info(NatType::Cone, vec![exit_ip], vec![1000], local));
         assert_eq!(notified.load(Ordering::SeqCst), 1);
-        nat.update_public_addr(Index::Udp(UDPIndex::MainV4(0)), addr);
+        nat.update_public_addr(addr);
         assert_eq!(notified.load(Ordering::SeqCst), 2);
     }
 }

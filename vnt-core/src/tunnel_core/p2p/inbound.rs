@@ -9,8 +9,8 @@ use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
 use anyhow::bail;
-use rust_p2p_core::route::RouteKey;
-use rust_p2p_core::tunnel::Tunnel;
+use rustp2p_core::endpoint::TunnelWriteHalf;
+use rustp2p_core::route_table::RouteKey;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
@@ -95,7 +95,7 @@ impl P2pInboundHandler {
         &self,
         buf: TransmissionBytes,
         route_key: RouteKey,
-        tunnel: &mut Tunnel,
+        tunnel: &TunnelWriteHalf,
     ) {
         if let Err(e) = self.next_handle_impl(buf, route_key, tunnel).await {
             log::warn!(
@@ -108,7 +108,7 @@ impl P2pInboundHandler {
         &self,
         buf: TransmissionBytes,
         route_key: RouteKey,
-        tunnel: &mut Tunnel,
+        tunnel: &TunnelWriteHalf,
     ) -> anyhow::Result<()> {
         let mut net_packet = NetPacket::new(buf)?;
         let _ = net_packet.msg_type()?;
@@ -163,7 +163,7 @@ impl P2pInboundHandler {
         &self,
         net: &crate::context::NetworkAddr,
         route_key: RouteKey,
-        tunnel: &mut Tunnel,
+        tunnel: &TunnelWriteHalf,
         mut net_packet: NetPacket<TransmissionBytes>,
     ) -> anyhow::Result<()> {
         if net_packet.msg_type()? != MsgType::Quic {
@@ -178,7 +178,7 @@ impl P2pInboundHandler {
         &self,
         net: &crate::context::NetworkAddr,
         route_key: RouteKey,
-        tunnel: &mut Tunnel,
+        tunnel: &TunnelWriteHalf,
         net_packet: NetPacket<TransmissionBytes>,
     ) -> anyhow::Result<()> {
         let msg_type = net_packet.msg_type()?;
@@ -208,7 +208,7 @@ impl P2pInboundHandler {
         &self,
         net: &crate::context::NetworkAddr,
         route_key: RouteKey,
-        tunnel: &mut Tunnel,
+        tunnel: &TunnelWriteHalf,
         net_packet: NetPacket<TransmissionBytes>,
         ctx: &PacketContext,
     ) -> anyhow::Result<()> {
@@ -235,9 +235,7 @@ impl P2pInboundHandler {
                 packet.set_dest_id(ctx.src_ip.into());
                 packet.set_payload(net_packet.payload())?;
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
-                tunnel
-                    .send_to(packet.into_bytes().into_buffer(), route_key.addr())
-                    .await?;
+                tunnel.send(packet.into_bytes().into_buffer()).await?;
             }
             MsgType::Pong => {
                 if net_packet.payload().len() >= 8 {
@@ -274,7 +272,7 @@ impl P2pInboundHandler {
                     );
                     return Ok(());
                 }
-                if let IpAddr::V4(ip) = route_key.addr().ip()
+                if let IpAddr::V4(ip) = route_key.peer_addr().ip()
                     && self.network_contains(&ip)
                 {
                     log::info!("===========loop PunchReq {route_key:?} {:?}", ctx.src_ip);
@@ -294,9 +292,7 @@ impl P2pInboundHandler {
                 )?;
 
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
-                tunnel
-                    .send_to(packet.into_bytes().into_buffer(), route_key.addr())
-                    .await?;
+                tunnel.send(packet.into_bytes().into_buffer()).await?;
             }
             MsgType::PunchRes => {
                 if !allow_punch(&self.turn, &ctx.src_ip) {
@@ -310,7 +306,7 @@ impl P2pInboundHandler {
                     );
                     return Ok(());
                 }
-                if let IpAddr::V4(ip) = route_key.addr().ip()
+                if let IpAddr::V4(ip) = route_key.peer_addr().ip()
                     && self.network_contains(&ip)
                 {
                     log::info!("===========loop PunchRes {route_key:?} {:?}", ctx.src_ip);
@@ -344,9 +340,7 @@ impl P2pInboundHandler {
                     self.packet_crypto.encrypt_reserve(),
                 )?;
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
-                tunnel
-                    .send_to(packet.into_bytes().into_buffer(), route_key.addr())
-                    .await?;
+                tunnel.send(packet.into_bytes().into_buffer()).await?;
             }
             MsgType::DirectConnectRes => {
                 if !valid_punch_source(net, ctx.src_ip) {
@@ -389,9 +383,7 @@ impl P2pInboundHandler {
                 packet.set_src_id(ctx.dest_ip.into());
                 packet.set_dest_id(ctx.src_ip.into());
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
-                tunnel
-                    .send_to(packet.into_bytes().into_buffer(), route_key.addr())
-                    .await?;
+                tunnel.send(packet.into_bytes().into_buffer()).await?;
             }
             MsgType::RelayProbeReply => {
                 if !valid_relay_probe(net, ctx) {
@@ -413,16 +405,24 @@ impl P2pInboundHandler {
         Ok(())
     }
 
-    pub async fn tcp_disconnect(&self, route_key: RouteKey) {
-        if let Some(ip) = self.route_table.get_id_by_route_key(&route_key) {
-            self.route_table.remove_route(&ip, &route_key);
-        }
+    pub fn tunnel_disconnect(&self, route_key: RouteKey) {
+        cleanup_tunnel_routes(&self.route_table, &self.packet_loss_stats, &route_key);
     }
+}
+
+fn cleanup_tunnel_routes(
+    route_table: &RouteTable,
+    packet_loss_stats: &PacketLossStats,
+    route_key: &RouteKey,
+) {
+    let removed = route_table.remove_route_key(route_key);
+    packet_loss_stats.remove_batch(&removed);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustp2p_core::route_table::Protocol;
 
     fn network() -> NetworkAddr {
         NetworkAddr {
@@ -493,5 +493,38 @@ mod tests {
         ] {
             assert!(!valid_relay_probe(&net, &invalid));
         }
+    }
+
+    #[test]
+    fn tunnel_cleanup_removes_all_packet_loss_stats_for_the_route_key() {
+        let route_table = RouteTable::new();
+        let packet_loss_stats = PacketLossStats::default();
+        let direct = Ipv4Addr::new(10, 26, 0, 3);
+        let relayed = Ipv4Addr::new(10, 26, 0, 4);
+        let route_key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2000".parse().unwrap(),
+            "127.0.0.1:3000".parse().unwrap(),
+        );
+
+        route_table.add_owner_route(direct, route_key);
+        route_table.add_relay_route(relayed, Route::from_default_rt(route_key, 2));
+        packet_loss_stats.record_sent(direct, route_key);
+        packet_loss_stats.record_sent(relayed, route_key);
+
+        cleanup_tunnel_routes(&route_table, &packet_loss_stats, &route_key);
+
+        assert!(!route_table.exists(&direct));
+        assert!(!route_table.exists(&relayed));
+        assert!(
+            packet_loss_stats
+                .get_loss_info(&direct, &route_key)
+                .is_none()
+        );
+        assert!(
+            packet_loss_stats
+                .get_loss_info(&relayed, &route_key)
+                .is_none()
+        );
     }
 }
