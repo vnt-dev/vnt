@@ -110,6 +110,12 @@ pub(crate) async fn query_tcp_public_addr_loop(
                 servers
             }
         };
+        let target_count = tcp_stun_servers.len().min(2);
+        if target_count == 0 {
+            log::warn!("TCP STUN server list is empty");
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            continue;
+        }
         let Some(local_ipv4) = app_context
             .get_nat_info()
             .map(|info| info.local_ipv4)
@@ -119,9 +125,11 @@ pub(crate) async fn query_tcp_public_addr_loop(
             tokio::time::sleep(Duration::from_secs(30)).await;
             continue;
         };
-        let candidates = resolve_tcp_stun_candidates(&tcp_stun_servers).await;
-        if candidates.len() < 2 {
-            log::warn!("TCP public address detection requires two reachable STUN servers");
+        let candidates = resolve_tcp_stun_candidates(&tcp_stun_servers, target_count).await;
+        if candidates.len() < target_count {
+            log::warn!(
+                "TCP public address detection requires {target_count} reachable STUN server(s)"
+            );
             tokio::time::sleep(Duration::from_secs(30)).await;
             continue;
         }
@@ -137,33 +145,35 @@ pub(crate) async fn query_tcp_public_addr_loop(
             )
         });
         let results = futures::future::join_all(attempts).await;
-        let mut connections = Vec::with_capacity(2);
+        let mut connections = Vec::with_capacity(target_count);
         for result in results {
             match result {
                 Ok(connection) => connections.push(connection),
                 Err(error) => log::debug!("TCP STUN connection failed: {error}"),
             }
         }
-        if connections.len() != 2 {
+        if connections.len() != target_count {
             tokio::time::sleep(Duration::from_secs(30)).await;
             continue;
         }
 
-        let first_public_addr = connections[0].public_addr;
-        let second_public_addr = connections[1].public_addr;
-        if first_public_addr.port() != second_public_addr.port() {
+        let Some(public_addr) =
+            matching_tcp_public_addr(connections.iter().map(|connection| connection.public_addr))
+        else {
+            let public_addrs = connections
+                .iter()
+                .map(|connection| connection.public_addr)
+                .collect::<Vec<_>>();
             log::warn!(
-                "TCP STUN public port mismatch: {first_public_addr} != {second_public_addr}; retry later"
+                "TCP STUN public address mismatch: {public_addrs:?}; disable TCP punching and retry later"
             );
             app_context
                 .nat_info
                 .update_tcp_public_addr(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into());
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
             continue;
-        }
-        app_context
-            .nat_info
-            .update_tcp_public_addr(first_public_addr);
+        };
+        app_context.nat_info.update_tcp_public_addr(public_addr);
 
         loop {
             let sleep_secs = rand::rng().random_range(10u64..=15);
@@ -171,6 +181,10 @@ pub(crate) async fn query_tcp_public_addr_loop(
             if !keep_tcp_stun_connections_alive(&mut connections, &stun_request).await {
                 break;
             }
+            // NAT classification periodically replaces NatInfo and initializes
+            // its TCP mapping to zero. Reapply the address while the validated
+            // STUN connection set is still healthy.
+            app_context.nat_info.update_tcp_public_addr(public_addr);
         }
     }
 }
@@ -182,7 +196,10 @@ struct TcpStunConnection {
     public_addr: SocketAddr,
 }
 
-async fn resolve_tcp_stun_candidates(servers: &[String]) -> Vec<(String, SocketAddr)> {
+async fn resolve_tcp_stun_candidates(
+    servers: &[String],
+    target_count: usize,
+) -> Vec<(String, SocketAddr)> {
     use rand::seq::SliceRandom;
 
     let mut servers = servers.to_vec();
@@ -197,7 +214,7 @@ async fn resolve_tcp_stun_candidates(servers: &[String]) -> Vec<(String, SocketA
                     .find(|addr| remote_addrs.insert(*addr))
                 {
                     candidates.push((stun.clone(), addr));
-                    if candidates.len() == 2 {
+                    if candidates.len() == target_count {
                         break;
                     }
                 }
@@ -206,6 +223,16 @@ async fn resolve_tcp_stun_candidates(servers: &[String]) -> Vec<(String, SocketA
         }
     }
     candidates
+}
+
+fn matching_tcp_public_addr(
+    public_addrs: impl IntoIterator<Item = SocketAddr>,
+) -> Option<SocketAddr> {
+    let mut public_addrs = public_addrs.into_iter();
+    let first = public_addrs.next()?;
+    public_addrs
+        .all(|public_addr| public_addr == first)
+        .then_some(first)
 }
 
 async fn connect_tcp_stun(
@@ -333,4 +360,46 @@ fn default_tcp_stun() -> Vec<String> {
         "stun.sipnet.net:3478".to_string(),
         "stun.nextcloud.com:443".to_string(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matching_tcp_public_addr;
+    use std::net::SocketAddr;
+
+    #[test]
+    fn one_tcp_stun_result_is_usable() {
+        let public_addrs = ["1.1.1.1:10000".parse::<SocketAddr>().unwrap()];
+        assert_eq!(
+            matching_tcp_public_addr(public_addrs),
+            Some("1.1.1.1:10000".parse::<SocketAddr>().unwrap())
+        );
+    }
+
+    #[test]
+    fn two_matching_tcp_stun_results_are_usable() {
+        let public_addrs = [
+            "1.1.1.1:10000".parse::<SocketAddr>().unwrap(),
+            "1.1.1.1:10000".parse::<SocketAddr>().unwrap(),
+        ];
+        assert_eq!(
+            matching_tcp_public_addr(public_addrs),
+            Some("1.1.1.1:10000".parse::<SocketAddr>().unwrap())
+        );
+    }
+
+    #[test]
+    fn tcp_stun_ip_or_port_mismatch_is_unusable() {
+        let ip_mismatch = [
+            "1.1.1.1:10000".parse::<SocketAddr>().unwrap(),
+            "2.2.2.2:10000".parse::<SocketAddr>().unwrap(),
+        ];
+        assert_eq!(matching_tcp_public_addr(ip_mismatch), None);
+
+        let port_mismatch = [
+            "1.1.1.1:10000".parse::<SocketAddr>().unwrap(),
+            "1.1.1.1:20000".parse::<SocketAddr>().unwrap(),
+        ];
+        assert_eq!(matching_tcp_public_addr(port_mismatch), None);
+    }
 }
