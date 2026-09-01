@@ -1,3 +1,4 @@
+pub(crate) mod addr;
 pub mod device_id;
 pub(crate) mod dns_query;
 pub(crate) mod socket;

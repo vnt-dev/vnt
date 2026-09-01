@@ -145,7 +145,7 @@ impl ConnectRegConfig {
             v => (v, self.server_addr.address.to_string()),
         };
         // DNS 只负责解析 IP，端口由调用方从地址中解析后自行拼装
-        let (host, port) = split_host_port(&server_domain)?;
+        let (host, port) = crate::utils::addr::split_host_port(&server_domain)?;
         let ip =
             crate::utils::dns_query::dns_query_one(host, &vec![], &self.default_interface).await?;
         Ok(ConnectConfig {
@@ -174,39 +174,6 @@ fn parse_dynamic_txt(txt: &str) -> (ProtocolType, &str) {
     } else {
         (ProtocolType::TlsTcp, txt)
     }
-}
-
-/// 将 server 地址拆分为 host 与端口。
-/// host 返回格式与旧的 strip_port 一致（IPv6 去掉方括号），
-/// 端口由调用方使用，DNS 查询只负责解析 IP。
-fn split_host_port(addr: &str) -> anyhow::Result<(&str, u16)> {
-    if let Some(stripped) = addr.strip_prefix('[') {
-        let pos = stripped
-            .find(']')
-            .ok_or_else(|| anyhow::Error::msg(format!("invalid server address: {addr}")))?;
-        let port = stripped[pos + 1..]
-            .strip_prefix(':')
-            .and_then(|p| p.parse().ok())
-            .ok_or_else(|| anyhow::Error::msg(format!("server address has no port: {addr}")))?;
-        return Ok((&stripped[..pos], port));
-    }
-
-    if addr.contains(':') && !addr.contains('.') && addr.matches(':').count() > 1 {
-        return Err(anyhow::Error::msg(format!(
-            "server address has no port: {addr}"
-        )));
-    }
-
-    if let Some((host, port)) = addr.rsplit_once(':') {
-        let port = port
-            .parse()
-            .map_err(|_| anyhow::Error::msg(format!("invalid server address: {addr}")))?;
-        return Ok((host, port));
-    }
-
-    Err(anyhow::Error::msg(format!(
-        "server address has no port: {addr}"
-    )))
 }
 impl ConnectConfig {
     pub fn server_addr(&self) -> SocketAddr {

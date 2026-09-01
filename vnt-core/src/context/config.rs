@@ -6,9 +6,10 @@ use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAd
 use anyhow::bail;
 use ipnet::Ipv4Net;
 use rustp2p_core::route_table::Protocol;
+use rustp2p_core::socket::LocalInterface;
 use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 
 pub const MAX_NETWORK_CODE_LEN: usize = 32;
@@ -101,7 +102,10 @@ pub enum PeerProtocol {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PeerAddress {
     protocol: PeerProtocol,
-    address: SocketAddr,
+    /// host 为 IP 字面量或域名；IPv6 存储时不含方括号。
+    /// 域名不做解析时解析，由调用方在使用时解析出 SocketAddr。
+    host: String,
+    port: u16,
 }
 
 impl PeerAddress {
@@ -109,18 +113,34 @@ impl PeerAddress {
         self.protocol
     }
 
-    pub fn address(&self) -> SocketAddr {
-        self.address
-    }
-
-    pub(crate) fn endpoints(&self) -> Vec<(Protocol, SocketAddr)> {
-        match self.protocol {
-            PeerProtocol::Both => {
-                vec![(Protocol::TCP, self.address), (Protocol::UDP, self.address)]
+    /// 在使用时解析出实际地址：
+    /// - IP 字面量直接使用
+    /// - 域名通过 DNS 查询解析（A/AAAA），解析失败返回错误
+    pub(crate) async fn endpoints(
+        &self,
+        default_interface: &Option<LocalInterface>,
+    ) -> anyhow::Result<Vec<(Protocol, SocketAddr)>> {
+        let addrs = if let Ok(ip) = self.host.parse::<IpAddr>() {
+            vec![SocketAddr::new(ip, self.port)]
+        } else {
+            crate::utils::dns_query::dns_query_all(&self.host, &vec![], default_interface)
+                .await?
+                .into_iter()
+                .map(|ip| SocketAddr::new(ip, self.port))
+                .collect::<Vec<_>>()
+        };
+        let mut endpoints = Vec::with_capacity(addrs.len() * 2);
+        for addr in addrs {
+            match self.protocol {
+                PeerProtocol::Both => {
+                    endpoints.push((Protocol::TCP, addr));
+                    endpoints.push((Protocol::UDP, addr));
+                }
+                PeerProtocol::Tcp => endpoints.push((Protocol::TCP, addr)),
+                PeerProtocol::Udp => endpoints.push((Protocol::UDP, addr)),
             }
-            PeerProtocol::Tcp => vec![(Protocol::TCP, self.address)],
-            PeerProtocol::Udp => vec![(Protocol::UDP, self.address)],
         }
+        Ok(endpoints)
     }
 }
 
@@ -139,22 +159,31 @@ impl FromStr for PeerAddress {
         } else {
             (PeerProtocol::Both, value)
         };
-        let address = address
-            .parse::<SocketAddr>()
+        // 此处只拆分 host 与端口，不做 DNS 解析；域名在使用时解析出地址
+        let (host, port) = crate::utils::addr::split_host_port(address)
             .map_err(|error| anyhow::anyhow!("invalid peer address '{value}': {error}"))?;
-        if address.port() == 0 {
+        if port == 0 {
             bail!("invalid peer address '{value}': port must not be 0")
         }
-        Ok(Self { protocol, address })
+        Ok(Self {
+            protocol,
+            host: host.to_string(),
+            port,
+        })
     }
 }
 
 impl Display for PeerAddress {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let address = if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        };
         match self.protocol {
-            PeerProtocol::Both => write!(f, "{}", self.address),
-            PeerProtocol::Tcp => write!(f, "tcp://{}", self.address),
-            PeerProtocol::Udp => write!(f, "udp://{}", self.address),
+            PeerProtocol::Both => write!(f, "{address}"),
+            PeerProtocol::Tcp => write!(f, "tcp://{address}"),
+            PeerProtocol::Udp => write!(f, "udp://{address}"),
         }
     }
 }
@@ -344,13 +373,13 @@ mod tests {
         assert_eq!(DeviceMode::default(), DeviceMode::Tun);
     }
 
-    #[test]
-    fn peer_address_parse_and_display() {
+    #[tokio::test]
+    async fn peer_address_parse_and_display() {
         let both = " 127.0.0.1:29872 ".parse::<PeerAddress>().unwrap();
         assert_eq!(both.protocol(), PeerProtocol::Both);
-        assert_eq!(both.address(), "127.0.0.1:29872".parse().unwrap());
         assert_eq!(both.to_string(), "127.0.0.1:29872");
-        let endpoints = both.endpoints();
+        // IP 字面量在使用时直接构建 endpoint，无需 DNS
+        let endpoints = both.endpoints(&None).await.unwrap();
         assert_eq!(endpoints.len(), 2);
         assert!(endpoints.iter().any(|(protocol, _)| protocol.is_tcp()));
         assert!(endpoints.iter().any(|(protocol, _)| protocol.is_udp()));
@@ -365,12 +394,26 @@ mod tests {
     }
 
     #[test]
+    fn peer_address_supports_domain_without_resolving() {
+        // 域名只做 host:port 拆分，解析时不做 DNS
+        let domain = "peer.example.com:29872".parse::<PeerAddress>().unwrap();
+        assert_eq!(domain.protocol(), PeerProtocol::Both);
+        assert_eq!(domain.to_string(), "peer.example.com:29872");
+
+        let tcp = "tcp://peer.example.com:29873"
+            .parse::<PeerAddress>()
+            .unwrap();
+        assert_eq!(tcp.to_string(), "tcp://peer.example.com:29873");
+    }
+
+    #[test]
     fn peer_address_rejects_invalid_values() {
         for value in [
             "quic://127.0.0.1:29872",
-            "example.com:29872",
             "127.0.0.1",
+            "example.com",
             "127.0.0.1:0",
+            "example.com:0",
         ] {
             assert!(
                 value.parse::<PeerAddress>().is_err(),
