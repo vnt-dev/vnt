@@ -253,6 +253,8 @@ pub async fn route_timeout_task(route_table: RouteTable, packet_loss_stats: Pack
     }
 }
 
+/// 隧道读空闲超时:超过该时长未收到对端数据则回收隧道
+const TUNNEL_READ_TIMEOUT: Duration = Duration::from_secs(20);
 const RELAY_ROUTE_TARGET: usize = 3;
 const RELAY_TARGETS_PER_BATCH: usize = 10;
 const RELAY_PROBES_PER_TARGET: usize = 3;
@@ -568,7 +570,16 @@ pub async fn tunnel_dispatch_task(
         let nat_info = nat_info.clone();
         let outbound = outbound.clone();
         task_group.spawn(async move {
-            while let Some(buf) = reader.recv().await {
+            loop {
+                // 超过空闲超时仍未收到数据时回收隧道，避免任务与连接长期驻留
+                let buf = match tokio::time::timeout(TUNNEL_READ_TIMEOUT, reader.recv()).await {
+                    Ok(Some(buf)) => buf,
+                    Ok(None) => break,
+                    Err(_) => {
+                        log::debug!("tunnel {protocol:?}-{remote_addr:?} read idle timeout");
+                        break;
+                    }
+                };
                 if protocol.is_udp()
                     && rustp2p_core::stun::is_stun_response(&buf)
                     && let Some(pub_addr) = rustp2p_core::stun::recv_stun_response(&buf)

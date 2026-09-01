@@ -29,7 +29,12 @@ impl Route {
     }
     pub fn from_with_loss(route_key: RouteKey, metric: u8, rtt: u32, loss_rate: u16) -> Self {
         let is_relay = metric > 1;
-        let score = get_channel_score(rtt, loss_rate as u32, is_relay, route_key.protocol().is_tcp());
+        let score = get_channel_score(
+            rtt,
+            loss_rate as u32,
+            is_relay,
+            route_key.protocol().is_tcp(),
+        );
         Self {
             route_key,
             metric,
