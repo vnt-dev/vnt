@@ -587,10 +587,8 @@ pub async fn tunnel_dispatch_task(
                     nat_info.update_public_addr(pub_addr);
                     continue;
                 }
-                let mut bytes = TransmissionBytes::zeroed(buf.len());
-                bytes.copy_from_slice(&buf);
                 p2p_inbound_handler
-                    .next_handle(bytes, route_key, &writer)
+                    .next_handle(buf.into(), route_key, &writer)
                     .await;
             }
             outbound.remove_tunnel(&route_key);
