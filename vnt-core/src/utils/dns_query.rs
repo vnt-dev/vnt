@@ -2,7 +2,7 @@ use anyhow::{Context, anyhow};
 use dns_parser::{Builder, Packet, QueryClass, QueryType, RData, ResponseCode};
 use rand::seq::SliceRandom;
 use std::io;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -42,11 +42,11 @@ pub async fn dns_query_one(
     domain: &str,
     name_servers: &Vec<String>,
     default_interface: &Option<LocalInterface>,
-) -> anyhow::Result<SocketAddr> {
+) -> anyhow::Result<IpAddr> {
     let mut vec = dns_query_all(domain, name_servers, default_interface).await?;
     if default_interface.is_some() {
         // 出口网卡绑定目前应用于 IPv4 Socket；优先且只使用可绑定的 IPv4 地址。
-        vec.retain(SocketAddr::is_ipv4);
+        vec.retain(IpAddr::is_ipv4);
     }
     vec.shuffle(&mut rand::rng());
     vec.pop().context("DNS query failed")
@@ -55,34 +55,29 @@ pub async fn dns_query_all(
     domain: &str,
     name_servers: &Vec<String>,
     default_interface: &Option<LocalInterface>,
-) -> anyhow::Result<Vec<SocketAddr>> {
-    match SocketAddr::from_str(domain) {
+) -> anyhow::Result<Vec<IpAddr>> {
+    match IpAddr::from_str(domain) {
         Ok(addr) => Ok(vec![addr]),
         Err(_) => {
             if name_servers.is_empty() {
-                let addrs: Vec<SocketAddr> = tokio::net::lookup_host(domain)
+                let addrs: Vec<IpAddr> = tokio::net::lookup_host(domain)
                     .await
                     .map_err(|e| io::Error::other(format!("DNS query failed: {domain:?},{e:?}")))?
+                    .map(|addr| addr.ip())
                     .collect();
                 return Ok(addrs);
             }
 
             let mut err: Option<io::Error> = None;
             for name_server in name_servers {
-                let end_index = domain
-                    .rfind(':')
-                    .ok_or_else(|| io::Error::other(format!("not port: {domain:?}")))?;
-                let host = &domain[..end_index];
-                let port = u16::from_str(&domain[end_index + 1..])
-                    .map_err(|_| io::Error::other(format!("not port: {domain:?}")))?;
                 let th1 = {
-                    let host = host.to_string();
+                    let host = domain.to_string();
                     let name_server = name_server.clone();
                     let default_interface = default_interface.clone();
                     tokio::spawn(a_dns(host, name_server, default_interface.clone()))
                 };
                 let th2 = {
-                    let host = host.to_string();
+                    let host = domain.to_string();
                     let name_server = name_server.clone();
                     let default_interface = default_interface.clone();
                     tokio::spawn(aaaa_dns(host, name_server, default_interface.clone()))
@@ -91,7 +86,7 @@ pub async fn dns_query_all(
                 match th1.await? {
                     Ok(rs) => {
                         for ip in rs {
-                            addr.push(SocketAddr::new(ip.into(), port));
+                            addr.push(IpAddr::V4(ip));
                         }
                     }
                     Err(e) => {
@@ -101,7 +96,7 @@ pub async fn dns_query_all(
                 match th2.await? {
                     Ok(rs) => {
                         for ip in rs {
-                            addr.push(SocketAddr::new(ip.into(), port));
+                            addr.push(IpAddr::V6(ip));
                         }
                     }
                     Err(e) => {
