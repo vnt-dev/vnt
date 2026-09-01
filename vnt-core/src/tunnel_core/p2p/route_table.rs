@@ -18,7 +18,7 @@ pub struct Route {
 impl Route {
     pub fn from(route_key: RouteKey, metric: u8, rtt: u32) -> Self {
         let is_relay = metric > 1;
-        let score = get_channel_score(rtt, 0, is_relay);
+        let score = get_channel_score(rtt, 0, is_relay, route_key.protocol().is_tcp());
         Self {
             route_key,
             metric,
@@ -29,7 +29,7 @@ impl Route {
     }
     pub fn from_with_loss(route_key: RouteKey, metric: u8, rtt: u32, loss_rate: u16) -> Self {
         let is_relay = metric > 1;
-        let score = get_channel_score(rtt, loss_rate as u32, is_relay);
+        let score = get_channel_score(rtt, loss_rate as u32, is_relay, route_key.protocol().is_tcp());
         Self {
             route_key,
             metric,
@@ -40,7 +40,7 @@ impl Route {
     }
     pub fn from_default_rt(route_key: RouteKey, metric: u8) -> Self {
         let is_relay = metric > 1;
-        let score = get_channel_score(DEFAULT_RTT, 0, is_relay);
+        let score = get_channel_score(DEFAULT_RTT, 0, is_relay, route_key.protocol().is_tcp());
         Self {
             route_key,
             metric,
@@ -76,15 +76,18 @@ impl Route {
 /// - `rtt`: 往返时延（毫秒）
 /// - `loss_v`: 丢包率（万分率，0-10000）
 /// - `is_relay`: 是否为中继路由
+/// - `is_tcp`: 是否为 TCP 路由，TCP 权重略高，使同质量下 TCP 评分稍高
 ///
 /// # 返回
 /// 评分值，越高表示路由质量越好
-pub fn get_channel_score(rtt: u32, loss_v: u32, is_relay: bool) -> u32 {
+pub fn get_channel_score(rtt: u32, loss_v: u32, is_relay: bool, is_tcp: bool) -> u32 {
     let rtt = rtt.max(1);
     let loss_v = loss_v.min(10000);
 
     // 权重配置
-    let weight = if is_relay { 100 } else { 120 };
+    let base_weight = if is_relay { 100 } else { 120 };
+    // TCP 权重略高（+5），质量相当时优先选择 TCP 路由
+    let weight = if is_tcp { base_weight + 5 } else { base_weight };
     let k_adj = 10; // 丢包惩罚系数
 
     // 用 u64 计算避免溢出：分母最大 rtt * 110000，rtt > 约39s 时 u32 溢出
@@ -356,14 +359,26 @@ mod tests {
     /// rtt 极大（>39s）时分母不能 u32 溢出（debug 构建下溢出会 panic）
     #[test]
     fn test_get_channel_score_large_rtt_no_overflow() {
-        let score = get_channel_score(u32::MAX, 0, false);
+        let score = get_channel_score(u32::MAX, 0, false, false);
         assert_eq!(score, 0);
-        let score = get_channel_score(u32::MAX, 10000, true);
+        let score = get_channel_score(u32::MAX, 10000, true, true);
         assert_eq!(score, 0);
         // 正常值结果与预期一致：低 rtt 零丢包得分高
-        let good = get_channel_score(10, 0, false);
-        let bad = get_channel_score(1000, 5000, true);
+        let good = get_channel_score(10, 0, false, false);
+        let bad = get_channel_score(1000, 5000, true, false);
         assert!(good > bad);
+    }
+
+    /// tcp 路由在相同质量下评分略高于 udp
+    #[test]
+    fn tcp_scores_slightly_higher_than_udp() {
+        let udp = get_channel_score(50, 0, false, false);
+        let tcp = get_channel_score(50, 0, false, true);
+        assert!(tcp > udp);
+        // 中继路由同样生效
+        let udp_relay = get_channel_score(50, 0, true, false);
+        let tcp_relay = get_channel_score(50, 0, true, true);
+        assert!(tcp_relay > udp_relay);
     }
 
     #[test]
