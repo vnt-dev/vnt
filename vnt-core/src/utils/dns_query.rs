@@ -1,6 +1,5 @@
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use dns_parser::{Builder, Packet, QueryClass, QueryType, RData, ResponseCode};
-use rand::seq::SliceRandom;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::str::FromStr;
@@ -37,19 +36,6 @@ pub async fn dns_query_txt(
     } else {
         Err(io::Error::other(format!("DNS query failed {domain:?}")))
     }
-}
-pub async fn dns_query_one(
-    domain: &str,
-    name_servers: &Vec<String>,
-    default_interface: &Option<LocalInterface>,
-) -> anyhow::Result<IpAddr> {
-    let mut vec = dns_query_all(domain, name_servers, default_interface).await?;
-    if default_interface.is_some() {
-        // 出口网卡绑定目前应用于 IPv4 Socket；优先且只使用可绑定的 IPv4 地址。
-        vec.retain(IpAddr::is_ipv4);
-    }
-    vec.shuffle(&mut rand::rng());
-    vec.pop().context("DNS query failed")
 }
 pub async fn dns_query_all(
     domain: &str,

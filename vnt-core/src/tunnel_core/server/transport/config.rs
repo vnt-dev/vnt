@@ -1,6 +1,6 @@
 use crate::protocol::control_message::{RegRequestMsg, RegistrationMode};
 use crate::tls::verifier::CertValidationMode;
-use anyhow::Context;
+use anyhow::bail;
 use parking_lot::Mutex;
 use rand::seq::SliceRandom;
 use rustp2p_core::socket::LocalInterface;
@@ -127,9 +127,12 @@ impl ConnectRegConfig {
             registration_mode,
         }
     }
-    pub async fn to_connect_config(&self) -> anyhow::Result<ConnectConfig> {
-        let (protocol_type, server_domain) = match self.server_addr.protocol_type {
+    /// 解析出全部候选服务器地址：每条 TXT 动态记录（或静态地址）解析出的
+    /// 每个 IP 对应一个 ConnectConfig，调用方逐个尝试连接直到成功。
+    pub async fn to_connect_config(&self) -> anyhow::Result<Vec<ConnectConfig>> {
+        let server_domains: Vec<(ProtocolType, String)> = match self.server_addr.protocol_type {
             ProtocolType::Dynamic => {
+                // 动态发现：TXT 记录可能给出多个 (协议, 域名)
                 let mut txt = crate::utils::dns_query::dns_query_txt(
                     &self.server_addr.address,
                     vec![],
@@ -137,24 +140,55 @@ impl ConnectRegConfig {
                 )
                 .await?;
                 txt.shuffle(&mut rand::rng());
-                let x = txt.first().context("DNS query failed")?;
-                let x = x.to_lowercase();
-                let (protocol_type, domain) = parse_dynamic_txt(&x);
-                (protocol_type, domain.to_owned())
+                txt.into_iter()
+                    .map(|x| {
+                        let x = x.to_lowercase();
+                        let (protocol_type, domain) = parse_dynamic_txt(&x);
+                        (protocol_type, domain.to_owned())
+                    })
+                    .collect()
             }
-            v => (v, self.server_addr.address.to_string()),
+            v => vec![(v, self.server_addr.address.to_string())],
         };
-        // DNS 只负责解析 IP，端口由调用方从地址中解析后自行拼装
-        let (host, port) = crate::utils::addr::split_host_port(&server_domain)?;
-        let ip =
-            crate::utils::dns_query::dns_query_one(host, &vec![], &self.default_interface).await?;
-        Ok(ConnectConfig {
-            protocol_type,
-            server_addr: SocketAddr::new(ip, port),
-            server_domain: host.to_owned(),
-            cert_mode: self.cert_mode.clone(),
-            default_interface: self.default_interface.clone(),
-        })
+
+        let mut connect_configs = Vec::new();
+        for (protocol_type, server_domain) in server_domains {
+            // DNS 只负责解析 IP，端口由调用方从地址中解析后自行拼装
+            let (host, port) = match crate::utils::addr::split_host_port(&server_domain) {
+                Ok(v) => v,
+                Err(error) => {
+                    log::warn!("invalid server address {server_domain:?}: {error:#}");
+                    continue;
+                }
+            };
+            let addrs = match crate::utils::dns_query::dns_query_all(
+                host,
+                &vec![],
+                &self.default_interface,
+            )
+            .await
+            {
+                Ok(addrs) => addrs,
+                Err(error) => {
+                    log::warn!("DNS query failed for {host:?}: {error:#}");
+                    continue;
+                }
+            };
+            connect_configs.extend(addrs.into_iter().map(|ip| ConnectConfig {
+                protocol_type,
+                server_addr: SocketAddr::new(ip, port),
+                server_domain: host.to_owned(),
+                cert_mode: self.cert_mode.clone(),
+                default_interface: self.default_interface.clone(),
+            }));
+        }
+        if connect_configs.is_empty() {
+            bail!(
+                "no server address resolved for {}",
+                self.server_addr.address
+            );
+        }
+        Ok(connect_configs)
     }
 }
 /// 解析动态 DNS TXT 记录中的协议前缀。

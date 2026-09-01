@@ -14,7 +14,9 @@ use crate::tunnel_core::server::inbound::{IpUpdateContext, ServerTurnInboundHand
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::tunnel_core::server::rpc::{RpcNotifier, ServerRPC};
 use crate::tunnel_core::server::transport::TransportClient;
-use crate::tunnel_core::server::transport::config::{ConnectRegConfig, SharedRegistrationIp};
+use crate::tunnel_core::server::transport::config::{
+    ConnectConfig, ConnectRegConfig, SharedRegistrationIp,
+};
 use crate::utils::task_control::TaskGroup;
 use anyhow::bail;
 use bytes::Bytes;
@@ -125,18 +127,44 @@ impl ServerTurnManager {
         &mut self,
         mode: RegistrationMode,
     ) -> anyhow::Result<ResponseMessage> {
-        let connect_config = self.config.to_connect_config().await?;
+        // 域名/动态发现可能解析出多个候选地址，逐个尝试直到有能连上的。
+        // 连接成功不代表地址可用，注册请求/响应也纳入本次尝试，
+        // 任何一步失败都切换下一个地址
+        let connect_configs = self.config.to_connect_config().await?;
+        let mut last_error: Option<anyhow::Error> = None;
+        for connect_config in &connect_configs {
+            match self.try_connect_and_reg(connect_config, mode).await {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    log::warn!(
+                        "server[{}] {} connect/register failed: {error:#}",
+                        self.server_id,
+                        connect_config.server_addr()
+                    );
+                    self.disconnect();
+                    last_error = Some(error);
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::Error::msg("no server address to connect")))
+    }
+
+    /// 对一个候选地址执行完整的「连接 → 注册 → 等待响应」流程。
+    /// 只有注册响应成功收到才算该地址可用，任何一步失败都返回错误。
+    async fn try_connect_and_reg(
+        &mut self,
+        connect_config: &ConnectConfig,
+        mode: RegistrationMode,
+    ) -> anyhow::Result<ResponseMessage> {
         log::info!(
             "Connecting to server[{}] {:?} with mode {:?}",
             self.server_id,
             connect_config,
             mode,
         );
-
         self.transport_client
-            .connect_timeout(&connect_config, Duration::from_secs(10))
+            .connect_timeout(connect_config, Duration::from_secs(10))
             .await?;
-
         let reg_msg = self.config.reg_msg_request(self.server_id, mode);
         let request_msg = RequestMessage::Reg(reg_msg);
         let encoded = request_msg.encode();

@@ -65,26 +65,37 @@ pub(crate) fn resolve_interface(name: Option<&str>) -> anyhow::Result<Option<Res
 }
 
 pub(crate) trait SocketTrait {
-    fn set_ip_unicast_if(&self, _interface: &LocalInterface) -> io::Result<()> {
+    fn set_ip_unicast_if(&self, _interface: &LocalInterface, _is_ipv6: bool) -> io::Result<()> {
         Ok(())
     }
 }
 
 #[cfg(target_os = "windows")]
 impl SocketTrait for Socket {
-    fn set_ip_unicast_if(&self, interface: &LocalInterface) -> io::Result<()> {
+    fn set_ip_unicast_if(&self, interface: &LocalInterface, is_ipv6: bool) -> io::Result<()> {
         use std::os::windows::io::AsRawSocket;
         use windows_sys::Win32::Networking::WinSock::{
-            IP_UNICAST_IF, IPPROTO_IP, SOCKET_ERROR, htonl, setsockopt,
+            IP_UNICAST_IF, IPPROTO_IP, IPPROTO_IPV6, IPV6_UNICAST_IF, SOCKET_ERROR, htonl,
+            setsockopt,
         };
 
         let raw_socket = self.as_raw_socket();
+        // Windows 的 IPv4 接口索引用网络字节序，IPV6_UNICAST_IF 用主机字节序
+        let best_interface = if is_ipv6 {
+            interface.index
+        } else {
+            unsafe { htonl(interface.index) }
+        };
+        let (level, option) = if is_ipv6 {
+            (IPPROTO_IPV6, IPV6_UNICAST_IF)
+        } else {
+            (IPPROTO_IP, IP_UNICAST_IF)
+        };
         let result = unsafe {
-            let best_interface = htonl(interface.index);
             setsockopt(
                 raw_socket as usize,
-                IPPROTO_IP,
-                IP_UNICAST_IF,
+                level,
+                option,
                 &best_interface as *const _ as *const u8,
                 std::mem::size_of_val(&best_interface) as i32,
             )
@@ -98,15 +109,20 @@ impl SocketTrait for Socket {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl SocketTrait for Socket {
-    fn set_ip_unicast_if(&self, interface: &LocalInterface) -> io::Result<()> {
+    fn set_ip_unicast_if(&self, interface: &LocalInterface, _is_ipv6: bool) -> io::Result<()> {
         self.bind_device(Some(interface.name.as_bytes()))
     }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 impl SocketTrait for Socket {
-    fn set_ip_unicast_if(&self, interface: &LocalInterface) -> io::Result<()> {
-        self.bind_device_by_index_v4(std::num::NonZeroU32::new(interface.index))
+    fn set_ip_unicast_if(&self, interface: &LocalInterface, is_ipv6: bool) -> io::Result<()> {
+        let index = std::num::NonZeroU32::new(interface.index);
+        if is_ipv6 {
+            self.bind_device_by_index_v6(index)
+        } else {
+            self.bind_device_by_index_v4(index)
+        }
     }
 }
 
@@ -116,10 +132,10 @@ impl SocketTrait for Socket {}
 pub(crate) fn bind_socket_to_interface(
     socket: &Socket,
     interface: Option<&LocalInterface>,
-    is_ipv4: bool,
+    is_ipv6: bool,
 ) -> io::Result<()> {
-    if is_ipv4 && let Some(interface) = interface {
-        socket.set_ip_unicast_if(interface)?;
+    if let Some(interface) = interface {
+        socket.set_ip_unicast_if(interface, is_ipv6)?;
     }
     Ok(())
 }
@@ -137,11 +153,9 @@ pub(crate) async fn connect_tcp(
     interface: Option<&LocalInterface>,
 ) -> io::Result<tokio::net::TcpStream> {
     let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
-    bind_socket_to_interface(
-        &socket,
-        interface,
-        addr.is_ipv4() && !addr.ip().is_loopback(),
-    )?;
+    if !addr.ip().is_loopback() {
+        bind_socket_to_interface(&socket, interface, addr.is_ipv6())?;
+    }
     socket.set_nonblocking(true)?;
     socket.set_tcp_nodelay(true)?;
 
@@ -186,11 +200,10 @@ pub(crate) async fn connect_tcp_reuse_port(
         ));
     }
     let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
-    bind_socket_to_interface(
-        &socket,
-        interface,
-        addr.is_ipv4() && !addr.ip().is_loopback(),
-    )?;
+    // 该路径仅用于 IPv4（上方已拦截），绑定传输族为 IPv4
+    if !addr.ip().is_loopback() {
+        bind_socket_to_interface(&socket, interface, false)?;
+    }
     socket.set_reuse_address(true)?;
     #[cfg(unix)]
     socket.set_reuse_port(true)?;

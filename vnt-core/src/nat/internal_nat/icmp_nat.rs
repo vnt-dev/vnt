@@ -36,7 +36,7 @@ pub async fn start_icmp_nat(
     crate::utils::socket::bind_socket_to_interface(
         &net_icmp_socket,
         default_interface.as_ref(),
-        true,
+        false,
     )
     .context("bind ICMP socket to outbound interface failed")?;
     let addr: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
