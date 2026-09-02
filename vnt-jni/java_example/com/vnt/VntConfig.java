@@ -18,6 +18,7 @@ public class VntConfig {
     private final List<String> inputRoutes;
     private final List<String> subnetMappings;
     private final List<String> outputRoutes;
+    private final boolean autoSyncSubnet;
     private final String networkCode;
     private final String password;
     private final String deviceId;
@@ -46,6 +47,7 @@ public class VntConfig {
         this.inputRoutes = builder.inputRoutes;
         this.subnetMappings = builder.subnetMappings;
         this.outputRoutes = builder.outputRoutes;
+        this.autoSyncSubnet = builder.autoSyncSubnet;
         this.networkCode = builder.networkCode;
         this.password = builder.password;
         this.deviceId = builder.deviceId;
@@ -121,6 +123,7 @@ public class VntConfig {
         json.put("no_nat", noNat);
         json.put("device_mode", deviceMode);
         json.put("allow_mapping", allowMapping);
+        json.put("auto_sync_subnet", autoSyncSubnet);
 
         // 数组
         if (!portMapping.isEmpty()) {
@@ -167,6 +170,7 @@ public class VntConfig {
         private List<String> inputRoutes = new ArrayList<>();
         private List<String> subnetMappings = new ArrayList<>();
         private List<String> outputRoutes = new ArrayList<>();
+        private boolean autoSyncSubnet = false;
         private String networkCode;
         private String password;
         private String deviceId;
@@ -218,6 +222,12 @@ public class VntConfig {
         /** 添加点对网入口路由，格式：映射CIDR,出口节点虚拟IP。 */
         public Builder addInputRoute(String route) {
             this.inputRoutes.add(route);
+            return this;
+        }
+
+        /** 自动获取并应用其他在线节点的出口子网。 */
+        public Builder setAutoSyncSubnet(boolean autoSyncSubnet) {
+            this.autoSyncSubnet = autoSyncSubnet;
             return this;
         }
 

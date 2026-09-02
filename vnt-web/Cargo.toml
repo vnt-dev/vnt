@@ -17,7 +17,6 @@ anyhow.workspace = true
 log.workspace = true
 ipnet.workspace = true
 hostname.workspace = true
-route_manager.workspace = true
 toml.workspace = true
 rust-embed = "8.0"
 mime_guess = "2.0"

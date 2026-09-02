@@ -39,6 +39,7 @@ pub struct InboundHandlerConfig {
     pub enhanced_inbound: EnhancedInbound,
     pub fec_decoder: FecDecoder,
     pub turn: Arc<Vec<TurnRule>>,
+    pub auto_sync_subnet: bool,
 }
 
 pub struct ServerTurnManager {
@@ -48,6 +49,7 @@ pub struct ServerTurnManager {
     notifier: RpcNotifier,
     transport_client: TransportClient,
     event_script: EventScript,
+    subnet_sync_supported: bool,
 }
 pub(crate) fn create_server_tunnel(
     app_state: AppState,
@@ -117,6 +119,7 @@ impl ServerTurnManager {
             receiver: Some(receiver),
             notifier,
             event_script,
+            subnet_sync_supported: false,
         }
     }
     pub fn disconnect(&mut self) {
@@ -175,6 +178,10 @@ impl ServerTurnManager {
             .next_timeout(Duration::from_secs(10))
             .await?;
         let response = ResponseMessage::from_slice(&buf)?;
+        self.subnet_sync_supported = matches!(
+            &response,
+            ResponseMessage::Reg(reg) if reg.subnet_sync_supported
+        );
         match &response {
             ResponseMessage::Reg(_) => {}
             ResponseMessage::Error(_e) => {
@@ -217,6 +224,7 @@ impl ServerTurnManager {
         config: Box<InboundHandlerConfig>,
     ) {
         let data_handler = ServerTurnInboundHandler::new(self.server_id, config);
+        data_handler.set_subnet_sync_supported(self.subnet_sync_supported);
         let Some(mut receiver) = self.receiver.take() else {
             unreachable!()
         };
@@ -237,6 +245,7 @@ impl ServerTurnManager {
                     };
                     match &msg {
                         ResponseMessage::Reg(reg) => {
+                            data_handler.set_subnet_sync_supported(reg.subnet_sync_supported);
                             let Some(current_network) = data_handler.network_addr() else {
                                 log::error!("客户端当前虚拟网络状态不存在，5秒后重试");
                                 self.disconnect();
@@ -317,6 +326,11 @@ impl ServerTurnManager {
     ) -> anyhow::Result<()> {
         let mut time = crate::utils::time::now_ts_ms();
         let mut ping_interval = tokio::time::interval(Duration::from_secs(5));
+        let mut subnet_sync_interval = tokio::time::interval_at(
+            tokio::time::Instant::now() + Duration::from_secs(10),
+            Duration::from_secs(10),
+        );
+        subnet_sync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 Some((buf,expired)) = receiver.recv() => {
@@ -338,6 +352,9 @@ impl ServerTurnManager {
                         bail!("timeout")
                     }
                     data_handler.handle_ping(&mut self.transport_client,now).await?;
+                }
+                _ = subnet_sync_interval.tick() => {
+                    data_handler.handle_subnet_sync(&mut self.transport_client).await?;
                 }
                 else => {
                     bail!("receiver closed");

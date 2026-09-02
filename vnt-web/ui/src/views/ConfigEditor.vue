@@ -566,6 +566,15 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 <label :class="toggleLabelClass">
                   <div class="flex-1">
                     <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      自动同步节点子网 <ConfigHelp :help="configHelp.auto_sync_subnet" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">自动应用其他在线节点的出口网段</div>
+                  </div>
+                  <input v-model="formData.auto_sync_subnet" type="checkbox" :class="checkboxClass" />
+                </label>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
                       关闭内置NAT <ConfigHelp :help="configHelp.no_nat" />
                     </div>
                     <div class="text-xs text-slate-400 mt-0.5">使用系统网卡转发</div>

@@ -282,6 +282,8 @@ pub struct StartConfig {
     #[serde(default)]
     pub output: Vec<Ipv4Net>,
     #[serde(default)]
+    pub auto_sync_subnet: bool,
+    #[serde(default)]
     pub no_nat: bool,
     #[serde(default)]
     pub device_mode: DeviceMode,
@@ -953,7 +955,6 @@ async fn start_vnt_network(
     task_group: vnt_core::utils::task_control::TaskGroup,
     task_group_guard: vnt_core::utils::task_control::TaskGroupGuard,
 ) -> anyhow::Result<()> {
-    let sub_input = core_config.input.clone();
     let mut network_manager =
         NetworkManager::create_network(Box::new(core_config), task_group.clone())
             .await
@@ -1025,26 +1026,6 @@ async fn start_vnt_network(
             .await
             .with_context(|| format!("设置 {} 虚拟网卡 IP 失败", mode))?;
         state.record_log(&file_name, "设置 IP 成功");
-
-        // 配置子网路由
-        if !sub_input.is_empty()
-            && let Ok(if_index) = network_manager.device_if_index().await
-            && let Ok(mut route_manager) = route_manager::RouteManager::new()
-        {
-            state.record_log(&file_name, "配置子网路由");
-            for input in &sub_input {
-                let route =
-                    route_manager::Route::new(input.net.network().into(), input.net.prefix_len())
-                        .with_gateway(input.target_ip.into())
-                        .with_if_index(if_index);
-
-                if let Err(e) = route_manager.add(&route) {
-                    log::error!("add route [{route}] error: {e:?}");
-                } else {
-                    log::info!("add route [{route}] successful");
-                }
-            }
-        }
     } else {
         state.record_log(&file_name, "device_mode=no，不创建虚拟网卡");
     }
@@ -1489,6 +1470,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         input: cfg.input,
         subnet_mapping: cfg.subnet_mapping,
         output: cfg.output,
+        auto_sync_subnet: cfg.auto_sync_subnet,
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
         mtu: cfg.mtu,
@@ -1822,6 +1804,7 @@ mod tests {
             input: Vec::new(),
             subnet_mapping: Vec::new(),
             output: Vec::new(),
+            auto_sync_subnet: false,
             no_nat: false,
             // 默认无网卡，避免无关用例意外触发 tun_name 冲突
             device_mode: DeviceMode::No,
@@ -1887,11 +1870,13 @@ network_code = "test"
         let mut config = new_test_config();
         config.subnet_mapping = vec!["192.168.2.2/32,192.168.1.3/32".parse().unwrap()];
         config.output = vec!["192.168.1.0/24".parse().unwrap()];
+        config.auto_sync_subnet = true;
         let mut core = convert_config(config).unwrap();
         assert_eq!(
             core.subnet_mapping[0].to_string(),
             "192.168.2.2/32,192.168.1.3/32"
         );
+        assert!(core.auto_sync_subnet);
         core.normalize().unwrap();
     }
 

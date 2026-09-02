@@ -41,6 +41,7 @@ struct RegistrationContext {
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
     turn: std::sync::Arc<Vec<crate::context::config::TurnRule>>,
+    auto_sync_subnet: bool,
 }
 
 pub struct NetworkManager {
@@ -55,6 +56,8 @@ pub struct NetworkManager {
     server_rpc: ServerRPC,
     tun_receiver: Option<TunReceiver>,
     registration_context: Option<Box<RegistrationContext>>,
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    system_routes_started: std::sync::atomic::AtomicBool,
 }
 pub enum RegisterResponse {
     Success(NetworkAddr),
@@ -277,6 +280,7 @@ impl NetworkManager {
             enhanced_inbound,
             fec_decoder,
             turn,
+            auto_sync_subnet: config.auto_sync_subnet,
         });
 
         app_state.set_config(config.clone());
@@ -293,6 +297,8 @@ impl NetworkManager {
             server_rpc,
             tun_receiver,
             registration_context: Some(registration_context),
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+            system_routes_started: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -388,6 +394,7 @@ impl NetworkManager {
                 enhanced_inbound: ctx.enhanced_inbound.clone(),
                 fec_decoder: ctx.fec_decoder.clone(),
                 turn: ctx.turn.clone(),
+                auto_sync_subnet: ctx.auto_sync_subnet,
             });
             turn_manager.data_handle_task_connected(task_group, handler_config);
         }
@@ -457,6 +464,29 @@ impl NetworkManager {
             .map(|network| (network.ip, network.prefix_len))
             .unwrap_or((ip, prefix_len));
         self.device_io_manager.set_network(ip, prefix_len).await?;
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+        if !self
+            .system_routes_started
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            let if_index = self.device_if_index().await?;
+            if self
+                .system_routes_started
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                crate::system_subnet_routes::start(
+                    &self.task_group,
+                    self.app_state.subnet_route.subscribe(),
+                    if_index,
+                );
+            }
+        }
         // 网卡设置成功（应用 IP）后触发事件脚本
         if let Some(network) = self.app_state.get_network() {
             let server = self

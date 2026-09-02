@@ -10,7 +10,8 @@ use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
-    ClientSimpleInfoList, FastRegRequestMsg, RequestMessage, ResponseMessage,
+    ClientSimpleInfoList, FastRegRequestMsg, RequestMessage, ResponseMessage, SubnetSyncResponse,
+    encode_subnet_sync_request,
 };
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::rpc_message::RpcMessageResponse;
@@ -308,6 +309,7 @@ pub(crate) struct ServerTurnInboundHandler {
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
     turn: Arc<Vec<TurnRule>>,
+    auto_sync_subnet: bool,
 }
 impl ServerTurnInboundHandler {
     pub fn new(
@@ -329,6 +331,7 @@ impl ServerTurnInboundHandler {
             enhanced_inbound: config.enhanced_inbound,
             fec_decoder: config.fec_decoder,
             turn: config.turn,
+            auto_sync_subnet: config.auto_sync_subnet,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -449,6 +452,12 @@ impl ServerTurnInboundHandler {
                     );
                 }
             },
+            MsgType::SubnetSyncRes if self.auto_sync_subnet => {
+                let response = SubnetSyncResponse::from_slice(net_packet.payload())?;
+                self.server_info
+                    .update_subnet_snapshot(self.server_id, response);
+                self.refresh_automatic_subnet_routes(network_addr.ip);
+            }
             _ => {}
         }
         Ok(())
@@ -637,6 +646,27 @@ impl ServerTurnInboundHandler {
             .await?;
         Ok(())
     }
+
+    pub async fn handle_subnet_sync(
+        &self,
+        transport_client: &mut TransportClient,
+    ) -> anyhow::Result<()> {
+        if self.auto_sync_subnet
+            && let Some(known_hash) = self.server_info.subnet_sync_request_hash(self.server_id)
+        {
+            let payload = encode_subnet_sync_request(&known_hash);
+            let mut packet =
+                NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH + payload.len()))?;
+            packet.set_ttl(1);
+            packet.set_msg_type(MsgType::SubnetSyncReq);
+            packet.set_gateway_flag(true);
+            packet.set_payload(&payload)?;
+            transport_client
+                .send(packet.into_buffer().into_bytes().freeze())
+                .await?;
+        }
+        Ok(())
+    }
     pub fn handle_connected(&self) {
         self.server_info.set_server_connected(self.server_id, true);
         self.server_info
@@ -646,6 +676,10 @@ impl ServerTurnInboundHandler {
     pub fn set_server_version(&self, version: String) {
         self.server_info.set_server_version(self.server_id, version);
     }
+    pub fn set_subnet_sync_supported(&self, supported: bool) {
+        self.server_info
+            .set_subnet_sync_supported(self.server_id, supported);
+    }
     pub fn network_addr(&self) -> Option<NetworkAddr> {
         self.network_route.network.get()
     }
@@ -654,6 +688,17 @@ impl ServerTurnInboundHandler {
             self.server_info
                 .set_disconnected_time(self.server_id, Some(crate::utils::time::now_ts_ms()));
         }
+        if let Some(network) = self.network_route.network.get() {
+            self.refresh_automatic_subnet_routes(network.ip);
+        }
+    }
+
+    fn refresh_automatic_subnet_routes(&self, self_ip: Ipv4Addr) {
+        let static_routes = self.network_route.subnet_route.static_routes();
+        let routes = self
+            .server_info
+            .automatic_subnet_routes(self_ip, &static_routes);
+        self.network_route.subnet_route.set_automatic_routes(routes);
     }
 }
 

@@ -1,6 +1,7 @@
 use crate::protocol::control_message::{RegRequestMsg, RegistrationMode};
 use crate::tls::verifier::CertValidationMode;
 use anyhow::bail;
+use ipnet::Ipv4Net;
 use parking_lot::Mutex;
 use rand::seq::SliceRandom;
 use rustp2p_core::socket::LocalInterface;
@@ -37,6 +38,7 @@ pub(crate) struct ConnectRegConfig {
     pub ip: SharedRegistrationIp,
     pub key_sign: Option<String>,
     pub ip_variable: bool,
+    pub advertised_subnets: Arc<Vec<Ipv4Net>>,
     pub default_interface: Option<LocalInterface>,
 }
 #[derive(Debug, Clone)]
@@ -128,6 +130,7 @@ impl ConnectRegConfig {
             ip_variable: self.ip_variable,
             server_id,
             registration_mode,
+            advertised_subnets: self.advertised_subnets.as_ref().clone(),
         }
     }
     /// 解析出全部候选服务器地址：动态地址（DNS TXT 记录或 http(s) 接口返回的
@@ -259,6 +262,7 @@ mod tests {
             ip: shared_ip.clone(),
             key_sign: None,
             ip_variable: true,
+            advertised_subnets: Arc::new(Vec::new()),
             default_interface: None,
         };
 

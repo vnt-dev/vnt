@@ -16,6 +16,7 @@ export const emptyFormData = () => ({
   input: [],
   subnet_mapping: [],
   output: [],
+  auto_sync_subnet: false,
   no_nat: false,
   device_mode: "tun",
   port_mapping: [],
@@ -100,6 +101,8 @@ export const parseTomlToForm = (toml) => {
         const items = match[1].match(/"([^"]*)"/g);
         if (items) data.subnet_mapping = items.map((s) => s.replace(/"/g, ""));
       }
+    } else if (trimmed.match(/^auto_sync_subnet\s*=/)) {
+      data.auto_sync_subnet = trimmed.includes("true");
     } else if (trimmed.match(/^no_nat\s*=/)) {
       data.no_nat = trimmed.includes("true");
     } else if (trimmed.match(/^no_tun\s*=/)) {
@@ -249,6 +252,11 @@ export const formToToml = (formData) => {
     toml += `subnet_mapping = [${subnetMappings.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
+  if (formData.auto_sync_subnet) {
+    toml += "\n# 自动获取并应用其他在线节点的出口子网\n";
+    toml += "auto_sync_subnet = true\n";
+  }
+
   if (formData.no_nat) {
     toml += "\n# 是否关闭内置子网NAT，关闭后需要配置网卡转发，否则无法使用点对网\n";
     toml += "# 通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好\n";
@@ -380,6 +388,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 出栈允许网段，用于点对网，允许指定网段的转发
 # output = ["0.0.0.0/0"]
+
+# 是否自动获取并应用其他在线节点的出口子网
+# auto_sync_subnet = false
 
 # 是否关闭内置子网NAT，关闭(设为true)后需要配置网卡转发，否则无法使用点对网。通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好
 # no_nat = false

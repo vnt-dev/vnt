@@ -2,7 +2,9 @@ use crate::context::config::Config;
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::nat::SubnetExternalRoute;
 use crate::protocol::client_message::PunchInfo;
-use crate::protocol::control_message::{ClientSimpleInfo, ClientSimpleInfoList};
+use crate::protocol::control_message::{
+    ClientSimpleInfo, ClientSimpleInfoList, SubnetSyncResponse,
+};
 use crate::tunnel_core::p2p::route_table::RouteTable;
 use crate::tunnel_core::server::transport::config::ProtocolAddress;
 use ipnet::Ipv4Net;
@@ -406,6 +408,9 @@ pub struct ServerNodeInfo {
     pub last_connected_time: Option<i64>,
     pub disconnected_time: Option<i64>,
     pub server_version: Option<String>,
+    pub subnet_sync_supported: bool,
+    pub subnet_snapshot_hash: Vec<u8>,
+    pub subnet_nodes: HashMap<Ipv4Addr, Vec<Ipv4Net>>,
 }
 impl ServerInfoCollection {
     pub fn server_client_ip_map(&self) -> HashMap<u32, (Vec<Ipv4Addr>, u32)> {
@@ -505,6 +510,68 @@ impl ServerInfoCollection {
             .map(|v| v.data_version)
             .unwrap_or(0)
     }
+    pub fn subnet_sync_request_hash(&self, server_id: u32) -> Option<Vec<u8>> {
+        self.server_node_map
+            .read()
+            .get(&server_id)
+            .filter(|server| server.connected && server.subnet_sync_supported)
+            .map(|server| server.subnet_snapshot_hash.clone())
+    }
+    pub fn set_subnet_sync_supported(&self, server_id: u32, supported: bool) {
+        let mut guard = self.server_node_map.write();
+        let server = guard.entry(server_id).or_default();
+        server.subnet_sync_supported = supported;
+        if !supported {
+            server.subnet_snapshot_hash.clear();
+            server.subnet_nodes.clear();
+        }
+    }
+    pub fn update_subnet_snapshot(&self, server_id: u32, response: SubnetSyncResponse) {
+        let mut guard = self.server_node_map.write();
+        let server = guard.entry(server_id).or_default();
+        server.subnet_snapshot_hash = response.snapshot_hash;
+        server.subnet_nodes = response
+            .nodes
+            .into_iter()
+            .map(|node| (node.ip, node.subnets))
+            .collect();
+    }
+    pub fn automatic_subnet_routes(
+        &self,
+        self_ip: Ipv4Addr,
+        static_routes: &[crate::nat::NetInput],
+    ) -> Vec<crate::nat::NetInput> {
+        let guard = self.server_node_map.read();
+        let mut declarations = Vec::<(Ipv4Addr, Ipv4Net)>::new();
+        for server in guard.values().filter(|server| server.connected) {
+            for (ip, subnets) in &server.subnet_nodes {
+                if *ip == self_ip {
+                    continue;
+                }
+                for subnet in subnets {
+                    if !declarations.contains(&(*ip, *subnet)) {
+                        declarations.push((*ip, *subnet));
+                    }
+                }
+            }
+        }
+        declarations
+            .sort_by_key(|(ip, net)| (u32::from(*ip), u32::from(net.network()), net.prefix_len()));
+
+        let mut claimed = std::collections::HashSet::<Ipv4Net>::new();
+        declarations
+            .into_iter()
+            // Sorting by node IP above makes an identical CIDR prefer the
+            // smallest node. Different overlapping CIDRs remain valid LPM entries.
+            .filter(|(_, subnet)| {
+                claimed.insert(*subnet)
+                    && !static_routes
+                        .iter()
+                        .any(|route| ipv4_nets_overlap(route.net, *subnet))
+            })
+            .map(|(target_ip, net)| crate::nat::NetInput { net, target_ip })
+            .collect()
+    }
     pub fn update_client_simple_list(
         &self,
         server_id: u32,
@@ -551,6 +618,10 @@ impl ServerInfoCollection {
         let server_node = mutex_guard.entry(server_id).or_default();
         let old = server_node.connected;
         server_node.connected = val;
+        if !val {
+            server_node.subnet_snapshot_hash.clear();
+            server_node.subnet_nodes.clear();
+        }
         old
     }
     pub fn is_any_server_connected(&self, server_ids: Option<&[u32]>) -> bool {
@@ -632,7 +703,101 @@ impl ServerInfoCollection {
             server_node.client_map.clear();
             server_node.last_connected_time = None;
             server_node.disconnected_time = None;
+            server_node.subnet_sync_supported = false;
+            server_node.subnet_snapshot_hash.clear();
+            server_node.subnet_nodes.clear();
         }
+    }
+}
+
+fn ipv4_nets_overlap(left: Ipv4Net, right: Ipv4Net) -> bool {
+    left.contains(&right.network()) || right.contains(&left.network())
+}
+
+#[cfg(test)]
+mod subnet_sync_tests {
+    use super::ServerInfoCollection;
+    use crate::nat::NetInput;
+    use crate::protocol::control_message::{NodeSubnetRoutes, SubnetSyncResponse};
+    use crate::tunnel_core::server::transport::config::ProtocolAddress;
+
+    #[test]
+    fn overlaps_are_kept_and_exact_duplicates_prefer_smallest_node_ip() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![
+            (0, ProtocolAddress::default()),
+            (1, ProtocolAddress::default()),
+        ]);
+        servers.set_server_connected(0, true);
+        servers.set_server_connected(1, true);
+        servers.update_subnet_snapshot(
+            0,
+            SubnetSyncResponse {
+                snapshot_hash: vec![1],
+                nodes: vec![NodeSubnetRoutes {
+                    ip: "10.26.0.2".parse().unwrap(),
+                    subnets: vec![
+                        "192.168.0.0/24".parse().unwrap(),
+                        "172.16.0.0/24".parse().unwrap(),
+                    ],
+                }],
+            },
+        );
+        servers.update_subnet_snapshot(
+            1,
+            SubnetSyncResponse {
+                snapshot_hash: vec![2],
+                nodes: vec![NodeSubnetRoutes {
+                    ip: "10.26.0.4".parse().unwrap(),
+                    subnets: vec![
+                        "192.168.0.0/25".parse().unwrap(),
+                        "192.168.0.0/24".parse().unwrap(),
+                    ],
+                }],
+            },
+        );
+
+        let routes = servers.automatic_subnet_routes("10.26.0.3".parse().unwrap(), &[]);
+        assert_eq!(routes.len(), 3);
+        let duplicate = routes
+            .iter()
+            .find(|route| route.net == "192.168.0.0/24".parse().unwrap())
+            .unwrap();
+        assert_eq!(
+            duplicate.target_ip,
+            "10.26.0.2".parse::<std::net::Ipv4Addr>().unwrap()
+        );
+        assert!(
+            routes
+                .iter()
+                .any(|route| route.net == "192.168.0.0/25".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn static_routes_override_whole_overlapping_automatic_declarations() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![(0, ProtocolAddress::default())]);
+        servers.set_server_connected(0, true);
+        servers.update_subnet_snapshot(
+            0,
+            SubnetSyncResponse {
+                snapshot_hash: vec![1],
+                nodes: vec![NodeSubnetRoutes {
+                    ip: "10.26.0.2".parse().unwrap(),
+                    subnets: vec!["192.168.0.0/24".parse().unwrap()],
+                }],
+            },
+        );
+        let static_routes = vec![NetInput {
+            net: "192.168.0.128/25".parse().unwrap(),
+            target_ip: "10.26.0.9".parse().unwrap(),
+        }];
+        assert!(
+            servers
+                .automatic_subnet_routes("10.26.0.3".parse().unwrap(), &static_routes)
+                .is_empty()
+        );
     }
 }
 #[derive(Copy, Clone, Debug)]

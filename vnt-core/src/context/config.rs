@@ -248,6 +248,7 @@ pub struct Config {
     pub input: Vec<NetInput>,
     pub subnet_mapping: Vec<SubnetMapping>,
     pub output: Vec<Ipv4Net>,
+    pub auto_sync_subnet: bool,
     pub no_nat: bool,
     pub device_mode: DeviceMode,
     pub mtu: Option<u16>,
@@ -352,6 +353,10 @@ impl Config {
             ip: registration_ip,
             key_sign: self.key_sign(),
             ip_variable: self.ip.is_none(),
+            advertised_subnets: std::sync::Arc::new(crate::nat::advertised_subnets(
+                &self.output,
+                &self.subnet_mapping,
+            )),
             default_interface,
         }
     }

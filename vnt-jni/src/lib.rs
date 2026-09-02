@@ -1034,6 +1034,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         output: Vec<ipnet::Ipv4Net>,
         #[serde(default)]
+        auto_sync_subnet: bool,
+        #[serde(default)]
         no_nat: bool,
         #[serde(default)]
         device_mode: DeviceMode,
@@ -1146,6 +1148,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         input: cfg.input,
         subnet_mapping: cfg.subnet_mapping,
         output: cfg.output,
+        auto_sync_subnet: cfg.auto_sync_subnet,
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
         mtu: cfg.mtu,
@@ -1346,7 +1349,8 @@ mod tests {
                 "server":["tcp://127.0.0.1:29872"],
                 "network_code":"test",
                 "output":["192.168.1.0/24"],
-                "subnet_mapping":["192.168.2.2/32,192.168.1.3/32"]
+                "subnet_mapping":["192.168.2.2/32,192.168.1.3/32"],
+                "auto_sync_subnet":true
             }"#,
         )
         .unwrap();
@@ -1354,6 +1358,7 @@ mod tests {
             config.subnet_mapping[0].to_string(),
             "192.168.2.2/32,192.168.1.3/32"
         );
+        assert!(config.auto_sync_subnet);
         config.normalize().unwrap();
     }
 }

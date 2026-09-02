@@ -102,6 +102,101 @@ impl SubnetMappingTable {
     }
 }
 
+/// Build the canonical address space that other nodes can use to reach this exit.
+/// Output ranges are interpreted in the real address space and translated through
+/// the reverse (actual -> mapped) mapping before being collapsed back to CIDRs.
+pub fn advertised_subnets(outputs: &[Ipv4Net], rules: &[SubnetMapping]) -> Vec<Ipv4Net> {
+    let output_intervals = merged_intervals(outputs.iter().copied());
+    if output_intervals.is_empty() {
+        return Vec::new();
+    }
+
+    let table = SubnetMappingTable::new(rules.to_vec());
+    let mut translated = Vec::new();
+    for (start, end) in output_intervals {
+        let mut boundaries = vec![start, end];
+        for rule in rules {
+            let rule_start = u32::from(rule.actual.network()) as u64;
+            let rule_end = u32::from(rule.actual.broadcast()) as u64 + 1;
+            if rule_start < end && rule_end > start {
+                boundaries.push(rule_start.max(start));
+                boundaries.push(rule_end.min(end));
+            }
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
+
+        for range in boundaries.windows(2) {
+            let part_start = range[0];
+            let part_end = range[1];
+            if part_start == part_end {
+                continue;
+            }
+            let actual = Ipv4Addr::from(part_start as u32);
+            if let Some(mapped) = table.reverse(actual) {
+                let mapped_start = u32::from(mapped) as u64;
+                translated.push((mapped_start, mapped_start + (part_end - part_start)));
+            } else {
+                translated.push((part_start, part_end));
+            }
+        }
+    }
+
+    intervals_to_cidrs(merge_interval_list(translated))
+}
+
+fn merged_intervals(nets: impl IntoIterator<Item = Ipv4Net>) -> Vec<(u64, u64)> {
+    merge_interval_list(
+        nets.into_iter()
+            .map(|net| {
+                let net = net.trunc();
+                (
+                    u32::from(net.network()) as u64,
+                    u32::from(net.broadcast()) as u64 + 1,
+                )
+            })
+            .collect(),
+    )
+}
+
+fn merge_interval_list(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    ranges.sort_unstable();
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
+}
+
+fn intervals_to_cidrs(ranges: Vec<(u64, u64)>) -> Vec<Ipv4Net> {
+    let mut result = Vec::new();
+    for (mut start, end) in ranges {
+        while start < end {
+            let alignment_bits = if start == 0 {
+                32
+            } else {
+                (start as u32).trailing_zeros()
+            };
+            let remaining = end - start;
+            let remaining_bits = 63 - remaining.leading_zeros();
+            let host_bits = alignment_bits.min(remaining_bits).min(32);
+            let prefix_len = (32 - host_bits) as u8;
+            result.push(Ipv4Net::new_assert(
+                Ipv4Addr::from(start as u32),
+                prefix_len,
+            ));
+            start += 1u64 << host_bits;
+        }
+    }
+    result
+}
+
 fn translate(ip: Ipv4Addr, from: Ipv4Net, to: Ipv4Net) -> Ipv4Addr {
     let offset = u32::from(ip) - u32::from(from.network());
     Ipv4Addr::from(u32::from(to.network()) + offset)
@@ -335,5 +430,41 @@ mod tests {
             "192.168.3.0/24,192.168.1.0/24".parse().unwrap(),
         ];
         assert!(normalize_and_validate(&mut reverse_conflict, &outputs).is_err());
+    }
+
+    #[test]
+    fn advertised_subnets_merge_outputs_and_translate_mapped_ranges() {
+        let outputs = vec![
+            "192.168.1.0/25".parse().unwrap(),
+            "192.168.1.128/25".parse().unwrap(),
+            "192.168.1.0/24".parse().unwrap(),
+        ];
+        assert_eq!(
+            advertised_subnets(&outputs, &[]),
+            vec!["192.168.1.0/24".parse().unwrap()]
+        );
+
+        let rules = vec!["192.168.2.0/25,192.168.1.0/25".parse().unwrap()];
+        assert_eq!(
+            advertised_subnets(&outputs, &rules),
+            vec![
+                "192.168.1.128/25".parse().unwrap(),
+                "192.168.2.0/25".parse().unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn advertised_subnets_honor_longest_reverse_mapping_and_recollapse() {
+        let outputs = vec!["192.168.1.0/24".parse().unwrap()];
+        let rules = vec![
+            "192.168.2.0/24,192.168.1.0/24".parse().unwrap(),
+            "192.168.2.2/32,192.168.1.3/32".parse().unwrap(),
+            "192.168.2.3/32,192.168.1.2/32".parse().unwrap(),
+        ];
+        assert_eq!(
+            advertised_subnets(&outputs, &rules),
+            vec!["192.168.2.0/24".parse().unwrap()]
+        );
     }
 }

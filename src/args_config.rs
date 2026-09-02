@@ -26,6 +26,7 @@ pub struct FileConfig {
     pub input: Option<Vec<NetInput>>,
     pub subnet_mapping: Option<Vec<SubnetMapping>>,
     pub output: Option<Vec<Ipv4Net>>,
+    pub auto_sync_subnet: Option<bool>,
     pub no_nat: Option<bool>,
     pub device_mode: Option<DeviceMode>,
     #[serde(rename = "no_tun", skip_serializing)]
@@ -153,6 +154,9 @@ pub struct Args {
     /// 出栈允许网段
     #[clap(short, long)]
     pub output: Vec<Ipv4Net>,
+    /// 自动获取并应用其他在线节点上报的出口子网
+    #[clap(long)]
+    pub auto_sync_subnet: bool,
     /// 自定义设备名称
     #[clap(long, alias = "name")]
     pub device_name: Option<String>,
@@ -330,6 +334,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         input,
         subnet_mapping,
         output,
+        auto_sync_subnet: args.auto_sync_subnet || file.auto_sync_subnet.unwrap_or(false),
         no_nat: args.no_nat || file.no_nat.unwrap_or(false),
         device_mode: args.device_mode.or(file.device_mode).unwrap_or_default(),
         mtu: args.mtu.or(file.mtu),
@@ -376,6 +381,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
             .cert_mode
             .unwrap_or(CertValidationMode::InsecureSkipVerification),
         output: args.output,
+        auto_sync_subnet: args.auto_sync_subnet,
         no_nat: args.no_nat,
         device_mode: args.device_mode.unwrap_or_default(),
         mtu: args.mtu,
@@ -447,6 +453,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         password: file.password.clone(),
         cert_mode,
         output: file.output.unwrap_or_default(),
+        auto_sync_subnet: file.auto_sync_subnet.unwrap_or(false),
         no_nat: file.no_nat.unwrap_or(false),
         device_mode: file.device_mode.unwrap_or_default(),
         mtu: file.mtu,
@@ -525,6 +532,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 出栈允许网段，用于点对网，允许指定网段的转发
 # output = ["0.0.0.0/0"]
+
+# 自动获取并应用其他在线节点的出口子网（默认 false）
+# auto_sync_subnet = false
 
 # 是否关闭内置子网NAT，关闭(设为true)后需要配置网卡转发，否则无法使用点对网。通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好
 # no_nat = false
@@ -654,6 +664,28 @@ mod tests {
         .unwrap();
         let (config, _) = build_from_args_only(args).unwrap();
         assert!(config.no_broadcast);
+    }
+
+    #[test]
+    fn test_auto_sync_subnet_cli_and_file() {
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--auto-sync-subnet",
+        ])
+        .unwrap();
+        let (config, _) = build_from_args_only(args).unwrap();
+        assert!(config.auto_sync_subnet);
+
+        let file: FileConfig = toml::from_str(
+            "auto_sync_subnet = true\nserver = [\"quic://127.0.0.1:29872\"]\nnetwork_code = \"test-net\"",
+        )
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
+        assert!(config.auto_sync_subnet);
     }
 
     #[test]

@@ -133,6 +133,13 @@ export const configHelp = {
     example: "192.168.1.0/24",
     notes: ["0.0.0.0/0 会允许访问任意 IPv4 目标，使用前应评估安全风险。"],
   },
+  auto_sync_subnet: {
+    param: "auto_sync_subnet / --auto-sync-subnet",
+    summary: "自动获取其他在线节点上报的出口子网并安装路由。",
+    usage: "开启后会随节点上下线和配置变化自动增删路由；本机手动 input 规则优先。",
+    format: "开关；默认关闭。",
+    notes: ["不同 CIDR 即使重叠也会保留并按最长前缀匹配；CIDR 完全相同时使用虚拟 IP 最小的节点。"],
+  },
   no_nat: {
     param: "no_nat",
     summary: "关闭 VNT 内置的点对网 NAT，改用操作系统转发。",

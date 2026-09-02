@@ -49,6 +49,9 @@ reed-solomon-erasure = "6.0"
 serde.workspace = true
 rcgen = "0.14.6"
 
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))'.dependencies]
+route_manager.workspace = true
+
 zerocopy = { version = "0.8.31", features = ["derive"] }
 socket2 = { version = "0.6.1", features = ["all"] }
 

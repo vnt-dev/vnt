@@ -17,6 +17,7 @@ message RegRequestMsg {
   bool ip_variable = 7;
   fixed32 server_id = 8;
   RegistrationMode registration_mode = 9;
+  repeated Ipv4Subnet advertised_subnets = 10;
 }
 
 
@@ -25,6 +26,26 @@ message RegResponseMsg {
   uint32 prefix_len = 2;
   fixed32 gateway = 3;
   string server_version = 4;
+  bool subnet_sync_supported = 5;
+}
+
+message Ipv4Subnet {
+  fixed32 network = 1;
+  uint32 prefix_len = 2;
+}
+
+message NodeSubnetRoutes {
+  fixed32 ip = 1;
+  repeated Ipv4Subnet subnets = 2;
+}
+
+message SubnetSyncRequest {
+  bytes known_hash = 1;
+}
+
+message SubnetSyncResponse {
+  bytes snapshot_hash = 1;
+  repeated NodeSubnetRoutes nodes = 2;
 }
 
 message ConfirmRegMsg {

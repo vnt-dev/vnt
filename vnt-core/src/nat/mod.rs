@@ -10,7 +10,7 @@ pub(crate) mod internal_nat;
 pub(crate) mod subnet_mapping;
 pub(crate) mod subnet_packet;
 
-pub use subnet_mapping::{SubnetMapping, SubnetMappingTable};
+pub use subnet_mapping::{SubnetMapping, SubnetMappingTable, advertised_subnets};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetInput {
@@ -58,27 +58,55 @@ impl<'de> Deserialize<'de> for NetInput {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SubnetExternalRoute {
-    route_table: Arc<Mutex<Vec<NetInput>>>,
+    route_table: Arc<Mutex<SubnetRouteTables>>,
+    changes: tokio::sync::watch::Sender<Vec<NetInput>>,
 }
-impl SubnetExternalRoute {
-    pub fn new(mut route_table: Vec<NetInput>) -> Self {
-        route_table.sort_by_key(|r| std::cmp::Reverse(r.net.prefix_len()));
-        SubnetExternalRoute {
-            route_table: Arc::new(Mutex::new(route_table)),
+
+#[derive(Default)]
+struct SubnetRouteTables {
+    static_routes: Vec<NetInput>,
+    automatic_routes: Vec<NetInput>,
+    effective_routes: Vec<NetInput>,
+}
+
+impl Default for SubnetExternalRoute {
+    fn default() -> Self {
+        let (changes, _) = tokio::sync::watch::channel(Vec::new());
+        Self {
+            route_table: Arc::new(Mutex::new(SubnetRouteTables::default())),
+            changes,
         }
     }
-    pub fn set_route_table(&self, mut route_table: Vec<NetInput>) {
-        route_table.sort_by_key(|r| std::cmp::Reverse(r.net.prefix_len()));
-        *self.route_table.lock() = route_table;
+}
+impl SubnetExternalRoute {
+    pub fn new(route_table: Vec<NetInput>) -> Self {
+        let route = Self::default();
+        route.set_route_table(route_table);
+        route
+    }
+    pub fn set_route_table(&self, route_table: Vec<NetInput>) {
+        let routes = {
+            let mut tables = self.route_table.lock();
+            tables.static_routes = route_table;
+            rebuild_routes(&mut tables);
+            tables.effective_routes.clone()
+        };
+        self.publish(routes);
+    }
+    pub fn set_automatic_routes(&self, route_table: Vec<NetInput>) {
+        let routes = {
+            let mut tables = self.route_table.lock();
+            tables.automatic_routes = route_table;
+            rebuild_routes(&mut tables);
+            tables.effective_routes.clone()
+        };
+        self.publish(routes);
     }
     pub fn route(&self, ip: &Ipv4Addr) -> Option<Ipv4Addr> {
         let route_table = self.route_table.lock();
-        if route_table.is_empty() {
-            return None;
-        }
-        for net in route_table.iter() {
+        for net in &route_table.effective_routes {
             if net.net.contains(ip) {
                 return Some(net.target_ip);
             }
@@ -86,11 +114,35 @@ impl SubnetExternalRoute {
         None
     }
     pub fn all_route(&self) -> Vec<NetInput> {
-        self.route_table.lock().clone()
+        self.route_table.lock().effective_routes.clone()
+    }
+    pub fn static_routes(&self) -> Vec<NetInput> {
+        self.route_table.lock().static_routes.clone()
     }
     pub fn reset_route(&self, route_table: Vec<NetInput>) {
-        *self.route_table.lock() = route_table;
+        self.set_route_table(route_table);
     }
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Vec<NetInput>> {
+        self.changes.subscribe()
+    }
+
+    fn publish(&self, routes: Vec<NetInput>) {
+        self.changes.send_if_modified(|current| {
+            if *current == routes {
+                false
+            } else {
+                *current = routes;
+                true
+            }
+        });
+    }
+}
+
+fn rebuild_routes(tables: &mut SubnetRouteTables) {
+    let mut routes = tables.static_routes.clone();
+    routes.extend(tables.automatic_routes.clone());
+    routes.sort_by_key(|route| std::cmp::Reverse(route.net.prefix_len()));
+    tables.effective_routes = routes;
 }
 
 #[derive(Clone)]
@@ -114,5 +166,41 @@ impl AllowSubnetExternalRoute {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NetInput, SubnetExternalRoute};
+
+    #[test]
+    fn static_and_automatic_routes_are_replaced_independently() {
+        let static_route = "192.168.0.0/24,10.26.0.2".parse::<NetInput>().unwrap();
+        let automatic_route = "172.16.0.0/16,10.26.0.3".parse::<NetInput>().unwrap();
+        let routes = SubnetExternalRoute::new(vec![static_route.clone()]);
+        routes.set_automatic_routes(vec![automatic_route.clone()]);
+        assert_eq!(routes.static_routes(), vec![static_route.clone()]);
+        assert!(routes.all_route().contains(&automatic_route));
+
+        routes.set_automatic_routes(Vec::new());
+        assert_eq!(routes.all_route(), vec![static_route]);
+    }
+
+    #[test]
+    fn overlapping_routes_use_longest_prefix() {
+        let routes = SubnetExternalRoute::new(Vec::new());
+        routes.set_automatic_routes(vec![
+            "192.168.0.0/24,10.26.0.2".parse::<NetInput>().unwrap(),
+            "192.168.0.0/25,10.26.0.4".parse::<NetInput>().unwrap(),
+        ]);
+
+        assert_eq!(
+            routes.route(&"192.168.0.20".parse().unwrap()),
+            Some("10.26.0.4".parse().unwrap())
+        );
+        assert_eq!(
+            routes.route(&"192.168.0.200".parse().unwrap()),
+            Some("10.26.0.2".parse().unwrap())
+        );
     }
 }

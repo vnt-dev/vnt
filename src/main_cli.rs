@@ -1,6 +1,5 @@
 use anyhow::{Context, bail};
 use args_config::{Args, FileConfig, build_config_from_args_and_file};
-use route_manager::Route;
 use std::path::Path;
 use vnt_ipc as vnt_core;
 
@@ -54,7 +53,6 @@ async fn main0() -> anyhow::Result<()> {
     log::info!("cert mode: {}", config.cert_mode);
     log::info!("compress: {}", config.compress);
     log::info!("rtx(quic channel): {}", config.rtx);
-    let sub_input = config.input.clone();
     if !config.input.is_empty() {
         let x = config
             .input
@@ -119,23 +117,6 @@ async fn main0() -> anyhow::Result<()> {
             .set_device_network_ip(reg_msg.ip, reg_msg.prefix_len)
             .await
             .context("set network ip")?;
-        if !sub_input.is_empty() {
-            let if_index = network_manager
-                .device_if_index()
-                .await
-                .context("device_if_index")?;
-            let mut route_manager = route_manager::RouteManager::new()?;
-            for x in sub_input {
-                let route = Route::new(x.net.network().into(), x.net.prefix_len())
-                    .with_gateway(x.target_ip.into())
-                    .with_if_index(if_index);
-                if let Err(e) = route_manager.add(&route) {
-                    log::error!("add route [{route}] error: {e:?}");
-                } else {
-                    log::info!("add route [{route}] successful");
-                }
-            }
-        }
     } else {
         log::info!(
             "启动网络：{}/{} (无虚拟网卡)",

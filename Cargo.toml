@@ -22,8 +22,6 @@ toml.workspace = true
 hostname.workspace = true
 ipnet.workspace = true
 
-route_manager.workspace = true
-
 [target.'cfg(windows)'.dependencies]
 windows-service.workspace = true
 
