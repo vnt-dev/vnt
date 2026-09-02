@@ -2,9 +2,11 @@
 import { ref, watch, nextTick } from "vue";
 import AppModal from "../components/AppModal.vue";
 import AppSelect from "../components/AppSelect.vue";
+import ConfigHelp from "../components/ConfigHelp.vue";
 import { useUiStore } from "../stores/ui";
 import { getConfig, saveConfig } from "../api";
 import { emptyFormData, parseTomlToForm, formToToml, NEW_CONFIG_TEMPLATE } from "../utils/toml";
+import { configHelp } from "../utils/configHelp";
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -229,20 +231,23 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             </h4>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">配置名称</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  配置名称 <ConfigHelp :help="configHelp.config_name" />
+                </label>
                 <input v-model="formData.config_name" type="text" placeholder="例如: 我的VPN配置" class="input" />
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
-                  网络编号 <span class="text-red-500">*</span>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  网络编号 <span class="text-red-500">*</span> <ConfigHelp :help="configHelp.network_code" />
                 </label>
                 <input v-model="formData.network_code" type="text" placeholder="例如: my_network" required class="input" />
               </div>
             </div>
             <div class="mt-4">
-              <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+              <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                 服务器地址 <span class="text-red-500">*</span>
-                <span class="text-xs text-slate-500 ml-2">支持 quic:// tcp:// wss:// dynamic://</span>
+                <ConfigHelp :help="configHelp.server" />
+                <span class="text-xs text-slate-500 ml-2">默认 tcp://；支持 quic:// wss:// dynamic://</span>
               </label>
               <div class="space-y-2">
                 <div v-for="(server, idx) in formData.server" :key="idx" class="flex gap-2">
@@ -270,8 +275,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               </div>
             </div>
             <div class="mt-4">
-              <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+              <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                 可直连节点地址
+                <ConfigHelp :help="configHelp.peer_address" />
                 <span class="text-xs text-slate-500 ml-2">支持 ip:端口、tcp://、udp://</span>
               </label>
               <div class="space-y-2">
@@ -303,8 +309,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               <p class="mt-2 text-xs text-slate-400">不带协议时会同时尝试 TCP 和 UDP；端口填写对端的隧道端口。</p>
             </div>
             <div class="mt-4">
-              <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+              <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                 指定中转规则
+                <ConfigHelp :help="configHelp.turn" />
                 <span class="text-xs text-slate-500 ml-2">目标IP或CIDR,中转虚拟IP</span>
               </label>
               <div class="space-y-2">
@@ -352,18 +359,23 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             </h4>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   自定义虚拟IP
+                  <ConfigHelp :help="configHelp.ip" />
                   <span class="text-xs text-slate-500 ml-1">(可选)</span>
                 </label>
                 <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2" class="input" />
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">MTU</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  MTU <ConfigHelp :help="configHelp.mtu" />
+                </label>
                 <input v-model.number="formData.mtu" type="number" placeholder="1380" class="input" />
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">隧道端口</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  隧道端口 <ConfigHelp :help="configHelp.tunnel_port" />
+                </label>
                 <input v-model.number="formData.tunnel_port" type="number" placeholder="0 (自动分配)" class="input" />
               </div>
             </div>
@@ -380,35 +392,45 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <label :class="toggleLabelClass">
                 <div class="flex-1">
-                  <div class="text-sm font-medium text-slate-800 dark:text-white">QUIC传输优化</div>
+                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                    QUIC传输优化 <ConfigHelp :help="configHelp.rtx" />
+                  </div>
                   <div class="text-xs text-slate-400 mt-0.5">重传丢包</div>
                 </div>
                 <input v-model="formData.rtx" type="checkbox" :class="checkboxClass" />
               </label>
               <label :class="toggleLabelClass">
                 <div class="flex-1">
-                  <div class="text-sm font-medium text-slate-800 dark:text-white">FEC前向纠错</div>
+                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                    FEC前向纠错 <ConfigHelp :help="configHelp.fec" />
+                  </div>
                   <div class="text-xs text-slate-400 mt-0.5">损失部分带宽提升稳定性</div>
                 </div>
                 <input v-model="formData.fec" type="checkbox" :class="checkboxClass" />
               </label>
               <label :class="toggleLabelClass">
                 <div class="flex-1">
-                  <div class="text-sm font-medium text-slate-800 dark:text-white">LZ4压缩</div>
+                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                    LZ4压缩 <ConfigHelp :help="configHelp.compress" />
+                  </div>
                   <div class="text-xs text-slate-400 mt-0.5">减少传输数据量</div>
                 </div>
                 <input v-model="formData.compress" type="checkbox" :class="checkboxClass" />
               </label>
               <label :class="toggleLabelClass">
                 <div class="flex-1">
-                  <div class="text-sm font-medium text-slate-800 dark:text-white">关闭P2P打洞</div>
+                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                    关闭P2P打洞 <ConfigHelp :help="configHelp.no_punch" />
+                  </div>
                   <div class="text-xs text-slate-400 mt-0.5">关闭自动打洞；显式节点地址仍可直连</div>
                 </div>
                 <input v-model="formData.no_punch" type="checkbox" :class="checkboxClass" />
               </label>
               <label :class="toggleLabelClass">
                 <div class="flex-1">
-                  <div class="text-sm font-medium text-slate-800 dark:text-white">关闭IPv4广播和组播</div>
+                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                    关闭IPv4广播和组播 <ConfigHelp :help="configHelp.no_broadcast" />
+                  </div>
                   <div class="text-xs text-slate-400 mt-0.5">停止转发本机发出的 IPv4 广播和组播</div>
                 </div>
                 <input v-model="formData.no_broadcast" type="checkbox" :class="checkboxClass" />
@@ -432,19 +454,22 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             <div class="space-y-4">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300"
-                    >组网加密密码(同一组网密码需要相同)</label
-                  >
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    组网加密密码 <ConfigHelp :help="configHelp.password" />
+                  </label>
                   <input v-model="formData.password" type="password" placeholder="留空则不加密" class="input" />
                 </div>
                 <div>
-                  <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">服务端证书校验模式</label>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    服务端证书校验模式 <ConfigHelp :help="configHelp.cert_mode" />
+                  </label>
                   <AppSelect v-model="formData.cert_mode" :options="certificateModeOptions" aria-label="服务端证书校验模式" />
                 </div>
               </div>
               <div v-if="formData.cert_mode === 'finger'">
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   证书指纹
+                  <ConfigHelp :help="configHelp.fingerprint" />
                   <span class="text-xs text-slate-500 ml-1">(服务端启动时日志会输出指纹)</span>
                 </label>
                 <input
@@ -472,8 +497,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             </h4>
             <div class="space-y-4">
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   入栈网段
+                  <ConfigHelp :help="configHelp.input" />
                   <span class="text-xs text-slate-500 ml-1">格式: CIDR,目标IP</span>
                 </label>
                 <div class="space-y-2">
@@ -494,8 +520,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 </div>
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   出口端子网映射
+                  <ConfigHelp :help="configHelp.subnet_mapping" />
                   <span class="text-xs text-slate-500 ml-1">格式: 映射CIDR,真实CIDR（真实网段需在 output 中允许）</span>
                 </label>
                 <div class="space-y-2">
@@ -513,8 +540,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 </div>
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   出栈网段
+                  <ConfigHelp :help="configHelp.output" />
                   <span class="text-xs text-slate-500 ml-1">格式: CIDR (允许转发的网段)</span>
                 </label>
                 <div class="space-y-2">
@@ -537,14 +565,18 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <label :class="toggleLabelClass">
                   <div class="flex-1">
-                    <div class="text-sm font-medium text-slate-800 dark:text-white">关闭内置NAT</div>
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      关闭内置NAT <ConfigHelp :help="configHelp.no_nat" />
+                    </div>
                     <div class="text-xs text-slate-400 mt-0.5">使用系统网卡转发</div>
                   </div>
                   <input v-model="formData.no_nat" type="checkbox" :class="checkboxClass" />
                 </label>
                 <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                   <div class="flex-1">
-                    <div class="text-sm font-medium text-slate-800 dark:text-white">虚拟网卡模式</div>
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      虚拟网卡模式 <ConfigHelp :help="configHelp.device_mode" />
+                    </div>
                     <div class="mt-0.5 text-xs text-slate-400">
                       <template v-if="formData.device_mode === 'no'">使用端口转发，无需管理员权限</template>
                       <template v-else-if="formData.device_mode === 'tap'">
@@ -576,8 +608,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             </h4>
             <div class="space-y-4">
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   映射规则
+                  <ConfigHelp :help="configHelp.port_mapping" />
                   <span class="text-xs text-slate-500 ml-1">格式: 协议://监听地址-虚拟IP-目标地址</span>
                 </label>
                 <div class="space-y-2">
@@ -604,7 +637,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               </div>
               <label :class="toggleLabelClass">
                 <div class="flex-1">
-                  <div class="text-sm font-medium text-slate-800 dark:text-white">允许作为映射出口</div>
+                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                    允许作为映射出口 <ConfigHelp :help="configHelp.allow_mapping" />
+                  </div>
                   <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板来进行端口映射</div>
                 </div>
                 <input v-model="formData.allow_mapping" type="checkbox" :class="checkboxClass" />
@@ -627,19 +662,27 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             </h4>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">设备名称</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  设备名称 <ConfigHelp :help="configHelp.device_name" />
+                </label>
                 <input v-model="formData.device_name" type="text" placeholder="默认为主机名" class="input" />
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">设备ID</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  设备ID <ConfigHelp :help="configHelp.device_id" />
+                </label>
                 <input v-model="formData.device_id" type="text" placeholder="自动生成" class="input" />
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">虚拟网卡名</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  虚拟网卡名 <ConfigHelp :help="configHelp.tun_name" />
+                </label>
                 <input v-model="formData.tun_name" type="text" placeholder="可选" class="input" />
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">绑定出口网卡</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  绑定出口网卡 <ConfigHelp :help="configHelp.outbound_interface" />
+                </label>
                 <input
                   v-model="formData.outbound_interface"
                   type="text"
@@ -649,7 +692,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 <p class="mt-1.5 text-xs leading-5 text-slate-400">服务端通信、P2P 打洞及转发流量将使用此网卡</p>
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">事件脚本</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  事件脚本 <ConfigHelp :help="configHelp.event_script" />
+                </label>
                 <input
                   v-model="formData.event_script"
                   type="text"
@@ -678,7 +723,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             </h4>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">UDP STUN服务器</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  UDP STUN服务器 <ConfigHelp :help="configHelp.udp_stun" />
+                </label>
                 <div class="space-y-2">
                   <div v-for="(item, idx) in formData.udp_stun" :key="idx" class="flex gap-2">
                     <input v-model="formData.udp_stun[idx]" type="text" placeholder="例如: stun.l.google.com:19302" class="input flex-1" />
@@ -697,7 +744,9 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 </div>
               </div>
               <div>
-                <label class="mb-2 block text-sm font-medium text-slate-600 dark:text-slate-300">TCP STUN服务器</label>
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  TCP STUN服务器 <ConfigHelp :help="configHelp.tcp_stun" />
+                </label>
                 <div class="space-y-2">
                   <div v-for="(item, idx) in formData.tcp_stun" :key="idx" class="flex gap-2">
                     <input v-model="formData.tcp_stun[idx]" type="text" placeholder="例如: stun.nextcloud.com:443" class="input flex-1" />
@@ -733,7 +782,14 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
 
     <template #footer>
       <div class="flex-1 text-left text-xs text-slate-500">
-        <span v-if="editMode === 'form'">填写完成后保存即可生成配置文件</span>
+        <span v-if="editMode === 'form'" class="inline-flex items-center gap-1.5">
+          <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="10" cy="10" r="7.25" stroke="currentColor" stroke-width="1.5" />
+            <path d="M10 9.25v4.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <circle cx="10" cy="6.5" r=".85" fill="currentColor" />
+          </svg>
+          字段旁的信息图标可查看详细用法
+        </span>
         <span v-else>* 请使用标准 TOML 格式</span>
       </div>
       <button class="btn-ghost" @click="emit('close')">取消</button>

@@ -179,7 +179,7 @@ export const formToToml = (formData) => {
 
   const servers = formData.server.filter((s) => s.trim());
   if (servers.length > 0) {
-    toml += "# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)\n";
+    toml += "# 服务器地址列表(省略协议时默认 tcp；支持 quic / tcp / wss / dynamic) (必填)\n";
     toml += "# dynamic 协议使用dns txt解析记录值\n";
     toml += `server = [${servers.map((s) => `"${s}"`).join(", ")}]\n`;
   }
@@ -339,7 +339,7 @@ export const NEW_CONFIG_TEMPLATE = `# config_name = "配置名称"
 # 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
 network_code = "your_network_code"
 
-# 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)
+# 服务器地址列表(省略协议时默认 tcp；支持 quic / tcp / wss / dynamic) (必填)
 # dynamic 协议使用dns txt解析记录值
 server = ["quic://1.2.3.4:29872"]
 
