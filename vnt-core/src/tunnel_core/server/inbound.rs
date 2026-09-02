@@ -6,7 +6,9 @@ use crate::context::{
 };
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
-use crate::event_script::{EventScript, EventScriptType};
+use crate::event_script::EventScript;
+#[cfg(not(target_os = "android"))]
+use crate::event_script::EventScriptType;
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
@@ -48,11 +50,18 @@ pub type AndroidIpUpdateCallback =
     Arc<dyn Fn(AndroidIpUpdateRequest) -> anyhow::Result<()> + Send + Sync + 'static>;
 
 #[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AndroidPreparedUpdate {
+    Ip(AndroidIpUpdateRequest),
+    Route,
+}
+
+#[cfg(target_os = "android")]
 #[derive(Default)]
 struct AndroidIpUpdateState {
     next_request_id: u64,
     pending: Vec<AndroidIpUpdateRequest>,
-    prepared: Option<AndroidIpUpdateRequest>,
+    prepared: Option<AndroidPreparedUpdate>,
     callback: Option<AndroidIpUpdateCallback>,
 }
 
@@ -232,7 +241,7 @@ impl IpUpdateContext {
         let request = {
             let state = self.android.lock();
             if state.prepared.is_some() {
-                bail!("另一个 IP 更新请求正在切换");
+                bail!("另一个 Android TUN 更新请求正在切换");
             }
             state
                 .pending
@@ -248,7 +257,7 @@ impl IpUpdateContext {
         if self.device_mode.has_device() {
             self.device_io_manager.suspend_android().await?;
         }
-        self.android.lock().prepared = Some(request);
+        self.android.lock().prepared = Some(AndroidPreparedUpdate::Ip(request));
         Ok(())
     }
 
@@ -264,7 +273,14 @@ impl IpUpdateContext {
             .android
             .lock()
             .prepared
-            .filter(|request| request.request_id == request_id && request.ip == ip)
+            .and_then(|prepared| match prepared {
+                AndroidPreparedUpdate::Ip(request)
+                    if request.request_id == request_id && request.ip == ip =>
+                {
+                    Some(request)
+                }
+                _ => None,
+            })
             .context("IP 更新请求尚未准备或已经失效")?;
         let updated = Self::validate_target(
             self.network.get().context("客户端尚未完成网络注册")?,
@@ -291,6 +307,41 @@ impl IpUpdateContext {
             state.prepared = None;
         }
         self.send_fast_reg(ip).await;
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn prepare_android_route_update(&self) -> anyhow::Result<()> {
+        let _guard = self.update_lock.lock().await;
+        {
+            let state = self.android.lock();
+            if state.prepared.is_some() {
+                bail!("另一个 Android TUN 更新请求正在切换");
+            }
+        }
+        if !self.device_mode.has_device() {
+            bail!("无 TUN 模式不能更新 Android VPN 路由");
+        }
+        self.network.get().context("客户端尚未完成网络注册")?;
+        self.device_io_manager.suspend_android().await?;
+        self.android.lock().prepared = Some(AndroidPreparedUpdate::Route);
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn complete_android_route_update(
+        &self,
+        tun_fd: std::os::fd::OwnedFd,
+    ) -> anyhow::Result<()> {
+        let _guard = self.update_lock.lock().await;
+        if self.android.lock().prepared != Some(AndroidPreparedUpdate::Route) {
+            bail!("路由更新请求尚未准备或已经失效");
+        }
+        let network = self.network.get().context("客户端尚未完成网络注册")?;
+        self.device_io_manager
+            .resume_android(tun_fd, network.ip, network.prefix_len)
+            .await?;
+        self.android.lock().prepared = None;
         Ok(())
     }
 }

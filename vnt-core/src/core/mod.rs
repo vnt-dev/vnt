@@ -6,8 +6,12 @@ use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::enhanced_ipv4_tunnel;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
-use crate::event_script::{EventScript, EventScriptType};
+use crate::event_script::EventScript;
+#[cfg(not(target_os = "android"))]
+use crate::event_script::EventScriptType;
 use crate::fec::{FecDecoder, FecEncoder};
+#[cfg(target_os = "android")]
+use crate::nat::NetInput;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
@@ -29,6 +33,10 @@ use ipnet::Ipv4Net;
 use std::net::Ipv4Addr;
 
 pub const DEFAULT_MTU: u16 = 1380;
+
+#[cfg(target_os = "android")]
+pub type AndroidSubnetRouteCallback =
+    std::sync::Arc<dyn Fn(Vec<NetInput>) -> anyhow::Result<()> + Send + Sync + 'static>;
 
 /// Context for deferred registration
 struct RegistrationContext {
@@ -521,6 +529,25 @@ impl NetworkManager {
     }
 
     #[cfg(target_os = "android")]
+    pub fn set_android_subnet_route_callback(&self, callback: AndroidSubnetRouteCallback) {
+        if !self.config.auto_sync_subnet {
+            return;
+        }
+        let mut routes = self.app_state.subnet_route.subscribe();
+        self.task_group.spawn(async move {
+            loop {
+                if routes.changed().await.is_err() {
+                    break;
+                }
+                let snapshot = routes.borrow_and_update().clone();
+                if let Err(error) = callback(snapshot) {
+                    log::warn!("通知 Android 子网路由变化失败: {error:#}");
+                }
+            }
+        });
+    }
+
+    #[cfg(target_os = "android")]
     pub async fn prepare_android_ip_update(
         &self,
         request_id: u64,
@@ -539,6 +566,19 @@ impl NetworkManager {
         self.ip_update
             .complete_android_update(request_id, ip, tun_fd)
             .await
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn prepare_android_route_update(&self) -> anyhow::Result<()> {
+        self.ip_update.prepare_android_route_update().await
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn complete_android_route_update(
+        &self,
+        tun_fd: std::os::fd::OwnedFd,
+    ) -> anyhow::Result<()> {
+        self.ip_update.complete_android_route_update(tun_fd).await
     }
 
     fn stop_network(&mut self) {

@@ -34,6 +34,8 @@ pnet_packet = "0.35"
 pnet_base = "0.35"
 ring = "0.17.14"
 subtle = "2.6"
+zerocopy = { version = "0.8.31", features = ["derive"] }
+socket2 = { version = "0.6.1", features = ["all"] }
 
 prost.workspace = true
 tokio-tungstenite = "0.30"
@@ -51,9 +53,6 @@ rcgen = "0.14.6"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))'.dependencies]
 route_manager.workspace = true
-
-zerocopy = { version = "0.8.31", features = ["derive"] }
-socket2 = { version = "0.6.1", features = ["all"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3.9", features = ["winreg"] }
