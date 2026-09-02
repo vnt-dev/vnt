@@ -141,27 +141,27 @@ impl ConnectRegConfig {
                 // 服务器地址列表（每行同样支持 tcp:// quic:// wss:// 前缀）
                 let address = &self.server_addr.address;
                 let lower_address = address.to_lowercase();
-                let entries: Vec<String> =
-                    if lower_address.starts_with("http://") || lower_address.starts_with("https://")
-                    {
-                        // HTTP(S) 接口：按返回顺序连接，服务端可自行控制优先级
-                        let body = crate::utils::http_get::http_get_text(address).await?;
-                        body.lines()
-                            .map(str::trim)
-                            .filter(|line| !line.is_empty())
-                            .map(str::to_string)
-                            .collect()
-                    } else {
-                        // DNS TXT 记录的顺序无意义，随机化以分散负载
-                        let mut txt = crate::utils::dns_query::dns_query_txt(
-                            address,
-                            vec![],
-                            &self.default_interface,
-                        )
-                        .await?;
-                        txt.shuffle(&mut rand::rng());
-                        txt
-                    };
+                let entries: Vec<String> = if lower_address.starts_with("http://")
+                    || lower_address.starts_with("https://")
+                {
+                    // HTTP(S) 接口：按返回顺序连接，服务端可自行控制优先级
+                    let body = crate::utils::http_get::http_get_text(address).await?;
+                    body.lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                } else {
+                    // DNS TXT 记录的顺序无意义，随机化以分散负载
+                    let mut txt = crate::utils::dns_query::dns_query_txt(
+                        address,
+                        vec![],
+                        &self.default_interface,
+                    )
+                    .await?;
+                    txt.shuffle(&mut rand::rng());
+                    txt
+                };
                 entries
                     .into_iter()
                     .map(|x| {
@@ -309,11 +309,17 @@ mod tests {
     fn test_parse_server_preserves_url_case() {
         assert_eq!(
             parse_server("dynamic://HTTPS://Example.com/API/GetServers?token=AbC"),
-            Ok((ProtocolType::Dynamic, "HTTPS://Example.com/API/GetServers?token=AbC".to_string()))
+            Ok((
+                ProtocolType::Dynamic,
+                "HTTPS://Example.com/API/GetServers?token=AbC".to_string()
+            ))
         );
         assert_eq!(
             parse_server("DYNAMIC://http://127.0.0.1:8080/servers"),
-            Ok((ProtocolType::Dynamic, "http://127.0.0.1:8080/servers".to_string()))
+            Ok((
+                ProtocolType::Dynamic,
+                "http://127.0.0.1:8080/servers".to_string()
+            ))
         );
         assert_eq!(
             parse_server("TCP://Example.com:29872"),

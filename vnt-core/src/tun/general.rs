@@ -279,20 +279,44 @@ fn create_device(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
         if config.device_mode == DeviceMode::Tun {
             builder = builder.offload(true);
         }
-        let dev = builder.build_async().with_context(|| {
-            if config.device_mode == DeviceMode::Tap && cfg!(windows) {
-                "创建 TAP 失败；Windows TAP 模式需要预先安装 tap-windows (tap0901) 驱动"
-            } else if config.device_mode == DeviceMode::Tap {
-                "创建 TAP 失败"
-            } else {
-                "创建 TUN 失败"
-            }
+        let dev = builder.build_async().map_err(|error| {
+            let context = device_creation_error_context(config.device_mode, &error);
+            anyhow::Error::new(error).context(context)
         })?;
         #[cfg(target_os = "linux")]
         {
             _ = dev.set_tx_queue_len(1000);
         }
         Ok(dev)
+    }
+}
+
+fn device_creation_error_context(mode: DeviceMode, error: &io::Error) -> &'static str {
+    let permission_denied = error.kind() == io::ErrorKind::PermissionDenied || {
+        #[cfg(windows)]
+        {
+            error.raw_os_error() == Some(5)
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    };
+
+    if permission_denied {
+        return match mode {
+            DeviceMode::Tap => "创建 TAP 失败：权限不足，请尝试以管理员身份运行程序",
+            DeviceMode::Tun => "创建 TUN 失败：权限不足，请尝试以管理员身份运行程序",
+            DeviceMode::No => "创建虚拟网卡失败：权限不足，请尝试以管理员身份运行程序",
+        };
+    }
+
+    match mode {
+        DeviceMode::Tap if cfg!(windows) => {
+            "创建 TAP 失败；Windows TAP 模式需要预先安装 tap-windows (tap0901) 驱动"
+        }
+        DeviceMode::Tap => "创建 TAP 失败",
+        DeviceMode::Tun | DeviceMode::No => "创建 TUN 失败",
     }
 }
 fn create(
@@ -422,5 +446,41 @@ impl Encoder<TransmissionBytes> for BytesCodec {
         buf.reserve(data.len());
         buf.extend_from_slice(&data);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_denied_suggests_running_as_administrator() {
+        let error = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
+
+        assert_eq!(
+            device_creation_error_context(DeviceMode::Tun, &error),
+            "创建 TUN 失败：权限不足，请尝试以管理员身份运行程序"
+        );
+    }
+
+    #[test]
+    fn unrelated_error_keeps_the_original_hint() {
+        let error = io::Error::new(io::ErrorKind::NotFound, "driver not found");
+
+        assert_eq!(
+            device_creation_error_context(DeviceMode::Tun, &error),
+            "创建 TUN 失败"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_access_denied_code_suggests_running_as_administrator() {
+        let error = io::Error::from_raw_os_error(5);
+
+        assert_eq!(
+            device_creation_error_context(DeviceMode::Tap, &error),
+            "创建 TAP 失败：权限不足，请尝试以管理员身份运行程序"
+        );
     }
 }

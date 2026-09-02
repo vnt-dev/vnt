@@ -65,7 +65,9 @@ mod tests {
             body
         );
         let addr = spawn_http_server(response.into_bytes()).await;
-        let text = http_get_text(&format!("http://{addr}/servers")).await.unwrap();
+        let text = http_get_text(&format!("http://{addr}/servers"))
+            .await
+            .unwrap();
         assert_eq!(text, body);
     }
 
@@ -82,7 +84,9 @@ mod tests {
         response.push_str("0\r\n\r\n");
 
         let addr = spawn_http_server(response.into_bytes()).await;
-        let text = http_get_text(&format!("http://{addr}/servers")).await.unwrap();
+        let text = http_get_text(&format!("http://{addr}/servers"))
+            .await
+            .unwrap();
         assert_eq!(text, "tcp://127.0.0.1:29872\r\nwss://127.0.0.1:80\r\n");
     }
 
@@ -91,6 +95,10 @@ mod tests {
     async fn http_get_rejects_non_2xx() {
         let response = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         let addr = spawn_http_server(response.to_vec()).await;
-        assert!(http_get_text(&format!("http://{addr}/missing")).await.is_err());
+        assert!(
+            http_get_text(&format!("http://{addr}/missing"))
+                .await
+                .is_err()
+        );
     }
 }
