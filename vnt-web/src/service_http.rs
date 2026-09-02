@@ -353,6 +353,9 @@ struct HttpAppInfo {
     compress: Option<bool>,
     encrypt: Option<bool>,
     rtx: Option<bool>,
+    input: Vec<NetInput>,
+    output: Vec<Ipv4Net>,
+    automatic_input: Vec<NetInput>,
     /// 启动后配置文件是否发生过变化(与启动时的配置快照对比)
     config_changed: bool,
 }
@@ -1236,6 +1239,12 @@ async fn get_info(
             compress: config.as_ref().map(|v| v.compress),
             encrypt: config.as_ref().map(|v| v.password.is_some()),
             rtx: config.as_ref().map(|v| v.rtx),
+            input: config.as_ref().map(|v| v.input.clone()).unwrap_or_default(),
+            output: config
+                .as_ref()
+                .map(|v| v.output.clone())
+                .unwrap_or_default(),
+            automatic_input: api.automatic_subnet_routes(),
             config_changed,
         }
     } else {

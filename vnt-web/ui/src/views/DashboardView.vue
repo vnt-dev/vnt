@@ -174,6 +174,53 @@ const serverConnected = computed(() => {
             >
           </div>
         </div>
+        <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-slate-700 dark:text-slate-200">入口路由</span>
+              <span class="font-mono text-xs text-slate-400">-i</span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span
+                v-for="route in app.selectedInfo.input"
+                :key="route"
+                class="break-all rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-200"
+                >{{ route }}</span
+              >
+              <span v-if="!app.selectedInfo.input?.length" class="text-xs text-slate-400">无</span>
+            </div>
+          </div>
+          <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-slate-700 dark:text-slate-200">自动同步路由</span>
+              <span class="text-xs text-slate-400">实时</span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span
+                v-for="route in app.selectedInfo.automatic_input"
+                :key="route"
+                class="break-all rounded border border-indigo-100 bg-white px-2 py-1 font-mono text-xs text-indigo-700 dark:border-indigo-900 dark:bg-slate-900/60 dark:text-indigo-300"
+                >{{ route }}</span
+              >
+              <span v-if="!app.selectedInfo.automatic_input?.length" class="text-xs text-slate-400">无</span>
+            </div>
+          </div>
+          <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-sm font-medium text-slate-700 dark:text-slate-200">出口子网</span>
+              <span class="font-mono text-xs text-slate-400">-o</span>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <span
+                v-for="subnet in app.selectedInfo.output"
+                :key="subnet"
+                class="break-all rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-200"
+                >{{ subnet }}</span
+              >
+              <span v-if="!app.selectedInfo.output?.length" class="text-xs text-slate-400">无</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="card p-0 overflow-hidden">

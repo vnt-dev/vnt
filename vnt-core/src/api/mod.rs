@@ -1,5 +1,6 @@
 use crate::context::config::Config;
 use crate::context::{AppState, NetworkAddr, PacketLossInfo, ServerNodeInfo, TrafficInfo};
+use crate::nat::NetInput;
 use crate::protocol::control_message::ClientSimpleInfo;
 use crate::tunnel_core::p2p::route_table::Route;
 use crate::tunnel_core::server::rpc::ServerRPC;
@@ -48,6 +49,10 @@ impl VntApi {
     /// 获取所有路由
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Vec<Route>)> {
         self.app_state.route_table.route_table()
+    }
+    /// 获取服务器自动同步得到的子网路由
+    pub fn automatic_subnet_routes(&self) -> Vec<NetInput> {
+        self.app_state.subnet_route.automatic_routes()
     }
     /// 获取服务器节点
     pub fn server_node_list(&self) -> Vec<ServerNodeInfo> {

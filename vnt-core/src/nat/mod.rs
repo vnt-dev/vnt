@@ -119,6 +119,9 @@ impl SubnetExternalRoute {
     pub fn static_routes(&self) -> Vec<NetInput> {
         self.route_table.lock().static_routes.clone()
     }
+    pub fn automatic_routes(&self) -> Vec<NetInput> {
+        self.route_table.lock().automatic_routes.clone()
+    }
     pub fn reset_route(&self, route_table: Vec<NetInput>) {
         self.set_route_table(route_table);
     }
@@ -180,9 +183,11 @@ mod tests {
         let routes = SubnetExternalRoute::new(vec![static_route.clone()]);
         routes.set_automatic_routes(vec![automatic_route.clone()]);
         assert_eq!(routes.static_routes(), vec![static_route.clone()]);
+        assert_eq!(routes.automatic_routes(), vec![automatic_route.clone()]);
         assert!(routes.all_route().contains(&automatic_route));
 
         routes.set_automatic_routes(Vec::new());
+        assert!(routes.automatic_routes().is_empty());
         assert_eq!(routes.all_route(), vec![static_route]);
     }
 
