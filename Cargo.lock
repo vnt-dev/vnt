@@ -6168,6 +6168,7 @@ dependencies = [
  "rand 0.10.2",
  "rcgen",
  "reed-solomon-erasure",
+ "reqwest",
  "ring",
  "rustls",
  "rustls-native-certs",

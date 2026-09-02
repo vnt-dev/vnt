@@ -115,7 +115,7 @@ impl FileConfig {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// 服务器地址 例如 `-s quic://127.0.0.1:29872`, 支持quic/tcp/wss/dynamic
+    /// 服务器地址 例如 `-s quic://127.0.0.1:29872`, 支持quic/tcp/wss/dynamic；dynamic 默认解析dns txt记录，也可填入http(s)接口如 dynamic://https://xxx
     #[clap(short, long)]
     pub server: Vec<ProtocolAddress>,
     /// 可直连节点地址，可重复指定；支持 ip:端口、tcp://ip:端口、udp://ip:端口
@@ -484,7 +484,7 @@ impl FileConfig {
 network_code = "your_network_code"
 
 # 服务器地址列表(支持 quic / tcp / wss / dynamic) (必填)
-# dynamic 协议使用dns txt解析记录值
+# dynamic 协议默认使用dns txt解析记录值，也支持填入http(s)接口如 dynamic://https://example.com/servers，接口返回换行符分隔的服务器地址列表
 server = ["quic://1.2.3.4:29872"]
 
 # 可直连节点地址列表 (可选)

@@ -1,6 +1,7 @@
 pub(crate) mod addr;
 pub mod device_id;
 pub(crate) mod dns_query;
+pub(crate) mod http_get;
 pub(crate) mod socket;
 pub mod task_control;
 pub(crate) mod time {

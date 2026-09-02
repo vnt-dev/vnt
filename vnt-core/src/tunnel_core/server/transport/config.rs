@@ -91,23 +91,26 @@ impl fmt::Display for ProtocolAddress {
     }
 }
 pub fn parse_server(val: &str) -> Result<(ProtocolType, String), String> {
-    let val = val.trim().to_lowercase();
-    if let Some(s) = val.strip_prefix("quic://") {
-        return Ok((ProtocolType::Quic, s.to_string()));
+    let trimmed = val.trim();
+    let lower = trimmed.to_lowercase();
+    // 前缀匹配不区分大小写；返回的地址保留原始大小写，
+    // 因为 dynamic://http(s):// 的 URL 路径/查询串是区分大小写的
+    if lower.starts_with("quic://") {
+        return Ok((ProtocolType::Quic, trimmed[7..].to_string()));
     }
-    if let Some(s) = val.strip_prefix("tcp://") {
-        return Ok((ProtocolType::TlsTcp, s.to_string()));
+    if lower.starts_with("tcp://") {
+        return Ok((ProtocolType::TlsTcp, trimmed[6..].to_string()));
     }
-    if let Some(s) = val.strip_prefix("wss://") {
-        return Ok((ProtocolType::Wss, s.to_string()));
+    if lower.starts_with("wss://") {
+        return Ok((ProtocolType::Wss, trimmed[6..].to_string()));
     }
-    if let Some(s) = val.strip_prefix("dynamic://") {
-        return Ok((ProtocolType::Dynamic, s.to_string()));
+    if lower.starts_with("dynamic://") {
+        return Ok((ProtocolType::Dynamic, trimmed[10..].to_string()));
     }
-    if val.contains("://") {
+    if trimmed.contains("://") {
         return Err(format!("Unknown protocol in server address: {}", val));
     }
-    Ok((ProtocolType::TlsTcp, val))
+    Ok((ProtocolType::TlsTcp, trimmed.to_string()))
 }
 impl ConnectRegConfig {
     pub fn reg_msg_request(
@@ -127,20 +130,40 @@ impl ConnectRegConfig {
             registration_mode,
         }
     }
-    /// 解析出全部候选服务器地址：每条 TXT 动态记录（或静态地址）解析出的
-    /// 每个 IP 对应一个 ConnectConfig，调用方逐个尝试连接直到成功。
+    /// 解析出全部候选服务器地址：动态地址（DNS TXT 记录或 http(s) 接口返回的
+    /// 地址列表）与静态地址解析出的每个 IP 对应一个 ConnectConfig，
+    /// 调用方逐个尝试连接直到成功。
     pub async fn to_connect_config(&self) -> anyhow::Result<Vec<ConnectConfig>> {
         let server_domains: Vec<(ProtocolType, String)> = match self.server_addr.protocol_type {
             ProtocolType::Dynamic => {
-                // 动态发现：TXT 记录可能给出多个 (协议, 域名)
-                let mut txt = crate::utils::dns_query::dns_query_txt(
-                    &self.server_addr.address,
-                    vec![],
-                    &self.default_interface,
-                )
-                .await?;
-                txt.shuffle(&mut rand::rng());
-                txt.into_iter()
+                // 动态发现：默认用 DNS TXT 记录；也支持填入 http(s) 接口，
+                // 如 dynamic://https://example.com/servers，响应为换行分隔的
+                // 服务器地址列表（每行同样支持 tcp:// quic:// wss:// 前缀）
+                let address = &self.server_addr.address;
+                let lower_address = address.to_lowercase();
+                let entries: Vec<String> =
+                    if lower_address.starts_with("http://") || lower_address.starts_with("https://")
+                    {
+                        // HTTP(S) 接口：按返回顺序连接，服务端可自行控制优先级
+                        let body = crate::utils::http_get::http_get_text(address).await?;
+                        body.lines()
+                            .map(str::trim)
+                            .filter(|line| !line.is_empty())
+                            .map(str::to_string)
+                            .collect()
+                    } else {
+                        // DNS TXT 记录的顺序无意义，随机化以分散负载
+                        let mut txt = crate::utils::dns_query::dns_query_txt(
+                            address,
+                            vec![],
+                            &self.default_interface,
+                        )
+                        .await?;
+                        txt.shuffle(&mut rand::rng());
+                        txt
+                    };
+                entries
+                    .into_iter()
                     .map(|x| {
                         let x = x.to_lowercase();
                         let (protocol_type, domain) = parse_dynamic_txt(&x);
@@ -277,6 +300,24 @@ mod tests {
         assert_eq!(
             parse_dynamic_txt("example.com:29872"),
             (ProtocolType::TlsTcp, "example.com:29872")
+        );
+    }
+
+    /// 协议前缀不区分大小写，但 dynamic://http(s):// 的 URL 地址必须保留
+    /// 原始大小写（路径/查询串区分大小写）
+    #[test]
+    fn test_parse_server_preserves_url_case() {
+        assert_eq!(
+            parse_server("dynamic://HTTPS://Example.com/API/GetServers?token=AbC"),
+            Ok((ProtocolType::Dynamic, "HTTPS://Example.com/API/GetServers?token=AbC".to_string()))
+        );
+        assert_eq!(
+            parse_server("DYNAMIC://http://127.0.0.1:8080/servers"),
+            Ok((ProtocolType::Dynamic, "http://127.0.0.1:8080/servers".to_string()))
+        );
+        assert_eq!(
+            parse_server("TCP://Example.com:29872"),
+            Ok((ProtocolType::TlsTcp, "Example.com:29872".to_string()))
         );
     }
 }
