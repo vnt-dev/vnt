@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use vnt_core::context::config::{Config, DeviceMode, PeerAddress, TurnRule};
-use vnt_core::nat::NetInput;
+use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
 use vnt_ipc as vnt_core;
@@ -24,6 +24,7 @@ pub struct FileConfig {
     pub compress: Option<bool>,
     pub fec: Option<bool>,
     pub input: Option<Vec<NetInput>>,
+    pub subnet_mapping: Option<Vec<SubnetMapping>>,
     pub output: Option<Vec<Ipv4Net>>,
     pub no_nat: Option<bool>,
     pub device_mode: Option<DeviceMode>,
@@ -146,6 +147,9 @@ pub struct Args {
     /// 入栈监听网段
     #[clap(short, long)]
     pub input: Vec<NetInput>,
+    /// 出口端子网映射，可重复指定，格式为 mapped_cidr,actual_cidr；真实网段必须由 output 允许
+    #[clap(long)]
+    pub subnet_mapping: Vec<SubnetMapping>,
     /// 出栈允许网段
     #[clap(short, long)]
     pub output: Vec<Ipv4Net>,
@@ -283,6 +287,11 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
     } else {
         args.output
     };
+    let subnet_mapping = if args.subnet_mapping.is_empty() {
+        file.subnet_mapping.unwrap_or_default()
+    } else {
+        args.subnet_mapping
+    };
     let mut udp_stun = file.udp_stun.unwrap_or_default();
     for x in udp_stun.iter_mut() {
         if !x.contains(':') {
@@ -319,6 +328,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         password: args.password.or_else(|| file.password.clone()),
         cert_mode,
         input,
+        subnet_mapping,
         output,
         no_nat: args.no_nat || file.no_nat.unwrap_or(false),
         device_mode: args.device_mode.or(file.device_mode).unwrap_or_default(),
@@ -354,6 +364,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         no_broadcast: args.no_broadcast,
         rtx: args.rtx,
         input: args.input,
+        subnet_mapping: args.subnet_mapping,
         compress: args.compress,
         fec: args.fec,
         device_id,
@@ -426,6 +437,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         no_broadcast: file.no_broadcast.unwrap_or(false),
         rtx: file.rtx.unwrap_or(false),
         input: file.input.unwrap_or_default(),
+        subnet_mapping: file.subnet_mapping.unwrap_or_default(),
         compress: file.compress.unwrap_or(false),
         fec: file.fec.unwrap_or(false),
         device_id,
@@ -506,6 +518,10 @@ server = ["quic://1.2.3.4:29872"]
 
 # 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点
 # input = ["192.168.0.0/24,10.26.0.2", "192.168.1.0/24,10.26.0.3"]
+
+# 出口端子网映射，将访问端使用的映射网段转换为真实网段；两侧掩码必须相同
+# 多条规则按最长前缀匹配，真实 CIDR 必须由本机 output 完整覆盖
+# subnet_mapping = ["192.168.2.0/24,192.168.1.0/24", "192.168.2.2/32,192.168.1.3/32"]
 
 # 出栈允许网段，用于点对网，允许指定网段的转发
 # output = ["0.0.0.0/0"]
@@ -698,6 +714,42 @@ mod tests {
         .unwrap();
         let (config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
         assert_eq!(config.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
+    }
+
+    #[test]
+    fn test_subnet_mapping_cli_and_file_precedence() {
+        let file: FileConfig = toml::from_str(
+            "subnet_mapping = [\"192.168.2.0/24,192.168.1.0/24\"]\noutput = [\"192.168.1.0/24\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
+        )
+        .unwrap();
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--subnet-mapping",
+            "192.168.3.9/32,192.168.1.9/32",
+        ])
+        .unwrap();
+        let (mut config, _) = build_config_from_args_and_file(Some(args), Some(file)).unwrap();
+        assert_eq!(config.subnet_mapping.len(), 1);
+        assert_eq!(
+            config.subnet_mapping[0].to_string(),
+            "192.168.3.9/32,192.168.1.9/32"
+        );
+        config.normalize().unwrap();
+
+        let file: FileConfig = toml::from_str(
+            "subnet_mapping = [\"192.168.2.0/24,192.168.1.0/24\"]\noutput = [\"192.168.1.0/24\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
+        )
+        .unwrap();
+        let (mut config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
+        assert_eq!(
+            config.subnet_mapping[0].to_string(),
+            "192.168.2.0/24,192.168.1.0/24"
+        );
+        config.normalize().unwrap();
     }
 
     #[test]

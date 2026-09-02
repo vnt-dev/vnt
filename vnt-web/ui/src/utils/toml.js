@@ -14,6 +14,7 @@ export const emptyFormData = () => ({
   no_punch: false,
   no_broadcast: false,
   input: [],
+  subnet_mapping: [],
   output: [],
   no_nat: false,
   device_mode: "tun",
@@ -92,6 +93,12 @@ export const parseTomlToForm = (toml) => {
       if (match) {
         const items = match[1].match(/"([^"]*)"/g);
         if (items) data.output = items.map((s) => s.replace(/"/g, ""));
+      }
+    } else if (trimmed.startsWith("subnet_mapping")) {
+      const match = trimmed.match(/subnet_mapping\s*=\s*\[(.*)\]/);
+      if (match) {
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.subnet_mapping = items.map((s) => s.replace(/"/g, ""));
       }
     } else if (trimmed.match(/^no_nat\s*=/)) {
       data.no_nat = trimmed.includes("true");
@@ -236,6 +243,12 @@ export const formToToml = (formData) => {
     toml += `output = [${outputs.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
+  const subnetMappings = formData.subnet_mapping.filter((s) => s.trim());
+  if (subnetMappings.length > 0) {
+    toml += "# 出口端子网映射（映射CIDR,真实CIDR），按最长前缀匹配\n";
+    toml += `subnet_mapping = [${subnetMappings.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
   if (formData.no_nat) {
     toml += "\n# 是否关闭内置子网NAT，关闭后需要配置网卡转发，否则无法使用点对网\n";
     toml += "# 通常关闭内置子网NAT，使用系统的网卡转发，点对网性能会更好\n";
@@ -361,6 +374,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点
 # input = ["192.168.0.0/24,10.26.0.2", "192.168.1.0/24,10.26.0.3"]
+
+# 出口端子网映射，两侧掩码必须相同；本机 output 需允许真实网段
+# subnet_mapping = ["192.168.2.0/24,192.168.1.0/24", "192.168.2.2/32,192.168.1.3/32"]
 
 # 出栈允许网段，用于点对网，允许指定网段的转发
 # output = ["0.0.0.0/0"]

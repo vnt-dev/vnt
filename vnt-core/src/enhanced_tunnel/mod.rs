@@ -3,8 +3,9 @@ use crate::context::config::DeviceMode;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
 use crate::ethernet::MacTable;
-use crate::nat::SubnetExternalRoute;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
+use crate::nat::subnet_packet::SubnetPacketMapper;
+use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
 use crate::port_mapping::PortMapping;
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tunnel_core::outbound::HybridOutbound;
@@ -26,6 +27,8 @@ pub(crate) struct TunnelConfig {
 pub(crate) struct TunnelComponents {
     pub hybrid_outbound: HybridOutbound,
     pub external_route: SubnetExternalRoute,
+    pub subnet_mapping: SubnetMappingTable,
+    pub subnet_packet_mapper: SubnetPacketMapper,
     pub internal_nat_inbound: Option<InternalNatInbound>,
     pub port_mapping_manager: PortMappingManager,
 }
@@ -54,7 +57,8 @@ pub(crate) async fn enhanced_ipv4_tunnel(
         },
         quic_over::boot::QuicTunnelComponents {
             hybrid_outbound: components.hybrid_outbound.clone(),
-            external_route: components.external_route,
+            external_route: components.external_route.clone(),
+            subnet_mapping: components.subnet_mapping.clone(),
             internal_nat_manager: components.internal_nat_inbound.clone(),
             port_mapping_manager: components.port_mapping_manager,
         },
@@ -68,6 +72,8 @@ pub(crate) async fn enhanced_ipv4_tunnel(
         app_state.traffic_stats.clone(),
         config.device_mode,
         components.hybrid_outbound.clone(),
+        components.subnet_mapping.clone(),
+        components.subnet_packet_mapper.clone(),
         mac_table.clone(),
     );
 
@@ -76,6 +82,8 @@ pub(crate) async fn enhanced_ipv4_tunnel(
             app_state.network.clone(),
             outbound,
             components.hybrid_outbound,
+            components.subnet_mapping,
+            components.subnet_packet_mapper,
             mac_table,
         )
     });

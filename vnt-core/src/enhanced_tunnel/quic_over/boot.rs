@@ -8,8 +8,8 @@ use crate::enhanced_tunnel::quic_over::quic_client::QuicTunnelClient;
 use crate::enhanced_tunnel::quic_over::quic_inbound::EnhancedQuicInbound;
 use crate::enhanced_tunnel::quic_over::quic_outbound::EnhancedQuicOutbound;
 use crate::enhanced_tunnel::quic_over::{quic_client, quic_server};
-use crate::nat::SubnetExternalRoute;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
+use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
 use crate::port_mapping::PortMapping;
 use crate::tls;
 use crate::tun::TunDataInbound;
@@ -37,6 +37,7 @@ pub(crate) struct QuicTunnelConfig {
 pub(crate) struct QuicTunnelComponents {
     pub hybrid_outbound: HybridOutbound,
     pub external_route: SubnetExternalRoute,
+    pub subnet_mapping: SubnetMappingTable,
     pub internal_nat_manager: Option<InternalNatInbound>,
     pub port_mapping_manager: PortMappingManager,
 }
@@ -79,6 +80,7 @@ pub(crate) async fn quic_tunnel_start(
         ip_stack.clone(),
         components.internal_nat_manager,
         components.port_mapping_manager,
+        components.subnet_mapping.clone(),
     )
     .await;
     if config.open_quic_client {

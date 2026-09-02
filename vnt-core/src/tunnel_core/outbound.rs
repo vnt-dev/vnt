@@ -3,7 +3,8 @@ use crate::context::config::{TurnRule, is_turn_ip, turn_ip_for};
 use crate::context::{NetworkAddr, ServerInfoCollection, SharedNetworkAddr, TrafficStats};
 use crate::crypto::PacketCrypto;
 use crate::fec::FecEncoder;
-use crate::nat::SubnetExternalRoute;
+use crate::nat::subnet_packet::SubnetPacketMapper;
+use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::p2p::outbound::P2pOutbound;
@@ -213,10 +214,13 @@ pub(crate) struct HybridOutbound {
     basic_outbound: BasicOutbound,
     packet_compression: PacketCompression,
     external_route: SubnetExternalRoute,
+    subnet_mapping: SubnetMappingTable,
+    subnet_packet_mapper: SubnetPacketMapper,
     fec_encoder: Option<FecEncoder>,
     no_broadcast: bool,
 }
 impl HybridOutbound {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         network: SharedNetworkAddr,
         server_info: ServerInfoCollection,
@@ -224,6 +228,8 @@ impl HybridOutbound {
         basic_outbound: BasicOutbound,
         packet_compression: PacketCompression,
         external_route: SubnetExternalRoute,
+        subnet_mapping: SubnetMappingTable,
+        subnet_packet_mapper: SubnetPacketMapper,
         fec_encoder: Option<FecEncoder>,
     ) -> Self {
         Self {
@@ -233,6 +239,8 @@ impl HybridOutbound {
             basic_outbound,
             packet_compression,
             external_route,
+            subnet_mapping,
+            subnet_packet_mapper,
             fec_encoder,
             no_broadcast: false,
         }
@@ -276,26 +284,53 @@ impl HybridOutbound {
     pub async fn ipv4_outbound(
         &self,
         net: NetworkAddr,
-        mut data: TransmissionBytes,
+        data: TransmissionBytes,
     ) -> anyhow::Result<()> {
         let Some(ipv4) = Ipv4Packet::new(data.as_ref()) else {
             return Ok(());
         };
+        let source = ipv4.get_source();
         let mut dest = ipv4.get_destination();
         let len = data.len() as u64;
-        data.retreat_head(HEAD_LENGTH)?;
-        let mut packet = NetPacket::new(data)?;
-        packet.set_msg_type(MsgType::Turn);
-        packet.set_src_id(net.ip.into());
-        packet.set_ttl(5);
-        // 路由
-        if !net.network().contains(&dest) {
+        let dest_is_overlay = net.network().contains(&dest);
+        if !dest_is_overlay {
             if let Some(v) = self.external_route.route(&dest) {
                 dest = v;
             } else {
                 return Ok(());
             }
         }
+        // On an output node, replies leave the physical network with their real
+        // source. Restore the mapped source immediately before tunnelling them
+        // back to the overlay peer. Access-side packets remain untouched.
+        let packets = if dest_is_overlay {
+            if let Some(mapped) = self.subnet_mapping.reverse(source) {
+                self.subnet_packet_mapper
+                    .map_source(dest, data, 0, source, mapped)?
+            } else {
+                vec![data]
+            }
+        } else {
+            vec![data]
+        };
+        for data in packets {
+            self.ipv4_outbound_to(net, data, dest).await?;
+        }
+        self.traffic_stats.record_tx(dest, len);
+        Ok(())
+    }
+
+    async fn ipv4_outbound_to(
+        &self,
+        net: NetworkAddr,
+        mut data: TransmissionBytes,
+        dest: Ipv4Addr,
+    ) -> anyhow::Result<()> {
+        data.retreat_head(HEAD_LENGTH)?;
+        let mut packet = NetPacket::new(data)?;
+        packet.set_msg_type(MsgType::Turn);
+        packet.set_src_id(net.ip.into());
+        packet.set_ttl(5);
         packet.set_dest_id(dest.into());
 
         packet = self
@@ -313,7 +348,6 @@ impl HybridOutbound {
                 .send_encrypted_packet(net, dest, packet)
                 .await?;
         }
-        self.traffic_stats.record_tx(dest, len);
         Ok(())
     }
 
@@ -335,14 +369,40 @@ impl HybridOutbound {
             }
             return self.ethernet_broadcast_outbound(net, data).await;
         }
-        if !net.network().contains(&dest) {
+        let dest_is_overlay = net.network().contains(&dest);
+        if !dest_is_overlay {
             if let Some(route) = self.external_route.route(&dest) {
                 dest = route;
             } else {
                 return Ok(());
             }
         }
-        self.ethernet_unicast_outbound(net, dest, data).await
+        let packets = if dest_is_overlay {
+            let Some(frame) = crate::ethernet::parse_frame(data.as_ref()) else {
+                return Ok(());
+            };
+            let Some(ipv4) = Ipv4Packet::new(&data[frame.payload_offset..]) else {
+                return Ok(());
+            };
+            let source = ipv4.get_source();
+            if let Some(mapped) = self.subnet_mapping.reverse(source) {
+                self.subnet_packet_mapper.map_source(
+                    dest,
+                    data,
+                    frame.payload_offset,
+                    source,
+                    mapped,
+                )?
+            } else {
+                vec![data]
+            }
+        } else {
+            vec![data]
+        };
+        for packet in packets {
+            self.ethernet_unicast_outbound(net, dest, packet).await?;
+        }
+        Ok(())
     }
 
     pub async fn ethernet_unicast_outbound(

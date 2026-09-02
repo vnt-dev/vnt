@@ -30,7 +30,7 @@ use tower_http::cors::{Any, CorsLayer};
 use vnt_core::api::VntApi;
 use vnt_core::context::config::{Config as CoreConfig, DeviceMode, PeerAddress, TurnRule};
 use vnt_core::core::{DEFAULT_MTU, NetworkManager, RegisterResponse};
-use vnt_core::nat::NetInput;
+use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
@@ -277,6 +277,8 @@ pub struct StartConfig {
     pub fec: bool,
     #[serde(default)]
     pub input: Vec<NetInput>,
+    #[serde(default)]
+    pub subnet_mapping: Vec<SubnetMapping>,
     #[serde(default)]
     pub output: Vec<Ipv4Net>,
     #[serde(default)]
@@ -1485,6 +1487,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         password: cfg.password,
         cert_mode,
         input: cfg.input,
+        subnet_mapping: cfg.subnet_mapping,
         output: cfg.output,
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
@@ -1817,6 +1820,7 @@ mod tests {
             rtx: false,
             fec: false,
             input: Vec::new(),
+            subnet_mapping: Vec::new(),
             output: Vec::new(),
             no_nat: false,
             // 默认无网卡，避免无关用例意外触发 tun_name 冲突
@@ -1876,6 +1880,19 @@ network_code = "test"
         assert_eq!(core.turn.len(), 2);
         assert_eq!(core.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
         assert_eq!(core.turn[1].to_string(), "10.26.1.9,10.26.0.3");
+    }
+
+    #[test]
+    fn test_convert_config_keeps_exit_subnet_mapping() {
+        let mut config = new_test_config();
+        config.subnet_mapping = vec!["192.168.2.2/32,192.168.1.3/32".parse().unwrap()];
+        config.output = vec!["192.168.1.0/24".parse().unwrap()];
+        let mut core = convert_config(config).unwrap();
+        assert_eq!(
+            core.subnet_mapping[0].to_string(),
+            "192.168.2.2/32,192.168.1.3/32"
+        );
+        core.normalize().unwrap();
     }
 
     #[test]

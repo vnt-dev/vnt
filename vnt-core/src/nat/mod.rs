@@ -7,6 +7,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 pub(crate) mod internal_nat;
+pub(crate) mod subnet_mapping;
+pub(crate) mod subnet_packet;
+
+pub use subnet_mapping::{SubnetMapping, SubnetMappingTable};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetInput {

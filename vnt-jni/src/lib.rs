@@ -14,7 +14,7 @@ use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
 use vnt_core::context::config::{Config, DeviceMode, PeerAddress, TurnRule};
 use vnt_core::core::{NetworkManager, RegisterResponse};
-use vnt_core::nat::NetInput;
+use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
@@ -1030,6 +1030,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         input: Vec<NetInput>,
         #[serde(default)]
+        subnet_mapping: Vec<SubnetMapping>,
+        #[serde(default)]
         output: Vec<ipnet::Ipv4Net>,
         #[serde(default)]
         no_nat: bool,
@@ -1142,6 +1144,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         password: cfg.password,
         cert_mode,
         input: cfg.input,
+        subnet_mapping: cfg.subnet_mapping,
         output: cfg.output,
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
@@ -1334,5 +1337,23 @@ mod tests {
         assert_eq!(config.turn.len(), 2);
         assert_eq!(config.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
         assert_eq!(config.turn[1].to_string(), "10.26.1.9,10.26.0.3");
+    }
+
+    #[test]
+    fn parses_exit_subnet_mapping_from_json() {
+        let mut config = parse_config_from_json(
+            r#"{
+                "server":["tcp://127.0.0.1:29872"],
+                "network_code":"test",
+                "output":["192.168.1.0/24"],
+                "subnet_mapping":["192.168.2.2/32,192.168.1.3/32"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.subnet_mapping[0].to_string(),
+            "192.168.2.2/32,192.168.1.3/32"
+        );
+        config.normalize().unwrap();
     }
 }

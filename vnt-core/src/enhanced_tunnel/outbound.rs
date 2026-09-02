@@ -3,6 +3,8 @@ use crate::enhanced_tunnel::quic_over::quic_outbound::EnhancedQuicOutbound;
 use crate::ethernet::{
     MacTable, build_arp_reply, is_broadcast_or_multicast, mac_from_ip, parse_arp_ipv4, parse_frame,
 };
+use crate::nat::SubnetMappingTable;
+use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::HybridOutbound;
 use pnet_base::MacAddr;
@@ -32,6 +34,8 @@ pub struct EnhancedOutbound {
     network: SharedNetworkAddr,
     enhanced_quic_outbound: EnhancedQuicOutbound,
     hybrid_outbound: HybridOutbound,
+    subnet_mapping: SubnetMappingTable,
+    subnet_packet_mapper: SubnetPacketMapper,
     mac_table: MacTable,
 }
 
@@ -40,12 +44,16 @@ impl EnhancedOutbound {
         network: SharedNetworkAddr,
         enhanced_quic_outbound: EnhancedQuicOutbound,
         hybrid_outbound: HybridOutbound,
+        subnet_mapping: SubnetMappingTable,
+        subnet_packet_mapper: SubnetPacketMapper,
         mac_table: MacTable,
     ) -> Self {
         Self {
             network,
             enhanced_quic_outbound,
             hybrid_outbound,
+            subnet_mapping,
+            subnet_packet_mapper,
             mac_table,
         }
     }
@@ -145,16 +153,29 @@ impl EnhancedOutbound {
                 .ipv4_broadcast_outbound(net, data)
                 .await;
         }
-        if self
-            .enhanced_quic_outbound
-            .outbound(&net, data.as_ref())
-            .await
-        {
-            // 使用quic 通道传输
-            return Ok(());
+        let packets = if net.network().contains(&dest) {
+            if let Some(mapped) = self.subnet_mapping.reverse(src) {
+                self.subnet_packet_mapper
+                    .map_source(dest, data, 0, src, mapped)?
+            } else {
+                vec![data]
+            }
+        } else {
+            vec![data]
+        };
+        for data in packets {
+            if self
+                .enhanced_quic_outbound
+                .outbound(&net, data.as_ref())
+                .await
+            {
+                // 使用quic 通道传输
+                continue;
+            }
+            // 使用通用通道传输
+            self.hybrid_outbound.ipv4_outbound(net, data).await?;
         }
-        // 使用通用通道传输
-        self.hybrid_outbound.ipv4_outbound(net, data).await
+        Ok(())
     }
 }
 

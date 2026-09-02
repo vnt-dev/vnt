@@ -1,3 +1,4 @@
+use crate::nat::SubnetMappingTable;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::protocol::client_message::QuicProxyHandshake;
 use crate::protocol::client_message::quic_proxy_handshake::Handshake;
@@ -22,6 +23,7 @@ pub async fn server_listen(
     ip_stack: Option<IpStack>,
     internal_nat_manager: Option<InternalNatInbound>,
     port_mapping_manager: PortMappingManager,
+    subnet_mapping: SubnetMappingTable,
 ) {
     task_group.spawn(quic_endpoint_accept(
         ip_stack,
@@ -30,6 +32,7 @@ pub async fn server_listen(
         ip_socket,
         internal_nat_manager,
         port_mapping_manager,
+        subnet_mapping,
     ));
 }
 
@@ -40,6 +43,7 @@ async fn quic_endpoint_accept(
     ip_socket: Option<Arc<IpSocket>>,
     internal_nat_manager: Option<InternalNatInbound>,
     port_mapping_manager: PortMappingManager,
+    subnet_mapping: SubnetMappingTable,
 ) {
     while let Some(connecting) = endpoint.accept().await {
         let remote_addr = connecting.remote_address();
@@ -48,6 +52,7 @@ async fn quic_endpoint_accept(
         let ip_stack = ip_stack.clone();
         let internal_nat_manager = internal_nat_manager.clone();
         let port_mapping_manager = port_mapping_manager.clone();
+        let subnet_mapping = subnet_mapping.clone();
         task_group.spawn(async move {
             match connecting.await {
                 Ok(connection) => {
@@ -59,6 +64,7 @@ async fn quic_endpoint_accept(
                         ip_socket,
                         internal_nat_manager,
                         port_mapping_manager,
+                        subnet_mapping,
                     )
                     .await
                     {
@@ -81,6 +87,7 @@ async fn quic_accept(
     ip_socket: Option<Arc<IpSocket>>,
     internal_nat_manager: Option<InternalNatInbound>,
     port_mapping_manager: PortMappingManager,
+    subnet_mapping: SubnetMappingTable,
 ) -> anyhow::Result<()> {
     loop {
         tokio::select! {
@@ -89,8 +96,9 @@ async fn quic_accept(
                 let ip_stack = ip_stack.clone();
                 let internal_nat_manager = internal_nat_manager.clone();
                 let port_mapping_manager = port_mapping_manager.clone();
+                let subnet_mapping = subnet_mapping.clone();
                 task_group_clone.spawn(async move {
-                    if let Err(e) = quic_stream_bi_handle(ip_stack,send_stream, recv_stream,&internal_nat_manager,port_mapping_manager).await{
+                    if let Err(e) = quic_stream_bi_handle(ip_stack,send_stream, recv_stream,&internal_nat_manager,port_mapping_manager,&subnet_mapping).await{
                         log::error!("quic_stream_bi_handle: {e:?}");
                     }
                 });
@@ -99,8 +107,9 @@ async fn quic_accept(
                 let recv_stream = rs?;
                 let ip_socket = ip_socket.clone();
                 let internal_nat_manager = internal_nat_manager.clone();
+                let subnet_mapping = subnet_mapping.clone();
                 task_group_clone.spawn(async move {
-                    if let Err(e) = quic_stream_uni_handle(recv_stream, ip_socket,&internal_nat_manager).await{
+                    if let Err(e) = quic_stream_uni_handle(recv_stream, ip_socket,&internal_nat_manager,&subnet_mapping).await{
                         log::error!("quic_stream_uni_handle: {e:?}");
                     }
                 });
@@ -115,6 +124,7 @@ async fn quic_stream_bi_handle(
     mut recv_stream: RecvStream,
     internal_nat_manager: &Option<InternalNatInbound>,
     port_mapping_manager: PortMappingManager,
+    subnet_mapping: &SubnetMappingTable,
 ) -> anyhow::Result<()> {
     let handshake = recv_handshake(&mut recv_stream).await?;
     let Some(handshake) = handshake.handshake else {
@@ -126,7 +136,10 @@ async fn quic_stream_bi_handle(
                 Ipv4Addr::from(handshake.src_ip).into(),
                 handshake.src_port as _,
             );
-            let dst_ip = Ipv4Addr::from(handshake.dst_ip);
+            let mapped_dst_ip = Ipv4Addr::from(handshake.dst_ip);
+            let dst_ip = subnet_mapping
+                .forward(mapped_dst_ip)
+                .unwrap_or(mapped_dst_ip);
             let dst = SocketAddr::new(dst_ip.into(), handshake.dst_port as _);
             if src == dst {
                 bail!("tcp handshake failed, ip: {}", src);
@@ -201,6 +214,7 @@ async fn quic_stream_uni_handle(
     mut recv_stream: RecvStream,
     ip_socket: Option<Arc<IpSocket>>,
     internal_nat_manager: &Option<InternalNatInbound>,
+    subnet_mapping: &SubnetMappingTable,
 ) -> anyhow::Result<()> {
     let handshake = recv_handshake(&mut recv_stream).await?;
     let Some(handshake) = handshake.handshake else {
@@ -212,7 +226,10 @@ async fn quic_stream_uni_handle(
             let ip_next_header_protocol =
                 IpNextHeaderProtocol::new(handshake.ip_next_header_protocol as _);
             let src_ip = Ipv4Addr::from(handshake.src_ip);
-            let dest_ip = Ipv4Addr::from(handshake.dst_ip);
+            let mapped_dest_ip = Ipv4Addr::from(handshake.dst_ip);
+            let dest_ip = subnet_mapping
+                .forward(mapped_dest_ip)
+                .unwrap_or(mapped_dest_ip);
             log::debug!("recv IP({ip_next_header_protocol}) packet {src_ip}->{dest_ip}");
             let mut framed_read = FramedRead::new(recv_stream, LengthDelimitedCodec::new());
             // 如果不是网段内的，并且启用了内置nat，则直接转发

@@ -9,7 +9,8 @@ use crate::enhanced_tunnel::outbound::EnhancedOutbound;
 use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::{FecDecoder, FecEncoder};
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
-use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute};
+use crate::nat::subnet_packet::SubnetPacketMapper;
+use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
 use crate::protocol::control_message::ErrorResponseMsg;
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tun::{DeviceConfig, DeviceIOManager, TunDataInbound, TunReceiver, tun_channel};
@@ -151,6 +152,8 @@ impl NetworkManager {
         );
         let subnet_external_route = app_state.subnet_route.clone();
         subnet_external_route.set_route_table(config.input.clone());
+        let subnet_mapping = SubnetMappingTable::new(config.subnet_mapping.clone());
+        let subnet_packet_mapper = SubnetPacketMapper::default();
 
         let fec_decoder = FecDecoder::new(packet_crypto.clone());
         let basic_outbound = BasicOutbound::new(
@@ -176,6 +179,8 @@ impl NetworkManager {
             basic_outbound.clone(),
             packet_compression.clone(),
             subnet_external_route.clone(),
+            subnet_mapping.clone(),
+            subnet_packet_mapper.clone(),
             fec_encoder,
         )
         .with_no_broadcast(config.no_broadcast);
@@ -236,6 +241,8 @@ impl NetworkManager {
             crate::enhanced_tunnel::TunnelComponents {
                 hybrid_outbound: hybrid_outbound.clone(),
                 external_route: subnet_external_route.clone(),
+                subnet_mapping,
+                subnet_packet_mapper,
                 internal_nat_inbound,
                 port_mapping_manager,
             },
