@@ -18,7 +18,7 @@ use rustp2p_core::punch::Puncher;
 use rustp2p_core::route_table::Protocol;
 use rustp2p_core::socket::LocalInterface;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -150,27 +150,51 @@ async fn direct_peer_probe_task(
                 continue;
             }
         };
-        let Some(address) = resolved
+        let addresses = resolved_peer_addresses(resolved, protocol);
+        let attempts = addresses
             .into_iter()
-            .find(|(p, _)| *p == protocol)
-            .map(|(_, addr)| addr)
-        else {
-            continue;
-        };
-        if route_table.has_direct_endpoint(protocol, address) {
-            continue;
-        }
-        let packet = match build_direct_peer_probe(src_ip, socket_manager.encrypt_reserve()) {
-            Ok(packet) => packet,
-            Err(error) => {
-                log::warn!("failed to build direct peer probe for {protocol}://{address}: {error}");
-                continue;
-            }
-        };
-        if let Err(error) = socket_manager.send_to_addr(packet, protocol, address).await {
-            log::debug!("direct peer probe failed for {protocol}://{address}: {error:?}");
-        }
+            .filter(|address| !route_table.has_direct_endpoint(protocol, *address))
+            .map(|address| {
+                let socket_manager = socket_manager.clone();
+                async move {
+                    let packet = match build_direct_peer_probe(
+                        src_ip,
+                        socket_manager.encrypt_reserve(),
+                    ) {
+                        Ok(packet) => packet,
+                        Err(error) => {
+                            log::warn!(
+                                "failed to build direct peer probe for {protocol}://{address}: {error}"
+                            );
+                            return;
+                        }
+                    };
+                    if let Err(error) = socket_manager
+                        .send_to_addr(packet, protocol, address)
+                        .await
+                    {
+                        log::debug!(
+                            "direct peer probe failed for {protocol}://{address}: {error:?}"
+                        );
+                    }
+                }
+            });
+        // 同一域名的多个候选地址并行探测，避免首个不可达地址阻塞后续地址。
+        futures::future::join_all(attempts).await;
     }
+}
+
+fn resolved_peer_addresses(
+    resolved: Vec<(Protocol, SocketAddr)>,
+    protocol: Protocol,
+) -> Vec<SocketAddr> {
+    let mut seen = HashSet::new();
+    resolved
+        .into_iter()
+        .filter_map(|(resolved_protocol, address)| {
+            (resolved_protocol == protocol && seen.insert(address)).then_some(address)
+        })
+        .collect()
 }
 
 fn build_direct_peer_probe(
@@ -659,6 +683,23 @@ mod tests {
         assert_eq!(packet.max_ttl(), 1);
         assert_eq!(packet.ttl(), 1);
         assert_eq!(packet.payload().len(), 8);
+    }
+
+    #[test]
+    fn direct_peer_probe_keeps_all_resolved_addresses_for_protocol() {
+        let first: SocketAddr = "192.0.2.1:29872".parse().unwrap();
+        let second: SocketAddr = "[2001:db8::1]:29872".parse().unwrap();
+        let endpoints = vec![
+            (Protocol::TCP, first),
+            (Protocol::UDP, first),
+            (Protocol::TCP, second),
+            (Protocol::TCP, first),
+        ];
+
+        assert_eq!(
+            resolved_peer_addresses(endpoints, Protocol::TCP),
+            vec![first, second]
+        );
     }
 
     #[test]

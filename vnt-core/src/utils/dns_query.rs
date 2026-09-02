@@ -46,7 +46,7 @@ pub async fn dns_query_all(
         Ok(addr) => Ok(vec![addr]),
         Err(_) => {
             if name_servers.is_empty() {
-                let addrs: Vec<IpAddr> = tokio::net::lookup_host(domain)
+                let addrs: Vec<IpAddr> = tokio::net::lookup_host((domain, 0))
                     .await
                     .map_err(|e| io::Error::other(format!("DNS query failed: {domain:?},{e:?}")))?
                     .map(|addr| addr.ip())
