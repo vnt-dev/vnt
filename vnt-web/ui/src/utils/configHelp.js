@@ -18,10 +18,10 @@ export const configHelp = {
   server: {
     param: "server",
     summary: "VNT 节点用于注册、发现对端和中继的服务器地址。",
-    usage: "可以配置多个地址用于容错。支持 QUIC、TCP、WebSocket TLS 和动态 DNS TXT 发现；省略协议时默认使用 TCP。",
-    format: "主机:端口（默认 tcp://）、quic://主机:端口、tcp://主机:端口、wss://域名/路径 或 dynamic://域名。",
+    usage: "可以配置多个地址用于容错。支持 QUIC、TCP、WebSocket TLS，以及通过 DNS TXT 或 HTTP(S) 接口动态发现；省略协议时默认使用 TCP。",
+    format: "主机:端口（默认 tcp://）、quic://主机:端口、tcp://主机:端口、wss://域名/路径、dynamic://域名，或 dynamic://http(s)://接口地址。",
     example: "quic://1.2.3.4:29872",
-    notes: ["dynamic:// 会读取域名的 DNS TXT 记录。", "WebSocket TLS 通常使用域名和有效证书。"],
+    notes: ["dynamic://域名 会读取 DNS TXT 记录；dynamic://http(s)://接口地址 会读取接口返回的换行分隔服务器地址列表。"],
   },
   peer_address: {
     param: "peer_address",

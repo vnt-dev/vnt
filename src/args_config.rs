@@ -148,7 +148,7 @@ pub struct Args {
     /// 入栈监听网段
     #[clap(short, long)]
     pub input: Vec<NetInput>,
-    /// 出口端子网映射，可重复指定，格式为 mapped_cidr,actual_cidr；真实网段必须由 output 允许
+    /// 出栈网段映射，可重复指定，格式为 mapped_cidr,actual_cidr；真实网段必须由 output 允许
     #[clap(long)]
     pub subnet_mapping: Vec<SubnetMapping>,
     /// 出栈允许网段
@@ -526,7 +526,7 @@ server = ["quic://1.2.3.4:29872"]
 # 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点
 # input = ["192.168.0.0/24,10.26.0.2", "192.168.1.0/24,10.26.0.3"]
 
-# 出口端子网映射，将访问端使用的映射网段转换为真实网段；两侧掩码必须相同
+# 出栈网段映射，将访问端使用的映射网段转换为真实网段；两侧掩码必须相同
 # 多条规则按最长前缀匹配，真实 CIDR 必须由本机 output 完整覆盖
 # subnet_mapping = ["192.168.2.0/24,192.168.1.0/24", "192.168.2.2/32,192.168.1.3/32"]
 

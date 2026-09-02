@@ -247,7 +247,7 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                 服务器地址 <span class="text-red-500">*</span>
                 <ConfigHelp :help="configHelp.server" />
-                <span class="text-xs text-slate-500 ml-2">默认 tcp://；支持 quic:// wss:// dynamic://</span>
+                <span class="text-xs text-slate-500 ml-2">默认 tcp://；支持 quic://、wss://、dynamic://（DNS TXT 或 HTTP(S)）</span>
               </label>
               <div class="space-y-2">
                 <div v-for="(server, idx) in formData.server" :key="idx" class="flex gap-2">
@@ -521,26 +521,6 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               </div>
               <div>
                 <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  出口端子网映射
-                  <ConfigHelp :help="configHelp.subnet_mapping" />
-                  <span class="text-xs text-slate-500 ml-1">格式: 映射CIDR,真实CIDR（真实网段需在 output 中允许）</span>
-                </label>
-                <div class="space-y-2">
-                  <div v-for="(item, idx) in formData.subnet_mapping" :key="idx" class="flex gap-2">
-                    <input v-model="formData.subnet_mapping[idx]" type="text" placeholder="例如: 192.168.2.2/32,192.168.1.3/32" class="input flex-1" />
-                    <button @click="formData.subnet_mapping.splice(idx, 1)" :class="removeBtnClass">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <button @click="formData.subnet_mapping.push('')" :class="addBtnClass">
-                    + 添加子网映射
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   出栈网段
                   <ConfigHelp :help="configHelp.output" />
                   <span class="text-xs text-slate-500 ml-1">格式: CIDR (允许转发的网段)</span>
@@ -559,6 +539,26 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                     :class="addBtnClass"
                   >
                     + 添加出栈网段
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  出栈网段映射
+                  <ConfigHelp :help="configHelp.subnet_mapping" />
+                  <span class="text-xs text-slate-500 ml-1">格式: 映射CIDR,真实CIDR（真实网段需在 output 中允许）</span>
+                </label>
+                <div class="space-y-2">
+                  <div v-for="(item, idx) in formData.subnet_mapping" :key="idx" class="flex gap-2">
+                    <input v-model="formData.subnet_mapping[idx]" type="text" placeholder="例如: 192.168.2.2/32,192.168.1.3/32" class="input flex-1" />
+                    <button @click="formData.subnet_mapping.splice(idx, 1)" :class="removeBtnClass">
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <button @click="formData.subnet_mapping.push('')" :class="addBtnClass">
+                    + 添加出栈网段映射
                   </button>
                 </div>
               </div>

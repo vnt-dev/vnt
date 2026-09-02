@@ -183,7 +183,7 @@ export const formToToml = (formData) => {
   const servers = formData.server.filter((s) => s.trim());
   if (servers.length > 0) {
     toml += "# 服务器地址列表(省略协议时默认 tcp；支持 quic / tcp / wss / dynamic) (必填)\n";
-    toml += "# dynamic 协议使用dns txt解析记录值\n";
+    toml += "# dynamic 协议默认使用 DNS TXT 解析，也可使用 dynamic://http(s)://接口地址获取换行分隔的服务器地址列表\n";
     toml += `server = [${servers.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
@@ -248,7 +248,7 @@ export const formToToml = (formData) => {
 
   const subnetMappings = formData.subnet_mapping.filter((s) => s.trim());
   if (subnetMappings.length > 0) {
-    toml += "# 出口端子网映射（映射CIDR,真实CIDR），按最长前缀匹配\n";
+    toml += "# 出栈网段映射（映射CIDR,真实CIDR），按最长前缀匹配\n";
     toml += `subnet_mapping = [${subnetMappings.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
@@ -348,7 +348,7 @@ export const NEW_CONFIG_TEMPLATE = `# config_name = "配置名称"
 network_code = "your_network_code"
 
 # 服务器地址列表(省略协议时默认 tcp；支持 quic / tcp / wss / dynamic) (必填)
-# dynamic 协议使用dns txt解析记录值
+# dynamic 协议默认使用 DNS TXT 解析，也可使用 dynamic://http(s)://接口地址获取换行分隔的服务器地址列表
 server = ["quic://1.2.3.4:29872"]
 
 # 可直连节点地址列表 (可选)
@@ -383,11 +383,11 @@ server = ["quic://1.2.3.4:29872"]
 # 入栈监听网段 (逗号分隔的 CIDR 和目标 IP)，用于点对网，将指定网段的流量发送到目标节点
 # input = ["192.168.0.0/24,10.26.0.2", "192.168.1.0/24,10.26.0.3"]
 
-# 出口端子网映射，两侧掩码必须相同；本机 output 需允许真实网段
-# subnet_mapping = ["192.168.2.0/24,192.168.1.0/24", "192.168.2.2/32,192.168.1.3/32"]
-
 # 出栈允许网段，用于点对网，允许指定网段的转发
 # output = ["0.0.0.0/0"]
+
+# 出栈网段映射，两侧掩码必须相同；本机 output 需允许真实网段
+# subnet_mapping = ["192.168.2.0/24,192.168.1.0/24", "192.168.2.2/32,192.168.1.3/32"]
 
 # 是否自动获取并应用其他在线节点的出口子网
 # auto_sync_subnet = false
