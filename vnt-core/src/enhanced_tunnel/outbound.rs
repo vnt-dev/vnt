@@ -2,6 +2,7 @@ use crate::context::SharedNetworkAddr;
 use crate::enhanced_tunnel::quic_over::quic_outbound::EnhancedQuicOutbound;
 use crate::ethernet::{
     MacTable, build_arp_reply, is_broadcast_or_multicast, mac_from_ip, parse_arp_ipv4, parse_frame,
+    strip_ipv4,
 };
 use crate::nat::SubnetMappingTable;
 use crate::nat::subnet_packet::SubnetPacketMapper;
@@ -86,9 +87,25 @@ impl EnhancedOutbound {
         if frame.ethertype == EtherTypes::Arp
             && let Some(arp) = parse_arp_ipv4(data.as_ref())
             && arp.operation == ArpOperations::Request
-            && arp.target_ip == net.gateway
+            && (arp.target_ip == net.gateway
+                || self.hybrid_outbound.is_ikev2_client(&arp.target_ip))
         {
-            return Ok(build_arp_reply(data.as_ref(), net.gateway));
+            return Ok(build_arp_reply(data.as_ref(), arp.target_ip));
+        }
+
+        if frame.ethertype == EtherTypes::Ipv4 {
+            let Some(ipv4) = Ipv4Packet::new(&data[frame.payload_offset..]) else {
+                return Ok(None);
+            };
+            let dest = ipv4.get_destination();
+            if self.hybrid_outbound.is_ikev2_client(&dest) {
+                if let Some(ip) = strip_ipv4(data) {
+                    self.hybrid_outbound
+                        .ikev2_relay_outbound(net, ip, dest)
+                        .await?;
+                }
+                return Ok(None);
+            }
         }
 
         // Only frames explicitly addressed to our proxy-ARP gateway enter the
@@ -142,6 +159,12 @@ impl EnhancedOutbound {
         if dest == net.gateway {
             // 发送到网关
             return self.hybrid_outbound.ipv4_gateway_outbound(net, data).await;
+        }
+        if self.hybrid_outbound.is_ikev2_client(&dest) {
+            return self
+                .hybrid_outbound
+                .ikev2_relay_outbound(net, data, dest)
+                .await;
         }
         if dest.is_multicast() || dest == net.broadcast || dest.is_broadcast() {
             // 广播或组播

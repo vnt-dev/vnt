@@ -12,6 +12,8 @@ mod proto {
     include!(concat!(env!("OUT_DIR"), "/protocol.control_message.rs"));
 }
 
+pub use proto::ClientType;
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
 pub enum RegistrationMode {
     #[default]
@@ -47,6 +49,7 @@ pub(crate) struct RegRequestMsg {
     pub server_id: u32,
     pub registration_mode: RegistrationMode,
     pub advertised_subnets: Vec<Ipv4Net>,
+    pub allow_ikev2: bool,
 }
 impl RegRequestMsg {
     // pub fn check(&self) -> anyhow::Result<()> {
@@ -117,6 +120,7 @@ impl RegRequestMsg {
                 .into_iter()
                 .map(ipv4_subnet_to_proto)
                 .collect(),
+            allow_ikev2: self.allow_ikev2,
         }
     }
 }
@@ -333,18 +337,21 @@ impl SelectiveBroadcast {
 pub struct ClientSimpleInfo {
     pub ip: Ipv4Addr,
     pub online: bool,
+    pub client_type: ClientType,
 }
 impl ClientSimpleInfo {
     pub fn from(msg: proto::ClientSimpleInfo) -> anyhow::Result<Self> {
         Ok(Self {
             ip: msg.ip.into(),
             online: msg.online,
+            client_type: msg.client_type(),
         })
     }
     pub fn to(self) -> proto::ClientSimpleInfo {
         proto::ClientSimpleInfo {
             ip: self.ip.into(),
             online: self.online,
+            client_type: self.client_type as i32,
         }
     }
 }
@@ -406,6 +413,7 @@ mod tests {
             server_id: 0,
             registration_mode: RegistrationMode::Normal,
             advertised_subnets: vec![advertised],
+            allow_ikev2: false,
         })
         .encode();
         let request = proto::RequestMessage::decode(encoded.as_ref()).unwrap();
@@ -442,5 +450,42 @@ mod tests {
         let snapshot = SubnetSyncResponse::from_slice(&encoded).unwrap();
         assert_eq!(snapshot.snapshot_hash, vec![1, 2, 3]);
         assert_eq!(snapshot.nodes[0].subnets, vec![advertised]);
+    }
+
+    #[test]
+    fn ikev2_capability_and_client_type_round_trip() {
+        let encoded = RequestMessage::Reg(RegRequestMsg {
+            network_code: "test".to_string(),
+            device_id: "device".to_string(),
+            ip: None,
+            name: "node".to_string(),
+            version: "1".to_string(),
+            key_sign: None,
+            ip_variable: true,
+            server_id: 0,
+            registration_mode: RegistrationMode::Normal,
+            advertised_subnets: Vec::new(),
+            allow_ikev2: true,
+        })
+        .encode();
+        let request = proto::RequestMessage::decode(encoded.as_ref()).unwrap();
+        let RequestPayload::Reg(request) = request.request_payload.unwrap() else {
+            panic!("expected registration request");
+        };
+        assert!(request.allow_ikev2);
+
+        let list = proto::ClientSimpleInfoList {
+            data_version: 1,
+            list: vec![proto::ClientSimpleInfo {
+                ip: Ipv4Addr::new(10, 26, 0, 8).into(),
+                online: true,
+                client_type: proto::ClientType::Ikev2 as i32,
+            }],
+            is_all: true,
+            time: 0,
+        }
+        .encode_to_vec();
+        let decoded = ClientSimpleInfoList::from_slice(&list).unwrap();
+        assert_eq!(decoded.list[0].client_type, ClientType::Ikev2);
     }
 }

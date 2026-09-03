@@ -3,7 +3,7 @@ use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::nat::SubnetExternalRoute;
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
-    ClientSimpleInfo, ClientSimpleInfoList, SubnetSyncResponse,
+    ClientSimpleInfo, ClientSimpleInfoList, ClientType, SubnetSyncResponse,
 };
 use crate::tunnel_core::p2p::route_table::RouteTable;
 use crate::tunnel_core::server::transport::config::ProtocolAddress;
@@ -423,7 +423,7 @@ impl ServerInfoCollection {
                     (
                         v.client_map
                             .iter()
-                            .filter(|(_, v)| v.online)
+                            .filter(|(_, v)| v.online && v.client_type == ClientType::Vnt)
                             .map(|(k, _)| *k)
                             .collect(),
                         v.rtt.unwrap_or(500),
@@ -496,12 +496,17 @@ impl ServerInfoCollection {
         self.client_simple_list
             .read()
             .iter()
-            .filter(|v| v.online)
+            .filter(|v| v.online && v.client_type == ClientType::Vnt)
             .map(|c| c.ip)
             .collect()
     }
     pub fn client_ips(&self) -> Vec<ClientSimpleInfo> {
         self.client_simple_list.read().clone()
+    }
+    pub fn is_ikev2_client(&self, ip: &Ipv4Addr) -> bool {
+        self.client_simple_list.read().iter().any(|client| {
+            client.ip == *ip && client.online && client.client_type == ClientType::Ikev2
+        })
     }
     pub fn data_version(&self, server_id: u32) -> u64 {
         self.server_node_map
@@ -603,6 +608,9 @@ impl ServerInfoCollection {
                 if let Some(v) = client_simple_map.get_mut(&x.ip) {
                     if x.online {
                         v.online = true;
+                    }
+                    if x.client_type == ClientType::Ikev2 {
+                        v.client_type = ClientType::Ikev2;
                     }
                 } else {
                     client_simple_map.insert(x.ip, x.clone());

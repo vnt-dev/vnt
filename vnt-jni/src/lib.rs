@@ -565,7 +565,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
             let local_clients: HashMap<_, _> = api
                 .client_ips()
                 .into_iter()
-                .map(|client| (client.ip, client.online))
+                .map(|client| (client.ip, (client.online, client.client_type)))
                 .collect();
             let server_clients: HashMap<_, _> = runtime
                 .block_on(api.server_rpc().client_list())
@@ -601,7 +601,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                         .map(|route| route.route_key().protocol().to_string());
                     let route_metric = route.as_ref().map(|route| route.metric());
                     let rtt = route.as_ref().map(|route| route.rtt());
-                    let online = local_clients.get(&ip).copied().unwrap_or(false)
+                    let online = local_clients.get(&ip).map(|value| value.0).unwrap_or(false)
                         || server_client.map(|client| client.online).unwrap_or(false)
                         || has_route;
                     let packet_loss = api.packet_loss_info(&ip).map(|info| {
@@ -621,13 +621,24 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                         "ip": ip.to_string(),
                         "name": server_client.map(|client| client.name.as_str()).unwrap_or(""),
                         "version": server_client.map(|client| client.version.as_str()).unwrap_or(""),
+                        "client_type": server_client
+                            .map(|client| if client.client_type == 1 { "IKEV2" } else { "VNT" })
+                            .or_else(|| local_clients.get(&ip).map(|value| match value.1 {
+                                vnt_core::protocol::control_message::ClientType::Ikev2 => "IKEV2",
+                                vnt_core::protocol::control_message::ClientType::Vnt => "VNT",
+                            }))
+                            .unwrap_or("VNT"),
                         "online": online,
                         "direct": direct,
                         "route_protocol": route_protocol,
                         "route_metric": route_metric,
                         "rtt": rtt,
                         "key_equal": server_client
-                            .map(|client| encryption_state(local_key.as_deref(), client.key_sign.as_deref()))
+                            .map(|client| if client.client_type == 1 {
+                                0
+                            } else {
+                                encryption_state(local_key.as_deref(), client.key_sign.as_deref())
+                            })
                             .unwrap_or(0),
                         "packet_loss": packet_loss,
                         "traffic": traffic,
@@ -1047,6 +1058,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         no_broadcast: bool,
         #[serde(default)]
+        allow_ikev2: bool,
+        #[serde(default)]
         compress: bool,
         #[serde(default)]
         rtx: bool,
@@ -1162,6 +1175,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         ip: cfg.ip,
         no_punch: cfg.no_punch,
         no_broadcast: cfg.no_broadcast,
+        allow_ikev2: cfg.allow_ikev2,
         rtx: cfg.rtx,
         compress: cfg.compress,
         device_id,

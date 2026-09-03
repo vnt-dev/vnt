@@ -39,6 +39,7 @@ pub(crate) struct ConnectRegConfig {
     pub key_sign: Option<String>,
     pub ip_variable: bool,
     pub advertised_subnets: Arc<Vec<Ipv4Net>>,
+    pub allow_ikev2: bool,
     pub default_interface: Option<LocalInterface>,
 }
 #[derive(Debug, Clone)]
@@ -131,6 +132,7 @@ impl ConnectRegConfig {
             server_id,
             registration_mode,
             advertised_subnets: self.advertised_subnets.as_ref().clone(),
+            allow_ikev2: self.allow_ikev2,
         }
     }
     /// 解析出全部候选服务器地址：动态地址（DNS TXT 记录或 http(s) 接口返回的
@@ -263,6 +265,7 @@ mod tests {
             key_sign: None,
             ip_variable: true,
             advertised_subnets: Arc::new(Vec::new()),
+            allow_ikev2: false,
             default_interface: None,
         };
 

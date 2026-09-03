@@ -270,6 +270,8 @@ pub struct StartConfig {
     #[serde(default)]
     pub no_broadcast: bool,
     #[serde(default)]
+    pub allow_ikev2: bool,
+    #[serde(default)]
     pub compress: bool,
     #[serde(default)]
     pub rtx: bool,
@@ -375,6 +377,7 @@ struct HttpClientItem {
     online: bool,
     route: Option<HttpRouteDetail>,
     version: String,
+    client_type: String,
     last_connected_time: i64,
     key_equal: i32,
     nat_info: Option<HttpClientNatInfo>,
@@ -1468,6 +1471,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         ip: cfg.ip,
         no_punch: cfg.no_punch,
         no_broadcast: cfg.no_broadcast,
+        allow_ikev2: cfg.allow_ikev2,
         rtx: cfg.rtx,
         compress: cfg.compress,
         device_id,
@@ -1596,6 +1600,11 @@ async fn get_peers(
                     online: v.online || has_route,
                     route,
                     version: String::new(),
+                    client_type: match v.client_type {
+                        vnt_core::protocol::control_message::ClientType::Ikev2 => "IKEV2",
+                        vnt_core::protocol::control_message::ClientType::Vnt => "VNT",
+                    }
+                    .to_string(),
                     last_connected_time: 0,
                     key_equal: 0,
                     nat_info: build_nat_info(&ip),
@@ -1613,6 +1622,7 @@ async fn get_peers(
             let route = build_route(&ip);
             // 如果有路由，说明设备在线（可以直接通信）
             let has_route = route.is_some();
+            let client_type = if v.client_type == 1 { "IKEV2" } else { "VNT" };
             merged.insert(
                 ip,
                 HttpClientItem {
@@ -1621,8 +1631,13 @@ async fn get_peers(
                     online: v.online || has_route,
                     route,
                     version: v.version,
+                    client_type: client_type.to_string(),
                     last_connected_time: v.last_connected_time,
-                    key_equal: calc_key_equal(&v.key_sign),
+                    key_equal: if v.client_type == 1 {
+                        0
+                    } else {
+                        calc_key_equal(&v.key_sign)
+                    },
                     nat_info: build_nat_info(&ip),
                     packet_loss: build_packet_loss(&ip),
                     traffic: build_traffic(&ip),
@@ -1807,6 +1822,7 @@ mod tests {
             password: None,
             no_punch: false,
             no_broadcast: false,
+            allow_ikev2: false,
             compress: false,
             rtx: false,
             fec: false,

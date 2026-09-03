@@ -7,6 +7,11 @@ enum RegistrationMode {
   PRE_REGISTER = 1;
 }
 
+enum ClientType {
+  VNT = 0;
+  IKEV2 = 1;
+}
+
 message RegRequestMsg {
   string network_code = 1;
   string device_id = 2;
@@ -18,6 +23,7 @@ message RegRequestMsg {
   fixed32 server_id = 8;
   RegistrationMode registration_mode = 9;
   repeated Ipv4Subnet advertised_subnets = 10;
+  bool allow_ikev2 = 11;
 }
 
 
@@ -92,6 +98,7 @@ message SelectiveBroadcast {
 message ClientSimpleInfo{
   fixed32 ip = 1;
   bool online = 2;
+  ClientType client_type = 3;
 }
 
 message ClientSimpleInfoList{

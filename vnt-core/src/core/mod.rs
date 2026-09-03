@@ -50,6 +50,7 @@ struct RegistrationContext {
     fec_decoder: FecDecoder,
     turn: std::sync::Arc<Vec<crate::context::config::TurnRule>>,
     auto_sync_subnet: bool,
+    allow_ikev2: bool,
 }
 
 pub struct NetworkManager {
@@ -194,7 +195,8 @@ impl NetworkManager {
             subnet_packet_mapper.clone(),
             fec_encoder,
         )
-        .with_no_broadcast(config.no_broadcast);
+        .with_no_broadcast(config.no_broadcast)
+        .with_allow_ikev2(config.allow_ikev2);
         let port_mapping_manager = PortMappingManager::new(
             config.device_mode == DeviceMode::No,
             config.allow_port_mapping,
@@ -289,6 +291,7 @@ impl NetworkManager {
             fec_decoder,
             turn,
             auto_sync_subnet: config.auto_sync_subnet,
+            allow_ikev2: config.allow_ikev2,
         });
 
         app_state.set_config(config.clone());
@@ -403,6 +406,7 @@ impl NetworkManager {
                 fec_decoder: ctx.fec_decoder.clone(),
                 turn: ctx.turn.clone(),
                 auto_sync_subnet: ctx.auto_sync_subnet,
+                allow_ikev2: ctx.allow_ikev2,
             });
             turn_manager.data_handle_task_connected(task_group, handler_config);
         }

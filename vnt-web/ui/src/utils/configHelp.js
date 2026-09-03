@@ -89,6 +89,13 @@ export const configHelp = {
     usage: "可减少发现协议和广播风暴产生的流量；依赖局域网发现、组播服务或某些游戏联机时不要开启。",
     format: "开关；默认关闭，即允许转发。",
   },
+  allow_ikev2: {
+    param: "allow_ikev2 / --allow-ikev2",
+    summary: "允许本节点与接入同一虚拟网络的 IKEv2/IPsec 客户端互通。",
+    usage: "开启后，本节点信任已认证 VNT 服务端注入的 IKEv2 明文 IPv4 包，并把发往 IKEv2 类型地址的流量固定交给服务端中继。",
+    format: "开关；默认关闭。",
+    notes: ["此路径不使用 VNT 节点间 password 加密，应只连接受信任的服务端。"],
+  },
   password: {
     param: "password",
     summary: "对虚拟网络中的节点间数据进行加密。",

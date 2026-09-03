@@ -361,6 +361,7 @@ pub(crate) struct ServerTurnInboundHandler {
     fec_decoder: FecDecoder,
     turn: Arc<Vec<TurnRule>>,
     auto_sync_subnet: bool,
+    allow_ikev2: bool,
 }
 impl ServerTurnInboundHandler {
     pub fn new(
@@ -383,6 +384,7 @@ impl ServerTurnInboundHandler {
             fec_decoder: config.fec_decoder,
             turn: config.turn,
             auto_sync_subnet: config.auto_sync_subnet,
+            allow_ikev2: config.allow_ikev2,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -421,6 +423,24 @@ impl ServerTurnInboundHandler {
         let mut net_packet = self.packet_compression.decompress(net_packet)?;
 
         match msg_type {
+            MsgType::Ikev2Relay if self.allow_ikev2 => {
+                let Some(ipv4) = Ipv4Packet::new(net_packet.payload()) else {
+                    return Ok(());
+                };
+                let header_length = ipv4.get_header_length() as usize * 4;
+                if ipv4.get_version() != 4
+                    || header_length < Ipv4Packet::minimum_packet_size()
+                    || ipv4.get_total_length() as usize != net_packet.payload().len()
+                    || ipv4.get_source() != src
+                    || ipv4.get_destination() != network_addr.ip
+                    || Ipv4Addr::from(net_packet.dest_id()) != network_addr.ip
+                {
+                    return Ok(());
+                }
+                self.enhanced_inbound
+                    .inbound(&network_addr, MsgType::Turn, src, net_packet)
+                    .await?;
+            }
             MsgType::Turn => {
                 // 只允许icmp EchoReply
                 let Some(ipv4) = Ipv4Packet::new(net_packet.payload()) else {

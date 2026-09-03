@@ -115,6 +115,16 @@ impl BasicOutbound {
             .await
     }
 
+    pub async fn send_server_raw(
+        &self,
+        dest: Ipv4Addr,
+        packet: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        self.server_outbound
+            .send_raw(dest, packet.into_bytes())
+            .await
+    }
+
     /// 广播发送
     pub async fn send_raw_broadcast(
         &self,
@@ -218,6 +228,7 @@ pub(crate) struct HybridOutbound {
     subnet_packet_mapper: SubnetPacketMapper,
     fec_encoder: Option<FecEncoder>,
     no_broadcast: bool,
+    allow_ikev2: bool,
 }
 impl HybridOutbound {
     #[allow(clippy::too_many_arguments)]
@@ -243,12 +254,57 @@ impl HybridOutbound {
             subnet_packet_mapper,
             fec_encoder,
             no_broadcast: false,
+            allow_ikev2: false,
         }
     }
 
     pub fn with_no_broadcast(mut self, no_broadcast: bool) -> Self {
         self.no_broadcast = no_broadcast;
         self
+    }
+    pub fn with_allow_ikev2(mut self, allow_ikev2: bool) -> Self {
+        self.allow_ikev2 = allow_ikev2;
+        self
+    }
+    pub fn is_ikev2_client(&self, ip: &Ipv4Addr) -> bool {
+        self.allow_ikev2 && self.server_info.is_ikev2_client(ip)
+    }
+    pub async fn ikev2_relay_outbound(
+        &self,
+        net: NetworkAddr,
+        mut data: TransmissionBytes,
+        dest: Ipv4Addr,
+    ) -> anyhow::Result<()> {
+        if !self.is_ikev2_client(&dest) {
+            return Ok(());
+        }
+        let Some(ipv4) = Ipv4Packet::new(data.as_ref()) else {
+            return Ok(());
+        };
+        let header_length = ipv4.get_header_length() as usize * 4;
+        let total_length = ipv4.get_total_length() as usize;
+        if header_length < Ipv4Packet::minimum_packet_size()
+            || total_length < header_length
+            || total_length > data.len()
+            || ipv4.get_source() != net.ip
+            || ipv4.get_destination() != dest
+        {
+            return Ok(());
+        }
+        if total_length < data.len() {
+            let trailing = data.len() - total_length;
+            data.shrink_end(trailing);
+        }
+        let len = data.len() as u64;
+        data.retreat_head(HEAD_LENGTH)?;
+        let mut packet = NetPacket::new(data)?;
+        packet.set_msg_type(MsgType::Ikev2Relay);
+        packet.set_src_id(net.ip.into());
+        packet.set_dest_id(dest.into());
+        packet.set_ttl(5);
+        self.basic_outbound.send_server_raw(dest, packet).await?;
+        self.traffic_stats.record_tx(dest, len);
+        Ok(())
     }
     pub async fn outbound_raw(
         &self,
@@ -357,6 +413,12 @@ impl HybridOutbound {
         data: TransmissionBytes,
         mut dest: Ipv4Addr,
     ) -> anyhow::Result<()> {
+        if self.is_ikev2_client(&dest) {
+            let Some(ip) = crate::ethernet::strip_ipv4(data) else {
+                return Ok(());
+            };
+            return self.ikev2_relay_outbound(net, ip, dest).await;
+        }
         if dest == net.gateway {
             let Some(ip) = crate::ethernet::strip_ipv4(data) else {
                 return Ok(());

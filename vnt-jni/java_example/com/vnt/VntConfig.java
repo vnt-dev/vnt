@@ -29,6 +29,7 @@ public class VntConfig {
     private final String certMode;
     private final boolean noPunch;
     private final boolean noBroadcast;
+    private final boolean allowIkev2;
     private final boolean compress;
     private final boolean rtx;
     private final boolean fec;
@@ -58,6 +59,7 @@ public class VntConfig {
         this.certMode = builder.certMode;
         this.noPunch = builder.noPunch;
         this.noBroadcast = builder.noBroadcast;
+        this.allowIkev2 = builder.allowIkev2;
         this.compress = builder.compress;
         this.rtx = builder.rtx;
         this.fec = builder.fec;
@@ -117,6 +119,7 @@ public class VntConfig {
         // 布尔值
         json.put("no_punch", noPunch);
         json.put("no_broadcast", noBroadcast);
+        json.put("allow_ikev2", allowIkev2);
         json.put("compress", compress);
         json.put("rtx", rtx);
         json.put("fec", fec);
@@ -181,6 +184,7 @@ public class VntConfig {
         private String certMode;
         private boolean noPunch = false;
         private boolean noBroadcast = false;
+        private boolean allowIkev2 = false;
         private boolean compress = false;
         private boolean rtx = false;
         private boolean fec = false;
@@ -322,6 +326,14 @@ public class VntConfig {
          */
         public Builder setNoBroadcast(boolean noBroadcast) {
             this.noBroadcast = noBroadcast;
+            return this;
+        }
+
+        /**
+         * 允许与服务端接入的 IKEv2/IPsec 客户端通信（默认false）
+         */
+        public Builder setAllowIkev2(boolean allowIkev2) {
+            this.allowIkev2 = allowIkev2;
             return this;
         }
 

@@ -242,6 +242,8 @@ pub struct Config {
     pub password: Option<String>,
     pub no_punch: bool,
     pub no_broadcast: bool,
+    /// 允许与由服务端终结的 IKEv2/IPsec 客户端互通。
+    pub allow_ikev2: bool,
     pub compress: bool,
     pub rtx: bool,
     pub fec: bool,
@@ -293,6 +295,9 @@ impl Config {
         }
         if self.server_addr.is_empty() {
             bail!("服务器地址不能为空");
+        }
+        if self.allow_ikev2 && self.device_mode == DeviceMode::No {
+            bail!("allow_ikev2 requires device_mode = tun or tap");
         }
         if self.server_addr.len() > 1 {
             let mut set = HashSet::new();
@@ -357,6 +362,7 @@ impl Config {
                 &self.output,
                 &self.subnet_mapping,
             )),
+            allow_ikev2: self.allow_ikev2,
             default_interface,
         }
     }

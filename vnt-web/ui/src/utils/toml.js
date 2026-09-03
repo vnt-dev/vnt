@@ -13,6 +13,7 @@ export const emptyFormData = () => ({
   compress: false,
   no_punch: false,
   no_broadcast: false,
+  allow_ikev2: false,
   input: [],
   subnet_mapping: [],
   output: [],
@@ -83,6 +84,8 @@ export const parseTomlToForm = (toml) => {
       data.no_punch = trimmed.includes("true");
     } else if (trimmed.match(/^no_broadcast\s*=/)) {
       data.no_broadcast = trimmed.includes("true");
+    } else if (trimmed.match(/^allow_ikev2\s*=/)) {
+      data.allow_ikev2 = trimmed.includes("true");
     } else if (trimmed.startsWith("input")) {
       const match = trimmed.match(/input\s*=\s*\[(.*)\]/);
       if (match) {
@@ -226,6 +229,11 @@ export const formToToml = (formData) => {
   if (formData.no_broadcast) {
     toml += "\n# 是否关闭 IPv4 广播和组播转发 (默认 false，即开启)\n";
     toml += "no_broadcast = true\n";
+  }
+
+  if (formData.allow_ikev2) {
+    toml += "\n# 允许与 IKEv2 客户端通信，并信任服务端注入的数据\n";
+    toml += "allow_ikev2 = true\n";
   }
 
   if (formData.compress) {
@@ -376,6 +384,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 是否关闭 IPv4 广播和组播转发 (默认 false，即开启)
 # no_broadcast = false
+
+# 是否允许与 IKEv2 客户端通信，并信任服务端注入的 IKEv2 明文 IPv4 包
+# allow_ikev2 = false
 
 # 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
 # compress = false

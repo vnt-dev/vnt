@@ -216,7 +216,10 @@ const switcherClass = (fileName) =>
                     {{ peer.ip }}
                   </span>
                 </td>
-                <td>{{ peer.name || "-" }}</td>
+                <td>
+                  <span>{{ peer.name || "-" }}</span>
+                  <span class="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">{{ peer.client_type || "VNT" }}</span>
+                </td>
                 <td class="hidden text-xs text-slate-400 md:table-cell">{{ peer.version || "-" }}</td>
                 <td>
                   <div class="flex items-center gap-2">

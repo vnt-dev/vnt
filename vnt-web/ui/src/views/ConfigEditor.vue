@@ -435,6 +435,15 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
                 </div>
                 <input v-model="formData.no_broadcast" type="checkbox" :class="checkboxClass" />
               </label>
+              <label :class="toggleLabelClass">
+                <div class="flex-1">
+                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                    允许 IKEv2 客户端 <ConfigHelp :help="configHelp.allow_ikev2" />
+                  </div>
+                  <div class="text-xs text-slate-400 mt-0.5">信任服务端注入并固定中继 IKEv2 流量</div>
+                </div>
+                <input v-model="formData.allow_ikev2" type="checkbox" :class="checkboxClass" />
+              </label>
             </div>
           </div>
 
