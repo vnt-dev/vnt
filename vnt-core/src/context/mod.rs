@@ -583,7 +583,7 @@ impl ServerInfoCollection {
         self_ip: Ipv4Addr,
         client_simple_list: ClientSimpleInfoList,
         now: i64,
-    ) {
+    ) -> Vec<Ipv4Addr> {
         let mut guard = self.server_node_map.write();
         let server_node = guard.entry(server_id).or_default();
         if now > client_simple_list.time {
@@ -619,7 +619,21 @@ impl ServerInfoCollection {
         }
 
         let mut guard = self.client_simple_list.write();
-        *guard = client_simple_map.into_values().collect()
+        let previous_online: HashMap<Ipv4Addr, bool> =
+            guard.iter().map(|info| (info.ip, info.online)).collect();
+        let mut changed = Vec::new();
+        for (ip, info) in &client_simple_map {
+            if previous_online.get(ip).copied().unwrap_or(false) != info.online {
+                changed.push(*ip);
+            }
+        }
+        for (ip, was_online) in previous_online {
+            if was_online && !client_simple_map.contains_key(&ip) {
+                changed.push(ip);
+            }
+        }
+        *guard = client_simple_map.into_values().collect();
+        changed
     }
     pub fn set_server_connected(&self, server_id: u32, val: bool) -> bool {
         let mut mutex_guard = self.server_node_map.write();
@@ -804,6 +818,69 @@ mod subnet_sync_tests {
         assert!(
             servers
                 .automatic_subnet_routes("10.26.0.3".parse().unwrap(), &static_routes)
+                .is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
+mod client_status_tests {
+    use super::ServerInfoCollection;
+    use crate::protocol::control_message::{ClientSimpleInfo, ClientSimpleInfoList, ClientType};
+    use crate::tunnel_core::server::transport::config::ProtocolAddress;
+    use std::net::Ipv4Addr;
+
+    fn update(servers: &ServerInfoCollection, peer: Ipv4Addr, online: bool) -> Vec<Ipv4Addr> {
+        servers.update_client_simple_list(
+            0,
+            Ipv4Addr::new(10, 26, 0, 1),
+            ClientSimpleInfoList {
+                data_version: 1,
+                list: vec![ClientSimpleInfo {
+                    ip: peer,
+                    online,
+                    client_type: ClientType::Vnt,
+                }],
+                is_all: true,
+                time: 0,
+            },
+            0,
+        )
+    }
+
+    #[test]
+    fn online_transitions_are_reported_once() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![(0, ProtocolAddress::default())]);
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+        assert!(update(&servers, peer, true).is_empty());
+        assert_eq!(update(&servers, peer, false), vec![peer]);
+        assert!(update(&servers, peer, false).is_empty());
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+    }
+
+    #[test]
+    fn disappearing_from_full_snapshot_is_one_offline_transition() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![(0, ProtocolAddress::default())]);
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+
+        let empty_snapshot = || ClientSimpleInfoList {
+            data_version: 2,
+            list: Vec::new(),
+            is_all: true,
+            time: 0,
+        };
+        assert_eq!(
+            servers.update_client_simple_list(0, Ipv4Addr::new(10, 26, 0, 1), empty_snapshot(), 0,),
+            vec![peer]
+        );
+        assert!(
+            servers
+                .update_client_simple_list(0, Ipv4Addr::new(10, 26, 0, 1), empty_snapshot(), 0,)
                 .is_empty()
         );
     }

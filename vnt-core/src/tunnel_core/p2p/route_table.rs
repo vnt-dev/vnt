@@ -185,10 +185,12 @@ impl RouteTable {
     }
 
     /// 添加 owner 路由（打洞请求响应时调用）
-    pub fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) {
-        if self.inner.add_owner_route(id, key) {
+    pub fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) -> bool {
+        let first_direct = self.inner.add_owner_route(id, key);
+        if first_direct {
             self.inner.first_direct_route_notify.notify_one();
         }
+        first_direct
     }
 
     /// 添加路由（心跳时调用，用于更新路由时间和添加跨节点转发路由）

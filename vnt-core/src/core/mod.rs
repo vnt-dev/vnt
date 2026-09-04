@@ -276,6 +276,7 @@ impl NetworkManager {
                 fec_decoder: fec_decoder.clone(),
                 turn: turn.clone(),
                 basic_outbound,
+                punch_backoff: app_state.punch_backoff.clone(),
             });
             p2p_task.start(handler);
         }

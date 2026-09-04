@@ -482,12 +482,15 @@ impl ServerTurnInboundHandler {
             }
             MsgType::PushClientIps => {
                 let list = ClientSimpleInfoList::from_slice(net_packet.payload())?;
-                self.server_info.update_client_simple_list(
+                let changed = self.server_info.update_client_simple_list(
                     self.server_id,
                     network_addr.ip,
                     list,
                     now,
                 );
+                for ip in changed {
+                    self.punch_backoff.reset(ip);
+                }
             }
             MsgType::RpcRes => {
                 // 设置rpc响应
@@ -662,7 +665,6 @@ impl ServerTurnInboundHandler {
                     log::debug!("ignore configured turn target PunchStart2 from {src}");
                     return Ok(());
                 }
-                self.punch_backoff.record(src);
                 // 对方回复开始打洞
                 let peer_punch_info = PunchInfo::from_slice(net_packet.payload())?;
                 self.update_peer_nat_info(src, peer_punch_info.nat_info.clone());

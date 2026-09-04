@@ -38,35 +38,38 @@ pub async fn punch_task(
         let Some(punch_info) = (ctx.punch_info_getter)() else {
             continue;
         };
+        if !ctx.server_info.is_any_server_connected(None) {
+            continue;
+        }
         let mut list = ctx.server_info.client_online_ips();
+        list.retain(|dest_ip| {
+            *dest_ip > src_ip
+                && allow_punch(&ctx.turn, dest_ip)
+                && route_table.need_punch(dest_ip)
+                && ctx.punch_backoff.should_punch(*dest_ip)
+        });
         list.shuffle(&mut rand::rng());
         list.truncate(5);
         for dest_ip in list {
-            if dest_ip <= src_ip {
+            // should_punch() 只用于候选过滤；最终必须原子占用，
+            // 防止并发调度或重复报文同时启动同一目标。
+            if !ctx.punch_backoff.try_begin(dest_ip) {
                 continue;
             }
-            if !allow_punch(&ctx.turn, &dest_ip) {
-                continue;
-            }
-            if ctx.server_info.is_any_server_connected(None) && route_table.need_punch(&dest_ip) {
-                if !ctx.punch_backoff.should_punch(dest_ip) {
-                    continue;
-                }
-                log::info!("punching {dest_ip}");
+            log::info!("punching {dest_ip}");
 
-                let data = punch_info.encode();
-                let mut net_packet = NetPacket::new(TransmissionBytes::zeroed_size(
-                    HEAD_LENGTH + data.len(),
-                    tunnel_to_server.encrypt_reserve(),
-                ))?;
-                net_packet.set_msg_type(MsgType::PunchStart1);
-                net_packet.set_ttl(2);
-                net_packet.set_src_id(src_ip.into());
-                net_packet.set_dest_id(dest_ip.into());
-                net_packet.set_payload(data.as_ref())?;
-                if let Err(e) = tunnel_to_server.send(dest_ip, net_packet).await {
-                    error!("punch send error {:?}", e);
-                }
+            let data = punch_info.encode();
+            let mut net_packet = NetPacket::new(TransmissionBytes::zeroed_size(
+                HEAD_LENGTH + data.len(),
+                tunnel_to_server.encrypt_reserve(),
+            ))?;
+            net_packet.set_msg_type(MsgType::PunchStart1);
+            net_packet.set_ttl(2);
+            net_packet.set_src_id(src_ip.into());
+            net_packet.set_dest_id(dest_ip.into());
+            net_packet.set_payload(data.as_ref())?;
+            if let Err(e) = tunnel_to_server.send(dest_ip, net_packet).await {
+                error!("punch send error {:?}", e);
             }
         }
     }
@@ -97,7 +100,7 @@ impl NatPuncher {
         if self.puncher.is_none() {
             return Ok(false);
         }
-        if !self.punch_backoff.should_punch(dest_ip) {
+        if !self.punch_backoff.try_begin(dest_ip) {
             return Ok(false);
         }
         self.punch_uncheck_delay(dest_ip, punch_info, Some(Duration::from_millis(50)))?;

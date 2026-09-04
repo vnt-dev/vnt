@@ -1,5 +1,6 @@
 use crate::compression::PacketCompression;
 use crate::context::config::{TurnRule, allow_punch};
+use crate::context::nat::PunchBackoff;
 use crate::context::{NetworkAddr, NetworkRoute, PacketLossStats};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
@@ -59,6 +60,7 @@ pub(crate) struct P2pInboundConfig {
     pub fec_decoder: FecDecoder,
     pub turn: Arc<Vec<TurnRule>>,
     pub basic_outbound: BasicOutbound,
+    pub punch_backoff: PunchBackoff,
 }
 
 #[derive(Clone)]
@@ -72,6 +74,7 @@ pub(crate) struct P2pInboundHandler {
     fec_decoder: FecDecoder,
     turn: Arc<Vec<TurnRule>>,
     basic_outbound: BasicOutbound,
+    punch_backoff: PunchBackoff,
 }
 
 impl P2pInboundHandler {
@@ -86,6 +89,7 @@ impl P2pInboundHandler {
             fec_decoder: config.fec_decoder,
             turn: config.turn,
             basic_outbound: config.basic_outbound,
+            punch_backoff: config.punch_backoff,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -283,7 +287,9 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                self.route_table.add_owner_route(ctx.src_ip, route_key);
+                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                    self.punch_backoff.reset(ctx.src_ip);
+                }
                 let mut packet = build_handshake_response(
                     MsgType::PunchRes,
                     net.ip,
@@ -317,7 +323,9 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                self.route_table.add_owner_route(ctx.src_ip, route_key);
+                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                    self.punch_backoff.reset(ctx.src_ip);
+                }
             }
             MsgType::DirectConnectReq => {
                 if !valid_punch_source(net, ctx.src_ip) {
@@ -332,7 +340,9 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     net.ip
                 );
-                self.route_table.add_owner_route(ctx.src_ip, route_key);
+                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                    self.punch_backoff.reset(ctx.src_ip);
+                }
                 let mut packet = build_handshake_response(
                     MsgType::DirectConnectRes,
                     net.ip,
@@ -355,7 +365,9 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                self.route_table.add_owner_route(ctx.src_ip, route_key);
+                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                    self.punch_backoff.reset(ctx.src_ip);
+                }
             }
             MsgType::PingTurn => {}
             MsgType::PongTurn => {}

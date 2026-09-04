@@ -136,7 +136,7 @@ fn mapping_addr(addr: SocketAddr) -> Option<(Ipv4Addr, u16)> {
 
 #[derive(Copy, Clone, Debug)]
 pub struct PunchState {
-    /// 打洞交互累计次数，退避时长按「BASE × count」线性增长，封顶 MAX_BACKOFF。
+    /// 连续失败的打洞轮次，成功或节点上下线时清零。
     pub count: u32,
     /// 该目标下次允许打洞的时刻，到点之前不应再次打洞。
     /// 用单调时钟 Instant，不受系统时间调整影响。
@@ -149,26 +149,61 @@ pub struct PunchBackoff {
 }
 
 impl PunchBackoff {
-    const MAX_BACKOFF: Duration = Duration::from_secs(3_600); // 常规退避上限 1h
     const NAT_CHANGE_CAP: Duration = Duration::from_secs(600); // NAT 变化后最多等待 10 分钟
-    const BASE: Duration = Duration::from_secs(3);
+    const RETRY_BACKOFF: [Duration; 7] = [
+        Duration::from_secs(3),
+        Duration::from_secs(10),
+        Duration::from_secs(30),
+        Duration::from_secs(60),
+        Duration::from_secs(300),
+        Duration::from_secs(900),
+        Duration::from_secs(3_600),
+    ];
 
-    /// 记录一次打洞交互：退避时长 = BASE × 累计次数，封顶 MAX_BACKOFF。
-    pub fn record(&self, ip: Ipv4Addr) {
+    #[cfg(test)]
+    fn record(&self, ip: Ipv4Addr) {
         let now = Instant::now();
         let mut map = self.inner.write();
         let entry = map.entry(ip).or_insert(PunchState {
             count: 0,
             backoff_until: now,
         });
-        entry.count += 1;
-        entry.backoff_until = now + (Self::BASE * entry.count).min(Self::MAX_BACKOFF);
+        Self::record_entry(entry, now);
+    }
+
+    /// 原子地检查并占用一轮打洞机会。
+    ///
+    /// 返回 `true` 时已经立即更新退避期，即使后续协商包丢失，
+    /// 也不会在下一调度周期中无限重发。
+    pub fn try_begin(&self, ip: Ipv4Addr) -> bool {
+        let now = Instant::now();
+        let mut map = self.inner.write();
+        let entry = map.entry(ip).or_insert(PunchState {
+            count: 0,
+            backoff_until: now,
+        });
+        if now < entry.backoff_until {
+            return false;
+        }
+        Self::record_entry(entry, now);
+        true
+    }
+
+    fn record_entry(entry: &mut PunchState, now: Instant) {
+        entry.count = entry.count.saturating_add(1);
+        let index = (entry.count.saturating_sub(1) as usize).min(Self::RETRY_BACKOFF.len() - 1);
+        entry.backoff_until = now + Self::RETRY_BACKOFF[index];
     }
 
     pub fn should_punch(&self, ip: Ipv4Addr) -> bool {
         let map = self.inner.read();
         map.get(&ip)
             .is_none_or(|state| Instant::now() >= state.backoff_until)
+    }
+
+    /// 直连建立成功或节点在线状态变化后，忘记该节点的历史失败。
+    pub fn reset(&self, ip: Ipv4Addr) {
+        self.inner.write().remove(&ip);
     }
 
     /// 对端 NAT 变化：不删除退避记录，把该目标的退避截止时刻压缩到
@@ -293,6 +328,37 @@ mod tests {
         backoff.inner.write().get_mut(&ip).unwrap().backoff_until =
             Instant::now() - Duration::from_secs(1);
         assert!(backoff.should_punch(ip));
+    }
+
+    #[test]
+    fn try_begin_atomically_reserves_attempt_and_advances_schedule() {
+        let backoff = PunchBackoff::default();
+        let ip = Ipv4Addr::new(10, 26, 0, 2);
+
+        assert!(backoff.try_begin(ip));
+        assert!(!backoff.try_begin(ip), "同一退避期只能占用一次");
+
+        backoff.inner.write().get_mut(&ip).unwrap().backoff_until =
+            Instant::now() - Duration::from_secs(1);
+        let now = Instant::now();
+        assert!(backoff.try_begin(ip));
+        let state = backoff.inner.read()[&ip];
+        assert_eq!(state.count, 2);
+        assert!(state.backoff_until - now >= Duration::from_secs(9));
+    }
+
+    #[test]
+    fn reset_forgets_previous_failures() {
+        let backoff = PunchBackoff::default();
+        let ip = Ipv4Addr::new(10, 26, 0, 2);
+        assert!(backoff.try_begin(ip));
+        assert!(!backoff.should_punch(ip));
+
+        backoff.reset(ip);
+
+        assert!(backoff.should_punch(ip));
+        assert!(backoff.try_begin(ip));
+        assert_eq!(backoff.inner.read()[&ip].count, 1);
     }
 
     #[test]
