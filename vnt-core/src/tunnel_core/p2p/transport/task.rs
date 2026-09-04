@@ -82,7 +82,7 @@ pub async fn init_tunnel(
             network: app_state.network.clone(),
             server_info: app_state.server_info_collection.clone(),
             punch_backoff: app_state.punch_backoff.clone(),
-            punch_info_getter: Arc::new(move || app_state_for_punch.get_punch_info()),
+            punch_info_getter: Arc::new(move |target| app_state_for_punch.get_punch_info(target)),
             turn: config.turn.clone(),
         };
         task_group.spawn(punch_task(tunnel_to_server, route_table.clone(), punch_ctx));

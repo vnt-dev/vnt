@@ -1,4 +1,4 @@
-use crate::context::config::Config;
+use crate::context::config::{Config, punch_model_for};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::nat::SubnetExternalRoute;
 use crate::protocol::client_message::PunchInfo;
@@ -955,9 +955,16 @@ impl AppState {
     }
 }
 impl AppState {
-    pub fn get_punch_info(&self) -> Option<PunchInfo> {
+    pub fn get_punch_info(&self, target: Ipv4Addr) -> Option<PunchInfo> {
+        let punch_model = self
+            .config
+            .lock()
+            .as_ref()
+            .map(|config| punch_model_for(&config.punch_model, &target))
+            .unwrap_or_else(rustp2p_core::punch::PunchPolicySet::all);
         self.nat_info.get().map(|info| PunchInfo {
             nat_info: self.filter_ip(info),
+            punch_model,
         })
     }
     pub fn get_nat_info(&self) -> Option<NatInfo> {

@@ -49,6 +49,7 @@ struct RegistrationContext {
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
     turn: std::sync::Arc<Vec<crate::context::config::TurnRule>>,
+    punch_model: std::sync::Arc<Vec<crate::context::config::PunchRule>>,
     auto_sync_subnet: bool,
     allow_ikev2: bool,
 }
@@ -87,6 +88,7 @@ impl NetworkManager {
         config.normalize()?;
         config.check()?;
         let turn = std::sync::Arc::new(config.turn.clone());
+        let punch_model = std::sync::Arc::new(config.punch_model.clone());
         let outbound_interface_name = config
             .outbound_interface
             .as_deref()
@@ -161,6 +163,7 @@ impl NetworkManager {
             app_state.punch_backoff.clone(),
             puncher,
             packet_crypto.clone(),
+            punch_model.clone(),
         );
         let subnet_external_route = app_state.subnet_route.clone();
         subnet_external_route.set_route_table(config.input.clone());
@@ -291,6 +294,7 @@ impl NetworkManager {
             enhanced_inbound,
             fec_decoder,
             turn,
+            punch_model,
             auto_sync_subnet: config.auto_sync_subnet,
             allow_ikev2: config.allow_ikev2,
         });
@@ -401,6 +405,7 @@ impl NetworkManager {
                 peer_map: app_state.peer_map.clone(),
                 punch_backoff: app_state.punch_backoff.clone(),
                 puncher: ctx.puncher.clone(),
+                punch_model: ctx.punch_model.clone(),
                 packet_crypto: ctx.packet_crypto.clone(),
                 packet_compression: ctx.packet_compression.clone(),
                 enhanced_inbound: ctx.enhanced_inbound.clone(),

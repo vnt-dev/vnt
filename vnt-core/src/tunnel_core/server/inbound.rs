@@ -1,5 +1,5 @@
 use crate::compression::PacketCompression;
-use crate::context::config::{DeviceMode, TurnRule, allow_punch};
+use crate::context::config::{DeviceMode, PunchRule, TurnRule, allow_punch, punch_model_for};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{
     NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection, SharedNetworkAddr,
@@ -355,6 +355,7 @@ pub(crate) struct ServerTurnInboundHandler {
     peer_map: PeerInfoMap,
     punch_backoff: PunchBackoff,
     puncher: NatPuncher,
+    punch_model: Arc<Vec<PunchRule>>,
     packet_crypto: PacketCrypto,
     packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
@@ -378,6 +379,7 @@ impl ServerTurnInboundHandler {
             peer_map: config.peer_map,
             punch_backoff: config.punch_backoff,
             puncher: config.puncher,
+            punch_model: config.punch_model,
             packet_crypto: config.packet_crypto,
             packet_compression: config.packet_compression,
             enhanced_inbound: config.enhanced_inbound,
@@ -397,9 +399,10 @@ impl ServerTurnInboundHandler {
         info.local_ipv4s.retain(|ip| !self.network_contains(ip));
         info
     }
-    fn get_punch_info(&self) -> Option<PunchInfo> {
+    fn get_punch_info(&self, target: Ipv4Addr) -> Option<PunchInfo> {
         self.nat_info.get().map(|info| PunchInfo {
             nat_info: self.filter_ip(info),
+            punch_model: punch_model_for(&self.punch_model, &target),
         })
     }
     fn update_peer_nat_info(&self, ip: Ipv4Addr, nat_info: NatInfo) {
@@ -635,7 +638,7 @@ impl ServerTurnInboundHandler {
                 }
                 // 对方发起打洞
                 let peer_punch_info = PunchInfo::from_slice(net_packet.payload())?;
-                let Some(self_punch_info) = self.get_punch_info() else {
+                let Some(self_punch_info) = self.get_punch_info(src) else {
                     return Ok(());
                 };
                 log::info!(

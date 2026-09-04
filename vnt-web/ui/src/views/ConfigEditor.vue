@@ -342,6 +342,40 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
               </div>
               <p class="mt-2 text-xs text-slate-400">命中目标不参与 P2P 打洞；中转节点已直连时优先经其转发，填写网关 IP 时强制走服务器。</p>
             </div>
+            <div class="mt-4">
+              <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                打洞方式规则
+                <ConfigHelp :help="configHelp.punch_model" />
+                <span class="text-xs text-slate-500 ml-2">目标IP或CIDR,一种或多种模式</span>
+              </label>
+              <div class="space-y-2">
+                <div v-for="(rule, idx) in formData.punch_model" :key="idx" class="flex gap-2">
+                  <input
+                    v-model="formData.punch_model[idx]"
+                    type="text"
+                    placeholder="例如: 10.26.1.0/24,IPv4Tcp,IPv4Udp"
+                    class="input flex-1"
+                  />
+                  <button @click="formData.punch_model.splice(idx, 1)" :class="removeBtnClass">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <button @click="formData.punch_model.push('')" :class="addBtnClass">
+                  <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                  </svg>
+                  添加打洞规则
+                </button>
+              </div>
+              <p class="mt-2 text-xs text-slate-400">可选 IPv4Tcp、IPv4Udp、IPv6Tcp、IPv6Udp；双方实际使用允许集合的交集。</p>
+            </div>
           </div>
 
           <!-- 网络设置 -->

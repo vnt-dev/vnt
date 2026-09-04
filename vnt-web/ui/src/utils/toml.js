@@ -6,6 +6,7 @@ export const emptyFormData = () => ({
   server: [""],
   peer_address: [],
   turn: [],
+  punch_model: [],
   ip: "",
   mtu: null,
   rtx: false,
@@ -67,6 +68,12 @@ export const parseTomlToForm = (toml) => {
       if (match) {
         const items = match[1].match(/"([^"]*)"/g);
         if (items) data.turn = items.map((s) => s.replace(/"/g, ""));
+      }
+    } else if (trimmed.match(/^punch_model\s*=/)) {
+      const match = trimmed.match(/punch_model\s*=\s*\[(.*)\]/);
+      if (match) {
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.punch_model = items.map((s) => s.replace(/"/g, ""));
       }
     } else if (trimmed.includes("ip =")) {
       const match = trimmed.match(/ip\s*=\s*"([^"]*)"/);
@@ -202,6 +209,12 @@ export const formToToml = (formData) => {
     toml += "\n# 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继\n";
     toml += "# 命中目标不参与 P2P 打洞\n";
     toml += `turn = [${turnRules.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
+  const punchModelRules = formData.punch_model.filter((s) => s.trim());
+  if (punchModelRules.length > 0) {
+    toml += "\n# 按目标虚拟 IP 或网段限制 P2P 打洞方式；双方实际使用允许集合的交集\n";
+    toml += `punch_model = [${punchModelRules.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
   if (formData.ip) {
@@ -365,6 +378,9 @@ server = ["quic://1.2.3.4:29872"]
 # 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继
 # 命中目标不参与 P2P 打洞
 # turn = ["10.26.0.0/24,10.26.0.2", "10.26.1.9,10.26.0.3"]
+
+# 按目标虚拟 IP 或网段限制 P2P 打洞方式；可选 IPv4Tcp、IPv4Udp、IPv6Tcp、IPv6Udp
+# punch_model = ["10.26.0.2,IPv4Udp", "10.26.1.0/24,IPv4Tcp,IPv4Udp"]
 
 # ===简单使用以下参数可以不动===
 

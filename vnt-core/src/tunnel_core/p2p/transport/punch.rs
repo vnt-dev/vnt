@@ -1,4 +1,4 @@
-use crate::context::config::{TurnRule, allow_punch};
+use crate::context::config::{PunchRule, TurnRule, allow_punch, punch_model_for};
 use crate::context::nat::PunchBackoff;
 use crate::context::{ServerInfoCollection, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
@@ -10,7 +10,7 @@ use crate::tunnel_core::server::outbound::ServerOutbound;
 use anyhow::bail;
 use log::error;
 use rand::seq::SliceRandom;
-use rustp2p_core::punch::{PunchModel, Puncher};
+use rustp2p_core::punch::{PunchModel, PunchPolicy, PunchPolicySet, Puncher};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,7 +45,7 @@ pub struct PunchTaskContext {
     pub turn: Arc<Vec<TurnRule>>,
 }
 
-pub type PunchInfoGetter = std::sync::Arc<dyn Fn() -> Option<PunchInfo> + Send + Sync>;
+pub type PunchInfoGetter = std::sync::Arc<dyn Fn(Ipv4Addr) -> Option<PunchInfo> + Send + Sync>;
 
 pub async fn punch_task(
     tunnel_to_server: ServerOutbound,
@@ -55,9 +55,6 @@ pub async fn punch_task(
     loop {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let Some(src_ip) = ctx.network.ip() else {
-            continue;
-        };
-        let Some(punch_info) = (ctx.punch_info_getter)() else {
             continue;
         };
         if !ctx.server_info.is_any_server_connected(None) {
@@ -73,6 +70,9 @@ pub async fn punch_task(
         list.shuffle(&mut rand::rng());
         list.truncate(5);
         for dest_ip in list {
+            let Some(punch_info) = (ctx.punch_info_getter)(dest_ip) else {
+                continue;
+            };
             // should_punch() 只用于候选过滤；最终必须原子占用，
             // 防止并发调度或重复报文同时启动同一目标。
             if !ctx.punch_backoff.try_begin(dest_ip) {
@@ -103,6 +103,7 @@ pub struct NatPuncher {
     puncher: Option<Puncher>,
     packet_crypto: PacketCrypto,
     limiter: PunchLimiter,
+    punch_rules: Arc<Vec<PunchRule>>,
 }
 
 impl NatPuncher {
@@ -111,6 +112,7 @@ impl NatPuncher {
         punch_backoff: PunchBackoff,
         puncher: Option<Puncher>,
         packet_crypto: PacketCrypto,
+        punch_rules: Arc<Vec<PunchRule>>,
     ) -> Self {
         Self {
             network,
@@ -118,10 +120,15 @@ impl NatPuncher {
             puncher,
             packet_crypto,
             limiter: PunchLimiter::default(),
+            punch_rules,
         }
     }
     pub fn punch(&self, dest_ip: Ipv4Addr, punch_info: PunchInfo) -> anyhow::Result<bool> {
         let Some(puncher) = self.puncher.clone() else {
+            return Ok(false);
+        };
+        let Some(punch_model) = self.effective_punch_model(dest_ip, &punch_info) else {
+            log::debug!("skip punch to {dest_ip}: punch model intersection is empty");
             return Ok(false);
         };
         let Some(permit) = self.limiter.try_acquire() else {
@@ -135,6 +142,7 @@ impl NatPuncher {
             puncher,
             dest_ip,
             punch_info,
+            punch_model,
             Some(Duration::from_millis(50)),
             permit,
         )?;
@@ -152,17 +160,29 @@ impl NatPuncher {
         let Some(puncher) = self.puncher.clone() else {
             return Ok(());
         };
+        let Some(punch_model) = self.effective_punch_model(dest_ip, &punch_info) else {
+            log::debug!("skip punch to {dest_ip}: punch model intersection is empty");
+            return Ok(());
+        };
         let Some(permit) = self.limiter.try_acquire() else {
             log::debug!("skip punch to {dest_ip}: concurrent punch limit reached");
             return Ok(());
         };
-        self.spawn_punch(puncher, dest_ip, punch_info, time, permit)
+        self.spawn_punch(puncher, dest_ip, punch_info, punch_model, time, permit)
+    }
+    fn effective_punch_model(
+        &self,
+        dest_ip: Ipv4Addr,
+        punch_info: &PunchInfo,
+    ) -> Option<PunchModel> {
+        effective_punch_model(&self.punch_rules, dest_ip, punch_info.punch_model.clone())
     }
     fn spawn_punch(
         &self,
         puncher: Puncher,
         dest_ip: Ipv4Addr,
         punch_info: PunchInfo,
+        punch_model: PunchModel,
         time: Option<Duration>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
@@ -175,7 +195,16 @@ impl NatPuncher {
             if let Some(time) = time {
                 tokio::time::sleep(time).await;
             }
-            if let Err(e) = punch_now(puncher, src_ip, dest_ip, punch_info, packet_crypto).await {
+            if let Err(e) = punch_now(
+                puncher,
+                src_ip,
+                dest_ip,
+                punch_info,
+                punch_model,
+                packet_crypto,
+            )
+            .await
+            {
                 log::warn!("punch send error {:?}", e);
             }
         });
@@ -187,6 +216,7 @@ async fn punch_now(
     src_ip: Ipv4Addr,
     dest_ip: Ipv4Addr,
     nat_info: PunchInfo,
+    punch_model: PunchModel,
     packet_crypto: PacketCrypto,
 ) -> anyhow::Result<()> {
     let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
@@ -200,11 +230,28 @@ async fn punch_now(
     packet.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())?;
     packet_crypto.encrypt_in_place(&mut packet)?;
     let buf = packet.into_buffer().into_bytes().freeze();
-    let punch_info = rustp2p_core::punch::PunchInfo::new(PunchModel::all(), nat_info.nat_info);
+    let punch_info = rustp2p_core::punch::PunchInfo::new(punch_model, nat_info.nat_info);
     puncher
         .punch_now(Some(buf.clone()), buf, punch_info)
         .await?;
     Ok(())
+}
+
+fn effective_punch_model(
+    rules: &[PunchRule],
+    dest_ip: Ipv4Addr,
+    peer_model: PunchPolicySet,
+) -> Option<PunchModel> {
+    let model = punch_model_for(rules, &dest_ip) & peer_model;
+    [
+        PunchPolicy::IPv4Tcp,
+        PunchPolicy::IPv4Udp,
+        PunchPolicy::IPv6Tcp,
+        PunchPolicy::IPv6Udp,
+    ]
+    .into_iter()
+    .any(|policy| model.is_match(policy))
+    .then_some(model)
 }
 
 #[cfg(test)]
@@ -231,5 +278,23 @@ mod tests {
             clone.try_acquire().is_some(),
             "任务结束释放许可后应能立即开始下一轮"
         );
+    }
+
+    #[test]
+    fn punch_model_uses_local_and_peer_intersection() {
+        let rules = vec!["10.26.0.2,IPv4Tcp,IPv6Udp".parse::<PunchRule>().unwrap()];
+        let mut peer = PunchPolicySet::empty();
+        peer.or(PunchPolicy::IPv4Tcp);
+        peer.or(PunchPolicy::IPv4Udp);
+
+        let effective = effective_punch_model(&rules, Ipv4Addr::new(10, 26, 0, 2), peer)
+            .expect("IPv4Tcp is allowed by both peers");
+        assert!(effective.is_match(PunchPolicy::IPv4Tcp));
+        assert!(!effective.is_match(PunchPolicy::IPv4Udp));
+        assert!(!effective.is_match(PunchPolicy::IPv6Udp));
+
+        let mut incompatible = PunchPolicySet::empty();
+        incompatible.or(PunchPolicy::IPv6Tcp);
+        assert!(effective_punch_model(&rules, Ipv4Addr::new(10, 26, 0, 2), incompatible).is_none());
     }
 }

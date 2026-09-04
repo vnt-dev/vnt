@@ -38,6 +38,14 @@ export const configHelp = {
     format: "目标虚拟IP或CIDR,中转节点虚拟IP",
     example: "10.26.0.0/24,10.26.0.2",
   },
+  punch_model: {
+    param: "punch_model",
+    summary: "按目标虚拟 IP 或网段限制允许使用的 P2P 打洞方式。",
+    usage: "双方会交换各自规则，实际只尝试双方允许集合的交集。重叠规则按最长前缀匹配，相同目标的多条规则会合并；未命中时允许全部方式。",
+    format: "目标虚拟IP或CIDR,IPv4Tcp|IPv4Udp|IPv6Tcp|IPv6Udp（可填写多种，以逗号分隔）",
+    example: "10.26.1.0/24,IPv4Tcp,IPv4Udp",
+    notes: ["模式名称不区分大小写，也支持 ipv4-tcp 等连字符写法。", "指定中转规则和禁用打洞仍具有更高优先级。"],
+  },
   ip: {
     param: "ip",
     summary: "请求一个固定的本机虚拟 IPv4 地址。",

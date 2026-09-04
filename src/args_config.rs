@@ -4,7 +4,7 @@ use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
-use vnt_core::context::config::{Config, DeviceMode, PeerAddress, TurnRule};
+use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule};
 use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
@@ -16,6 +16,7 @@ pub struct FileConfig {
     pub server: Option<Vec<String>>,
     pub peer_address: Option<Vec<String>>,
     pub turn: Option<Vec<String>>,
+    pub punch_model: Option<Vec<String>>,
     pub network_code: Option<String>,
     pub ip: Option<Ipv4Addr>,
     pub no_punch: Option<bool>,
@@ -98,6 +99,18 @@ impl FileConfig {
             })
             .collect()
     }
+    pub fn to_punch_model(&self) -> anyhow::Result<Vec<PunchRule>> {
+        self.punch_model
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|value| {
+                value
+                    .parse::<PunchRule>()
+                    .map_err(|error| anyhow!("invalid punch model rule '{}': {}", value, error))
+            })
+            .collect()
+    }
     pub fn to_port_mapping(&self) -> anyhow::Result<Vec<PortMapping>> {
         if let Some(port_mapping_raw) = &self.port_mapping {
             let mut port_mapping = Vec::with_capacity(port_mapping_raw.len());
@@ -126,6 +139,9 @@ pub struct Args {
     /// 指定目标 IP/网段的优先中转节点，可重复指定，格式为 target,turn_ip
     #[clap(long)]
     pub turn: Vec<TurnRule>,
+    /// 指定目标 IP/网段允许的打洞方式，可重复指定，格式为 target,mode[,mode...]
+    #[clap(long)]
+    pub punch_model: Vec<PunchRule>,
     /// 网络编号，相同编号的会组同一个局域网
     #[clap(short, long)]
     pub network_code: Option<String>,
@@ -263,6 +279,11 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
     } else {
         args.turn
     };
+    let punch_model = if args.punch_model.is_empty() {
+        file.to_punch_model()?
+    } else {
+        args.punch_model
+    };
     let port_mapping = if args.port_mapping.is_empty() {
         file.to_port_mapping()?
     } else {
@@ -317,6 +338,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         server_addr,
         peer_address,
         turn,
+        punch_model,
         network_code,
         ip: args.ip.or(file.ip),
         no_punch: args.no_punch || file.no_punch.unwrap_or(false),
@@ -366,6 +388,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         server_addr: args.server,
         peer_address: args.peer_address,
         turn: args.turn,
+        punch_model: args.punch_model,
         network_code: args
             .network_code
             .ok_or_else(|| anyhow!("network_code is required"))?,
@@ -412,6 +435,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
     let server_addr = file.to_server_addr()?;
     let peer_address = file.to_peer_address()?;
     let turn = file.to_turn()?;
+    let punch_model = file.to_punch_model()?;
     let port_mapping = file.to_port_mapping()?;
 
     let cert_mode = file
@@ -441,6 +465,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         server_addr,
         peer_address,
         turn,
+        punch_model,
         network_code: file
             .network_code
             .ok_or_else(|| anyhow!("network_code is required"))?,
@@ -509,6 +534,10 @@ server = ["quic://1.2.3.4:29872"]
 # 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继
 # 命中目标不参与 P2P 打洞
 # turn = ["10.26.0.0/24,10.26.0.2", "10.26.1.9,10.26.0.3"]
+
+# 指定目标虚拟 IP 或网段允许的 P2P 打洞方式，同一目标的多条规则会合并
+# 可选模式：IPv4Tcp、IPv4Udp、IPv6Tcp、IPv6Udp
+# punch_model = ["10.26.0.2,IPv4Udp", "10.26.1.0/24,IPv4Tcp,IPv4Udp"]
 
 # ===简单使用以下参数可以不动===
 
@@ -756,6 +785,37 @@ mod tests {
         .unwrap();
         let (config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
         assert_eq!(config.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
+    }
+
+    #[test]
+    fn test_punch_model_cli_and_file_precedence() {
+        let file: FileConfig = toml::from_str(
+            "punch_model = [\"10.26.0.0/16,IPv4Udp\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
+        )
+        .unwrap();
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--punch-model",
+            "10.26.1.9,IPv4Tcp,IPv6Udp",
+        ])
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(Some(args), Some(file)).unwrap();
+        assert_eq!(config.punch_model.len(), 1);
+        assert_eq!(
+            config.punch_model[0].to_string(),
+            "10.26.1.9,IPv4Tcp,IPv6Udp"
+        );
+
+        let file: FileConfig = toml::from_str(
+            "punch_model = [\"10.26.0.0/16,IPv4Udp\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
+        )
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
+        assert_eq!(config.punch_model[0].to_string(), "10.26.0.0/16,IPv4Udp");
     }
 
     #[test]
