@@ -47,6 +47,10 @@ pub struct PunchTaskContext {
 
 pub type PunchInfoGetter = std::sync::Arc<dyn Fn(Ipv4Addr) -> Option<PunchInfo> + Send + Sync>;
 
+fn is_other_peer(src_ip: Ipv4Addr, dest_ip: Ipv4Addr) -> bool {
+    dest_ip != src_ip
+}
+
 pub async fn punch_task(
     tunnel_to_server: ServerOutbound,
     route_table: RouteTable,
@@ -62,7 +66,7 @@ pub async fn punch_task(
         }
         let mut list = ctx.server_info.client_online_ips();
         list.retain(|dest_ip| {
-            *dest_ip > src_ip
+            is_other_peer(src_ip, *dest_ip)
                 && allow_punch(&ctx.turn, dest_ip)
                 && route_table.need_punch(dest_ip)
                 && ctx.punch_backoff.should_punch(*dest_ip)
@@ -135,7 +139,8 @@ impl NatPuncher {
             log::debug!("skip punch to {dest_ip}: concurrent punch limit reached");
             return Ok(false);
         };
-        if !self.punch_backoff.try_begin(dest_ip) {
+        if !self.punch_backoff.try_begin_punch(dest_ip) {
+            log::debug!("skip punch to {dest_ip}: punched within the last 5 seconds");
             return Ok(false);
         }
         self.spawn_punch(
@@ -168,6 +173,10 @@ impl NatPuncher {
             log::debug!("skip punch to {dest_ip}: concurrent punch limit reached");
             return Ok(());
         };
+        if !self.punch_backoff.try_begin_punch(dest_ip) {
+            log::debug!("skip punch to {dest_ip}: punched within the last 5 seconds");
+            return Ok(());
+        }
         self.spawn_punch(puncher, dest_ip, punch_info, punch_model, time, permit)
     }
     fn effective_punch_model(
@@ -257,6 +266,15 @@ fn effective_punch_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn both_ip_directions_are_candidates_but_self_is_not() {
+        let src = Ipv4Addr::new(10, 26, 0, 2);
+
+        assert!(is_other_peer(src, Ipv4Addr::new(10, 26, 0, 1)));
+        assert!(is_other_peer(src, Ipv4Addr::new(10, 26, 0, 3)));
+        assert!(!is_other_peer(src, src));
+    }
 
     #[test]
     fn punch_limiter_is_shared_and_releases_capacity() {

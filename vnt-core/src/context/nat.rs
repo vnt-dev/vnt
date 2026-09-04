@@ -141,6 +141,9 @@ pub struct PunchState {
     /// 该目标下次允许打洞的时刻，到点之前不应再次打洞。
     /// 用单调时钟 Instant，不受系统时间调整影响。
     pub backoff_until: Instant,
+    /// 该目标下次允许实际启动底层打洞的时刻。
+    /// 与主动协商退避分离，避免双方同时发起时互相阻塞协商响应。
+    pub punch_cooldown_until: Instant,
 }
 
 #[derive(Clone, Default)]
@@ -149,9 +152,10 @@ pub struct PunchBackoff {
 }
 
 impl PunchBackoff {
+    const PUNCH_COOLDOWN: Duration = Duration::from_secs(5);
     const NAT_CHANGE_CAP: Duration = Duration::from_secs(600); // NAT 变化后最多等待 10 分钟
     const RETRY_BACKOFF: [Duration; 7] = [
-        Duration::from_secs(3),
+        Duration::from_secs(5),
         Duration::from_secs(10),
         Duration::from_secs(30),
         Duration::from_secs(60),
@@ -167,6 +171,7 @@ impl PunchBackoff {
         let entry = map.entry(ip).or_insert(PunchState {
             count: 0,
             backoff_until: now,
+            punch_cooldown_until: now,
         });
         Self::record_entry(entry, now);
     }
@@ -181,11 +186,32 @@ impl PunchBackoff {
         let entry = map.entry(ip).or_insert(PunchState {
             count: 0,
             backoff_until: now,
+            punch_cooldown_until: now,
         });
-        if now < entry.backoff_until {
+        if now < entry.backoff_until || now < entry.punch_cooldown_until {
             return false;
         }
         Self::record_entry(entry, now);
+        true
+    }
+
+    /// 原子地占用一次实际打洞机会。
+    ///
+    /// 该冷却与主动协商退避相互独立：本机刚发送 PunchStart1 时，
+    /// 仍允许响应对端同时发送的 PunchStart1；但随后同一目标产生的
+    /// PunchStart2 不会再次启动底层打洞。
+    pub fn try_begin_punch(&self, ip: Ipv4Addr) -> bool {
+        let now = Instant::now();
+        let mut map = self.inner.write();
+        let entry = map.entry(ip).or_insert(PunchState {
+            count: 0,
+            backoff_until: now,
+            punch_cooldown_until: now,
+        });
+        if now < entry.punch_cooldown_until {
+            return false;
+        }
+        entry.punch_cooldown_until = now + Self::PUNCH_COOLDOWN;
         true
     }
 
@@ -196,9 +222,10 @@ impl PunchBackoff {
     }
 
     pub fn should_punch(&self, ip: Ipv4Addr) -> bool {
+        let now = Instant::now();
         let map = self.inner.read();
         map.get(&ip)
-            .is_none_or(|state| Instant::now() >= state.backoff_until)
+            .is_none_or(|state| now >= state.backoff_until && now >= state.punch_cooldown_until)
     }
 
     /// 直连建立成功或节点在线状态变化后，忘记该节点的历史失败。
@@ -345,6 +372,52 @@ mod tests {
         let state = backoff.inner.read()[&ip];
         assert_eq!(state.count, 2);
         assert!(state.backoff_until - now >= Duration::from_secs(9));
+    }
+
+    #[test]
+    fn actual_punch_has_a_shared_per_target_cooldown() {
+        let backoff = PunchBackoff::default();
+        let clone = backoff.clone();
+        let first_ip = Ipv4Addr::new(10, 26, 0, 2);
+        let second_ip = Ipv4Addr::new(10, 26, 0, 3);
+
+        assert!(backoff.try_begin_punch(first_ip));
+        assert!(
+            !clone.try_begin_punch(first_ip),
+            "克隆必须共享同一目标的实际打洞冷却"
+        );
+        assert!(
+            clone.try_begin_punch(second_ip),
+            "不同目标的实际打洞冷却必须相互独立"
+        );
+
+        backoff
+            .inner
+            .write()
+            .get_mut(&first_ip)
+            .unwrap()
+            .punch_cooldown_until = Instant::now() - Duration::from_secs(1);
+        assert!(backoff.try_begin_punch(first_ip));
+    }
+
+    #[test]
+    fn outbound_reservation_allows_one_simultaneous_inbound_punch() {
+        let backoff = PunchBackoff::default();
+        let ip = Ipv4Addr::new(10, 26, 0, 2);
+
+        assert!(backoff.try_begin(ip), "主动协商应成功占用重试机会");
+        assert!(
+            backoff.try_begin_punch(ip),
+            "主动协商不应阻止响应对端同时发起的打洞"
+        );
+        assert!(
+            !backoff.try_begin_punch(ip),
+            "同一轮后续 PunchStart2 不应重复启动底层打洞"
+        );
+        assert!(
+            !backoff.should_punch(ip),
+            "实际打洞冷却期间不应再次主动协商"
+        );
     }
 
     #[test]
