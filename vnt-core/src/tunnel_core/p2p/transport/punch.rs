@@ -17,6 +17,12 @@ use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const MAX_CONCURRENT_PUNCHES: usize = 4;
+const PUNCH_POLICIES: [PunchPolicy; 4] = [
+    PunchPolicy::IPv4Tcp,
+    PunchPolicy::IPv4Udp,
+    PunchPolicy::IPv6Tcp,
+    PunchPolicy::IPv6Udp,
+];
 
 #[derive(Clone)]
 struct PunchLimiter {
@@ -68,15 +74,23 @@ pub async fn punch_task(
         list.retain(|dest_ip| {
             is_other_peer(src_ip, *dest_ip)
                 && allow_punch(&ctx.turn, dest_ip)
-                && route_table.need_punch(dest_ip)
                 && ctx.punch_backoff.should_punch(*dest_ip)
         });
+        let mut list = list
+            .into_iter()
+            .filter_map(|dest_ip| {
+                let mut punch_info = (ctx.punch_info_getter)(dest_ip)?;
+                let missing = route_table.missing_punch_policies(&dest_ip, &punch_info.punch_model);
+                if !has_any_punch_policy(&missing) {
+                    return None;
+                }
+                punch_info.punch_model = missing;
+                Some((dest_ip, punch_info))
+            })
+            .collect::<Vec<_>>();
         list.shuffle(&mut rand::rng());
         list.truncate(5);
-        for dest_ip in list {
-            let Some(punch_info) = (ctx.punch_info_getter)(dest_ip) else {
-                continue;
-            };
+        for (dest_ip, punch_info) in list {
             // should_punch() 只用于候选过滤；最终必须原子占用，
             // 防止并发调度或重复报文同时启动同一目标。
             if !ctx.punch_backoff.try_begin(dest_ip) {
@@ -127,21 +141,27 @@ impl NatPuncher {
             punch_rules,
         }
     }
-    pub fn punch(&self, dest_ip: Ipv4Addr, punch_info: PunchInfo) -> anyhow::Result<bool> {
+    pub fn punch(
+        &self,
+        dest_ip: Ipv4Addr,
+        punch_info: PunchInfo,
+    ) -> anyhow::Result<Option<PunchPolicySet>> {
         let Some(puncher) = self.puncher.clone() else {
-            return Ok(false);
+            return Ok(None);
         };
-        let Some(punch_model) = self.effective_punch_model(dest_ip, &punch_info) else {
+        let Some((punch_model, effective_policies)) =
+            self.effective_punch_model(dest_ip, &punch_info)
+        else {
             log::debug!("skip punch to {dest_ip}: punch model intersection is empty");
-            return Ok(false);
+            return Ok(None);
         };
         let Some(permit) = self.limiter.try_acquire() else {
             log::debug!("skip punch to {dest_ip}: concurrent punch limit reached");
-            return Ok(false);
+            return Ok(None);
         };
         if !self.punch_backoff.try_begin_punch(dest_ip) {
             log::debug!("skip punch to {dest_ip}: punched within the last 5 seconds");
-            return Ok(false);
+            return Ok(None);
         }
         self.spawn_punch(
             puncher,
@@ -151,7 +171,7 @@ impl NatPuncher {
             Some(Duration::from_millis(50)),
             permit,
         )?;
-        Ok(true)
+        Ok(Some(effective_policies))
     }
     pub fn punch_uncheck(&self, dest_ip: Ipv4Addr, punch_info: PunchInfo) -> anyhow::Result<()> {
         self.punch_uncheck_delay(dest_ip, punch_info, None)
@@ -165,7 +185,7 @@ impl NatPuncher {
         let Some(puncher) = self.puncher.clone() else {
             return Ok(());
         };
-        let Some(punch_model) = self.effective_punch_model(dest_ip, &punch_info) else {
+        let Some((punch_model, _)) = self.effective_punch_model(dest_ip, &punch_info) else {
             log::debug!("skip punch to {dest_ip}: punch model intersection is empty");
             return Ok(());
         };
@@ -183,7 +203,7 @@ impl NatPuncher {
         &self,
         dest_ip: Ipv4Addr,
         punch_info: &PunchInfo,
-    ) -> Option<PunchModel> {
+    ) -> Option<(PunchModel, PunchPolicySet)> {
         effective_punch_model(&self.punch_rules, dest_ip, punch_info.punch_model.clone())
     }
     fn spawn_punch(
@@ -250,17 +270,27 @@ fn effective_punch_model(
     rules: &[PunchRule],
     dest_ip: Ipv4Addr,
     peer_model: PunchPolicySet,
-) -> Option<PunchModel> {
-    let model = punch_model_for(rules, &dest_ip) & peer_model;
-    [
-        PunchPolicy::IPv4Tcp,
-        PunchPolicy::IPv4Udp,
-        PunchPolicy::IPv6Tcp,
-        PunchPolicy::IPv6Udp,
-    ]
-    .into_iter()
-    .any(|policy| model.is_match(policy))
-    .then_some(model)
+) -> Option<(PunchModel, PunchPolicySet)> {
+    let local_model = punch_model_for(rules, &dest_ip);
+    let effective_policies = intersect_punch_policies(&local_model, &peer_model);
+    has_any_punch_policy(&effective_policies)
+        .then(|| (local_model & peer_model, effective_policies))
+}
+
+fn intersect_punch_policies(left: &PunchPolicySet, right: &PunchPolicySet) -> PunchPolicySet {
+    let mut intersection = PunchPolicySet::empty();
+    for policy in PUNCH_POLICIES {
+        if left.is_match(policy) && right.is_match(policy) {
+            intersection.or(policy);
+        }
+    }
+    intersection
+}
+
+fn has_any_punch_policy(policies: &PunchPolicySet) -> bool {
+    PUNCH_POLICIES
+        .into_iter()
+        .any(|policy| policies.is_match(policy))
 }
 
 #[cfg(test)]
@@ -305,11 +335,15 @@ mod tests {
         peer.or(PunchPolicy::IPv4Tcp);
         peer.or(PunchPolicy::IPv4Udp);
 
-        let effective = effective_punch_model(&rules, Ipv4Addr::new(10, 26, 0, 2), peer)
-            .expect("IPv4Tcp is allowed by both peers");
+        let (effective, effective_policies) =
+            effective_punch_model(&rules, Ipv4Addr::new(10, 26, 0, 2), peer)
+                .expect("IPv4Tcp is allowed by both peers");
         assert!(effective.is_match(PunchPolicy::IPv4Tcp));
         assert!(!effective.is_match(PunchPolicy::IPv4Udp));
         assert!(!effective.is_match(PunchPolicy::IPv6Udp));
+        assert!(effective_policies.is_match(PunchPolicy::IPv4Tcp));
+        assert!(!effective_policies.is_match(PunchPolicy::IPv4Udp));
+        assert!(!effective_policies.is_match(PunchPolicy::IPv6Udp));
 
         let mut incompatible = PunchPolicySet::empty();
         incompatible.or(PunchPolicy::IPv6Tcp);

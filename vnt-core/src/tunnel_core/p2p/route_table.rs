@@ -1,4 +1,5 @@
 use parking_lot::{Mutex, RwLock};
+use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
 use rustp2p_core::route_table::{DEFAULT_RTT, Protocol, RouteKey};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -153,14 +154,30 @@ impl RouteTable {
         self.inner.get_by_id(id).is_some()
     }
 
-    /// 判断是否需要打洞（没有路由或只有中继路由）
-    pub fn need_punch(&self, id: &Ipv4Addr) -> bool {
+    /// 返回配置允许、但当前尚未建立直连路由的打洞类型。
+    pub fn missing_punch_policies(
+        &self,
+        id: &Ipv4Addr,
+        configured: &PunchPolicySet,
+    ) -> PunchPolicySet {
         let guard = self.inner.route_table.read();
-        let Some(list) = guard.get(id) else {
-            return true;
-        };
-        // 如果没有直连路由（metric=1），则需要打洞
-        !list.iter().any(|r| r.is_direct())
+        let routes = guard.get(id).map(Vec::as_slice).unwrap_or_default();
+        let mut missing = PunchPolicySet::empty();
+        for policy in [
+            PunchPolicy::IPv4Tcp,
+            PunchPolicy::IPv4Udp,
+            PunchPolicy::IPv6Tcp,
+            PunchPolicy::IPv6Udp,
+        ] {
+            if configured.is_match(policy)
+                && !routes
+                    .iter()
+                    .any(|route| direct_route_matches_policy(route, policy))
+            {
+                missing.or(policy);
+            }
+        }
+        missing
     }
 
     /// 获取直连路由数量（用于判断是否直连）
@@ -358,6 +375,23 @@ fn best_direct_route(routes: &[Route]) -> Option<Route> {
         .copied()
 }
 
+fn direct_route_matches_policy(route: &Route, policy: PunchPolicy) -> bool {
+    if !route.is_direct() {
+        return false;
+    }
+    matches!(
+        (
+            route.route_key().protocol(),
+            route.route_key().peer_addr(),
+            policy
+        ),
+        (Protocol::TCP, SocketAddr::V4(_), PunchPolicy::IPv4Tcp)
+            | (Protocol::UDP, SocketAddr::V4(_), PunchPolicy::IPv4Udp)
+            | (Protocol::TCP, SocketAddr::V6(_), PunchPolicy::IPv6Tcp)
+            | (Protocol::UDP, SocketAddr::V6(_), PunchPolicy::IPv6Udp)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,5 +512,56 @@ mod tests {
         let direct = Route::from(RouteKey::default(), 1, 1000);
         assert!(relay.score() > direct.score());
         assert_eq!(best_direct_route(&[relay, direct]).unwrap().metric(), 1);
+    }
+
+    #[test]
+    fn missing_punch_policies_only_returns_configured_routes_without_direct_match() {
+        let table = RouteTable::new();
+        let target = Ipv4Addr::new(10, 0, 0, 2);
+        let ipv4_tcp = RouteKey::new(
+            Protocol::TCP,
+            "127.0.0.1:2000".parse().unwrap(),
+            "127.0.0.1:3000".parse().unwrap(),
+        );
+        let ipv4_udp = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2001".parse().unwrap(),
+            "127.0.0.1:3001".parse().unwrap(),
+        );
+        let mut configured = PunchPolicySet::empty();
+        configured.or(PunchPolicy::IPv4Tcp);
+        configured.or(PunchPolicy::IPv4Udp);
+
+        table.add_owner_route(target, ipv4_tcp);
+        table.add_relay_route(target, Route::from_default_rt(ipv4_udp, 2));
+
+        let missing = table.missing_punch_policies(&target, &configured);
+        assert!(!missing.is_match(PunchPolicy::IPv4Tcp));
+        assert!(missing.is_match(PunchPolicy::IPv4Udp));
+        assert!(!missing.is_match(PunchPolicy::IPv6Tcp));
+        assert!(!missing.is_match(PunchPolicy::IPv6Udp));
+
+        table.add_owner_route(target, ipv4_udp);
+        let missing = table.missing_punch_policies(&target, &configured);
+        assert!(!missing.is_match(PunchPolicy::IPv4Tcp));
+        assert!(!missing.is_match(PunchPolicy::IPv4Udp));
+    }
+
+    #[test]
+    fn missing_punch_policies_distinguishes_ip_family_and_protocol() {
+        let table = RouteTable::new();
+        let target = Ipv4Addr::new(10, 0, 0, 2);
+        let ipv6_udp = RouteKey::new(
+            Protocol::UDP,
+            "[::1]:2000".parse().unwrap(),
+            "[::1]:3000".parse().unwrap(),
+        );
+        table.add_owner_route(target, ipv6_udp);
+
+        let missing = table.missing_punch_policies(&target, &PunchPolicySet::all());
+        assert!(missing.is_match(PunchPolicy::IPv4Tcp));
+        assert!(missing.is_match(PunchPolicy::IPv4Udp));
+        assert!(missing.is_match(PunchPolicy::IPv6Tcp));
+        assert!(!missing.is_match(PunchPolicy::IPv6Udp));
     }
 }

@@ -638,15 +638,17 @@ impl ServerTurnInboundHandler {
                 }
                 // 对方发起打洞
                 let peer_punch_info = PunchInfo::from_slice(net_packet.payload())?;
-                let Some(self_punch_info) = self.get_punch_info(src) else {
+                let Some(mut self_punch_info) = self.get_punch_info(src) else {
                     return Ok(());
                 };
                 log::info!(
                     "对方主动发起打洞 对方nat信息={peer_punch_info:?}，自己nat信息={self_punch_info:?} {src}->{dest}"
                 );
                 self.update_peer_nat_info(src, peer_punch_info.nat_info.clone());
-                let rs = self.puncher.punch(src, peer_punch_info)?;
-                if rs {
+                let effective_policies = self.puncher.punch(src, peer_punch_info)?;
+                if let Some(effective_policies) = effective_policies {
+                    // 回传双方都支持的请求策略，确保发起端也只打当前缺失的路由类型。
+                    self_punch_info.punch_model = effective_policies;
                     let bytes_mut = self_punch_info.encode();
                     let mut net_packet = NetPacket::new(TransmissionBytes::zeroed_size(
                         HEAD_LENGTH + bytes_mut.len(),
