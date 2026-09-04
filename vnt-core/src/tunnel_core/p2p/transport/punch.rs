@@ -14,6 +14,28 @@ use rustp2p_core::punch::{PunchModel, Puncher};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+const MAX_CONCURRENT_PUNCHES: usize = 4;
+
+#[derive(Clone)]
+struct PunchLimiter {
+    semaphore: Arc<Semaphore>,
+}
+
+impl Default for PunchLimiter {
+    fn default() -> Self {
+        Self {
+            semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_PUNCHES)),
+        }
+    }
+}
+
+impl PunchLimiter {
+    fn try_acquire(&self) -> Option<OwnedSemaphorePermit> {
+        self.semaphore.clone().try_acquire_owned().ok()
+    }
+}
 
 pub struct PunchTaskContext {
     pub network: SharedNetworkAddr,
@@ -80,6 +102,7 @@ pub struct NatPuncher {
     punch_backoff: PunchBackoff,
     puncher: Option<Puncher>,
     packet_crypto: PacketCrypto,
+    limiter: PunchLimiter,
 }
 
 impl NatPuncher {
@@ -94,22 +117,33 @@ impl NatPuncher {
             punch_backoff,
             puncher,
             packet_crypto,
+            limiter: PunchLimiter::default(),
         }
     }
     pub fn punch(&self, dest_ip: Ipv4Addr, punch_info: PunchInfo) -> anyhow::Result<bool> {
-        if self.puncher.is_none() {
+        let Some(puncher) = self.puncher.clone() else {
             return Ok(false);
-        }
+        };
+        let Some(permit) = self.limiter.try_acquire() else {
+            log::debug!("skip punch to {dest_ip}: concurrent punch limit reached");
+            return Ok(false);
+        };
         if !self.punch_backoff.try_begin(dest_ip) {
             return Ok(false);
         }
-        self.punch_uncheck_delay(dest_ip, punch_info, Some(Duration::from_millis(50)))?;
+        self.spawn_punch(
+            puncher,
+            dest_ip,
+            punch_info,
+            Some(Duration::from_millis(50)),
+            permit,
+        )?;
         Ok(true)
     }
     pub fn punch_uncheck(&self, dest_ip: Ipv4Addr, punch_info: PunchInfo) -> anyhow::Result<()> {
         self.punch_uncheck_delay(dest_ip, punch_info, None)
     }
-    pub fn punch_uncheck_delay(
+    fn punch_uncheck_delay(
         &self,
         dest_ip: Ipv4Addr,
         punch_info: PunchInfo,
@@ -118,11 +152,26 @@ impl NatPuncher {
         let Some(puncher) = self.puncher.clone() else {
             return Ok(());
         };
+        let Some(permit) = self.limiter.try_acquire() else {
+            log::debug!("skip punch to {dest_ip}: concurrent punch limit reached");
+            return Ok(());
+        };
+        self.spawn_punch(puncher, dest_ip, punch_info, time, permit)
+    }
+    fn spawn_punch(
+        &self,
+        puncher: Puncher,
+        dest_ip: Ipv4Addr,
+        punch_info: PunchInfo,
+        time: Option<Duration>,
+        permit: OwnedSemaphorePermit,
+    ) -> anyhow::Result<()> {
         let Some(src_ip) = self.network.ip() else {
             bail!("not ip");
         };
         let packet_crypto = self.packet_crypto.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Some(time) = time {
                 tokio::time::sleep(time).await;
             }
@@ -156,4 +205,31 @@ async fn punch_now(
         .punch_now(Some(buf.clone()), buf, punch_info)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn punch_limiter_is_shared_and_releases_capacity() {
+        let limiter = PunchLimiter::default();
+        let clone = limiter.clone();
+        let mut permits = Vec::new();
+
+        for _ in 0..MAX_CONCURRENT_PUNCHES {
+            permits.push(limiter.try_acquire().expect("前四个任务应获得许可"));
+        }
+        assert!(
+            clone.try_acquire().is_none(),
+            "克隆必须共享同一个全局并发上限"
+        );
+
+        permits.pop();
+
+        assert!(
+            clone.try_acquire().is_some(),
+            "任务结束释放许可后应能立即开始下一轮"
+        );
+    }
 }
