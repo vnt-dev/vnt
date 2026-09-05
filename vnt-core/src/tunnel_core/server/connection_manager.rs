@@ -6,9 +6,7 @@ use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
-use crate::protocol::control_message::{
-    ConfirmRegResponseMsg, RegistrationMode, RequestMessage, ResponseMessage,
-};
+use crate::protocol::control_message::{RegistrationMode, RequestMessage, ResponseMessage};
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
 use crate::tunnel_core::server::inbound::{IpUpdateContext, ServerTurnInboundHandler};
 use crate::tunnel_core::server::outbound::ServerOutbound;
@@ -20,8 +18,8 @@ use crate::tunnel_core::server::transport::config::{
 use crate::utils::task_control::TaskGroup;
 use anyhow::bail;
 use bytes::Bytes;
+use futures::stream::{FuturesUnordered, Stream, StreamExt};
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -199,31 +197,13 @@ impl ServerTurnManager {
         Ok(response)
     }
 
-    pub async fn send_confirm(&mut self) -> anyhow::Result<ConfirmRegResponseMsg> {
-        self.transport_client
-            .send(RequestMessage::ConfirmReg.encode().freeze())
-            .await?;
-        let buf = self
-            .transport_client
-            .next_timeout(Duration::from_secs(10))
-            .await?;
-        let response = ResponseMessage::from_slice(&buf)?;
-        match response {
-            ResponseMessage::ConfirmReg(msg) => Ok(msg),
-            ResponseMessage::Error(e) => bail!("Confirm failed: {}", e.message),
-            _ => bail!("Unexpected response"),
-        }
-    }
-
-    pub fn set_ip(&mut self, ip: Ipv4Addr) {
-        self.config.ip.set(ip);
-    }
-
-    /// Start data handling task with an already established connection.
-    pub fn data_handle_task_connected(
+    /// Start a server data task. Servers which were not part of the successful
+    /// initial registration enter the normal reconnect loop immediately.
+    pub fn data_handle_task(
         mut self,
         task_group: &TaskGroup,
         config: Box<InboundHandlerConfig>,
+        initially_connected: bool,
     ) {
         let data_handler = ServerTurnInboundHandler::new(self.server_id, config);
         data_handler.set_subnet_sync_supported(self.subnet_sync_supported);
@@ -232,7 +212,7 @@ impl ServerTurnManager {
         };
 
         task_group.spawn(async move {
-            let mut already_connected = true;
+            let mut already_connected = initially_connected;
             loop {
                 if !already_connected {
                     self.disconnect();
@@ -366,88 +346,143 @@ impl ServerTurnManager {
     }
 }
 
-/// Coordinated multi-server pre-registration.
-/// 1. First server uses PRE_REGISTER mode to get IP
-/// 2. Other servers pre-register with the obtained IP
-/// 3. Send confirmation to all servers
-/// 4. Return the registration response
-pub async fn coordinated_registration(
+/// Register with all configured servers concurrently and return as soon as one
+/// server accepts the fixed virtual IP. Dropping the remaining futures cancels
+/// their initial attempts; their data tasks will subsequently reconnect them.
+pub async fn register_with_first_available(
     managers: &mut [ServerTurnManager],
-) -> anyhow::Result<ResponseMessage> {
+) -> anyhow::Result<(usize, ResponseMessage)> {
     if managers.is_empty() {
         bail!("No servers to register");
     }
 
-    // Step 1: First server pre-register to get IP
-    log::info!(
-        "Starting coordinated registration with {} servers",
-        managers.len()
-    );
-    let first_response = managers[0]
-        .connect_and_reg(RegistrationMode::PreRegister)
-        .await?;
+    log::info!("Registering concurrently with {} servers", managers.len());
 
-    let ip = match &first_response {
-        ResponseMessage::Reg(reg) => reg.ip,
-        ResponseMessage::Error(e) => {
-            log::info!("First server registration failed: {}", e.message);
-            return Ok(first_response);
-        }
-        _ => bail!("Unexpected response from first server"),
-    };
-    log::info!("Got IP {} from first server", ip);
-
-    // Persist the assigned IP in the shared registration state immediately.
-    // This also makes a single-server reconnect carry the current runtime IP.
-    managers[0].set_ip(ip);
-
-    // Step 2: Set IP and pre-register with other servers
-    for manager in managers.iter_mut().skip(1) {
-        manager.set_ip(ip);
+    let attempts = FuturesUnordered::new();
+    for (index, manager) in managers.iter_mut().enumerate() {
+        attempts.push(async move {
+            (
+                index,
+                manager.connect_and_reg(RegistrationMode::Normal).await,
+            )
+        });
     }
 
-    if managers.len() > 1 {
-        let other_results: Vec<_> = futures::future::join_all(
-            managers
-                .iter_mut()
-                .skip(1)
-                .map(|m| m.connect_and_reg(RegistrationMode::PreRegister)),
-        )
-        .await;
+    select_first_available(attempts).await
+}
 
-        // Check all responses
-        for (i, result) in other_results.iter().enumerate() {
-            match result {
-                Ok(ResponseMessage::Reg(_)) => {
-                    log::info!("Server {} pre-registered successfully", i + 1);
-                }
-                Ok(ResponseMessage::Error(e)) => {
-                    log::info!("Server {} registration failed: {}", i + 1, e.message);
-                    return Ok(ResponseMessage::Error(e.clone()));
-                }
-                Err(e) => bail!("Server {} registration failed: {}", i + 1, e),
-                _ => bail!("Unexpected response from server {}", i + 1),
-            }
-        }
-    }
-
-    // Step 3: Send confirmation to all servers
-    log::info!("Sending confirmation to all servers");
-    let confirm_results: Vec<_> =
-        futures::future::join_all(managers.iter_mut().map(|m| m.send_confirm())).await;
-
-    // Check all confirmation responses
-    for (i, result) in confirm_results.into_iter().enumerate() {
+async fn select_first_available<S>(mut attempts: S) -> anyhow::Result<(usize, ResponseMessage)>
+where
+    S: Stream<Item = (usize, anyhow::Result<ResponseMessage>)> + Unpin,
+{
+    let mut first_rejection = None;
+    let mut connection_errors = Vec::new();
+    while let Some((index, result)) = attempts.next().await {
         match result {
-            Ok(msg) if msg.success => {
-                log::info!("Server {} confirmed successfully", i);
+            Ok(response) => match response {
+                response @ ResponseMessage::Reg(_) => {
+                    log::info!("Server {index} completed initial registration");
+                    drop(attempts);
+                    return Ok((index, response));
+                }
+                ResponseMessage::Error(error) => {
+                    log::warn!("Server {index} rejected registration: {}", error.message);
+                    if first_rejection.is_none() {
+                        first_rejection = Some((index, ResponseMessage::Error(error)));
+                    }
+                }
+                response => {
+                    log::warn!("Server {index} returned an unexpected registration response");
+                    connection_errors.push(format!(
+                        "server {index} returned unexpected response: {response:?}"
+                    ));
+                }
+            },
+            Err(error) => {
+                log::warn!("Server {index} initial registration failed: {error:#}");
+                connection_errors.push(format!("server {index}: {error:#}"));
             }
-            Ok(_) => bail!("Server {} confirmation failed", i),
-            Err(e) => bail!("Server {} confirmation failed: {}", i, e),
         }
     }
 
-    log::info!("Coordinated registration completed successfully");
-    // Return first server's response (contains IP info)
-    Ok(first_response)
+    if let Some(rejection) = first_rejection {
+        return Ok(rejection);
+    }
+
+    bail!(
+        "All servers failed to connect/register: {}",
+        connection_errors.join("; ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::control_message::{ErrorResponseMsg, RegResponseMsg};
+    use futures::FutureExt;
+
+    fn registration(ip: [u8; 4]) -> ResponseMessage {
+        ResponseMessage::Reg(RegResponseMsg {
+            ip: ip.into(),
+            prefix_len: 24,
+            gateway: [ip[0], ip[1], ip[2], 1].into(),
+            server_version: "test".to_string(),
+            subnet_sync_supported: false,
+        })
+    }
+
+    #[tokio::test]
+    async fn first_available_ignores_earlier_connection_failure() {
+        let attempts = futures::stream::iter(vec![
+            (0, Err(anyhow::anyhow!("offline"))),
+            (1, Ok(registration([10, 26, 0, 2]))),
+        ]);
+        let (index, response) = select_first_available(attempts).await.unwrap();
+        assert_eq!(index, 1);
+        assert!(matches!(response, ResponseMessage::Reg(_)));
+    }
+
+    #[tokio::test]
+    async fn first_available_does_not_wait_for_a_pending_server() {
+        let attempts = FuturesUnordered::new();
+        attempts
+            .push(futures::future::pending::<(usize, anyhow::Result<ResponseMessage>)>().boxed());
+        attempts.push(futures::future::ready((1, Ok(registration([10, 26, 0, 2])))).boxed());
+
+        let result =
+            tokio::time::timeout(Duration::from_millis(100), select_first_available(attempts))
+                .await
+                .expect("a ready server must not wait for a pending server")
+                .unwrap();
+        assert_eq!(result.0, 1);
+    }
+
+    #[tokio::test]
+    async fn first_available_returns_retryable_error_when_all_connections_fail() {
+        let attempts = futures::stream::iter(vec![
+            (0, Err(anyhow::anyhow!("offline"))),
+            (1, Err(anyhow::anyhow!("timeout"))),
+        ]);
+        let error = select_first_available(attempts)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("offline"));
+        assert!(error.contains("timeout"));
+    }
+
+    #[tokio::test]
+    async fn first_available_returns_server_rejection_when_none_succeed() {
+        let rejection = ResponseMessage::Error(ErrorResponseMsg {
+            code: 1,
+            message: "denied".to_string(),
+        });
+        let attempts = futures::stream::iter(vec![
+            (0, Ok(rejection)),
+            (1, Err(anyhow::anyhow!("offline"))),
+        ]);
+        let (index, response) = select_first_available(attempts).await.unwrap();
+        assert_eq!(index, 0);
+        assert!(matches!(response, ResponseMessage::Error(_)));
+    }
 }

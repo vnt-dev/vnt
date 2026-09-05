@@ -270,14 +270,12 @@ impl ConfirmRegResponseMsg {
 }
 pub(crate) enum RequestMessage {
     Reg(RegRequestMsg),
-    ConfirmReg,
     FastReg(FastRegRequestMsg),
 }
 impl RequestMessage {
     pub fn encode(self) -> BytesMut {
         let request_payload = match self {
             RequestMessage::Reg(reg) => RequestPayload::Reg(reg.to()),
-            RequestMessage::ConfirmReg => RequestPayload::ConfirmReg(proto::ConfirmRegMsg {}),
             RequestMessage::FastReg(fast_reg) => RequestPayload::FastReg(fast_reg.to()),
         };
         proto::RequestMessage {

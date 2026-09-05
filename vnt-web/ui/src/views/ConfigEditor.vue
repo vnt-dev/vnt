@@ -180,6 +180,10 @@ const handleSave = async () => {
         ui.toast.error("请至少填写一个服务器地址");
         return;
       }
+      if (servers.length > 1 && !formData.value.ip.trim()) {
+        ui.toast.error("配置多个服务器时必须填写虚拟 IP");
+        return;
+      }
       configContent = formToToml(formData.value);
     }
 
@@ -496,8 +500,11 @@ const sectionChevronClass = (expanded) =>
                 <div>
                   <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                     自定义虚拟IP
+                    <span v-if="formData.server.filter((server) => server.trim()).length > 1" class="text-red-500">*</span>
                     <ConfigHelp :help="configHelp.ip" />
-                    <span class="text-xs text-slate-500 ml-1">(可选)</span>
+                    <span class="text-xs text-slate-500 ml-1">
+                      {{ formData.server.filter((server) => server.trim()).length > 1 ? "(多服务器必填)" : "(可选)" }}
+                    </span>
                   </label>
                   <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2" class="input" />
                 </div>

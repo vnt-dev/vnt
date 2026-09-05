@@ -105,6 +105,7 @@ allow_ikev2 = false
 ### 服务端与直连
 
 - `server = ["quic://host:29872", "tcp://host:29872", "wss://host:29872"]` 可配置多个服务端以容灾。
+- 配置多个服务端时必须同时指定设备唯一的固定虚拟 IP，例如 `ip = "10.26.0.2"`；任一服务端注册成功即可启动，其余服务端随后自动重连。单服务端仍可省略 `ip` 由服务端分配。
 - `dynamic://domain` 从 DNS TXT 解析；`dynamic://https://...` 接口返回按换行分隔的服务端地址。
 - `peer_address` 可重复，接受 `ip:port`、`tcp://ip:port`、`udp://ip:port`。无协议时同时尝试 TCP/UDP，端口必须是对端 `tunnel_port`。
 - `no_punch = true` 关闭自动打洞，但显式 `peer_address` 仍可直连。

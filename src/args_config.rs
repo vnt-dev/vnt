@@ -147,7 +147,7 @@ pub struct Args {
     pub network_code: Option<String>,
     #[clap(short = 'k', long, hide = true)]
     pub token: Option<String>,
-    /// 自定义虚拟IP
+    /// 自定义虚拟IP；配置多个服务器时必须指定
     #[clap(long)]
     pub ip: Option<Ipv4Addr>,
     /// 启用加密，设置加密密码
@@ -541,7 +541,7 @@ server = ["quic://1.2.3.4:29872"]
 
 # ===简单使用以下参数可以不动===
 
-# 自定义虚拟 IP (可选)
+# 自定义虚拟 IP（配置多个服务器时必填，单服务器时可选）
 # ip = "10.10.0.2"
 
 # 是否启用quic优化传输 (默认 false,设置为true时开启)

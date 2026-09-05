@@ -23,7 +23,7 @@ use crate::tunnel_core::p2p::inbound::{P2pInboundConfig, P2pInboundHandler};
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
 use crate::tunnel_core::p2p::transport::task::{P2pInitConfig, init_tunnel};
 use crate::tunnel_core::server::connection_manager::{
-    InboundHandlerConfig, ServerTurnManager, coordinated_registration, create_server_tunnel,
+    InboundHandlerConfig, ServerTurnManager, create_server_tunnel, register_with_first_available,
 };
 use crate::tunnel_core::server::inbound::IpUpdateContext;
 use crate::tunnel_core::server::rpc::ServerRPC;
@@ -342,19 +342,23 @@ impl NetworkManager {
     ) -> anyhow::Result<RegisterResponse> {
         let is_multi_server = ctx.server_managers.len() > 1;
 
-        let response = if is_multi_server {
-            // Multi-server: coordinated pre-registration
+        let (initially_connected_server, response) = if is_multi_server {
+            // A fixed IP lets each server register independently. Start as soon
+            // as one server is ready and reconnect the rest in the background.
             log::info!(
-                "Multi-server mode: performing coordinated registration for {} servers",
+                "Multi-server mode: registering concurrently with {} servers",
                 ctx.server_managers.len()
             );
-            coordinated_registration(&mut ctx.server_managers).await?
+            register_with_first_available(&mut ctx.server_managers).await?
         } else {
             // Single-server: normal registration
             log::info!("Single-server mode: performing normal registration");
-            ctx.server_managers[0]
-                .connect_and_reg(crate::protocol::control_message::RegistrationMode::Normal)
-                .await?
+            (
+                0,
+                ctx.server_managers[0]
+                    .connect_and_reg(crate::protocol::control_message::RegistrationMode::Normal)
+                    .await?,
+            )
         };
         let reg_response = match response {
             crate::protocol::control_message::ResponseMessage::Reg(reg) => {
@@ -383,17 +387,17 @@ impl NetworkManager {
         };
         app_state.network.set(network_addr);
 
-        // 保存服务器版本信息
+        // 只保存本次实际完成注册的服务器版本；其他服务器会在重连后
+        // 分别更新自己的版本信息。
         if !reg_response.server_version.is_empty() {
-            for (index, _) in ctx.server_managers.iter().enumerate() {
-                app_state
-                    .server_info_collection
-                    .set_server_version(index as u32, reg_response.server_version.clone());
-            }
+            app_state.server_info_collection.set_server_version(
+                initially_connected_server as u32,
+                reg_response.server_version.clone(),
+            );
         }
 
         // Start data handling tasks for all servers
-        for turn_manager in ctx.server_managers.drain(..) {
+        for (index, turn_manager) in ctx.server_managers.drain(..).enumerate() {
             let handler_config = Box::new(InboundHandlerConfig {
                 network_route: NetworkRoute::new(
                     app_state.network.clone(),
@@ -414,7 +418,11 @@ impl NetworkManager {
                 auto_sync_subnet: ctx.auto_sync_subnet,
                 allow_ikev2: ctx.allow_ikev2,
             });
-            turn_manager.data_handle_task_connected(task_group, handler_config);
+            turn_manager.data_handle_task(
+                task_group,
+                handler_config,
+                index == initially_connected_server,
+            );
         }
 
         Ok(RegisterResponse::Success(network_addr))

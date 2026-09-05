@@ -426,6 +426,9 @@ impl Config {
                     bail!("服务器地址不能相同")
                 }
             }
+            if self.ip.is_none() {
+                bail!("配置多个服务器时必须指定虚拟 IP")
+            }
         }
         self.check_turn_rules()?;
 
@@ -503,6 +506,48 @@ mod tests {
         }
         assert!("bridge".parse::<DeviceMode>().is_err());
         assert_eq!(DeviceMode::default(), DeviceMode::Tun);
+    }
+
+    #[test]
+    fn multiple_servers_require_a_fixed_virtual_ip() {
+        let first: ProtocolAddress = "quic://127.0.0.1:29872".parse().unwrap();
+        let second: ProtocolAddress = "tcp://127.0.0.1:29873".parse().unwrap();
+
+        assert!(Config::default().check().is_err());
+
+        let single = Config {
+            server_addr: vec![first.clone()],
+            ..Default::default()
+        };
+        assert!(single.check().is_ok());
+
+        let dynamic_ip = Config {
+            server_addr: vec![first.clone(), second.clone()],
+            ..Default::default()
+        };
+        let error = dynamic_ip.check().unwrap_err().to_string();
+        assert!(error.contains("多个服务器"));
+        assert!(error.contains("虚拟 IP"));
+
+        let fixed_ip = Config {
+            server_addr: vec![first.clone(), second],
+            ip: Some(Ipv4Addr::new(10, 26, 0, 2)),
+            ..Default::default()
+        };
+        assert!(fixed_ip.check().is_ok());
+
+        let duplicate = Config {
+            server_addr: vec![first.clone(), first],
+            ip: Some(Ipv4Addr::new(10, 26, 0, 2)),
+            ..Default::default()
+        };
+        assert!(
+            duplicate
+                .check()
+                .unwrap_err()
+                .to_string()
+                .contains("不能相同")
+        );
     }
 
     #[tokio::test]

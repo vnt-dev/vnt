@@ -218,7 +218,7 @@ export const formToToml = (formData) => {
   }
 
   if (formData.ip) {
-    toml += "\n# 自定义虚拟 IP (可选)\n";
+    toml += "\n# 自定义虚拟 IP（配置多个服务器时必填，单服务器时可选）\n";
     toml += `ip = "${formData.ip}"\n`;
   }
 
@@ -384,7 +384,7 @@ server = ["quic://1.2.3.4:29872"]
 
 # ===简单使用以下参数可以不动===
 
-# 自定义虚拟 IP (可选)
+# 自定义虚拟 IP（配置多个服务器时必填，单服务器时可选）
 # ip = "10.10.0.2"
 
 # 是否启用quic优化传输 (默认 false,设置为true时开启)
