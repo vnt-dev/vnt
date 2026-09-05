@@ -359,6 +359,7 @@ struct HttpAppInfo {
     compress: Option<bool>,
     encrypt: Option<bool>,
     rtx: Option<bool>,
+    allow_ikev2: bool,
     input: Vec<NetInput>,
     output: Vec<Ipv4Net>,
     automatic_input: Vec<NetInput>,
@@ -1246,6 +1247,7 @@ async fn get_info(
             compress: config.as_ref().map(|v| v.compress),
             encrypt: config.as_ref().map(|v| v.password.is_some()),
             rtx: config.as_ref().map(|v| v.rtx),
+            allow_ikev2: config.as_ref().is_some_and(|v| v.allow_ikev2),
             input: config.as_ref().map(|v| v.input.clone()).unwrap_or_default(),
             output: config
                 .as_ref()
