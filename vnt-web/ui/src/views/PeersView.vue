@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, watch, inject } from "vue";
+import { computed, ref, reactive, onMounted, onUnmounted, watch, inject } from "vue";
 import { useAppStore } from "../stores/app";
 import { getPeers } from "../api";
 import { formatTime, formatBytes, formatSpeed } from "../utils/format";
@@ -21,6 +21,12 @@ let lastFetchTime = 0;
 const expandedPeers = reactive({});
 const speedHistoryMap = reactive({});
 const HISTORY_SIZE = 60;
+
+const showIkev2Warning = computed(
+  () =>
+    app.selectedInfo?.allow_ikev2 === false &&
+    peers.value.some((peer) => peer.online && peer.client_type === "IKEV2"),
+);
 
 const toggleExpand = (ip) => {
   expandedPeers[ip] = !expandedPeers[ip];
@@ -177,6 +183,24 @@ const switcherClass = (fileName) =>
           </span>
         </div>
       </div>
+      <div
+        v-if="showIkev2Warning"
+        role="alert"
+        class="flex items-start gap-3 border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200"
+      >
+        <svg class="mt-0.5 h-5 w-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 9v2m0 4h.01M10.3 4.1 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 4.1a2 2 0 0 0-3.4 0Z"
+          />
+        </svg>
+        <p>
+          检测到在线的 IKEv2 客户端，但当前实例未开启
+          <strong>允许 IKEv2 客户端（allow_ikev2 / --allow-ikev2）</strong>，因此无法访问这些客户端。请开启该选项并重启实例。
+        </p>
+      </div>
       <div class="custom-scrollbar max-h-[600px] overflow-x-auto">
         <table class="table peer-table">
           <thead>
@@ -216,7 +240,10 @@ const switcherClass = (fileName) =>
                     {{ peer.ip }}
                   </span>
                 </td>
-                <td>{{ peer.name || "-" }}</td>
+                <td>
+                  <span>{{ peer.name || "-" }}</span>
+                  <span class="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">{{ peer.client_type || "VNT" }}</span>
+                </td>
                 <td class="hidden text-xs text-slate-400 md:table-cell">{{ peer.version || "-" }}</td>
                 <td>
                   <div class="flex items-center gap-2">

@@ -38,6 +38,14 @@ export const configHelp = {
     format: "目标虚拟IP或CIDR,中转节点虚拟IP",
     example: "10.26.0.0/24,10.26.0.2",
   },
+  punch_model: {
+    param: "punch_model",
+    summary: "按目标虚拟 IP 或网段限制允许使用的 P2P 打洞方式。",
+    usage: "双方会交换各自规则，实际只尝试双方允许集合的交集。重叠规则按最长前缀匹配，相同目标的多条规则会合并；未命中时允许全部方式。",
+    format: "目标虚拟IP或CIDR,IPv4Tcp|IPv4Udp|IPv6Tcp|IPv6Udp（可填写多种，以逗号分隔）",
+    example: "10.26.1.0/24,IPv4Tcp,IPv4Udp",
+    notes: ["模式名称不区分大小写，也支持 ipv4-tcp 等连字符写法。", "指定中转规则和禁用打洞仍具有更高优先级。"],
+  },
   ip: {
     param: "ip",
     summary: "请求一个固定的本机虚拟 IPv4 地址。",
@@ -88,6 +96,13 @@ export const configHelp = {
     summary: "停止把本机发出的 IPv4 广播和组播转发到虚拟网络。",
     usage: "可减少发现协议和广播风暴产生的流量；依赖局域网发现、组播服务或某些游戏联机时不要开启。",
     format: "开关；默认关闭，即允许转发。",
+  },
+  allow_ikev2: {
+    param: "allow_ikev2 / --allow-ikev2",
+    summary: "允许本节点与接入同一虚拟网络的 IKEv2/IPsec 客户端互通。",
+    usage: "开启后，本节点信任已认证 VNT 服务端注入的 IKEv2 明文 IPv4 包，并把发往 IKEv2 类型地址的流量固定交给服务端中继。",
+    format: "开关；默认关闭。",
+    notes: ["此路径不使用 VNT 节点间 password 加密，应只连接受信任的服务端。"],
   },
   password: {
     param: "password",

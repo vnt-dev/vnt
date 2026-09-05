@@ -5,6 +5,7 @@ use crate::tls::verifier::CertValidationMode;
 use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAddress};
 use anyhow::bail;
 use ipnet::Ipv4Net;
+use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
 use rustp2p_core::route_table::Protocol;
 use rustp2p_core::socket::LocalInterface;
 use std::collections::HashSet;
@@ -17,6 +18,114 @@ pub const MAX_DEVICE_ID_LEN: usize = 64;
 pub const MAX_NAME_LEN: usize = 128;
 pub const MAX_VERSION_LEN: usize = 32;
 pub const MAX_MTU: u16 = 1500;
+
+const PUNCH_POLICIES: [PunchPolicy; 4] = [
+    PunchPolicy::IPv4Tcp,
+    PunchPolicy::IPv4Udp,
+    PunchPolicy::IPv6Tcp,
+    PunchPolicy::IPv6Udp,
+];
+
+#[derive(Debug, Clone)]
+pub struct PunchRule {
+    target: Ipv4Net,
+    policies: PunchPolicySet,
+}
+
+impl PunchRule {
+    pub fn target(&self) -> Ipv4Net {
+        self.target
+    }
+
+    pub fn policies(&self) -> PunchPolicySet {
+        self.policies.clone()
+    }
+
+    pub fn matches(&self, ip: &Ipv4Addr) -> bool {
+        self.target.contains(ip)
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for policy in PUNCH_POLICIES {
+            if other.policies.is_match(policy) {
+                self.policies.or(policy);
+            }
+        }
+    }
+}
+
+impl FromStr for PunchRule {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let parts = value.split(',').map(str::trim).collect::<Vec<_>>();
+        if parts.len() < 2 || parts.iter().any(|part| part.is_empty()) {
+            bail!("invalid punch model rule '{value}', expected target_ip_or_cidr,mode[,mode...]")
+        }
+        let target = if parts[0].contains('/') {
+            parts[0]
+                .parse::<Ipv4Net>()
+                .map_err(|error| anyhow::anyhow!("invalid punch target '{}': {error}", parts[0]))?
+        } else {
+            let ip = parts[0]
+                .parse::<Ipv4Addr>()
+                .map_err(|error| anyhow::anyhow!("invalid punch target '{}': {error}", parts[0]))?;
+            Ipv4Net::new(ip, 32)?
+        };
+        let mut policies = PunchPolicySet::empty();
+        for value in &parts[1..] {
+            policies.or(parse_punch_policy(value)?);
+        }
+        Ok(Self { target, policies })
+    }
+}
+
+impl Display for PunchRule {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.target.prefix_len() == 32 {
+            write!(f, "{}", self.target.addr())?;
+        } else {
+            write!(f, "{}", self.target)?;
+        }
+        for policy in PUNCH_POLICIES {
+            if self.policies.is_match(policy) {
+                write!(f, ",{}", punch_policy_name(policy))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn parse_punch_policy(value: &str) -> anyhow::Result<PunchPolicy> {
+    let normalized = value.trim().to_ascii_lowercase().replace(['-', '_'], "");
+    match normalized.as_str() {
+        "ipv4tcp" => Ok(PunchPolicy::IPv4Tcp),
+        "ipv4udp" => Ok(PunchPolicy::IPv4Udp),
+        "ipv6tcp" => Ok(PunchPolicy::IPv6Tcp),
+        "ipv6udp" => Ok(PunchPolicy::IPv6Udp),
+        _ => bail!(
+            "invalid punch mode '{value}', expected one of: IPv4Tcp, IPv4Udp, IPv6Tcp, IPv6Udp"
+        ),
+    }
+}
+
+fn punch_policy_name(policy: PunchPolicy) -> &'static str {
+    match policy {
+        PunchPolicy::IPv4Tcp => "IPv4Tcp",
+        PunchPolicy::IPv4Udp => "IPv4Udp",
+        PunchPolicy::IPv6Tcp => "IPv6Tcp",
+        PunchPolicy::IPv6Udp => "IPv6Udp",
+    }
+}
+
+pub fn punch_model_for(rules: &[PunchRule], target: &Ipv4Addr) -> PunchPolicySet {
+    rules
+        .iter()
+        .filter(|rule| rule.matches(target))
+        .max_by_key(|rule| rule.target.prefix_len())
+        .map(PunchRule::policies)
+        .unwrap_or_else(PunchPolicySet::all)
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct TurnRule {
@@ -231,6 +340,7 @@ pub struct Config {
     pub server_addr: Vec<ProtocolAddress>,
     pub peer_address: Vec<PeerAddress>,
     pub turn: Vec<TurnRule>,
+    pub punch_model: Vec<PunchRule>,
     pub cert_mode: CertValidationMode,
     pub network_code: String,
     pub device_id: String,
@@ -242,6 +352,8 @@ pub struct Config {
     pub password: Option<String>,
     pub no_punch: bool,
     pub no_broadcast: bool,
+    /// 允许与由服务端终结的 IKEv2/IPsec 客户端互通。
+    pub allow_ikev2: bool,
     pub compress: bool,
     pub rtx: bool,
     pub fec: bool,
@@ -265,6 +377,15 @@ impl Config {
         self.check_turn_rules()?;
         let mut seen = HashSet::new();
         self.turn.retain(|rule| seen.insert(rule.clone()));
+        let mut merged = Vec::<PunchRule>::new();
+        for rule in self.punch_model.drain(..) {
+            if let Some(existing) = merged.iter_mut().find(|item| item.target == rule.target) {
+                existing.merge(&rule);
+            } else {
+                merged.push(rule);
+            }
+        }
+        self.punch_model = merged;
         crate::nat::subnet_mapping::normalize_and_validate(&mut self.subnet_mapping, &self.output)?;
         Ok(())
     }
@@ -293,6 +414,9 @@ impl Config {
         }
         if self.server_addr.is_empty() {
             bail!("服务器地址不能为空");
+        }
+        if self.allow_ikev2 && self.device_mode == DeviceMode::No {
+            bail!("allow_ikev2 requires device_mode = tun or tap");
         }
         if self.server_addr.len() > 1 {
             let mut set = HashSet::new();
@@ -357,6 +481,7 @@ impl Config {
                 &self.output,
                 &self.subnet_mapping,
             )),
+            allow_ikev2: self.allow_ikev2,
             default_interface,
         }
     }
@@ -426,6 +551,53 @@ mod tests {
                 value.parse::<PeerAddress>().is_err(),
                 "{value} must be rejected"
             );
+        }
+    }
+
+    #[test]
+    fn punch_rule_parses_aliases_and_rejects_invalid_values() {
+        let host = "10.26.0.2,ipv4-udp".parse::<PunchRule>().unwrap();
+        assert_eq!(host.target().prefix_len(), 32);
+        assert!(host.policies().is_match(PunchPolicy::IPv4Udp));
+        assert_eq!(host.to_string(), "10.26.0.2,IPv4Udp");
+
+        let cidr = "10.26.1.0/24,IPv4Tcp,ipv6_udp"
+            .parse::<PunchRule>()
+            .unwrap();
+        assert!(cidr.policies().is_match(PunchPolicy::IPv4Tcp));
+        assert!(cidr.policies().is_match(PunchPolicy::IPv6Udp));
+        assert_eq!(cidr.to_string(), "10.26.1.0/24,IPv4Tcp,IPv6Udp");
+
+        for value in ["10.26.0.2", "10.26.0.2,", "bad,IPv4Udp", "10.26.0.2,quic"] {
+            assert!(value.parse::<PunchRule>().is_err(), "{value} must fail");
+        }
+    }
+
+    #[test]
+    fn punch_rules_merge_and_use_longest_prefix() {
+        let mut config = Config {
+            punch_model: vec![
+                "10.26.0.0/16,IPv4Tcp".parse().unwrap(),
+                "10.26.1.0/24,IPv4Udp".parse().unwrap(),
+                "10.26.1.0/24,IPv6Tcp,IPv4Udp".parse().unwrap(),
+            ],
+            ..Default::default()
+        };
+        config.normalize().unwrap();
+        assert_eq!(config.punch_model.len(), 2);
+
+        let narrow = punch_model_for(&config.punch_model, &Ipv4Addr::new(10, 26, 1, 9));
+        assert!(narrow.is_match(PunchPolicy::IPv4Udp));
+        assert!(narrow.is_match(PunchPolicy::IPv6Tcp));
+        assert!(!narrow.is_match(PunchPolicy::IPv4Tcp));
+
+        let broad = punch_model_for(&config.punch_model, &Ipv4Addr::new(10, 26, 2, 9));
+        assert!(broad.is_match(PunchPolicy::IPv4Tcp));
+        assert!(!broad.is_match(PunchPolicy::IPv4Udp));
+
+        let unmatched = punch_model_for(&config.punch_model, &Ipv4Addr::new(10, 27, 0, 1));
+        for policy in PUNCH_POLICIES {
+            assert!(unmatched.is_match(policy));
         }
     }
 

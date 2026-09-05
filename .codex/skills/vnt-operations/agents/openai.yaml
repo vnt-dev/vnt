@@ -1,0 +1,6 @@
+interface:
+  display_name: "VNT Operations"
+  short_description: "运行、配置和通过 API 控制 VNT 客户端，并部署 VNTS 服务端"
+  default_prompt: "Use $vnt-operations to configure and operate this VNT client or self-hosted VNTS server."
+policy:
+  allow_implicit_invocation: true

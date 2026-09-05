@@ -15,6 +15,7 @@ public class VntConfig {
     private final List<String> servers;
     private final List<String> peerAddresses;
     private final List<String> turnRules;
+    private final List<String> punchModelRules;
     private final List<String> inputRoutes;
     private final List<String> subnetMappings;
     private final List<String> outputRoutes;
@@ -29,6 +30,7 @@ public class VntConfig {
     private final String certMode;
     private final boolean noPunch;
     private final boolean noBroadcast;
+    private final boolean allowIkev2;
     private final boolean compress;
     private final boolean rtx;
     private final boolean fec;
@@ -44,6 +46,7 @@ public class VntConfig {
         this.servers = builder.servers;
         this.peerAddresses = builder.peerAddresses;
         this.turnRules = builder.turnRules;
+        this.punchModelRules = builder.punchModelRules;
         this.inputRoutes = builder.inputRoutes;
         this.subnetMappings = builder.subnetMappings;
         this.outputRoutes = builder.outputRoutes;
@@ -58,6 +61,7 @@ public class VntConfig {
         this.certMode = builder.certMode;
         this.noPunch = builder.noPunch;
         this.noBroadcast = builder.noBroadcast;
+        this.allowIkev2 = builder.allowIkev2;
         this.compress = builder.compress;
         this.rtx = builder.rtx;
         this.fec = builder.fec;
@@ -99,6 +103,7 @@ public class VntConfig {
             }
             json.put("turn", turnArray);
         }
+        putStringArray(json, "punch_model", punchModelRules);
 
         putStringArray(json, "input", inputRoutes);
         putStringArray(json, "subnet_mapping", subnetMappings);
@@ -117,6 +122,7 @@ public class VntConfig {
         // 布尔值
         json.put("no_punch", noPunch);
         json.put("no_broadcast", noBroadcast);
+        json.put("allow_ikev2", allowIkev2);
         json.put("compress", compress);
         json.put("rtx", rtx);
         json.put("fec", fec);
@@ -167,6 +173,7 @@ public class VntConfig {
         private List<String> servers = new ArrayList<>();
         private List<String> peerAddresses = new ArrayList<>();
         private List<String> turnRules = new ArrayList<>();
+        private List<String> punchModelRules = new ArrayList<>();
         private List<String> inputRoutes = new ArrayList<>();
         private List<String> subnetMappings = new ArrayList<>();
         private List<String> outputRoutes = new ArrayList<>();
@@ -181,6 +188,7 @@ public class VntConfig {
         private String certMode;
         private boolean noPunch = false;
         private boolean noBroadcast = false;
+        private boolean allowIkev2 = false;
         private boolean compress = false;
         private boolean rtx = false;
         private boolean fec = false;
@@ -216,6 +224,15 @@ public class VntConfig {
          */
         public Builder addTurnRule(String turnRule) {
             this.turnRules.add(turnRule);
+            return this;
+        }
+
+        /**
+         * 添加目标节点打洞方式规则（可选）。
+         * @param rule 格式：目标虚拟IP或CIDR,IPv4Tcp[,IPv4Udp,IPv6Tcp,IPv6Udp]
+         */
+        public Builder addPunchModelRule(String rule) {
+            this.punchModelRules.add(rule);
             return this;
         }
 
@@ -322,6 +339,14 @@ public class VntConfig {
          */
         public Builder setNoBroadcast(boolean noBroadcast) {
             this.noBroadcast = noBroadcast;
+            return this;
+        }
+
+        /**
+         * 允许与服务端接入的 IKEv2/IPsec 客户端通信（默认false）
+         */
+        public Builder setAllowIkev2(boolean allowIkev2) {
+            this.allowIkev2 = allowIkev2;
             return this;
         }
 

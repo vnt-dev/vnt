@@ -39,6 +39,42 @@ const deviceModeOptions = [
 ];
 const isWindows = /Windows/i.test(globalThis.navigator?.userAgent || "");
 
+// 分区折叠状态：子网路由、端口映射、STUN 属于高级配置，默认折叠
+const DEFAULT_SECTIONS = {
+  basic: true,
+  connect: true,
+  network: true,
+  transport: true,
+  security: true,
+  subnet: false,
+  portmap: false,
+  device: true,
+  stun: false,
+};
+const sectionExpanded = ref({ ...DEFAULT_SECTIONS });
+const toggleSection = (key) => {
+  sectionExpanded.value[key] = !sectionExpanded.value[key];
+};
+// 打开编辑器时重置折叠状态；已有数据的分区自动展开，避免配置被藏起来
+const resetSections = (data) => {
+  sectionExpanded.value = { ...DEFAULT_SECTIONS };
+  if (
+    data.input.length ||
+    data.output.length ||
+    data.subnet_mapping.length ||
+    data.auto_sync_subnet ||
+    data.no_nat
+  ) {
+    sectionExpanded.value.subnet = true;
+  }
+  if (data.port_mapping.length || data.allow_mapping) {
+    sectionExpanded.value.portmap = true;
+  }
+  if (data.udp_stun.length || data.tcp_stun.length) {
+    sectionExpanded.value.stun = true;
+  }
+};
+
 // 打开时加载内容
 watch(
   () => props.show,
@@ -57,6 +93,7 @@ watch(
         originalToml.value = data; // 保存原始TOML
         isParsingToml.value = true;
         formData.value = parseTomlToForm(data);
+        resetSections(formData.value);
         nextTick(() => {
           isParsingToml.value = false;
         });
@@ -68,6 +105,7 @@ watch(
       // 新建配置,初始化表单
       originalToml.value = "";
       formData.value = emptyFormData();
+      resetSections(formData.value);
       editorContent.value = NEW_CONFIG_TEMPLATE;
     }
   },
@@ -163,7 +201,9 @@ const removeBtnClass =
   "shrink-0 rounded-lg bg-red-50 px-3 py-2 text-red-500 transition-colors hover:bg-red-100 dark:bg-red-900/20 dark:text-red-500 dark:hover:bg-red-900/40";
 const addBtnClass =
   "flex w-full items-center justify-center gap-1 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-200 dark:bg-slate-700/50 dark:text-slate-300 dark:hover:bg-slate-700";
-const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-900 dark:text-white";
+const sectionTitleClass = "text-md flex items-center font-bold text-slate-900 dark:text-white";
+const sectionChevronClass = (expanded) =>
+  `h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`;
 </script>
 
 <template>
@@ -223,364 +263,250 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
         <div class="max-w-4xl mx-auto space-y-6">
           <!-- 基础配置 -->
           <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('basic')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                基础配置
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.basic)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
-              基础配置
-            </h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  配置名称 <ConfigHelp :help="configHelp.config_name" />
+            </div>
+            <div v-show="sectionExpanded.basic" class="mt-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    配置名称 <ConfigHelp :help="configHelp.config_name" />
+                  </label>
+                  <input v-model="formData.config_name" type="text" placeholder="例如: 我的VPN配置" class="input" />
+                </div>
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    网络编号 <span class="text-red-500">*</span> <ConfigHelp :help="configHelp.network_code" />
+                  </label>
+                  <input v-model="formData.network_code" type="text" placeholder="例如: my_network" required class="input" />
+                </div>
+              </div>
+              <div class="mt-4">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  服务器地址 <span class="text-red-500">*</span>
+                  <ConfigHelp :help="configHelp.server" />
+                  <span class="text-xs text-slate-500 ml-2">默认 tcp://；支持 quic://、wss://、dynamic://（DNS TXT 或 HTTP(S)）</span>
                 </label>
-                <input v-model="formData.config_name" type="text" placeholder="例如: 我的VPN配置" class="input" />
+                <div class="space-y-2">
+                  <div v-for="(server, idx) in formData.server" :key="idx" class="flex gap-2">
+                    <input v-model="formData.server[idx]" type="text" placeholder="例如: quic://1.2.3.4:29872" class="input flex-1" />
+                    <button @click="formData.server.splice(idx, 1)" v-if="formData.server.length > 1" :class="removeBtnClass">
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <button
+                    @click="formData.server.push('')"
+                    :class="addBtnClass"
+                  >
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    添加服务器
+                  </button>
+                </div>
               </div>
+            </div>
+          </div>
+
+          <!-- 连接与打洞 -->
+          <div class="card">
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('connect')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"
+                  />
+                </svg>
+                连接与打洞
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.connect)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <div v-show="sectionExpanded.connect" class="mt-4">
               <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  网络编号 <span class="text-red-500">*</span> <ConfigHelp :help="configHelp.network_code" />
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  可直连节点地址                  <ConfigHelp :help="configHelp.peer_address" />
+                  <span class="text-xs text-slate-500 ml-2">支持 ip:端口、tcp://、udp://</span>
                 </label>
-                <input v-model="formData.network_code" type="text" placeholder="例如: my_network" required class="input" />
-              </div>
-            </div>
-            <div class="mt-4">
-              <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                服务器地址 <span class="text-red-500">*</span>
-                <ConfigHelp :help="configHelp.server" />
-                <span class="text-xs text-slate-500 ml-2">默认 tcp://；支持 quic://、wss://、dynamic://（DNS TXT 或 HTTP(S)）</span>
-              </label>
-              <div class="space-y-2">
-                <div v-for="(server, idx) in formData.server" :key="idx" class="flex gap-2">
-                  <input v-model="formData.server[idx]" type="text" placeholder="例如: quic://1.2.3.4:29872" class="input flex-1" />
-                  <button @click="formData.server.splice(idx, 1)" v-if="formData.server.length > 1" :class="removeBtnClass">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
+                <div class="space-y-2">
+                  <div v-for="(peerAddress, idx) in formData.peer_address" :key="idx" class="flex gap-2">
+                    <input
+                      v-model="formData.peer_address[idx]"
+                      type="text"
+                      placeholder="例如: 192.168.1.10:29873"
+                      class="input flex-1"
+                    />
+                    <button @click="formData.peer_address.splice(idx, 1)" :class="removeBtnClass">
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <button @click="formData.peer_address.push('')" :class="addBtnClass">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                     </svg>
+                    添加可直连节点
                   </button>
                 </div>
-                <button
-                  @click="formData.server.push('')"
-                  :class="addBtnClass"
-                >
-                  <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                  </svg>
-                  添加服务器
-                </button>
+                <p class="mt-2 text-xs text-slate-400">不带协议时会同时尝试 TCP 和 UDP；端口填写对端的隧道端口。</p>
               </div>
-            </div>
-            <div class="mt-4">
-              <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                可直连节点地址
-                <ConfigHelp :help="configHelp.peer_address" />
-                <span class="text-xs text-slate-500 ml-2">支持 ip:端口、tcp://、udp://</span>
-              </label>
-              <div class="space-y-2">
-                <div v-for="(peerAddress, idx) in formData.peer_address" :key="idx" class="flex gap-2">
-                  <input
-                    v-model="formData.peer_address[idx]"
-                    type="text"
-                    placeholder="例如: 192.168.1.10:29873"
-                    class="input flex-1"
-                  />
-                  <button @click="formData.peer_address.splice(idx, 1)" :class="removeBtnClass">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
+              <div class="mt-4">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  指定中转规则
+                  <ConfigHelp :help="configHelp.turn" />
+                  <span class="text-xs text-slate-500 ml-2">目标IP或CIDR,中转虚拟IP</span>
+                </label>
+                <div class="space-y-2">
+                  <div v-for="(turnRule, idx) in formData.turn" :key="idx" class="flex gap-2">
+                    <input
+                      v-model="formData.turn[idx]"
+                      type="text"
+                      placeholder="例如: 10.26.0.0/24,10.26.0.2"
+                      class="input flex-1"
+                    />
+                    <button @click="formData.turn.splice(idx, 1)" :class="removeBtnClass">
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <button @click="formData.turn.push('')" :class="addBtnClass">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                     </svg>
+                    添加中转规则
                   </button>
                 </div>
-                <button @click="formData.peer_address.push('')" :class="addBtnClass">
-                  <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                  </svg>
-                  添加可直连节点
-                </button>
+                <p class="mt-2 text-xs text-slate-400">命中目标不参与 P2P 打洞；中转节点已直连时优先经其转发，填写网关 IP 时强制走服务器。</p>
               </div>
-              <p class="mt-2 text-xs text-slate-400">不带协议时会同时尝试 TCP 和 UDP；端口填写对端的隧道端口。</p>
-            </div>
-            <div class="mt-4">
-              <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                指定中转规则
-                <ConfigHelp :help="configHelp.turn" />
-                <span class="text-xs text-slate-500 ml-2">目标IP或CIDR,中转虚拟IP</span>
-              </label>
-              <div class="space-y-2">
-                <div v-for="(turnRule, idx) in formData.turn" :key="idx" class="flex gap-2">
-                  <input
-                    v-model="formData.turn[idx]"
-                    type="text"
-                    placeholder="例如: 10.26.0.0/24,10.26.0.2"
-                    class="input flex-1"
-                  />
-                  <button @click="formData.turn.splice(idx, 1)" :class="removeBtnClass">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
+              <div class="mt-4">
+                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  打洞方式规则
+                  <ConfigHelp :help="configHelp.punch_model" />
+                  <span class="text-xs text-slate-500 ml-2">目标IP或CIDR,一种或多种模式</span>
+                </label>
+                <div class="space-y-2">
+                  <div v-for="(rule, idx) in formData.punch_model" :key="idx" class="flex gap-2">
+                    <input
+                      v-model="formData.punch_model[idx]"
+                      type="text"
+                      placeholder="例如: 10.26.1.0/24,IPv4Tcp,IPv4Udp"
+                      class="input flex-1"
+                    />
+                    <button @click="formData.punch_model.splice(idx, 1)" :class="removeBtnClass">
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  <button @click="formData.punch_model.push('')" :class="addBtnClass">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                     </svg>
+                    添加打洞规则
                   </button>
                 </div>
-                <button @click="formData.turn.push('')" :class="addBtnClass">
-                  <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                  </svg>
-                  添加中转规则
-                </button>
+                <p class="mt-2 text-xs text-slate-400">可选 IPv4Tcp、IPv4Udp、IPv6Tcp、IPv6Udp；双方实际使用允许集合的交集。</p>
               </div>
-              <p class="mt-2 text-xs text-slate-400">命中目标不参与 P2P 打洞；中转节点已直连时优先经其转发，填写网关 IP 时强制走服务器。</p>
+              <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    隧道端口 <ConfigHelp :help="configHelp.tunnel_port" />
+                  </label>
+                  <input v-model.number="formData.tunnel_port" type="number" placeholder="0 (自动分配)" class="input" />
+                  <p class="mt-1.5 text-xs text-slate-400">本机监听 P2P 隧道的端口，固定端口便于端口映射和防火墙放行</p>
+                </div>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      关闭P2P打洞 <ConfigHelp :help="configHelp.no_punch" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">关闭自动打洞；显式节点地址仍可直连</div>
+                  </div>
+                  <input v-model="formData.no_punch" type="checkbox" :class="checkboxClass" />
+                </label>
+              </div>
             </div>
           </div>
 
           <!-- 网络设置 -->
           <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
-                />
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('network')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"
+                  />
+                </svg>
+                网络设置
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.network)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
-              网络设置
-            </h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  自定义虚拟IP
-                  <ConfigHelp :help="configHelp.ip" />
-                  <span class="text-xs text-slate-500 ml-1">(可选)</span>
-                </label>
-                <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2" class="input" />
-              </div>
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  MTU <ConfigHelp :help="configHelp.mtu" />
-                </label>
-                <input v-model.number="formData.mtu" type="number" placeholder="1380" class="input" />
-              </div>
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  隧道端口 <ConfigHelp :help="configHelp.tunnel_port" />
-                </label>
-                <input v-model.number="formData.tunnel_port" type="number" placeholder="0 (自动分配)" class="input" />
-              </div>
             </div>
-          </div>
-
-          <!-- 传输优化 -->
-          <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              传输优化
-            </h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label :class="toggleLabelClass">
-                <div class="flex-1">
-                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                    QUIC传输优化 <ConfigHelp :help="configHelp.rtx" />
-                  </div>
-                  <div class="text-xs text-slate-400 mt-0.5">重传丢包</div>
-                </div>
-                <input v-model="formData.rtx" type="checkbox" :class="checkboxClass" />
-              </label>
-              <label :class="toggleLabelClass">
-                <div class="flex-1">
-                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                    FEC前向纠错 <ConfigHelp :help="configHelp.fec" />
-                  </div>
-                  <div class="text-xs text-slate-400 mt-0.5">损失部分带宽提升稳定性</div>
-                </div>
-                <input v-model="formData.fec" type="checkbox" :class="checkboxClass" />
-              </label>
-              <label :class="toggleLabelClass">
-                <div class="flex-1">
-                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                    LZ4压缩 <ConfigHelp :help="configHelp.compress" />
-                  </div>
-                  <div class="text-xs text-slate-400 mt-0.5">减少传输数据量</div>
-                </div>
-                <input v-model="formData.compress" type="checkbox" :class="checkboxClass" />
-              </label>
-              <label :class="toggleLabelClass">
-                <div class="flex-1">
-                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                    关闭P2P打洞 <ConfigHelp :help="configHelp.no_punch" />
-                  </div>
-                  <div class="text-xs text-slate-400 mt-0.5">关闭自动打洞；显式节点地址仍可直连</div>
-                </div>
-                <input v-model="formData.no_punch" type="checkbox" :class="checkboxClass" />
-              </label>
-              <label :class="toggleLabelClass">
-                <div class="flex-1">
-                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                    关闭IPv4广播和组播 <ConfigHelp :help="configHelp.no_broadcast" />
-                  </div>
-                  <div class="text-xs text-slate-400 mt-0.5">停止转发本机发出的 IPv4 广播和组播</div>
-                </div>
-                <input v-model="formData.no_broadcast" type="checkbox" :class="checkboxClass" />
-              </label>
-            </div>
-          </div>
-
-          <!-- 安全配置 -->
-          <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                />
-              </svg>
-              安全配置
-            </h4>
-            <div class="space-y-4">
+            <div v-show="sectionExpanded.network" class="mt-4">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                    组网加密密码 <ConfigHelp :help="configHelp.password" />
+                    自定义虚拟IP
+                    <ConfigHelp :help="configHelp.ip" />
+                    <span class="text-xs text-slate-500 ml-1">(可选)</span>
                   </label>
-                  <input v-model="formData.password" type="password" placeholder="留空则不加密" class="input" />
+                  <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2" class="input" />
                 </div>
                 <div>
                   <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                    服务端证书校验模式 <ConfigHelp :help="configHelp.cert_mode" />
+                    MTU <ConfigHelp :help="configHelp.mtu" />
                   </label>
-                  <AppSelect v-model="formData.cert_mode" :options="certificateModeOptions" aria-label="服务端证书校验模式" />
+                  <input v-model.number="formData.mtu" type="number" placeholder="1380" class="input" />
                 </div>
-              </div>
-              <div v-if="formData.cert_mode === 'finger'">
-                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  证书指纹
-                  <ConfigHelp :help="configHelp.fingerprint" />
-                  <span class="text-xs text-slate-500 ml-1">(服务端启动时日志会输出指纹)</span>
-                </label>
-                <input
-                  v-model="formData.fingerprint"
-                  type="text"
-                  placeholder="例如: 3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1"
-                  class="input font-mono text-sm"
-                />
-              </div>
-            </div>
-          </div>
-
-          <!-- NAT与路由 -->
-          <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 01-.806-.98L15 9m0 0V7m0 2v6"
-                />
-              </svg>
-              NAT与路由 (点对网)
-            </h4>
-            <div class="space-y-4">
-              <div>
-                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  入栈网段
-                  <ConfigHelp :help="configHelp.input" />
-                  <span class="text-xs text-slate-500 ml-1">格式: CIDR,目标IP</span>
-                </label>
-                <div class="space-y-2">
-                  <div v-for="(item, idx) in formData.input" :key="idx" class="flex gap-2">
-                    <input v-model="formData.input[idx]" type="text" placeholder="例如: 192.168.0.0/24,10.26.0.2" class="input flex-1" />
-                    <button @click="formData.input.splice(idx, 1)" :class="removeBtnClass">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <button
-                    @click="formData.input.push('')"
-                    :class="addBtnClass"
-                  >
-                    + 添加入栈网段
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  出栈网段
-                  <ConfigHelp :help="configHelp.output" />
-                  <span class="text-xs text-slate-500 ml-1">格式: CIDR (允许转发的网段)</span>
-                </label>
-                <div class="space-y-2">
-                  <div v-for="(item, idx) in formData.output" :key="idx" class="flex gap-2">
-                    <input v-model="formData.output[idx]" type="text" placeholder="例如: 0.0.0.0/0" class="input flex-1" />
-                    <button @click="formData.output.splice(idx, 1)" :class="removeBtnClass">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <button
-                    @click="formData.output.push('')"
-                    :class="addBtnClass"
-                  >
-                    + 添加出栈网段
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  出栈网段映射
-                  <ConfigHelp :help="configHelp.subnet_mapping" />
-                  <span class="text-xs text-slate-500 ml-1">格式: 映射CIDR,真实CIDR（真实网段需在 output 中允许）</span>
-                </label>
-                <div class="space-y-2">
-                  <div v-for="(item, idx) in formData.subnet_mapping" :key="idx" class="flex gap-2">
-                    <input v-model="formData.subnet_mapping[idx]" type="text" placeholder="例如: 192.168.2.2/32,192.168.1.3/32" class="input flex-1" />
-                    <button @click="formData.subnet_mapping.splice(idx, 1)" :class="removeBtnClass">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  <button @click="formData.subnet_mapping.push('')" :class="addBtnClass">
-                    + 添加出栈网段映射
-                  </button>
-                </div>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <label :class="toggleLabelClass">
-                  <div class="flex-1">
-                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                      自动同步节点子网 <ConfigHelp :help="configHelp.auto_sync_subnet" />
-                    </div>
-                    <div class="text-xs text-slate-400 mt-0.5">自动应用其他在线节点的出口网段</div>
-                  </div>
-                  <input v-model="formData.auto_sync_subnet" type="checkbox" :class="checkboxClass" />
-                </label>
-                <label :class="toggleLabelClass">
-                  <div class="flex-1">
-                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                      关闭内置NAT <ConfigHelp :help="configHelp.no_nat" />
-                    </div>
-                    <div class="text-xs text-slate-400 mt-0.5">使用系统网卡转发</div>
-                  </div>
-                  <input v-model="formData.no_nat" type="checkbox" :class="checkboxClass" />
-                </label>
                 <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                   <div class="flex-1">
                     <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
@@ -602,175 +528,439 @@ const sectionTitleClass = "text-md mb-4 flex items-center font-bold text-slate-9
             </div>
           </div>
 
-          <!-- 端口映射 -->
+          <!-- 传输优化 -->
           <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                />
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('transport')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                传输优化
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.transport)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
-              端口映射
-            </h4>
-            <div class="space-y-4">
-              <div>
-                <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  映射规则
-                  <ConfigHelp :help="configHelp.port_mapping" />
-                  <span class="text-xs text-slate-500 ml-1">格式: 协议://监听地址-虚拟IP-目标地址</span>
-                </label>
-                <div class="space-y-2">
-                  <div v-for="(item, idx) in formData.port_mapping" :key="idx" class="flex gap-2">
-                    <input
-                      v-model="formData.port_mapping[idx]"
-                      type="text"
-                      placeholder="例如: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"
-                      class="input flex-1 font-mono"
-                    />
-                    <button @click="formData.port_mapping.splice(idx, 1)" :class="removeBtnClass">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
+            </div>
+            <div v-show="sectionExpanded.transport" class="mt-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      QUIC传输优化 <ConfigHelp :help="configHelp.rtx" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">重传丢包</div>
                   </div>
-                  <button
-                    @click="formData.port_mapping.push('')"
-                    :class="addBtnClass"
-                  >
-                    + 添加映射规则
-                  </button>
+                  <input v-model="formData.rtx" type="checkbox" :class="checkboxClass" />
+                </label>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      FEC前向纠错 <ConfigHelp :help="configHelp.fec" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">损失部分带宽提升稳定性</div>
+                  </div>
+                  <input v-model="formData.fec" type="checkbox" :class="checkboxClass" />
+                </label>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      LZ4压缩 <ConfigHelp :help="configHelp.compress" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">减少传输数据量</div>
+                  </div>
+                  <input v-model="formData.compress" type="checkbox" :class="checkboxClass" />
+                </label>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      关闭IPv4广播和组播 <ConfigHelp :help="configHelp.no_broadcast" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">停止转发本机发出的 IPv4 广播和组播</div>
+                  </div>
+                  <input v-model="formData.no_broadcast" type="checkbox" :class="checkboxClass" />
+                </label>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      允许 IKEv2 客户端 <ConfigHelp :help="configHelp.allow_ikev2" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">信任服务端注入并固定中继 IKEv2 流量</div>
+                  </div>
+                  <input v-model="formData.allow_ikev2" type="checkbox" :class="checkboxClass" />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 安全配置 -->
+          <div class="card">
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('security')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+                安全配置
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.security)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <div v-show="sectionExpanded.security" class="mt-4">
+              <div class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                      组网加密密码 <ConfigHelp :help="configHelp.password" />
+                    </label>
+                    <input v-model="formData.password" type="password" placeholder="留空则不加密" class="input" />
+                  </div>
+                  <div>
+                    <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                      服务端证书校验模式 <ConfigHelp :help="configHelp.cert_mode" />
+                    </label>
+                    <AppSelect v-model="formData.cert_mode" :options="certificateModeOptions" aria-label="服务端证书校验模式" />
+                  </div>
+                </div>
+                <div v-if="formData.cert_mode === 'finger'">
+                  <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    证书指纹
+                    <ConfigHelp :help="configHelp.fingerprint" />
+                    <span class="text-xs text-slate-500 ml-1">(服务端启动时日志会输出指纹)</span>
+                  </label>
+                  <input
+                    v-model="formData.fingerprint"
+                    type="text"
+                    placeholder="例如: 3bdd8675606837cdf95d5e13445606315762315a78555f9da652940a25feaec1"
+                    class="input font-mono text-sm"
+                  />
                 </div>
               </div>
-              <label :class="toggleLabelClass">
-                <div class="flex-1">
-                  <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
-                    允许作为映射出口 <ConfigHelp :help="configHelp.allow_mapping" />
+            </div>
+          </div>
+
+          <!-- 子网路由（点对网） -->
+          <div class="card">
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('subnet')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 01-.806-.98L15 9m0 0V7m0 2v6"
+                  />
+                </svg>
+                子网路由（点对网）
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.subnet)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <div v-show="sectionExpanded.subnet" class="mt-4">
+              <div class="space-y-4">
+                <div>
+                  <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    入栈网段
+                    <ConfigHelp :help="configHelp.input" />
+                    <span class="text-xs text-slate-500 ml-1">格式: CIDR,目标IP</span>
+                  </label>
+                  <div class="space-y-2">
+                    <div v-for="(item, idx) in formData.input" :key="idx" class="flex gap-2">
+                      <input v-model="formData.input[idx]" type="text" placeholder="例如: 192.168.0.0/24,10.26.0.2" class="input flex-1" />
+                      <button @click="formData.input.splice(idx, 1)" :class="removeBtnClass">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button
+                      @click="formData.input.push('')"
+                      :class="addBtnClass"
+                    >
+                      + 添加入栈网段
+                    </button>
                   </div>
-                  <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板来进行端口映射</div>
                 </div>
-                <input v-model="formData.allow_mapping" type="checkbox" :class="checkboxClass" />
-              </label>
+                <div>
+                  <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    出栈网段
+                    <ConfigHelp :help="configHelp.output" />
+                    <span class="text-xs text-slate-500 ml-1">格式: CIDR (允许转发的网段)</span>
+                  </label>
+                  <div class="space-y-2">
+                    <div v-for="(item, idx) in formData.output" :key="idx" class="flex gap-2">
+                      <input v-model="formData.output[idx]" type="text" placeholder="例如: 0.0.0.0/0" class="input flex-1" />
+                      <button @click="formData.output.splice(idx, 1)" :class="removeBtnClass">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button
+                      @click="formData.output.push('')"
+                      :class="addBtnClass"
+                    >
+                      + 添加出栈网段
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    出栈网段映射
+                    <ConfigHelp :help="configHelp.subnet_mapping" />
+                    <span class="text-xs text-slate-500 ml-1">格式: 映射CIDR,真实CIDR（真实网段需在 output 中允许）</span>
+                  </label>
+                  <div class="space-y-2">
+                    <div v-for="(item, idx) in formData.subnet_mapping" :key="idx" class="flex gap-2">
+                      <input v-model="formData.subnet_mapping[idx]" type="text" placeholder="例如: 192.168.2.2/32,192.168.1.3/32" class="input flex-1" />
+                      <button @click="formData.subnet_mapping.splice(idx, 1)" :class="removeBtnClass">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button @click="formData.subnet_mapping.push('')" :class="addBtnClass">
+                      + 添加出栈网段映射
+                    </button>
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label :class="toggleLabelClass">
+                    <div class="flex-1">
+                      <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                        自动同步节点子网 <ConfigHelp :help="configHelp.auto_sync_subnet" />
+                      </div>
+                      <div class="text-xs text-slate-400 mt-0.5">自动应用其他在线节点的出口网段</div>
+                    </div>
+                    <input v-model="formData.auto_sync_subnet" type="checkbox" :class="checkboxClass" />
+                  </label>
+                  <label :class="toggleLabelClass">
+                    <div class="flex-1">
+                      <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                        关闭内置NAT <ConfigHelp :help="configHelp.no_nat" />
+                      </div>
+                      <div class="text-xs text-slate-400 mt-0.5">使用系统网卡转发</div>
+                    </div>
+                    <input v-model="formData.no_nat" type="checkbox" :class="checkboxClass" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 端口映射 -->
+          <div class="card">
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('portmap')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+                端口映射
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.portmap)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <div v-show="sectionExpanded.portmap" class="mt-4">
+              <div class="space-y-4">
+                <div>
+                  <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    映射规则
+                    <ConfigHelp :help="configHelp.port_mapping" />
+                    <span class="text-xs text-slate-500 ml-1">格式: 协议://监听地址-虚拟IP-目标地址</span>
+                  </label>
+                  <div class="space-y-2">
+                    <div v-for="(item, idx) in formData.port_mapping" :key="idx" class="flex gap-2">
+                      <input
+                        v-model="formData.port_mapping[idx]"
+                        type="text"
+                        placeholder="例如: tcp://0.0.0.0:81-10.0.0.2-10.0.0.2:80"
+                        class="input flex-1 font-mono"
+                      />
+                      <button @click="formData.port_mapping.splice(idx, 1)" :class="removeBtnClass">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button
+                      @click="formData.port_mapping.push('')"
+                      :class="addBtnClass"
+                    >
+                      + 添加映射规则
+                    </button>
+                  </div>
+                </div>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      允许作为映射出口 <ConfigHelp :help="configHelp.allow_mapping" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板来进行端口映射</div>
+                  </div>
+                  <input v-model="formData.allow_mapping" type="checkbox" :class="checkboxClass" />
+                </label>
+              </div>
             </div>
           </div>
 
           <!-- 设备配置 -->
           <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                />
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('device')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+                设备配置
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.device)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
-              设备配置
-            </h4>
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  设备名称 <ConfigHelp :help="configHelp.device_name" />
-                </label>
-                <input v-model="formData.device_name" type="text" placeholder="默认为主机名" class="input" />
-              </div>
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  设备ID <ConfigHelp :help="configHelp.device_id" />
-                </label>
-                <input v-model="formData.device_id" type="text" placeholder="自动生成" class="input" />
-              </div>
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  虚拟网卡名 <ConfigHelp :help="configHelp.tun_name" />
-                </label>
-                <input v-model="formData.tun_name" type="text" placeholder="可选" class="input" />
-              </div>
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  绑定出口网卡 <ConfigHelp :help="configHelp.outbound_interface" />
-                </label>
-                <input
-                  v-model="formData.outbound_interface"
-                  type="text"
-                  placeholder="例如 Ethernet、Wi-Fi、eth0"
-                  class="input"
-                />
-                <p class="mt-1.5 text-xs leading-5 text-slate-400">服务端通信、P2P 打洞及转发流量将使用此网卡</p>
-              </div>
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  事件脚本 <ConfigHelp :help="configHelp.event_script" />
-                </label>
-                <input
-                  v-model="formData.event_script"
-                  type="text"
-                  placeholder="外部脚本路径，留空不触发"
-                  class="input"
-                />
-                <p class="mt-1.5 text-xs leading-5 text-slate-400">
-                  网卡创建成功、掉线、重连成功、IP 变化时以命令行参数调用事件脚本（例如 C:\scripts\vnt-event.bat）
-                </p>
+            </div>
+            <div v-show="sectionExpanded.device" class="mt-4">
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    设备名称 <ConfigHelp :help="configHelp.device_name" />
+                  </label>
+                  <input v-model="formData.device_name" type="text" placeholder="默认为主机名" class="input" />
+                </div>
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    设备ID <ConfigHelp :help="configHelp.device_id" />
+                  </label>
+                  <input v-model="formData.device_id" type="text" placeholder="自动生成" class="input" />
+                </div>
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    虚拟网卡名 <ConfigHelp :help="configHelp.tun_name" />
+                  </label>
+                  <input v-model="formData.tun_name" type="text" placeholder="可选" class="input" />
+                </div>
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    绑定出口网卡 <ConfigHelp :help="configHelp.outbound_interface" />
+                  </label>
+                  <input
+                    v-model="formData.outbound_interface"
+                    type="text"
+                    placeholder="例如 Ethernet、Wi-Fi、eth0"
+                    class="input"
+                  />
+                  <p class="mt-1.5 text-xs leading-5 text-slate-400">服务端通信、P2P 打洞及转发流量将使用此网卡</p>
+                </div>
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    事件脚本 <ConfigHelp :help="configHelp.event_script" />
+                  </label>
+                  <input
+                    v-model="formData.event_script"
+                    type="text"
+                    placeholder="外部脚本路径，留空不触发"
+                    class="input"
+                  />
+                  <p class="mt-1.5 text-xs leading-5 text-slate-400">
+                    网卡创建成功、掉线、重连成功、IP 变化时以命令行参数调用事件脚本（例如 C:\scripts\vnt-event.bat）
+                  </p>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- STUN配置 -->
+          <!-- STUN配置 (高级) -->
           <div class="card">
-            <h4 :class="sectionTitleClass">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('stun')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                STUN配置 (高级)
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.stun)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
-              STUN配置 (高级)
-            </h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  UDP STUN服务器 <ConfigHelp :help="configHelp.udp_stun" />
-                </label>
-                <div class="space-y-2">
-                  <div v-for="(item, idx) in formData.udp_stun" :key="idx" class="flex gap-2">
-                    <input v-model="formData.udp_stun[idx]" type="text" placeholder="例如: stun.l.google.com:19302" class="input flex-1" />
-                    <button @click="formData.udp_stun.splice(idx, 1)" :class="removeBtnClass">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+            </div>
+            <div v-show="sectionExpanded.stun" class="mt-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    UDP STUN服务器 <ConfigHelp :help="configHelp.udp_stun" />
+                  </label>
+                  <div class="space-y-2">
+                    <div v-for="(item, idx) in formData.udp_stun" :key="idx" class="flex gap-2">
+                      <input v-model="formData.udp_stun[idx]" type="text" placeholder="例如: stun.l.google.com:19302" class="input flex-1" />
+                      <button @click="formData.udp_stun.splice(idx, 1)" :class="removeBtnClass">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button
+                      @click="formData.udp_stun.push('')"
+                      :class="addBtnClass"
+                    >
+                      + 添加UDP STUN
                     </button>
                   </div>
-                  <button
-                    @click="formData.udp_stun.push('')"
-                    :class="addBtnClass"
-                  >
-                    + 添加UDP STUN
-                  </button>
                 </div>
-              </div>
-              <div>
-                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  TCP STUN服务器 <ConfigHelp :help="configHelp.tcp_stun" />
-                </label>
-                <div class="space-y-2">
-                  <div v-for="(item, idx) in formData.tcp_stun" :key="idx" class="flex gap-2">
-                    <input v-model="formData.tcp_stun[idx]" type="text" placeholder="例如: stun.nextcloud.com:443" class="input flex-1" />
-                    <button @click="formData.tcp_stun.splice(idx, 1)" :class="removeBtnClass">
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+                <div>
+                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                    TCP STUN服务器 <ConfigHelp :help="configHelp.tcp_stun" />
+                  </label>
+                  <div class="space-y-2">
+                    <div v-for="(item, idx) in formData.tcp_stun" :key="idx" class="flex gap-2">
+                      <input v-model="formData.tcp_stun[idx]" type="text" placeholder="例如: stun.nextcloud.com:443" class="input flex-1" />
+                      <button @click="formData.tcp_stun.splice(idx, 1)" :class="removeBtnClass">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <button
+                      @click="formData.tcp_stun.push('')"
+                      :class="addBtnClass"
+                    >
+                      + 添加TCP STUN
                     </button>
                   </div>
-                  <button
-                    @click="formData.tcp_stun.push('')"
-                    :class="addBtnClass"
-                  >
-                    + 添加TCP STUN
-                  </button>
                 </div>
               </div>
             </div>

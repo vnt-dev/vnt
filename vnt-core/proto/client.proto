@@ -59,4 +59,6 @@ message NatInfo {
 
 message PunchInfo{
   NatInfo nat_info = 1;
+  // Bit 0..3: IPv4Tcp, IPv4Udp, IPv6Tcp, IPv6Udp. Zero means legacy/all.
+  uint32 punch_model = 2;
 }

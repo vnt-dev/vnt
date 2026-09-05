@@ -1,5 +1,5 @@
 use crate::compression::PacketCompression;
-use crate::context::config::{Config, TurnRule};
+use crate::context::config::{Config, PunchRule, TurnRule};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{AppState, NetworkRoute, PeerInfoMap, ServerInfoCollection};
 use crate::crypto::PacketCrypto;
@@ -34,12 +34,14 @@ pub struct InboundHandlerConfig {
     pub peer_map: PeerInfoMap,
     pub punch_backoff: PunchBackoff,
     pub puncher: NatPuncher,
+    pub punch_model: Arc<Vec<PunchRule>>,
     pub packet_crypto: PacketCrypto,
     pub packet_compression: PacketCompression,
     pub enhanced_inbound: EnhancedInbound,
     pub fec_decoder: FecDecoder,
     pub turn: Arc<Vec<TurnRule>>,
     pub auto_sync_subnet: bool,
+    pub allow_ikev2: bool,
 }
 
 pub struct ServerTurnManager {

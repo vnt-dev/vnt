@@ -59,7 +59,9 @@ async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result
             }
             IpcCmd::ClientList(_) => {
                 let client_list = vnt_api.server_rpc().client_list().await?;
-                let key_sign = vnt_api.get_config().and_then(|config| config.key_sign());
+                let config = vnt_api.get_config();
+                let key_sign = config.as_ref().and_then(|config| config.key_sign());
+                let allow_ikev2 = config.as_ref().is_some_and(|config| config.allow_ikev2);
                 let items = client_list
                     .list
                     .into_iter()
@@ -85,10 +87,12 @@ async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result
                             rtt,
                             key_equal: key_sign == v.key_sign,
                             packet_loss,
+                            client_type: if v.client_type == 1 { "IKEV2" } else { "VNT" }
+                                .to_string(),
                         }
                     })
                     .collect();
-                ResponsePayload::ClientList(ClientInfoList { items })
+                ResponsePayload::ClientList(ClientInfoList { items, allow_ikev2 })
             }
             IpcCmd::AllRoute(_) => {
                 let route_list = all_route(&vnt_api);

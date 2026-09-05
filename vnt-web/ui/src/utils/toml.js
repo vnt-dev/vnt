@@ -6,6 +6,7 @@ export const emptyFormData = () => ({
   server: [""],
   peer_address: [],
   turn: [],
+  punch_model: [],
   ip: "",
   mtu: null,
   rtx: false,
@@ -13,6 +14,7 @@ export const emptyFormData = () => ({
   compress: false,
   no_punch: false,
   no_broadcast: false,
+  allow_ikev2: false,
   input: [],
   subnet_mapping: [],
   output: [],
@@ -67,6 +69,12 @@ export const parseTomlToForm = (toml) => {
         const items = match[1].match(/"([^"]*)"/g);
         if (items) data.turn = items.map((s) => s.replace(/"/g, ""));
       }
+    } else if (trimmed.match(/^punch_model\s*=/)) {
+      const match = trimmed.match(/punch_model\s*=\s*\[(.*)\]/);
+      if (match) {
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.punch_model = items.map((s) => s.replace(/"/g, ""));
+      }
     } else if (trimmed.includes("ip =")) {
       const match = trimmed.match(/ip\s*=\s*"([^"]*)"/);
       if (match) data.ip = match[1];
@@ -83,6 +91,8 @@ export const parseTomlToForm = (toml) => {
       data.no_punch = trimmed.includes("true");
     } else if (trimmed.match(/^no_broadcast\s*=/)) {
       data.no_broadcast = trimmed.includes("true");
+    } else if (trimmed.match(/^allow_ikev2\s*=/)) {
+      data.allow_ikev2 = trimmed.includes("true");
     } else if (trimmed.startsWith("input")) {
       const match = trimmed.match(/input\s*=\s*\[(.*)\]/);
       if (match) {
@@ -201,6 +211,12 @@ export const formToToml = (formData) => {
     toml += `turn = [${turnRules.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
+  const punchModelRules = formData.punch_model.filter((s) => s.trim());
+  if (punchModelRules.length > 0) {
+    toml += "\n# 按目标虚拟 IP 或网段限制 P2P 打洞方式；双方实际使用允许集合的交集\n";
+    toml += `punch_model = [${punchModelRules.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
   if (formData.ip) {
     toml += "\n# 自定义虚拟 IP (可选)\n";
     toml += `ip = "${formData.ip}"\n`;
@@ -226,6 +242,11 @@ export const formToToml = (formData) => {
   if (formData.no_broadcast) {
     toml += "\n# 是否关闭 IPv4 广播和组播转发 (默认 false，即开启)\n";
     toml += "no_broadcast = true\n";
+  }
+
+  if (formData.allow_ikev2) {
+    toml += "\n# 允许与 IKEv2 客户端通信，并信任服务端注入的数据\n";
+    toml += "allow_ikev2 = true\n";
   }
 
   if (formData.compress) {
@@ -358,6 +379,9 @@ server = ["quic://1.2.3.4:29872"]
 # 命中目标不参与 P2P 打洞
 # turn = ["10.26.0.0/24,10.26.0.2", "10.26.1.9,10.26.0.3"]
 
+# 按目标虚拟 IP 或网段限制 P2P 打洞方式；可选 IPv4Tcp、IPv4Udp、IPv6Tcp、IPv6Udp
+# punch_model = ["10.26.0.2,IPv4Udp", "10.26.1.0/24,IPv4Tcp,IPv4Udp"]
+
 # ===简单使用以下参数可以不动===
 
 # 自定义虚拟 IP (可选)
@@ -376,6 +400,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 是否关闭 IPv4 广播和组播转发 (默认 false，即开启)
 # no_broadcast = false
+
+# 是否允许与 IKEv2 客户端通信，并信任服务端注入的 IKEv2 明文 IPv4 包
+# allow_ikev2 = false
 
 # 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
 # compress = false

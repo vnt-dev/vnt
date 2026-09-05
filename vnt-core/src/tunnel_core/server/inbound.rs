@@ -1,5 +1,5 @@
 use crate::compression::PacketCompression;
-use crate::context::config::{DeviceMode, TurnRule, allow_punch};
+use crate::context::config::{DeviceMode, PunchRule, TurnRule, allow_punch, punch_model_for};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{
     NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection, SharedNetworkAddr,
@@ -355,12 +355,14 @@ pub(crate) struct ServerTurnInboundHandler {
     peer_map: PeerInfoMap,
     punch_backoff: PunchBackoff,
     puncher: NatPuncher,
+    punch_model: Arc<Vec<PunchRule>>,
     packet_crypto: PacketCrypto,
     packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
     turn: Arc<Vec<TurnRule>>,
     auto_sync_subnet: bool,
+    allow_ikev2: bool,
 }
 impl ServerTurnInboundHandler {
     pub fn new(
@@ -377,12 +379,14 @@ impl ServerTurnInboundHandler {
             peer_map: config.peer_map,
             punch_backoff: config.punch_backoff,
             puncher: config.puncher,
+            punch_model: config.punch_model,
             packet_crypto: config.packet_crypto,
             packet_compression: config.packet_compression,
             enhanced_inbound: config.enhanced_inbound,
             fec_decoder: config.fec_decoder,
             turn: config.turn,
             auto_sync_subnet: config.auto_sync_subnet,
+            allow_ikev2: config.allow_ikev2,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -395,9 +399,10 @@ impl ServerTurnInboundHandler {
         info.local_ipv4s.retain(|ip| !self.network_contains(ip));
         info
     }
-    fn get_punch_info(&self) -> Option<PunchInfo> {
+    fn get_punch_info(&self, target: Ipv4Addr) -> Option<PunchInfo> {
         self.nat_info.get().map(|info| PunchInfo {
             nat_info: self.filter_ip(info),
+            punch_model: punch_model_for(&self.punch_model, &target),
         })
     }
     fn update_peer_nat_info(&self, ip: Ipv4Addr, nat_info: NatInfo) {
@@ -421,6 +426,24 @@ impl ServerTurnInboundHandler {
         let mut net_packet = self.packet_compression.decompress(net_packet)?;
 
         match msg_type {
+            MsgType::Ikev2Relay if self.allow_ikev2 => {
+                let Some(ipv4) = Ipv4Packet::new(net_packet.payload()) else {
+                    return Ok(());
+                };
+                let header_length = ipv4.get_header_length() as usize * 4;
+                if ipv4.get_version() != 4
+                    || header_length < Ipv4Packet::minimum_packet_size()
+                    || ipv4.get_total_length() as usize != net_packet.payload().len()
+                    || ipv4.get_source() != src
+                    || ipv4.get_destination() != network_addr.ip
+                    || Ipv4Addr::from(net_packet.dest_id()) != network_addr.ip
+                {
+                    return Ok(());
+                }
+                self.enhanced_inbound
+                    .inbound(&network_addr, MsgType::Turn, src, net_packet)
+                    .await?;
+            }
             MsgType::Turn => {
                 // 只允许icmp EchoReply
                 let Some(ipv4) = Ipv4Packet::new(net_packet.payload()) else {
@@ -462,12 +485,15 @@ impl ServerTurnInboundHandler {
             }
             MsgType::PushClientIps => {
                 let list = ClientSimpleInfoList::from_slice(net_packet.payload())?;
-                self.server_info.update_client_simple_list(
+                let changed = self.server_info.update_client_simple_list(
                     self.server_id,
                     network_addr.ip,
                     list,
                     now,
                 );
+                for ip in changed {
+                    self.punch_backoff.reset(ip);
+                }
             }
             MsgType::RpcRes => {
                 // 设置rpc响应
@@ -612,15 +638,17 @@ impl ServerTurnInboundHandler {
                 }
                 // 对方发起打洞
                 let peer_punch_info = PunchInfo::from_slice(net_packet.payload())?;
-                let Some(self_punch_info) = self.get_punch_info() else {
+                let Some(mut self_punch_info) = self.get_punch_info(src) else {
                     return Ok(());
                 };
                 log::info!(
                     "对方主动发起打洞 对方nat信息={peer_punch_info:?}，自己nat信息={self_punch_info:?} {src}->{dest}"
                 );
                 self.update_peer_nat_info(src, peer_punch_info.nat_info.clone());
-                let rs = self.puncher.punch(src, peer_punch_info)?;
-                if rs {
+                let effective_policies = self.puncher.punch(src, peer_punch_info)?;
+                if let Some(effective_policies) = effective_policies {
+                    // 回传双方都支持的请求策略，确保发起端也只打当前缺失的路由类型。
+                    self_punch_info.punch_model = effective_policies;
                     let bytes_mut = self_punch_info.encode();
                     let mut net_packet = NetPacket::new(TransmissionBytes::zeroed_size(
                         HEAD_LENGTH + bytes_mut.len(),
@@ -642,7 +670,6 @@ impl ServerTurnInboundHandler {
                     log::debug!("ignore configured turn target PunchStart2 from {src}");
                     return Ok(());
                 }
-                self.punch_backoff.record(src);
                 // 对方回复开始打洞
                 let peer_punch_info = PunchInfo::from_slice(net_packet.payload())?;
                 self.update_peer_nat_info(src, peer_punch_info.nat_info.clone());

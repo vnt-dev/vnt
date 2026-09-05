@@ -1,9 +1,9 @@
-use crate::context::config::Config;
+use crate::context::config::{Config, punch_model_for};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::nat::SubnetExternalRoute;
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
-    ClientSimpleInfo, ClientSimpleInfoList, SubnetSyncResponse,
+    ClientSimpleInfo, ClientSimpleInfoList, ClientType, SubnetSyncResponse,
 };
 use crate::tunnel_core::p2p::route_table::RouteTable;
 use crate::tunnel_core::server::transport::config::ProtocolAddress;
@@ -423,7 +423,7 @@ impl ServerInfoCollection {
                     (
                         v.client_map
                             .iter()
-                            .filter(|(_, v)| v.online)
+                            .filter(|(_, v)| v.online && v.client_type == ClientType::Vnt)
                             .map(|(k, _)| *k)
                             .collect(),
                         v.rtt.unwrap_or(500),
@@ -496,12 +496,17 @@ impl ServerInfoCollection {
         self.client_simple_list
             .read()
             .iter()
-            .filter(|v| v.online)
+            .filter(|v| v.online && v.client_type == ClientType::Vnt)
             .map(|c| c.ip)
             .collect()
     }
     pub fn client_ips(&self) -> Vec<ClientSimpleInfo> {
         self.client_simple_list.read().clone()
+    }
+    pub fn is_ikev2_client(&self, ip: &Ipv4Addr) -> bool {
+        self.client_simple_list.read().iter().any(|client| {
+            client.ip == *ip && client.online && client.client_type == ClientType::Ikev2
+        })
     }
     pub fn data_version(&self, server_id: u32) -> u64 {
         self.server_node_map
@@ -578,7 +583,7 @@ impl ServerInfoCollection {
         self_ip: Ipv4Addr,
         client_simple_list: ClientSimpleInfoList,
         now: i64,
-    ) {
+    ) -> Vec<Ipv4Addr> {
         let mut guard = self.server_node_map.write();
         let server_node = guard.entry(server_id).or_default();
         if now > client_simple_list.time {
@@ -604,6 +609,9 @@ impl ServerInfoCollection {
                     if x.online {
                         v.online = true;
                     }
+                    if x.client_type == ClientType::Ikev2 {
+                        v.client_type = ClientType::Ikev2;
+                    }
                 } else {
                     client_simple_map.insert(x.ip, x.clone());
                 }
@@ -611,7 +619,21 @@ impl ServerInfoCollection {
         }
 
         let mut guard = self.client_simple_list.write();
-        *guard = client_simple_map.into_values().collect()
+        let previous_online: HashMap<Ipv4Addr, bool> =
+            guard.iter().map(|info| (info.ip, info.online)).collect();
+        let mut changed = Vec::new();
+        for (ip, info) in &client_simple_map {
+            if previous_online.get(ip).copied().unwrap_or(false) != info.online {
+                changed.push(*ip);
+            }
+        }
+        for (ip, was_online) in previous_online {
+            if was_online && !client_simple_map.contains_key(&ip) {
+                changed.push(ip);
+            }
+        }
+        *guard = client_simple_map.into_values().collect();
+        changed
     }
     pub fn set_server_connected(&self, server_id: u32, val: bool) -> bool {
         let mut mutex_guard = self.server_node_map.write();
@@ -800,6 +822,69 @@ mod subnet_sync_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod client_status_tests {
+    use super::ServerInfoCollection;
+    use crate::protocol::control_message::{ClientSimpleInfo, ClientSimpleInfoList, ClientType};
+    use crate::tunnel_core::server::transport::config::ProtocolAddress;
+    use std::net::Ipv4Addr;
+
+    fn update(servers: &ServerInfoCollection, peer: Ipv4Addr, online: bool) -> Vec<Ipv4Addr> {
+        servers.update_client_simple_list(
+            0,
+            Ipv4Addr::new(10, 26, 0, 1),
+            ClientSimpleInfoList {
+                data_version: 1,
+                list: vec![ClientSimpleInfo {
+                    ip: peer,
+                    online,
+                    client_type: ClientType::Vnt,
+                }],
+                is_all: true,
+                time: 0,
+            },
+            0,
+        )
+    }
+
+    #[test]
+    fn online_transitions_are_reported_once() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![(0, ProtocolAddress::default())]);
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+        assert!(update(&servers, peer, true).is_empty());
+        assert_eq!(update(&servers, peer, false), vec![peer]);
+        assert!(update(&servers, peer, false).is_empty());
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+    }
+
+    #[test]
+    fn disappearing_from_full_snapshot_is_one_offline_transition() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![(0, ProtocolAddress::default())]);
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+
+        let empty_snapshot = || ClientSimpleInfoList {
+            data_version: 2,
+            list: Vec::new(),
+            is_all: true,
+            time: 0,
+        };
+        assert_eq!(
+            servers.update_client_simple_list(0, Ipv4Addr::new(10, 26, 0, 1), empty_snapshot(), 0,),
+            vec![peer]
+        );
+        assert!(
+            servers
+                .update_client_simple_list(0, Ipv4Addr::new(10, 26, 0, 1), empty_snapshot(), 0,)
+                .is_empty()
+        );
+    }
+}
 #[derive(Copy, Clone, Debug)]
 pub struct NetworkAddr {
     pub gateway: Ipv4Addr,
@@ -870,9 +955,16 @@ impl AppState {
     }
 }
 impl AppState {
-    pub fn get_punch_info(&self) -> Option<PunchInfo> {
+    pub fn get_punch_info(&self, target: Ipv4Addr) -> Option<PunchInfo> {
+        let punch_model = self
+            .config
+            .lock()
+            .as_ref()
+            .map(|config| punch_model_for(&config.punch_model, &target))
+            .unwrap_or_else(rustp2p_core::punch::PunchPolicySet::all);
         self.nat_info.get().map(|info| PunchInfo {
             nat_info: self.filter_ip(info),
+            punch_model,
         })
     }
     pub fn get_nat_info(&self) -> Option<NatInfo> {

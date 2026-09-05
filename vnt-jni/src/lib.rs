@@ -12,7 +12,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
-use vnt_core::context::config::{Config, DeviceMode, PeerAddress, TurnRule};
+use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule};
 use vnt_core::core::{NetworkManager, RegisterResponse};
 use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::port_mapping::PortMapping;
@@ -565,7 +565,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
             let local_clients: HashMap<_, _> = api
                 .client_ips()
                 .into_iter()
-                .map(|client| (client.ip, client.online))
+                .map(|client| (client.ip, (client.online, client.client_type)))
                 .collect();
             let server_clients: HashMap<_, _> = runtime
                 .block_on(api.server_rpc().client_list())
@@ -601,7 +601,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                         .map(|route| route.route_key().protocol().to_string());
                     let route_metric = route.as_ref().map(|route| route.metric());
                     let rtt = route.as_ref().map(|route| route.rtt());
-                    let online = local_clients.get(&ip).copied().unwrap_or(false)
+                    let online = local_clients.get(&ip).map(|value| value.0).unwrap_or(false)
                         || server_client.map(|client| client.online).unwrap_or(false)
                         || has_route;
                     let packet_loss = api.packet_loss_info(&ip).map(|info| {
@@ -621,13 +621,24 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                         "ip": ip.to_string(),
                         "name": server_client.map(|client| client.name.as_str()).unwrap_or(""),
                         "version": server_client.map(|client| client.version.as_str()).unwrap_or(""),
+                        "client_type": server_client
+                            .map(|client| if client.client_type == 1 { "IKEV2" } else { "VNT" })
+                            .or_else(|| local_clients.get(&ip).map(|value| match value.1 {
+                                vnt_core::protocol::control_message::ClientType::Ikev2 => "IKEV2",
+                                vnt_core::protocol::control_message::ClientType::Vnt => "VNT",
+                            }))
+                            .unwrap_or("VNT"),
                         "online": online,
                         "direct": direct,
                         "route_protocol": route_protocol,
                         "route_metric": route_metric,
                         "rtt": rtt,
                         "key_equal": server_client
-                            .map(|client| encryption_state(local_key.as_deref(), client.key_sign.as_deref()))
+                            .map(|client| if client.client_type == 1 {
+                                0
+                            } else {
+                                encryption_state(local_key.as_deref(), client.key_sign.as_deref())
+                            })
                             .unwrap_or(0),
                         "packet_loss": packet_loss,
                         "traffic": traffic,
@@ -1027,6 +1038,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         peer_address: Vec<String>,
         #[serde(default)]
         turn: Vec<String>,
+        #[serde(default)]
+        punch_model: Vec<String>,
         network_code: String,
         #[serde(default)]
         device_id: Option<String>,
@@ -1046,6 +1059,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         no_punch: bool,
         #[serde(default)]
         no_broadcast: bool,
+        #[serde(default)]
+        allow_ikev2: bool,
         #[serde(default)]
         compress: bool,
         #[serde(default)]
@@ -1111,6 +1126,16 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         })
         .collect::<anyhow::Result<_>>()?;
 
+    let punch_model: Vec<PunchRule> = cfg
+        .punch_model
+        .iter()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| anyhow::anyhow!("invalid punch_model rule '{}': {}", value, error))
+        })
+        .collect::<anyhow::Result<_>>()?;
+
     let port_mapping: Vec<PortMapping> = cfg
         .port_mapping
         .iter()
@@ -1158,10 +1183,12 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         server_addr: server_addrs,
         peer_address,
         turn,
+        punch_model,
         network_code: cfg.network_code,
         ip: cfg.ip,
         no_punch: cfg.no_punch,
         no_broadcast: cfg.no_broadcast,
+        allow_ikev2: cfg.allow_ikev2,
         rtx: cfg.rtx,
         compress: cfg.compress,
         device_id,
@@ -1475,6 +1502,24 @@ mod tests {
         assert_eq!(config.turn.len(), 2);
         assert_eq!(config.turn[0].to_string(), "10.26.0.0/16,10.26.0.2");
         assert_eq!(config.turn[1].to_string(), "10.26.1.9,10.26.0.3");
+    }
+
+    #[test]
+    fn parses_punch_model_rules_from_json() {
+        let config = parse_config_from_json(
+            r#"{
+                "server":["quic://127.0.0.1:29872"],
+                "network_code":"test-net",
+                "punch_model":["10.26.0.2,IPv4Udp","10.26.1.0/24,IPv4Tcp,IPv6Udp"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.punch_model.len(), 2);
+        assert_eq!(config.punch_model[0].to_string(), "10.26.0.2,IPv4Udp");
+        assert_eq!(
+            config.punch_model[1].to_string(),
+            "10.26.1.0/24,IPv4Tcp,IPv6Udp"
+        );
     }
 
     #[test]

@@ -191,13 +191,15 @@ fn print_client_ip_list(list: ClientIpList) -> anyhow::Result<()> {
 fn print_client_list(list: ClientInfoList) -> anyhow::Result<()> {
     println!("\n--- Client List ({}) ---", list.items.len());
 
+    let show_ikev2_warning = has_unreachable_ikev2_client(&list);
+
     let table = list
         .items
         .iter()
         .map(|item| {
             let key_equal: bool = item.key_equal;
             let mut ip_str = Ipv4Addr::from(item.ip).to_string();
-            if !key_equal {
+            if item.client_type != "IKEV2" && !key_equal {
                 ip_str.push_str("(Key Mismatch)");
             }
             let loss_str = item
@@ -209,6 +211,7 @@ fn print_client_list(list: ClientInfoList) -> anyhow::Result<()> {
             vec![
                 ip_str.cell(),
                 item.name.clone().cell(),
+                item.client_type.clone().cell(),
                 item.version.clone().cell(),
                 item.online.to_string().cell(),
                 item.is_direct.to_string().cell(),
@@ -221,6 +224,7 @@ fn print_client_list(list: ClientInfoList) -> anyhow::Result<()> {
         .title(vec![
             "IP".cell().bold(true),
             "Name".cell().bold(true),
+            "Type".cell().bold(true),
             "Version".cell().bold(true),
             "Online".cell().bold(true),
             "P2P".cell().bold(true),
@@ -230,8 +234,27 @@ fn print_client_list(list: ClientInfoList) -> anyhow::Result<()> {
         ]);
 
     print_stdout(table)?;
+    if show_ikev2_warning {
+        println!(
+            "\n{}",
+            style(
+                "WARNING: Online IKEv2 clients detected, but allow_ikev2 / --allow-ikev2 is not enabled. These clients are unreachable."
+            )
+            .yellow()
+            .bright()
+            .bold()
+        );
+    }
     println!("\n");
     Ok(())
+}
+
+fn has_unreachable_ikev2_client(list: &ClientInfoList) -> bool {
+    !list.allow_ikev2
+        && list
+            .items
+            .iter()
+            .any(|item| item.online && item.client_type == "IKEV2")
 }
 
 pub fn print_route_list(route_list: ClientRouteList) -> anyhow::Result<()> {
@@ -286,4 +309,41 @@ pub fn ts_to_string(ts_secs: i64) -> String {
     let dt_local = dt.to_offset(local_offset);
     let format = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
     dt_local.format(&format).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::ClientInfoItem;
+
+    fn ikev2_client(online: bool) -> ClientInfoItem {
+        ClientInfoItem {
+            online,
+            client_type: "IKEV2".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn warns_for_online_ikev2_client_when_disabled() {
+        let list = ClientInfoList {
+            items: vec![ikev2_client(true)],
+            allow_ikev2: false,
+        };
+        assert!(has_unreachable_ikev2_client(&list));
+    }
+
+    #[test]
+    fn does_not_warn_when_ikev2_is_allowed_or_offline() {
+        let allowed = ClientInfoList {
+            items: vec![ikev2_client(true)],
+            allow_ikev2: true,
+        };
+        let offline = ClientInfoList {
+            items: vec![ikev2_client(false)],
+            allow_ikev2: false,
+        };
+        assert!(!has_unreachable_ikev2_client(&allowed));
+        assert!(!has_unreachable_ikev2_client(&offline));
+    }
 }

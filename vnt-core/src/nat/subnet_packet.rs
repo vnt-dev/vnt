@@ -404,11 +404,11 @@ fn internet_checksum(data: &[u8]) -> u16 {
 }
 
 fn add_words(sum: &mut u32, data: &[u8]) {
-    let mut chunks = data.chunks_exact(2);
-    for word in &mut chunks {
-        *sum += u16::from_be_bytes([word[0], word[1]]) as u32;
+    let (words, remainder) = data.as_chunks::<2>();
+    for &word in words {
+        *sum += u16::from_be_bytes(word) as u32;
     }
-    if let Some(last) = chunks.remainder().first() {
+    if let Some(last) = remainder.first() {
         *sum += (*last as u32) << 8;
     }
 }
