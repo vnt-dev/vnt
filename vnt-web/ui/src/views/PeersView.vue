@@ -126,7 +126,7 @@ const getRouteModeClass = (route) => {
 
 const getRouteModeText = (route) => {
   const isDirect = route.metric === 1;
-  const isTcp = route.protocol.includes("Tcp");
+  const isTcp = route.protocol === "tcp";
   if (isDirect) {
     return isTcp ? "打洞TCP直连" : "打洞UDP直连";
   } else {
