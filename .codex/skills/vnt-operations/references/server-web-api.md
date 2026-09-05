@@ -193,15 +193,17 @@ PUT /api/settings/ikev2
   "enabled": true,
   "ike_bind": "0.0.0.0:500",
   "natt_bind": "0.0.0.0:4500",
+  "server_address": "vpn.example.com",
   "remote_id": "vpn.example.com",
-  "public_ip": "203.0.113.10",
   "dns": ["1.1.1.1"],
   "cert": null,
   "key": null
 }
 ```
 
-先 GET、仅修改用户要求的字段、再 PUT 完整对象。`cert`/`key` 必须同时设置或同时为空；为空时可生成受管 CA 和服务证书。响应包含 `configured`、`enabled`、`runtime_active`、证书状态、CA 是否可下载及 `runtime_error`。保存会启动、停止或热加载服务，失败时服务端尝试回滚配置和受管证书；仍需读回并检查 `runtime_active/runtime_error`。
+先 GET、仅修改用户要求的字段、再 PUT 完整对象。`server_address` 是客户端实际连接地址，启用时必填，接受域名、IPv4 或 IPv6；`remote_id` 是服务器身份并必须匹配证书 SAN，只接受域名或 IPv4。`cert`/`key` 必须同时设置或同时为空；为空时可生成受管 CA 和服务证书。
+
+响应包含 `configured`、`enabled`、`runtime_active`、`ike_bind`、`natt_bind`、`server_address`、`remote_id`、`dns`、证书状态、`ca_download_available`、`server_certificate_download_available` 及 `runtime_error`。保存会启动、停止或热加载服务，失败时服务端尝试回滚配置和受管证书；仍需读回并检查 `runtime_active/runtime_error`。
 
 下载 CA：
 
@@ -214,6 +216,19 @@ GET /api/ikev2/ca-certificate?format=pem
 
 ```text
 python scripts/vnt_api.py server --base-url http://127.0.0.1:29871 --token-stdin GET "/api/ikev2/ca-certificate?format=der" --output vnt-ikev2-ca.cer
+```
+
+下载服务器叶证书：
+
+```text
+GET /api/ikev2/server-certificate?format=der
+GET /api/ikev2/server-certificate?format=pem
+```
+
+`der` 和 `pem` 都只返回证书链中的第一张叶证书。该下载主要用于诊断或必须直接信任叶证书的客户端；正常接入应安装并信任签发服务器证书的 CA。使用辅助脚本时同样通过 `--output` 保存响应，例如：
+
+```text
+python scripts/vnt_api.py server --base-url http://127.0.0.1:29871 --token-stdin GET "/api/ikev2/server-certificate?format=der" --output vnt-ikev2-server.cer
 ```
 
 ## 失败处理

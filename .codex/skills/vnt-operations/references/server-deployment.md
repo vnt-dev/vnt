@@ -182,13 +182,21 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 enabled = true
 ike_bind = "0.0.0.0:500"
 natt_bind = "0.0.0.0:4500"
+server_address = "vpn.example.com"
 remote_id = "vpn.example.com"
-public_ip = "203.0.113.10"
 dns = ["1.1.1.1"]
 # cert/key 同时省略时自动创建本地 CA 和匹配 remote_id 的服务证书。
 ```
 
-`remote_id` 只接受域名或 IPv4 地址，不能有首尾空白；两个监听地址不能相同。IKEv2 设备使用独立用户名/密码。普通 VNT 客户端只有设置 `allow_ikev2 = true` 才接受该流量；该路径不受 VNT 节点间密码的端到端加密保护。
+`server_address` 是接入说明交给客户端的实际连接地址，启用服务时必填，接受域名、IPv4 或 IPv6 地址；不要填写 URL、端口或带首尾空白的值。`remote_id` 是服务端 IKE 身份并必须匹配服务器证书 SAN，只接受域名或 IPv4 地址。两者可以不同，但 Android 原生客户端通常以服务器地址作为远程 ID，此时可能无法通过服务器身份验证；需要兼容 Android 时应让两者相同。两个监听地址不能相同。
+
+IKEv2 设备使用独立用户名/密码，用户名同时是设备 ID。原生客户端接入时：
+
+- Android 使用 `IKEv2/IPSec MSCHAPv2`，把受管 CA 安装为“VPN 和应用的 CA 证书”并在“IPSec CA 证书”中明确选择，不能选择“不验证服务器”；“IPSec 标识符”填写该设备 ID。
+- Windows 安装并信任 CA 后，需将 IKE/ESP 加密算法设置为 `GCMAES256`，DH 组设置为 Group14。
+- macOS/iOS 的服务器填写 `server_address`，远程 ID 填写 `remote_id`，本地 ID 留空。
+
+普通 VNT 客户端只有设置 `allow_ikev2 = true` 才接受该流量；该路径不受 VNT 节点间密码的端到端加密保护。
 
 ## 验证
 
