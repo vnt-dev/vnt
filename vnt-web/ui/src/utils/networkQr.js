@@ -19,5 +19,6 @@ export const buildNetworkQrPayload = (form) => {
     server: servers,
     mtu,
     password: String(form.password || ""),
+    ...(form.allow_ikev2 ? { allow_ikev2: true } : {}),
   };
 };
