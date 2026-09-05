@@ -45,6 +45,10 @@ jobs:
 
   rust:
     name: ${{ matrix.name }} Rust checks
+    env:
+      # The frontend job builds and validates the UI separately. Rust jobs run in
+      # clean checkouts without pnpm or the ignored vnt-web/static artifacts.
+      VNT_WEB_SKIP_UI_BUILD: "1"
     strategy:
       fail-fast: false
       matrix:
