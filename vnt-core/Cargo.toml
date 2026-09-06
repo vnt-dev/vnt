@@ -65,6 +65,12 @@ libc = "0.2"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 machine-uid = "0.6"
 
+[target.'cfg(target_os = "android")'.dependencies]
+# reqwest's platform verifier needs an Android Context and companion JVM classes.
+# vnt-core is also embedded by vnt-jni, so use bundled WebPKI roots for its
+# dynamic server-list HTTPS requests instead of relying on host initialization.
+webpki-roots = "1"
+
 [build-dependencies]
 prost-build = "0.14"
 protoc-bin-vendored = "3"

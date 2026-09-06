@@ -12,11 +12,27 @@ pub(crate) async fn http_get_text(url: &str) -> anyhow::Result<String> {
     // 构建 client 前确保进程内已安装默认 CryptoProvider（已安装则忽略冲突）
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let client = reqwest::Client::builder()
+    let client_builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent(format!("vnt/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("build http client failed")?;
+        .user_agent(format!("vnt/{}", env!("CARGO_PKG_VERSION")));
+
+    // reqwest defaults to rustls-platform-verifier. On Android that verifier
+    // must be initialized with a JVM Context and requires companion Kotlin
+    // classes, neither of which a reusable native library can assume its host
+    // application has supplied. A preconfigured rustls client keeps HTTPS
+    // certificate and hostname verification enabled while making vnt-jni's
+    // dynamic server-list fetch self-contained.
+    #[cfg(target_os = "android")]
+    let client_builder = {
+        let root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let tls_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        client_builder.tls_backend_preconfigured(tls_config)
+    };
+
+    let client = client_builder.build().context("build http client failed")?;
     let response = client
         .get(url)
         .send()
