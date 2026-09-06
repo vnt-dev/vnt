@@ -354,6 +354,8 @@ pub struct Config {
     pub no_broadcast: bool,
     /// 允许与由服务端终结的 IKEv2/IPsec 客户端互通。
     pub allow_ikev2: bool,
+    /// 允许与由服务端终结的 WireGuard 客户端互通。
+    pub allow_wireguard: bool,
     pub compress: bool,
     pub rtx: bool,
     pub fec: bool,
@@ -414,9 +416,6 @@ impl Config {
         }
         if self.server_addr.is_empty() {
             bail!("服务器地址不能为空");
-        }
-        if self.allow_ikev2 && self.device_mode == DeviceMode::No {
-            bail!("allow_ikev2 requires device_mode = tun or tap");
         }
         if self.server_addr.len() > 1 {
             let mut set = HashSet::new();
@@ -485,6 +484,7 @@ impl Config {
                 &self.subnet_mapping,
             )),
             allow_ikev2: self.allow_ikev2,
+            allow_wireguard: self.allow_wireguard,
             default_interface,
         }
     }
@@ -548,6 +548,18 @@ mod tests {
                 .to_string()
                 .contains("不能相同")
         );
+    }
+
+    #[test]
+    fn server_relay_clients_allow_no_device_mode() {
+        let config = Config {
+            server_addr: vec!["quic://127.0.0.1:29872".parse().unwrap()],
+            device_mode: DeviceMode::No,
+            allow_ikev2: true,
+            allow_wireguard: true,
+            ..Default::default()
+        };
+        assert!(config.check().is_ok());
     }
 
     #[tokio::test]

@@ -15,6 +15,7 @@ export const emptyFormData = () => ({
   no_punch: false,
   no_broadcast: false,
   allow_ikev2: false,
+  allow_wireguard: false,
   input: [],
   subnet_mapping: [],
   output: [],
@@ -93,6 +94,8 @@ export const parseTomlToForm = (toml) => {
       data.no_broadcast = trimmed.includes("true");
     } else if (trimmed.match(/^allow_ikev2\s*=/)) {
       data.allow_ikev2 = trimmed.includes("true");
+    } else if (trimmed.match(/^allow_wireguard\s*=/)) {
+      data.allow_wireguard = trimmed.includes("true");
     } else if (trimmed.startsWith("input")) {
       const match = trimmed.match(/input\s*=\s*\[(.*)\]/);
       if (match) {
@@ -249,6 +252,11 @@ export const formToToml = (formData) => {
     toml += "allow_ikev2 = true\n";
   }
 
+  if (formData.allow_wireguard) {
+    toml += "\n# 允许与 WireGuard 客户端通信，并信任服务端注入的数据\n";
+    toml += "allow_wireguard = true\n";
+  }
+
   if (formData.compress) {
     toml += "\n# 是否启用 LZ4 压缩 (默认 false)\n";
     toml += "compress = true\n";
@@ -403,6 +411,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 是否允许与 IKEv2 客户端通信，并信任服务端注入的 IKEv2 明文 IPv4 包
 # allow_ikev2 = false
+
+# 是否允许与 WireGuard 客户端通信，并信任服务端注入的 WireGuard 明文 IPv4 包
+# allow_wireguard = false
 
 # 是否启用 LZ4 压缩 (默认 false,设置为true时开启)
 # compress = false

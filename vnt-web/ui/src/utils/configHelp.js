@@ -104,6 +104,13 @@ export const configHelp = {
     format: "开关；默认关闭。",
     notes: ["此路径不使用 VNT 节点间 password 加密，应只连接受信任的服务端。"],
   },
+  allow_wireguard: {
+    param: "allow_wireguard / --allow-wireguard",
+    summary: "允许本节点与接入同一虚拟网络的 WireGuard 客户端互通。",
+    usage: "开启后，本节点信任已认证 VNT 服务端注入的 WireGuard 明文 IPv4 包，并把发往 WireGuard 类型地址的流量固定交给服务端中继。",
+    format: "开关；默认关闭。",
+    notes: ["此路径不使用 VNT 节点间 password 加密，应只连接受信任的服务端。"],
+  },
   password: {
     param: "password",
     summary: "对虚拟网络中的节点间数据进行加密。",

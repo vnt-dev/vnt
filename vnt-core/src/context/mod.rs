@@ -503,10 +503,12 @@ impl ServerInfoCollection {
     pub fn client_ips(&self) -> Vec<ClientSimpleInfo> {
         self.client_simple_list.read().clone()
     }
-    pub fn is_ikev2_client(&self, ip: &Ipv4Addr) -> bool {
-        self.client_simple_list.read().iter().any(|client| {
-            client.ip == *ip && client.online && client.client_type == ClientType::Ikev2
-        })
+    pub(crate) fn client_type(&self, ip: &Ipv4Addr) -> Option<ClientType> {
+        self.client_simple_list
+            .read()
+            .iter()
+            .find(|client| client.ip == *ip && client.online)
+            .map(|client| client.client_type)
     }
     pub fn data_version(&self, server_id: u32) -> u64 {
         self.server_node_map
@@ -609,8 +611,8 @@ impl ServerInfoCollection {
                     if x.online {
                         v.online = true;
                     }
-                    if x.client_type == ClientType::Ikev2 {
-                        v.client_type = ClientType::Ikev2;
+                    if x.client_type as i32 > v.client_type as i32 {
+                        v.client_type = x.client_type;
                     }
                 } else {
                     client_simple_map.insert(x.ip, x.clone());
@@ -883,6 +885,43 @@ mod client_status_tests {
                 .update_client_simple_list(0, Ipv4Addr::new(10, 26, 0, 1), empty_snapshot(), 0,)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn relay_clients_keep_their_type_and_are_excluded_from_p2p_targets() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![
+            (0, ProtocolAddress::default()),
+            (1, ProtocolAddress::default()),
+        ]);
+        let self_ip = Ipv4Addr::new(10, 26, 0, 1);
+        let ikev2 = Ipv4Addr::new(10, 26, 0, 2);
+        let wireguard = Ipv4Addr::new(10, 26, 0, 3);
+        for (server_id, ip, client_type) in [
+            (0, ikev2, ClientType::Ikev2),
+            (1, wireguard, ClientType::Wireguard),
+        ] {
+            servers.update_client_simple_list(
+                server_id,
+                self_ip,
+                ClientSimpleInfoList {
+                    data_version: 1,
+                    list: vec![ClientSimpleInfo {
+                        ip,
+                        online: true,
+                        client_type,
+                    }],
+                    is_all: true,
+                    time: 0,
+                },
+                0,
+            );
+        }
+
+        assert_eq!(servers.client_type(&ikev2), Some(ClientType::Ikev2));
+        assert_eq!(servers.client_type(&wireguard), Some(ClientType::Wireguard));
+        assert!(!servers.client_online_ips().contains(&ikev2));
+        assert!(!servers.client_online_ips().contains(&wireguard));
     }
 }
 #[derive(Copy, Clone, Debug)]

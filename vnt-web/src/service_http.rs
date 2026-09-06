@@ -276,6 +276,8 @@ pub struct StartConfig {
     #[serde(default)]
     pub allow_ikev2: bool,
     #[serde(default)]
+    pub allow_wireguard: bool,
+    #[serde(default)]
     pub compress: bool,
     #[serde(default)]
     pub rtx: bool,
@@ -360,6 +362,7 @@ struct HttpAppInfo {
     encrypt: Option<bool>,
     rtx: Option<bool>,
     allow_ikev2: bool,
+    allow_wireguard: bool,
     input: Vec<NetInput>,
     output: Vec<Ipv4Net>,
     automatic_input: Vec<NetInput>,
@@ -1248,6 +1251,7 @@ async fn get_info(
             encrypt: config.as_ref().map(|v| v.password.is_some()),
             rtx: config.as_ref().map(|v| v.rtx),
             allow_ikev2: config.as_ref().is_some_and(|v| v.allow_ikev2),
+            allow_wireguard: config.as_ref().is_some_and(|v| v.allow_wireguard),
             input: config.as_ref().map(|v| v.input.clone()).unwrap_or_default(),
             output: config
                 .as_ref()
@@ -1489,6 +1493,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         no_punch: cfg.no_punch,
         no_broadcast: cfg.no_broadcast,
         allow_ikev2: cfg.allow_ikev2,
+        allow_wireguard: cfg.allow_wireguard,
         rtx: cfg.rtx,
         compress: cfg.compress,
         device_id,
@@ -1619,6 +1624,7 @@ async fn get_peers(
                     version: String::new(),
                     client_type: match v.client_type {
                         vnt_core::protocol::control_message::ClientType::Ikev2 => "IKEV2",
+                        vnt_core::protocol::control_message::ClientType::Wireguard => "WIREGUARD",
                         vnt_core::protocol::control_message::ClientType::Vnt => "VNT",
                     }
                     .to_string(),
@@ -1639,7 +1645,11 @@ async fn get_peers(
             let route = build_route(&ip);
             // 如果有路由，说明设备在线（可以直接通信）
             let has_route = route.is_some();
-            let client_type = if v.client_type == 1 { "IKEV2" } else { "VNT" };
+            let client_type = match v.client_type {
+                1 => "IKEV2",
+                2 => "WIREGUARD",
+                _ => "VNT",
+            };
             merged.insert(
                 ip,
                 HttpClientItem {
@@ -1650,7 +1660,7 @@ async fn get_peers(
                     version: v.version,
                     client_type: client_type.to_string(),
                     last_connected_time: v.last_connected_time,
-                    key_equal: if v.client_type == 1 {
+                    key_equal: if v.client_type != 0 {
                         0
                     } else {
                         calc_key_equal(&v.key_sign)
@@ -1841,6 +1851,7 @@ mod tests {
             no_punch: false,
             no_broadcast: false,
             allow_ikev2: false,
+            allow_wireguard: false,
             compress: false,
             rtx: false,
             fec: false,
@@ -1940,11 +1951,15 @@ network_code = "test"
     }
 
     #[test]
-    fn test_convert_config_keeps_broadcast_switch() {
+    fn test_convert_config_keeps_broadcast_and_relay_switches() {
         let mut config = new_test_config();
         config.no_broadcast = true;
+        config.allow_ikev2 = true;
+        config.allow_wireguard = true;
         let core = convert_config(config).unwrap();
         assert!(core.no_broadcast);
+        assert!(core.allow_ikev2);
+        assert!(core.allow_wireguard);
     }
 
     /// 两个实例同时处于 Starting 互不影响

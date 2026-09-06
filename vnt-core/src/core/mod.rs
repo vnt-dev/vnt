@@ -52,6 +52,7 @@ struct RegistrationContext {
     punch_model: std::sync::Arc<Vec<crate::context::config::PunchRule>>,
     auto_sync_subnet: bool,
     allow_ikev2: bool,
+    allow_wireguard: bool,
 }
 
 pub struct NetworkManager {
@@ -199,7 +200,8 @@ impl NetworkManager {
             fec_encoder,
         )
         .with_no_broadcast(config.no_broadcast)
-        .with_allow_ikev2(config.allow_ikev2);
+        .with_allow_ikev2(config.allow_ikev2)
+        .with_allow_wireguard(config.allow_wireguard);
         let port_mapping_manager = PortMappingManager::new(
             config.device_mode == DeviceMode::No,
             config.allow_port_mapping,
@@ -297,6 +299,7 @@ impl NetworkManager {
             punch_model,
             auto_sync_subnet: config.auto_sync_subnet,
             allow_ikev2: config.allow_ikev2,
+            allow_wireguard: config.allow_wireguard,
         });
 
         app_state.set_config(config.clone());
@@ -417,6 +420,7 @@ impl NetworkManager {
                 turn: ctx.turn.clone(),
                 auto_sync_subnet: ctx.auto_sync_subnet,
                 allow_ikev2: ctx.allow_ikev2,
+                allow_wireguard: ctx.allow_wireguard,
             });
             turn_manager.data_handle_task(
                 task_group,

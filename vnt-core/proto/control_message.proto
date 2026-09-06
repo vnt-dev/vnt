@@ -10,6 +10,7 @@ enum RegistrationMode {
 enum ClientType {
   VNT = 0;
   IKEV2 = 1;
+  WIREGUARD = 2;
 }
 
 message RegRequestMsg {
@@ -24,6 +25,7 @@ message RegRequestMsg {
   RegistrationMode registration_mode = 9;
   repeated Ipv4Subnet advertised_subnets = 10;
   bool allow_ikev2 = 11;
+  bool allow_wireguard = 12;
 }
 
 

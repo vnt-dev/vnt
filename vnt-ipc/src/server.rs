@@ -62,6 +62,7 @@ async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result
                 let config = vnt_api.get_config();
                 let key_sign = config.as_ref().and_then(|config| config.key_sign());
                 let allow_ikev2 = config.as_ref().is_some_and(|config| config.allow_ikev2);
+                let allow_wireguard = config.as_ref().is_some_and(|config| config.allow_wireguard);
                 let items = client_list
                     .list
                     .into_iter()
@@ -85,14 +86,22 @@ async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result
                             is_direct: vnt_api.is_direct(&Ipv4Addr::from(v.ip)),
                             last_connected_time: v.last_connected_time,
                             rtt,
-                            key_equal: key_sign == v.key_sign,
+                            key_equal: v.client_type != 0 || key_sign == v.key_sign,
                             packet_loss,
-                            client_type: if v.client_type == 1 { "IKEV2" } else { "VNT" }
-                                .to_string(),
+                            client_type: match v.client_type {
+                                1 => "IKEV2",
+                                2 => "WIREGUARD",
+                                _ => "VNT",
+                            }
+                            .to_string(),
                         }
                     })
                     .collect();
-                ResponsePayload::ClientList(ClientInfoList { items, allow_ikev2 })
+                ResponsePayload::ClientList(ClientInfoList {
+                    items,
+                    allow_ikev2,
+                    allow_wireguard,
+                })
             }
             IpcCmd::AllRoute(_) => {
                 let route_list = all_route(&vnt_api);

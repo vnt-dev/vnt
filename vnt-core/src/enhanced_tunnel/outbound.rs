@@ -88,7 +88,7 @@ impl EnhancedOutbound {
             && let Some(arp) = parse_arp_ipv4(data.as_ref())
             && arp.operation == ArpOperations::Request
             && (arp.target_ip == net.gateway
-                || self.hybrid_outbound.is_ikev2_client(&arp.target_ip))
+                || self.hybrid_outbound.is_relay_client(&arp.target_ip))
         {
             return Ok(build_arp_reply(data.as_ref(), arp.target_ip));
         }
@@ -98,10 +98,10 @@ impl EnhancedOutbound {
                 return Ok(None);
             };
             let dest = ipv4.get_destination();
-            if self.hybrid_outbound.is_ikev2_client(&dest) {
+            if self.hybrid_outbound.is_relay_client(&dest) {
                 if let Some(ip) = strip_ipv4(data) {
                     self.hybrid_outbound
-                        .ikev2_relay_outbound(net, ip, dest)
+                        .server_relay_outbound(net, ip, dest)
                         .await?;
                 }
                 return Ok(None);
@@ -160,10 +160,10 @@ impl EnhancedOutbound {
             // 发送到网关
             return self.hybrid_outbound.ipv4_gateway_outbound(net, data).await;
         }
-        if self.hybrid_outbound.is_ikev2_client(&dest) {
+        if self.hybrid_outbound.is_relay_client(&dest) {
             return self
                 .hybrid_outbound
-                .ikev2_relay_outbound(net, data, dest)
+                .server_relay_outbound(net, data, dest)
                 .await;
         }
         if dest.is_multicast() || dest == net.broadcast || dest.is_broadcast() {

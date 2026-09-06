@@ -20,5 +20,6 @@ export const buildNetworkQrPayload = (form) => {
     mtu,
     password: String(form.password || ""),
     ...(form.allow_ikev2 ? { allow_ikev2: true } : {}),
+    ...(form.allow_wireguard ? { allow_wireguard: true } : {}),
   };
 };

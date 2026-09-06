@@ -40,6 +40,7 @@ pub struct InboundHandlerConfig {
     pub turn: Arc<Vec<TurnRule>>,
     pub auto_sync_subnet: bool,
     pub allow_ikev2: bool,
+    pub allow_wireguard: bool,
 }
 
 pub struct ServerTurnManager {

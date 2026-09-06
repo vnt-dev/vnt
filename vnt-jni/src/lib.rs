@@ -622,9 +622,14 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                         "name": server_client.map(|client| client.name.as_str()).unwrap_or(""),
                         "version": server_client.map(|client| client.version.as_str()).unwrap_or(""),
                         "client_type": server_client
-                            .map(|client| if client.client_type == 1 { "IKEV2" } else { "VNT" })
+                            .map(|client| match client.client_type {
+                                1 => "IKEV2",
+                                2 => "WIREGUARD",
+                                _ => "VNT",
+                            })
                             .or_else(|| local_clients.get(&ip).map(|value| match value.1 {
                                 vnt_core::protocol::control_message::ClientType::Ikev2 => "IKEV2",
+                                vnt_core::protocol::control_message::ClientType::Wireguard => "WIREGUARD",
                                 vnt_core::protocol::control_message::ClientType::Vnt => "VNT",
                             }))
                             .unwrap_or("VNT"),
@@ -634,7 +639,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                         "route_metric": route_metric,
                         "rtt": rtt,
                         "key_equal": server_client
-                            .map(|client| if client.client_type == 1 {
+                            .map(|client| if client.client_type != 0 {
                                 0
                             } else {
                                 encryption_state(local_key.as_deref(), client.key_sign.as_deref())
@@ -1062,6 +1067,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         allow_ikev2: bool,
         #[serde(default)]
+        allow_wireguard: bool,
+        #[serde(default)]
         compress: bool,
         #[serde(default)]
         rtx: bool,
@@ -1189,6 +1196,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         no_punch: cfg.no_punch,
         no_broadcast: cfg.no_broadcast,
         allow_ikev2: cfg.allow_ikev2,
+        allow_wireguard: cfg.allow_wireguard,
         rtx: cfg.rtx,
         compress: cfg.compress,
         device_id,
@@ -1477,16 +1485,20 @@ mod tests {
     }
 
     #[test]
-    fn parses_broadcast_switch_from_json() {
+    fn parses_broadcast_and_relay_switches_from_json() {
         let config = parse_config_from_json(
             r#"{
                 "server":["tcp://127.0.0.1:29872"],
                 "network_code":"test",
-                "no_broadcast":true
+                "no_broadcast":true,
+                "allow_ikev2":true,
+                "allow_wireguard":true
             }"#,
         )
         .unwrap();
         assert!(config.no_broadcast);
+        assert!(config.allow_ikev2);
+        assert!(config.allow_wireguard);
     }
 
     #[test]

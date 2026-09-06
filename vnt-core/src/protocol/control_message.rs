@@ -50,6 +50,7 @@ pub(crate) struct RegRequestMsg {
     pub registration_mode: RegistrationMode,
     pub advertised_subnets: Vec<Ipv4Net>,
     pub allow_ikev2: bool,
+    pub allow_wireguard: bool,
 }
 impl RegRequestMsg {
     // pub fn check(&self) -> anyhow::Result<()> {
@@ -121,6 +122,7 @@ impl RegRequestMsg {
                 .map(ipv4_subnet_to_proto)
                 .collect(),
             allow_ikev2: self.allow_ikev2,
+            allow_wireguard: self.allow_wireguard,
         }
     }
 }
@@ -412,6 +414,7 @@ mod tests {
             registration_mode: RegistrationMode::Normal,
             advertised_subnets: vec![advertised],
             allow_ikev2: false,
+            allow_wireguard: false,
         })
         .encode();
         let request = proto::RequestMessage::decode(encoded.as_ref()).unwrap();
@@ -451,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn ikev2_capability_and_client_type_round_trip() {
+    fn relay_capabilities_and_client_types_round_trip() {
         let encoded = RequestMessage::Reg(RegRequestMsg {
             network_code: "test".to_string(),
             device_id: "device".to_string(),
@@ -464,6 +467,7 @@ mod tests {
             registration_mode: RegistrationMode::Normal,
             advertised_subnets: Vec::new(),
             allow_ikev2: true,
+            allow_wireguard: true,
         })
         .encode();
         let request = proto::RequestMessage::decode(encoded.as_ref()).unwrap();
@@ -471,19 +475,28 @@ mod tests {
             panic!("expected registration request");
         };
         assert!(request.allow_ikev2);
+        assert!(request.allow_wireguard);
 
         let list = proto::ClientSimpleInfoList {
             data_version: 1,
-            list: vec![proto::ClientSimpleInfo {
-                ip: Ipv4Addr::new(10, 26, 0, 8).into(),
-                online: true,
-                client_type: proto::ClientType::Ikev2 as i32,
-            }],
+            list: vec![
+                proto::ClientSimpleInfo {
+                    ip: Ipv4Addr::new(10, 26, 0, 8).into(),
+                    online: true,
+                    client_type: proto::ClientType::Ikev2 as i32,
+                },
+                proto::ClientSimpleInfo {
+                    ip: Ipv4Addr::new(10, 26, 0, 9).into(),
+                    online: true,
+                    client_type: proto::ClientType::Wireguard as i32,
+                },
+            ],
             is_all: true,
             time: 0,
         }
         .encode_to_vec();
         let decoded = ClientSimpleInfoList::from_slice(&list).unwrap();
         assert_eq!(decoded.list[0].client_type, ClientType::Ikev2);
+        assert_eq!(decoded.list[1].client_type, ClientType::Wireguard);
     }
 }

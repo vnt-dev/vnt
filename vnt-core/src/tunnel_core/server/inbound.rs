@@ -363,7 +363,33 @@ pub(crate) struct ServerTurnInboundHandler {
     turn: Arc<Vec<TurnRule>>,
     auto_sync_subnet: bool,
     allow_ikev2: bool,
+    allow_wireguard: bool,
 }
+
+fn valid_server_relay_ipv4(
+    payload: &[u8],
+    src: Ipv4Addr,
+    dest_id: Ipv4Addr,
+    local_ip: Ipv4Addr,
+) -> bool {
+    let Some(ipv4) = Ipv4Packet::new(payload) else {
+        return false;
+    };
+    let header_length = ipv4.get_header_length() as usize * 4;
+    ipv4.get_version() == 4
+        && header_length >= Ipv4Packet::minimum_packet_size()
+        && header_length <= payload.len()
+        && ipv4.get_total_length() as usize == payload.len()
+        && ipv4.get_source() == src
+        && ipv4.get_destination() == local_ip
+        && dest_id == local_ip
+}
+
+fn server_relay_allowed(msg_type: MsgType, allow_ikev2: bool, allow_wireguard: bool) -> bool {
+    (msg_type == MsgType::Ikev2Relay && allow_ikev2)
+        || (msg_type == MsgType::WireGuardRelay && allow_wireguard)
+}
+
 impl ServerTurnInboundHandler {
     pub fn new(
         server_id: u32,
@@ -387,6 +413,7 @@ impl ServerTurnInboundHandler {
             turn: config.turn,
             auto_sync_subnet: config.auto_sync_subnet,
             allow_ikev2: config.allow_ikev2,
+            allow_wireguard: config.allow_wireguard,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -426,18 +453,15 @@ impl ServerTurnInboundHandler {
         let mut net_packet = self.packet_compression.decompress(net_packet)?;
 
         match msg_type {
-            MsgType::Ikev2Relay if self.allow_ikev2 => {
-                let Some(ipv4) = Ipv4Packet::new(net_packet.payload()) else {
-                    return Ok(());
-                };
-                let header_length = ipv4.get_header_length() as usize * 4;
-                if ipv4.get_version() != 4
-                    || header_length < Ipv4Packet::minimum_packet_size()
-                    || ipv4.get_total_length() as usize != net_packet.payload().len()
-                    || ipv4.get_source() != src
-                    || ipv4.get_destination() != network_addr.ip
-                    || Ipv4Addr::from(net_packet.dest_id()) != network_addr.ip
-                {
+            MsgType::Ikev2Relay | MsgType::WireGuardRelay
+                if server_relay_allowed(msg_type, self.allow_ikev2, self.allow_wireguard) =>
+            {
+                if !valid_server_relay_ipv4(
+                    net_packet.payload(),
+                    src,
+                    Ipv4Addr::from(net_packet.dest_id()),
+                    network_addr.ip,
+                ) {
                     return Ok(());
                 }
                 self.enhanced_inbound
@@ -787,6 +811,7 @@ mod tests {
     use crate::crypto::PacketCrypto;
     use crate::tunnel_core::server::transport::config::ProtocolAddress;
     use crate::utils::task_control::TaskGroupManager;
+    use pnet_packet::ipv4::MutableIpv4Packet;
     use std::collections::HashMap;
     use tokio::sync::mpsc::Receiver;
 
@@ -804,6 +829,75 @@ mod tests {
             gateway: Ipv4Addr::new(10, 26, 0, 1),
             broadcast: Ipv4Addr::new(10, 26, 0, 255),
         }
+    }
+
+    fn relay_ipv4(source: Ipv4Addr, destination: Ipv4Addr) -> Vec<u8> {
+        let mut bytes = vec![0; Ipv4Packet::minimum_packet_size()];
+        let mut packet = MutableIpv4Packet::new(&mut bytes).unwrap();
+        packet.set_version(4);
+        packet.set_header_length(5);
+        packet.set_total_length(Ipv4Packet::minimum_packet_size() as u16);
+        packet.set_source(source);
+        packet.set_destination(destination);
+        drop(packet);
+        bytes
+    }
+
+    #[test]
+    fn server_relay_ipv4_requires_exact_authenticated_endpoints_and_length() {
+        let source = Ipv4Addr::new(10, 26, 0, 9);
+        let local = Ipv4Addr::new(10, 26, 0, 8);
+        let valid = relay_ipv4(source, local);
+        assert!(valid_server_relay_ipv4(&valid, source, local, local));
+        assert!(!valid_server_relay_ipv4(
+            &valid,
+            Ipv4Addr::new(10, 26, 0, 7),
+            local,
+            local
+        ));
+        assert!(!valid_server_relay_ipv4(
+            &valid,
+            source,
+            Ipv4Addr::new(10, 26, 0, 7),
+            local
+        ));
+
+        let wrong_destination = relay_ipv4(source, Ipv4Addr::new(10, 26, 0, 7));
+        assert!(!valid_server_relay_ipv4(
+            &wrong_destination,
+            source,
+            local,
+            local
+        ));
+
+        let mut wrong_length = valid;
+        wrong_length.push(0);
+        assert!(!valid_server_relay_ipv4(
+            &wrong_length,
+            source,
+            local,
+            local
+        ));
+
+        let mut oversized_header = relay_ipv4(source, local);
+        MutableIpv4Packet::new(&mut oversized_header)
+            .unwrap()
+            .set_header_length(15);
+        assert!(!valid_server_relay_ipv4(
+            &oversized_header,
+            source,
+            local,
+            local
+        ));
+    }
+
+    #[test]
+    fn server_relay_capabilities_are_independent() {
+        assert!(server_relay_allowed(MsgType::Ikev2Relay, true, false));
+        assert!(!server_relay_allowed(MsgType::WireGuardRelay, true, false));
+        assert!(server_relay_allowed(MsgType::WireGuardRelay, false, true));
+        assert!(!server_relay_allowed(MsgType::Ikev2Relay, false, true));
+        assert!(!server_relay_allowed(MsgType::Turn, true, true));
     }
 
     fn update_context(

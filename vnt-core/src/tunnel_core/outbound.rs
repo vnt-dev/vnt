@@ -5,6 +5,7 @@ use crate::crypto::PacketCrypto;
 use crate::fec::FecEncoder;
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
+use crate::protocol::control_message::ClientType;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::p2p::outbound::P2pOutbound;
@@ -30,6 +31,18 @@ fn preferred_turn(net: NetworkAddr, rules: &[TurnRule], dest: &Ipv4Addr) -> Opti
         Some(PreferredTurn::Server)
     } else {
         Some(PreferredTurn::Peer(turn_ip))
+    }
+}
+
+fn relay_msg_type_for(
+    client_type: Option<ClientType>,
+    allow_ikev2: bool,
+    allow_wireguard: bool,
+) -> Option<MsgType> {
+    match client_type {
+        Some(ClientType::Ikev2) if allow_ikev2 => Some(MsgType::Ikev2Relay),
+        Some(ClientType::Wireguard) if allow_wireguard => Some(MsgType::WireGuardRelay),
+        _ => None,
     }
 }
 
@@ -214,6 +227,27 @@ mod tests {
         );
         assert_eq!(preferred_turn(network, &rules, &network.gateway), None);
     }
+
+    #[test]
+    fn relay_message_type_respects_independent_capabilities() {
+        assert_eq!(
+            relay_msg_type_for(Some(ClientType::Ikev2), true, false),
+            Some(MsgType::Ikev2Relay)
+        );
+        assert_eq!(
+            relay_msg_type_for(Some(ClientType::Wireguard), false, true),
+            Some(MsgType::WireGuardRelay)
+        );
+        assert_eq!(
+            relay_msg_type_for(Some(ClientType::Ikev2), false, true),
+            None
+        );
+        assert_eq!(
+            relay_msg_type_for(Some(ClientType::Wireguard), true, false),
+            None
+        );
+        assert_eq!(relay_msg_type_for(Some(ClientType::Vnt), true, true), None);
+    }
 }
 
 #[derive(Clone)]
@@ -229,6 +263,7 @@ pub(crate) struct HybridOutbound {
     fec_encoder: Option<FecEncoder>,
     no_broadcast: bool,
     allow_ikev2: bool,
+    allow_wireguard: bool,
 }
 impl HybridOutbound {
     #[allow(clippy::too_many_arguments)]
@@ -255,6 +290,7 @@ impl HybridOutbound {
             fec_encoder,
             no_broadcast: false,
             allow_ikev2: false,
+            allow_wireguard: false,
         }
     }
 
@@ -266,18 +302,30 @@ impl HybridOutbound {
         self.allow_ikev2 = allow_ikev2;
         self
     }
-    pub fn is_ikev2_client(&self, ip: &Ipv4Addr) -> bool {
-        self.allow_ikev2 && self.server_info.is_ikev2_client(ip)
+
+    pub fn with_allow_wireguard(mut self, allow_wireguard: bool) -> Self {
+        self.allow_wireguard = allow_wireguard;
+        self
     }
-    pub async fn ikev2_relay_outbound(
+    pub fn is_relay_client(&self, ip: &Ipv4Addr) -> bool {
+        self.relay_msg_type(ip).is_some()
+    }
+    fn relay_msg_type(&self, ip: &Ipv4Addr) -> Option<MsgType> {
+        relay_msg_type_for(
+            self.server_info.client_type(ip),
+            self.allow_ikev2,
+            self.allow_wireguard,
+        )
+    }
+    pub async fn server_relay_outbound(
         &self,
         net: NetworkAddr,
         mut data: TransmissionBytes,
         dest: Ipv4Addr,
     ) -> anyhow::Result<()> {
-        if !self.is_ikev2_client(&dest) {
+        let Some(msg_type) = self.relay_msg_type(&dest) else {
             return Ok(());
-        }
+        };
         let Some(ipv4) = Ipv4Packet::new(data.as_ref()) else {
             return Ok(());
         };
@@ -298,7 +346,7 @@ impl HybridOutbound {
         let len = data.len() as u64;
         data.retreat_head(HEAD_LENGTH)?;
         let mut packet = NetPacket::new(data)?;
-        packet.set_msg_type(MsgType::Ikev2Relay);
+        packet.set_msg_type(msg_type);
         packet.set_src_id(net.ip.into());
         packet.set_dest_id(dest.into());
         packet.set_ttl(5);
@@ -413,11 +461,11 @@ impl HybridOutbound {
         data: TransmissionBytes,
         mut dest: Ipv4Addr,
     ) -> anyhow::Result<()> {
-        if self.is_ikev2_client(&dest) {
+        if self.is_relay_client(&dest) {
             let Some(ip) = crate::ethernet::strip_ipv4(data) else {
                 return Ok(());
             };
-            return self.ikev2_relay_outbound(net, ip, dest).await;
+            return self.server_relay_outbound(net, ip, dest).await;
         }
         if dest == net.gateway {
             let Some(ip) = crate::ethernet::strip_ipv4(data) else {

@@ -57,6 +57,7 @@ message ServerInfo{
 message ClientInfoList{
   repeated ClientInfoItem items = 1;
   bool allow_ikev2 = 2;
+  bool allow_wireguard = 3;
 }
 
 message ClientInfoItem{

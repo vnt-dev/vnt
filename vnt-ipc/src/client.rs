@@ -192,6 +192,7 @@ fn print_client_list(list: ClientInfoList) -> anyhow::Result<()> {
     println!("\n--- Client List ({}) ---", list.items.len());
 
     let show_ikev2_warning = has_unreachable_ikev2_client(&list);
+    let show_wireguard_warning = has_unreachable_wireguard_client(&list);
 
     let table = list
         .items
@@ -199,7 +200,7 @@ fn print_client_list(list: ClientInfoList) -> anyhow::Result<()> {
         .map(|item| {
             let key_equal: bool = item.key_equal;
             let mut ip_str = Ipv4Addr::from(item.ip).to_string();
-            if item.client_type != "IKEV2" && !key_equal {
+            if item.client_type == "VNT" && !key_equal {
                 ip_str.push_str("(Key Mismatch)");
             }
             let loss_str = item
@@ -245,6 +246,17 @@ fn print_client_list(list: ClientInfoList) -> anyhow::Result<()> {
             .bold()
         );
     }
+    if show_wireguard_warning {
+        println!(
+            "\n{}",
+            style(
+                "WARNING: Online WireGuard clients detected, but allow_wireguard / --allow-wireguard is not enabled. These clients are unreachable."
+            )
+            .yellow()
+            .bright()
+            .bold()
+        );
+    }
     println!("\n");
     Ok(())
 }
@@ -255,6 +267,14 @@ fn has_unreachable_ikev2_client(list: &ClientInfoList) -> bool {
             .items
             .iter()
             .any(|item| item.online && item.client_type == "IKEV2")
+}
+
+fn has_unreachable_wireguard_client(list: &ClientInfoList) -> bool {
+    !list.allow_wireguard
+        && list
+            .items
+            .iter()
+            .any(|item| item.online && item.client_type == "WIREGUARD")
 }
 
 pub fn print_route_list(route_list: ClientRouteList) -> anyhow::Result<()> {
@@ -324,11 +344,20 @@ mod tests {
         }
     }
 
+    fn wireguard_client(online: bool) -> ClientInfoItem {
+        ClientInfoItem {
+            online,
+            client_type: "WIREGUARD".to_string(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn warns_for_online_ikev2_client_when_disabled() {
         let list = ClientInfoList {
             items: vec![ikev2_client(true)],
             allow_ikev2: false,
+            allow_wireguard: false,
         };
         assert!(has_unreachable_ikev2_client(&list));
     }
@@ -338,12 +367,36 @@ mod tests {
         let allowed = ClientInfoList {
             items: vec![ikev2_client(true)],
             allow_ikev2: true,
+            allow_wireguard: false,
         };
         let offline = ClientInfoList {
             items: vec![ikev2_client(false)],
             allow_ikev2: false,
+            allow_wireguard: false,
         };
         assert!(!has_unreachable_ikev2_client(&allowed));
         assert!(!has_unreachable_ikev2_client(&offline));
+    }
+
+    #[test]
+    fn warns_for_online_wireguard_client_only_when_disabled() {
+        let disabled = ClientInfoList {
+            items: vec![wireguard_client(true)],
+            allow_ikev2: false,
+            allow_wireguard: false,
+        };
+        let allowed = ClientInfoList {
+            items: vec![wireguard_client(true)],
+            allow_ikev2: false,
+            allow_wireguard: true,
+        };
+        let offline = ClientInfoList {
+            items: vec![wireguard_client(false)],
+            allow_ikev2: false,
+            allow_wireguard: false,
+        };
+        assert!(has_unreachable_wireguard_client(&disabled));
+        assert!(!has_unreachable_wireguard_client(&allowed));
+        assert!(!has_unreachable_wireguard_client(&offline));
     }
 }

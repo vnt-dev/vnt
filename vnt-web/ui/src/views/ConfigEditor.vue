@@ -598,6 +598,15 @@ const sectionChevronClass = (expanded) =>
                   </div>
                   <input v-model="formData.allow_ikev2" type="checkbox" :class="checkboxClass" />
                 </label>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      允许 WireGuard 客户端 <ConfigHelp :help="configHelp.allow_wireguard" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">信任服务端注入并固定中继 WireGuard 流量</div>
+                  </div>
+                  <input v-model="formData.allow_wireguard" type="checkbox" :class="checkboxClass" />
+                </label>
               </div>
             </div>
           </div>

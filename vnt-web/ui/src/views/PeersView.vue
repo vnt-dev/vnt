@@ -28,6 +28,12 @@ const showIkev2Warning = computed(
     peers.value.some((peer) => peer.online && peer.client_type === "IKEV2"),
 );
 
+const showWireGuardWarning = computed(
+  () =>
+    app.selectedInfo?.allow_wireguard === false &&
+    peers.value.some((peer) => peer.online && peer.client_type === "WIREGUARD"),
+);
+
 const toggleExpand = (ip) => {
   expandedPeers[ip] = !expandedPeers[ip];
 };
@@ -199,6 +205,18 @@ const switcherClass = (fileName) =>
         <p>
           检测到在线的 IKEv2 客户端，但当前实例未开启
           <strong>允许 IKEv2 客户端（allow_ikev2 / --allow-ikev2）</strong>，因此无法访问这些客户端。请开启该选项并重启实例。
+        </p>
+      </div>
+      <div
+        v-if="showWireGuardWarning"
+        class="mb-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-200"
+      >
+        <svg class="mt-0.5 h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 9v4m0 4h.01M10.3 4.4 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.4a2 2 0 0 0-3.4 0Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" />
+        </svg>
+        <p>
+          检测到在线的 WireGuard 客户端，但当前实例未开启
+          <strong>允许 WireGuard 客户端（allow_wireguard / --allow-wireguard）</strong>，因此无法访问这些客户端。请开启该选项并重启实例。
         </p>
       </div>
       <div class="custom-scrollbar max-h-[600px] overflow-x-auto">

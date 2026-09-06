@@ -5,6 +5,7 @@ package protocol.rpc;
 enum ClientType {
   VNT = 0;
   IKEV2 = 1;
+  WIREGUARD = 2;
 }
 
 message RpcMessageRequest{

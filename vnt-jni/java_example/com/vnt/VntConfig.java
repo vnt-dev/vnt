@@ -31,6 +31,7 @@ public class VntConfig {
     private final boolean noPunch;
     private final boolean noBroadcast;
     private final boolean allowIkev2;
+    private final boolean allowWireguard;
     private final boolean compress;
     private final boolean rtx;
     private final boolean fec;
@@ -62,6 +63,7 @@ public class VntConfig {
         this.noPunch = builder.noPunch;
         this.noBroadcast = builder.noBroadcast;
         this.allowIkev2 = builder.allowIkev2;
+        this.allowWireguard = builder.allowWireguard;
         this.compress = builder.compress;
         this.rtx = builder.rtx;
         this.fec = builder.fec;
@@ -123,6 +125,7 @@ public class VntConfig {
         json.put("no_punch", noPunch);
         json.put("no_broadcast", noBroadcast);
         json.put("allow_ikev2", allowIkev2);
+        json.put("allow_wireguard", allowWireguard);
         json.put("compress", compress);
         json.put("rtx", rtx);
         json.put("fec", fec);
@@ -189,6 +192,7 @@ public class VntConfig {
         private boolean noPunch = false;
         private boolean noBroadcast = false;
         private boolean allowIkev2 = false;
+        private boolean allowWireguard = false;
         private boolean compress = false;
         private boolean rtx = false;
         private boolean fec = false;
@@ -347,6 +351,14 @@ public class VntConfig {
          */
         public Builder setAllowIkev2(boolean allowIkev2) {
             this.allowIkev2 = allowIkev2;
+            return this;
+        }
+
+        /**
+         * 允许与服务端接入的 WireGuard 客户端通信（默认false）
+         */
+        public Builder setAllowWireguard(boolean allowWireguard) {
+            this.allowWireguard = allowWireguard;
             return this;
         }
 
