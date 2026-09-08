@@ -1,6 +1,9 @@
 # VNT
 
-一个简单、高效、能快速组建虚拟局域网的工具。无论设备身在何处，只要接入同一个虚拟网络，即可像在同一局域网内一样互相访问，适用于远程桌面、联机游戏、访问家中 NAS、跨地区协作等场景。
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/vnt-dev/vnt)
+
+一个简单、高效、能快速组建虚拟局域网的工具。无论设备身在何处，只要接入同一个虚拟网络，即可像在同一局域网内一样互相访问，适用于远程桌面、联机游戏、访问家中
+NAS、跨地区协作等场景。
 
 # 快速开始
 
@@ -18,8 +21,8 @@
 
 1. 安装并打开 VNT 桌面客户端。
 2. 新建一个组网配置，只需填写两项：
-   - **组网编号（-k）**：用于标识虚拟网络的编号，需要互联的设备须填写相同的编号，例如 `123456`；
-   - **服务端地址（-s）**：可使用公共服务端 `101.35.230.139:6660`，也可填写自行部署的服务端。
+    - **组网编号（-k）**：用于标识虚拟网络的编号，需要互联的设备须填写相同的编号，例如 `123456`；
+    - **服务端地址（-s）**：可使用公共服务端 `101.35.230.139:6660`，也可填写自行部署的服务端。
 3. 点击启动。所有使用**相同组网编号 + 相同服务端**的设备会自动组成一个虚拟局域网，每台设备会分配到虚拟 IP（网段由服务端设置）。
 4. 验证：在设备 A 上 `ping` 设备 B 的虚拟 IP，能 ping 通即表示组网成功。
 
@@ -77,9 +80,13 @@ IPv4 广播和组播默认开启。可使用 `--no-broadcast`（配置文件中�
 
 ## 安全说明
 
-- **建议设置组网密码**。设置密码后（命令行 `-p` / `--password`，或配置文件中的 `password`），节点之间的数据采用端到端加密（ChaCha20-Poly1305），**服务端仅负责转发密文，无法解密通信内容**。即使使用公共服务端，通信内容也不会泄露给服务端。
-- 如需与服务端接入的 IKEv2/IPsec 客户端通信，使用 `--allow-ikev2`（配置文件中为 `allow_ikev2 = true`）。该功能会信任已认证服务端注入的 IKEv2 明文 IPv4 数据，并让发往 IKEv2 类型设备的流量固定走服务端；默认关闭，且该路径不受 VNT 节点间密码的端到端加密保护。
-- 如需与服务端接入的 WireGuard 客户端通信，使用 `--allow-wireguard`（配置文件中为 `allow_wireguard = true`）。该功能与 `allow_ikev2` 相互独立，会信任已认证服务端注入的 WireGuard 明文 IPv4 数据，并让发往 WireGuard 类型设备的流量固定走服务端；默认关闭，且该路径不受 VNT 节点间密码的端到端加密保护。
+- **建议设置组网密码**。设置密码后（命令行 `-p` / `--password`，或配置文件中的 `password`
+  ），节点之间的数据采用端到端加密（ChaCha20-Poly1305），**服务端仅负责转发密文，无法解密通信内容**。即使使用公共服务端，通信内容也不会泄露给服务端。
+- 如需与服务端接入的 IKEv2/IPsec 客户端通信，使用 `--allow-ikev2`（配置文件中为 `allow_ikev2 = true`）。该功能会信任已认证服务端注入的
+  IKEv2 明文 IPv4 数据，并让发往 IKEv2 类型设备的流量固定走服务端；默认关闭，且该路径不受 VNT 节点间密码的端到端加密保护。
+- 如需与服务端接入的 WireGuard 客户端通信，使用 `--allow-wireguard`（配置文件中为 `allow_wireguard = true`）。该功能与
+  `allow_ikev2` 相互独立，会信任已认证服务端注入的 WireGuard 明文 IPv4 数据，并让发往 WireGuard 类型设备的流量固定走服务端；默认关闭，且该路径不受
+  VNT 节点间密码的端到端加密保护。
 - 同一虚拟网络内的所有设备必须使用**相同的密码**，否则无法互相通信。
 - 未设置密码时，节点间数据不加密，经过服务端中继的流量理论上可被服务端查看，请仅在可信网络环境下省略密码。
 - 此外，客户端与服务端之间的连接本身支持 tcp-tls、quic、wss 等加密传输协议，并可绑定服务端证书，防止伪造服务端攻击。
@@ -88,13 +95,15 @@ IPv4 广播和组播默认开启。可使用 `--no-broadcast`（配置文件中�
 
 ## 虚拟网卡模式
 
-配置文件使用 `device_mode = "no|tun|tap"`，默认值为 `tun`；命令行可用 `--device-mode` 覆盖。旧的 `no_tun` 配置已移除，程序会提示迁移而不会静默按 TUN 启动。
+配置文件使用 `device_mode = "no|tun|tap"`，默认值为 `tun`；命令行可用 `--device-mode` 覆盖。旧的 `no_tun`
+配置已移除，程序会提示迁移而不会静默按 TUN 启动。
 
 - `no`：不创建虚拟网卡，只提供流量出口和端口映射。
 - `tun`：创建三层网卡，网卡收发 IPv4 包。
 - `tap`：创建二层网卡，完整透传 Ethernet 帧，并与 TUN/NO 节点转换 IPv4、兼容 ARP。
 
-Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装 `tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
+Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装
+`tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
 
 ## VNT2.0 新特性
 
@@ -112,7 +121,8 @@ Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使
 
 ## 前端构建
 
-web 前端源码位于 `vnt-web/ui/`（Vite + Vue 3 + Pinia + Tailwind CSS v4），构建产物输出到 `vnt-web/static/`，由 RustEmbed 嵌入二进制。
+web 前端源码位于 `vnt-web/ui/`（Vite + Vue 3 + Pinia + Tailwind CSS v4），构建产物输出到 `vnt-web/static/`，由 RustEmbed
+嵌入二进制。
 
 项目使用根级 pnpm workspace 统一管理 Web 与桌面前端依赖：
 
@@ -125,7 +135,9 @@ pnpm build:web
 
 ## PC 客户端开发
 
-桌面客户端源码位于 `vnt-desktop/`（Tauri 2 + Vue 3）。桌面工作台通过 Tauri IPC 直接调用进程内 `vnt-core`；需要浏览器访问时，可在"Web 访问"中按需启用同进程 HTTP 服务，无需单独运行 `vnt2_web`。Tauri 与 Web 端统一使用 `vnt-web/ui/src/` 下的同一套响应式前端代码。
+桌面客户端源码位于 `vnt-desktop/`（Tauri 2 + Vue 3）。桌面工作台通过 Tauri IPC 直接调用进程内 `vnt-core`
+；需要浏览器访问时，可在"Web 访问"中按需启用同进程 HTTP 服务，无需单独运行 `vnt2_web`。Tauri 与 Web 端统一使用
+`vnt-web/ui/src/` 下的同一套响应式前端代码。
 
 ```
 pnpm install
@@ -134,6 +146,20 @@ pnpm dev:desktop
 
 构建安装包使用 `pnpm build:desktop`。更多说明见 `vnt-desktop/README.md`。
 
+# 交流群
+
+对 VNT 有任何问题均可以加群联系作者。
+
+- QQ 群 1：1034868233（满员）
+- QQ 群 2：950473757（满员）
+- QQ 群 3：1060550456
+
+# 赞助
+
+如果 VNT 对你有帮助，欢迎打赏作者。
+
+<img width="300" alt="赞助二维码" src="https://github.com/vnt-dev/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
+
 # 说明
 
 vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
@@ -141,6 +167,7 @@ vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
 更多平台后续再推出。
 
 ### 相关项目
+
 1. tun 虚拟网卡（https://github.com/tun-rs/tun-rs）
 2. 路由设置（https://github.com/tun-rs/route_manager）
 3. 用户态协议栈（用于 quic 代理和无 tun 模式出口）（https://github.com/rustp2p/tcp_ip）
