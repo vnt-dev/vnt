@@ -10,6 +10,7 @@ use crate::event_script::EventScript;
 #[cfg(not(target_os = "android"))]
 use crate::event_script::EventScriptType;
 use crate::fec::FecDecoder;
+use crate::nat::AllowSubnetExternalRoute;
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
     ClientSimpleInfoList, FastRegRequestMsg, RequestMessage, ResponseMessage, SubnetSyncResponse,
@@ -364,6 +365,7 @@ pub(crate) struct ServerTurnInboundHandler {
     auto_sync_subnet: bool,
     allow_ikev2: bool,
     allow_wireguard: bool,
+    relay_subnets: AllowSubnetExternalRoute,
 }
 
 fn valid_server_relay_ipv4(
@@ -371,6 +373,8 @@ fn valid_server_relay_ipv4(
     src: Ipv4Addr,
     dest_id: Ipv4Addr,
     local_ip: Ipv4Addr,
+    network_route: &NetworkRoute,
+    relay_subnets: &AllowSubnetExternalRoute,
 ) -> bool {
     let Some(ipv4) = Ipv4Packet::new(payload) else {
         return false;
@@ -380,8 +384,9 @@ fn valid_server_relay_ipv4(
         && header_length >= Ipv4Packet::minimum_packet_size()
         && header_length <= payload.len()
         && ipv4.get_total_length() as usize == payload.len()
-        && ipv4.get_source() == src
-        && ipv4.get_destination() == local_ip
+        && (ipv4.get_source() == src
+            || network_route.subnet_route.route(&ipv4.get_source()) == Some(src))
+        && (ipv4.get_destination() == local_ip || relay_subnets.allow(&ipv4.get_destination()))
         && dest_id == local_ip
 }
 
@@ -414,6 +419,7 @@ impl ServerTurnInboundHandler {
             auto_sync_subnet: config.auto_sync_subnet,
             allow_ikev2: config.allow_ikev2,
             allow_wireguard: config.allow_wireguard,
+            relay_subnets: config.relay_subnets,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -461,6 +467,8 @@ impl ServerTurnInboundHandler {
                     src,
                     Ipv4Addr::from(net_packet.dest_id()),
                     network_addr.ip,
+                    &self.network_route,
+                    &self.relay_subnets,
                 ) {
                     return Ok(());
                 }
@@ -844,51 +852,42 @@ mod tests {
     }
 
     #[test]
-    fn server_relay_ipv4_requires_exact_authenticated_endpoints_and_length() {
+    fn server_relay_ipv4_authorizes_virtual_and_declared_subnet_addresses() {
         let source = Ipv4Addr::new(10, 26, 0, 9);
         let local = Ipv4Addr::new(10, 26, 0, 8);
+        let shared_network = SharedNetworkAddr::default();
+        shared_network.set(network(local));
+        let network_route = NetworkRoute::new(
+            shared_network,
+            crate::nat::SubnetExternalRoute::new(vec![
+                "192.168.30.0/24,10.26.0.9".parse().unwrap(),
+            ]),
+        );
+        let relay_subnets = AllowSubnetExternalRoute::new(vec!["172.16.0.0/16".parse().unwrap()]);
+        let check = |payload: &[u8], src, dest_id| {
+            valid_server_relay_ipv4(payload, src, dest_id, local, &network_route, &relay_subnets)
+        };
         let valid = relay_ipv4(source, local);
-        assert!(valid_server_relay_ipv4(&valid, source, local, local));
-        assert!(!valid_server_relay_ipv4(
-            &valid,
-            Ipv4Addr::new(10, 26, 0, 7),
-            local,
-            local
-        ));
-        assert!(!valid_server_relay_ipv4(
-            &valid,
-            source,
-            Ipv4Addr::new(10, 26, 0, 7),
-            local
-        ));
+        assert!(check(&valid, source, local));
+        assert!(!check(&valid, Ipv4Addr::new(10, 26, 0, 7), local));
+        assert!(!check(&valid, source, Ipv4Addr::new(10, 26, 0, 7)));
+
+        let subnet = relay_ipv4(Ipv4Addr::new(192, 168, 30, 7), Ipv4Addr::new(172, 16, 2, 3));
+        assert!(check(&subnet, source, local));
+        assert!(!check(&subnet, Ipv4Addr::new(10, 26, 0, 7), local));
 
         let wrong_destination = relay_ipv4(source, Ipv4Addr::new(10, 26, 0, 7));
-        assert!(!valid_server_relay_ipv4(
-            &wrong_destination,
-            source,
-            local,
-            local
-        ));
+        assert!(!check(&wrong_destination, source, local));
 
         let mut wrong_length = valid;
         wrong_length.push(0);
-        assert!(!valid_server_relay_ipv4(
-            &wrong_length,
-            source,
-            local,
-            local
-        ));
+        assert!(!check(&wrong_length, source, local));
 
         let mut oversized_header = relay_ipv4(source, local);
         MutableIpv4Packet::new(&mut oversized_header)
             .unwrap()
             .set_header_length(15);
-        assert!(!valid_server_relay_ipv4(
-            &oversized_header,
-            source,
-            local,
-            local
-        ));
+        assert!(!check(&oversized_header, source, local));
     }
 
     #[test]

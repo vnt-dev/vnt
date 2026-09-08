@@ -4,7 +4,7 @@ use crate::context::{NetworkAddr, ServerInfoCollection, SharedNetworkAddr, Traff
 use crate::crypto::PacketCrypto;
 use crate::fec::FecEncoder;
 use crate::nat::subnet_packet::SubnetPacketMapper;
-use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
+use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
 use crate::protocol::control_message::ClientType;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
@@ -260,6 +260,7 @@ pub(crate) struct HybridOutbound {
     external_route: SubnetExternalRoute,
     subnet_mapping: SubnetMappingTable,
     subnet_packet_mapper: SubnetPacketMapper,
+    relay_subnets: AllowSubnetExternalRoute,
     fec_encoder: Option<FecEncoder>,
     no_broadcast: bool,
     allow_ikev2: bool,
@@ -276,6 +277,7 @@ impl HybridOutbound {
         external_route: SubnetExternalRoute,
         subnet_mapping: SubnetMappingTable,
         subnet_packet_mapper: SubnetPacketMapper,
+        relay_subnets: AllowSubnetExternalRoute,
         fec_encoder: Option<FecEncoder>,
     ) -> Self {
         Self {
@@ -287,6 +289,7 @@ impl HybridOutbound {
             external_route,
             subnet_mapping,
             subnet_packet_mapper,
+            relay_subnets,
             fec_encoder,
             no_broadcast: false,
             allow_ikev2: false,
@@ -334,8 +337,9 @@ impl HybridOutbound {
         if header_length < Ipv4Packet::minimum_packet_size()
             || total_length < header_length
             || total_length > data.len()
-            || ipv4.get_source() != net.ip
-            || ipv4.get_destination() != dest
+            || (ipv4.get_source() != net.ip && !self.relay_subnets.allow(&ipv4.get_source()))
+            || (ipv4.get_destination() != dest
+                && self.external_route.route(&ipv4.get_destination()) != Some(dest))
         {
             return Ok(());
         }
@@ -417,6 +421,12 @@ impl HybridOutbound {
         } else {
             vec![data]
         };
+        if self.is_relay_client(&dest) {
+            for data in packets {
+                self.server_relay_outbound(net, data, dest).await?;
+            }
+            return Ok(());
+        }
         for data in packets {
             self.ipv4_outbound_to(net, data, dest).await?;
         }
@@ -486,6 +496,12 @@ impl HybridOutbound {
             } else {
                 return Ok(());
             }
+        }
+        if self.is_relay_client(&dest) {
+            let Some(ip) = crate::ethernet::strip_ipv4(data) else {
+                return Ok(());
+            };
+            return self.server_relay_outbound(net, ip, dest).await;
         }
         let packets = if dest_is_overlay {
             let Some(frame) = crate::ethernet::parse_frame(data.as_ref()) else {

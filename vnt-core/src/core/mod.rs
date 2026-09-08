@@ -14,7 +14,9 @@ use crate::fec::{FecDecoder, FecEncoder};
 use crate::nat::NetInput;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::subnet_packet::SubnetPacketMapper;
-use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
+use crate::nat::{
+    AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable, advertised_subnets,
+};
 use crate::protocol::control_message::ErrorResponseMsg;
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tun::{DeviceConfig, DeviceIOManager, TunDataInbound, TunReceiver, tun_channel};
@@ -53,6 +55,7 @@ struct RegistrationContext {
     auto_sync_subnet: bool,
     allow_ikev2: bool,
     allow_wireguard: bool,
+    relay_subnets: AllowSubnetExternalRoute,
 }
 
 pub struct NetworkManager {
@@ -132,6 +135,10 @@ impl NetworkManager {
                 .collect(),
         );
         let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
+        let relay_subnets = AllowSubnetExternalRoute::new(advertised_subnets(
+            &config.output,
+            &config.subnet_mapping,
+        ));
 
         let p2p_enabled =
             !config.no_punch || !config.peer_address.is_empty() || !config.turn.is_empty();
@@ -197,6 +204,7 @@ impl NetworkManager {
             subnet_external_route.clone(),
             subnet_mapping.clone(),
             subnet_packet_mapper.clone(),
+            relay_subnets.clone(),
             fec_encoder,
         )
         .with_no_broadcast(config.no_broadcast)
@@ -300,6 +308,7 @@ impl NetworkManager {
             auto_sync_subnet: config.auto_sync_subnet,
             allow_ikev2: config.allow_ikev2,
             allow_wireguard: config.allow_wireguard,
+            relay_subnets,
         });
 
         app_state.set_config(config.clone());
@@ -421,6 +430,7 @@ impl NetworkManager {
                 auto_sync_subnet: ctx.auto_sync_subnet,
                 allow_ikev2: ctx.allow_ikev2,
                 allow_wireguard: ctx.allow_wireguard,
+                relay_subnets: ctx.relay_subnets.clone(),
             });
             turn_manager.data_handle_task(
                 task_group,

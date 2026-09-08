@@ -6,6 +6,7 @@ use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
+use crate::nat::AllowSubnetExternalRoute;
 use crate::protocol::control_message::{RegistrationMode, RequestMessage, ResponseMessage};
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
 use crate::tunnel_core::server::inbound::{IpUpdateContext, ServerTurnInboundHandler};
@@ -41,6 +42,7 @@ pub struct InboundHandlerConfig {
     pub auto_sync_subnet: bool,
     pub allow_ikev2: bool,
     pub allow_wireguard: bool,
+    pub relay_subnets: AllowSubnetExternalRoute,
 }
 
 pub struct ServerTurnManager {
