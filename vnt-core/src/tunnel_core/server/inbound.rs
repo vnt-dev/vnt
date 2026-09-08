@@ -899,6 +899,32 @@ mod tests {
         assert!(!server_relay_allowed(MsgType::Turn, true, true));
     }
 
+    #[test]
+    fn wireguard_relay_accepts_declared_subnet_endpoints_when_enabled() {
+        let source = Ipv4Addr::new(10, 26, 0, 9);
+        let local = Ipv4Addr::new(10, 26, 0, 8);
+        let shared_network = SharedNetworkAddr::default();
+        shared_network.set(network(local));
+        let network_route = NetworkRoute::new(
+            shared_network,
+            crate::nat::SubnetExternalRoute::new(vec![
+                "192.168.60.0/24,10.26.0.9".parse().unwrap(),
+            ]),
+        );
+        let relay_subnets = AllowSubnetExternalRoute::new(vec!["172.23.0.0/16".parse().unwrap()]);
+        let packet = relay_ipv4(Ipv4Addr::new(192, 168, 60, 7), Ipv4Addr::new(172, 23, 1, 8));
+
+        assert!(server_relay_allowed(MsgType::WireGuardRelay, false, true));
+        assert!(valid_server_relay_ipv4(
+            &packet,
+            source,
+            local,
+            local,
+            &network_route,
+            &relay_subnets,
+        ));
+    }
+
     fn update_context(
         device_mode: DeviceMode,
         connected: bool,
