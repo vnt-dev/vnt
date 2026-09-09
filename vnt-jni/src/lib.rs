@@ -6,7 +6,7 @@ use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(target_os = "android")]
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Arc;
@@ -1097,6 +1097,8 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         tcp_stun: Vec<String>,
         #[serde(default)]
+        tunnel_addr: Vec<SocketAddr>,
+        #[serde(default)]
         tunnel_port: Option<u16>,
         #[serde(default)]
         event_script: Option<String>,
@@ -1217,6 +1219,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         udp_stun,
         tcp_stun,
         fec: cfg.fec,
+        tunnel_addr: cfg.tunnel_addr,
         tunnel_port: cfg.tunnel_port,
         event_script: cfg.event_script,
     })
@@ -1482,6 +1485,21 @@ mod tests {
         assert_eq!(config.peer_address[0].to_string(), "127.0.0.1:30001");
         assert_eq!(config.peer_address[1].to_string(), "udp://127.0.0.1:30002");
         assert!(!config.no_broadcast);
+    }
+
+    #[test]
+    fn parses_tunnel_addresses_from_json() {
+        let mut config = parse_config_from_json(
+            r#"{
+                "server":["tcp://127.0.0.1:29872"],
+                "network_code":"test",
+                "tunnel_addr":["192.168.1.10:29873","[2001:db8::10]:29873"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.tunnel_addr.len(), 2);
+        assert_eq!(config.tunnel_port, None);
+        config.normalize().unwrap();
     }
 
     #[test]

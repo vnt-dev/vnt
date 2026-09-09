@@ -60,12 +60,12 @@ export const configHelp = {
     format: "正整数，常用范围 1200–1500；留空使用默认值。",
     example: "1380",
   },
-  tunnel_port: {
-    param: "tunnel_port",
-    summary: "指定本机监听 P2P 隧道的端口。",
-    usage: "固定端口便于路由器端口映射、防火墙放行和配置可直连节点地址。普通客户端通常保持自动分配即可。",
-    format: "0 表示自动分配，或填写可用的 1–65535 端口。",
-    example: "29873",
+  tunnel_addr: {
+    param: "tunnel_addr / --tunnel-addr",
+    summary: "指定本机监听 P2P 隧道的 IP 和端口。",
+    usage: "适合多网卡主机或只希望在指定地址接收连接的场景。可分别配置一个 IPv4 和一个 IPv6 地址；未配置的地址族仍使用通配地址。",
+    format: "IP:端口；IPv6 必须使用方括号。双地址必须使用相同端口，0 表示自动分配。",
+    example: '192.168.1.10:29873 / [2001:db8::10]:29873',
   },
   rtx: {
     param: "rtx",

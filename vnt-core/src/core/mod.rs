@@ -149,6 +149,7 @@ impl NetworkManager {
                 tunnel_to_server.clone(),
                 packet_crypto.clone(),
                 P2pInitConfig {
+                    tunnel_addr: config.tunnel_addr.clone(),
                     tunnel_port: config.tunnel_port,
                     automatic_punch: !config.no_punch,
                     peer_address: config.peer_address.clone(),

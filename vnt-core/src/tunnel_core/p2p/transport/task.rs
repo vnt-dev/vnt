@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) struct P2pInitConfig {
+    pub tunnel_addr: Vec<SocketAddr>,
     pub tunnel_port: Option<u16>,
     pub automatic_punch: bool,
     pub peer_address: Vec<PeerAddress>,
@@ -37,13 +38,24 @@ pub async fn init_tunnel(
     packet_crypto: PacketCrypto,
     config: P2pInitConfig,
 ) -> anyhow::Result<(Puncher, P2pOutbound, P2pTask)> {
-    let tunnel_port = config.tunnel_port.unwrap_or(0);
+    let tunnel_port = config
+        .tunnel_addr
+        .first()
+        .map(SocketAddr::port)
+        .or(config.tunnel_port)
+        .unwrap_or(0);
     let mut tunnel_config = TunnelConfig::new()
         .udp_port(tunnel_port)
         .tcp_port(tunnel_port)
         .tcp_codec(Box::new(LengthPrefixedInitCodec))
         .max_assistant_sockets(82)
         .max_udp_datagram_size(4096);
+    for addr in &config.tunnel_addr {
+        tunnel_config = match addr {
+            SocketAddr::V4(addr) => tunnel_config.bind_ipv4(*addr.ip()),
+            SocketAddr::V6(addr) => tunnel_config.bind_ipv6(*addr.ip()),
+        };
+    }
     if let Some(interface) = config.default_interface.clone() {
         tunnel_config = tunnel_config.default_interface(interface);
     }

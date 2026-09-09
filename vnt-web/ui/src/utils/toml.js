@@ -33,13 +33,14 @@ export const emptyFormData = () => ({
   fingerprint: "",
   udp_stun: [],
   tcp_stun: [],
-  tunnel_port: null,
+  tunnel_addr: [],
   event_script: "",
 });
 
 // 从TOML解析到表单
 export const parseTomlToForm = (toml) => {
   const data = emptyFormData();
+  let legacyTunnelPort = null;
 
   const lines = toml.split("\n");
   for (const line of lines) {
@@ -175,7 +176,20 @@ export const parseTomlToForm = (toml) => {
         const items = match[1].match(/"([^"]*)"/g);
         if (items) data.tcp_stun = items.map((s) => s.replace(/"/g, ""));
       }
+    } else if (trimmed.startsWith("tunnel_addr")) {
+      const match = trimmed.match(/tunnel_addr\s*=\s*\[(.*)\]/);
+      if (match) {
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.tunnel_addr = items.map((s) => s.replace(/"/g, ""));
+      }
+    } else if (trimmed.match(/^tunnel_port\s*=/)) {
+      const match = trimmed.match(/tunnel_port\s*=\s*(\d+)/);
+      if (match) legacyTunnelPort = parseInt(match[1]);
     }
+  }
+
+  if (data.tunnel_addr.length === 0 && legacyTunnelPort !== null) {
+    data.tunnel_addr = [`0.0.0.0:${legacyTunnelPort}`];
   }
 
   return data;
@@ -203,8 +217,14 @@ export const formToToml = (formData) => {
   const peerAddresses = formData.peer_address.filter((s) => s.trim());
   if (peerAddresses.length > 0) {
     toml += "\n# 可直连节点地址；无协议时同时尝试 TCP 和 UDP\n";
-    toml += "# 端口应为对端配置的 tunnel_port\n";
+    toml += "# 端口应为对端 tunnel_addr 中配置的监听端口\n";
     toml += `peer_address = [${peerAddresses.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
+  const tunnelAddresses = formData.tunnel_addr.filter((s) => s.trim());
+  if (tunnelAddresses.length > 0) {
+    toml += "\n# P2P 隧道监听地址；IPv4 与 IPv6 地址必须使用相同端口\n";
+    toml += `tunnel_addr = [${tunnelAddresses.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
   const turnRules = formData.turn.filter((s) => s.trim());
@@ -382,6 +402,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # 可直连节点地址列表 (可选)
 # peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873"]
+
+# P2P 隧道监听地址；IPv4 与 IPv6 最多各一个且端口必须相同
+# tunnel_addr = ["192.168.1.10:29873", "[2001:db8::10]:29873"]
 
 # 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继
 # 命中目标不参与 P2P 打洞

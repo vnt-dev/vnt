@@ -306,18 +306,47 @@ pub struct StartConfig {
     pub udp_stun: Vec<String>,
     #[serde(default)]
     pub tcp_stun: Vec<String>,
+    #[serde(default)]
+    pub tunnel_addr: Vec<SocketAddr>,
     pub tunnel_port: Option<u16>,
     #[serde(default)]
     pub event_script: Option<String>,
 }
 
 impl StartConfig {
-    fn reject_legacy_no_tun(&self) -> anyhow::Result<()> {
+    fn validate(&self) -> anyhow::Result<()> {
         if self.legacy_no_tun == Some(true) {
             bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"")
         }
+        validate_tunnel_binding(&self.tunnel_addr, self.tunnel_port)?;
         Ok(())
     }
+}
+
+fn validate_tunnel_binding(addrs: &[SocketAddr], legacy_port: Option<u16>) -> anyhow::Result<()> {
+    if !addrs.is_empty() && legacy_port.is_some() {
+        bail!("tunnel_addr and tunnel_port cannot be configured together")
+    }
+    let mut ipv4 = false;
+    let mut ipv6 = false;
+    let mut port = None;
+    for addr in addrs {
+        let seen = match addr {
+            SocketAddr::V4(_) => &mut ipv4,
+            SocketAddr::V6(_) => &mut ipv6,
+        };
+        if *seen {
+            bail!("tunnel_addr supports at most one address per IP family")
+        }
+        *seen = true;
+        if let Some(expected) = port
+            && expected != addr.port()
+        {
+            bail!("all tunnel_addr entries must use the same port")
+        }
+        port = Some(addr.port());
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -860,16 +889,43 @@ fn check_config_conflict(new: &StartConfig, running: &[&StartConfig]) -> Result<
                 }
             });
         }
-        if let (Some(a), Some(b)) = (new.tunnel_port, cfg.tunnel_port)
-            && a == b
-        {
-            return Err(format!(
-                "启动冲突：tunnel_port {} 已被其他运行中的实例使用",
-                a
-            ));
+        if tunnel_bindings_conflict(new, cfg) {
+            return Err("启动冲突：P2P 隧道监听地址与其他运行中的实例冲突".to_string());
         }
     }
     Ok(())
+}
+
+fn effective_tunnel_addrs(config: &StartConfig) -> Vec<SocketAddr> {
+    let (mut addrs, port) = if let Some(addr) = config.tunnel_addr.first() {
+        (config.tunnel_addr.clone(), addr.port())
+    } else if let Some(port) = config.tunnel_port {
+        (Vec::new(), port)
+    } else {
+        return Vec::new();
+    };
+    if port == 0 {
+        return Vec::new();
+    }
+    if !addrs.iter().any(SocketAddr::is_ipv4) {
+        addrs.push(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)));
+    }
+    if !addrs.iter().any(SocketAddr::is_ipv6) {
+        addrs.push(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)));
+    }
+    addrs
+}
+
+fn tunnel_bindings_conflict(a: &StartConfig, b: &StartConfig) -> bool {
+    effective_tunnel_addrs(a).iter().any(|left| {
+        effective_tunnel_addrs(b).iter().any(|right| {
+            left.port() == right.port()
+                && left.is_ipv4() == right.is_ipv4()
+                && (left.ip().is_unspecified()
+                    || right.ip().is_unspecified()
+                    || left.ip() == right.ip())
+        })
+    })
 }
 
 /// 启动 VNT 服务的入口函数
@@ -897,6 +953,7 @@ async fn start_vnt_internal(
 
     state.record_log(&file_name, "解析配置文件内容");
     let cfg: StartConfig = toml::from_str(&content).context("Failed to parse TOML config")?;
+    cfg.validate()?;
 
     let config_display_name = cfg.config_name.clone().unwrap_or_else(|| file_name.clone());
 
@@ -1319,7 +1376,7 @@ async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
     // 验证配置格式
     let parsed = toml::from_str::<StartConfig>(&req.config).and_then(|config| {
         config
-            .reject_legacy_no_tun()
+            .validate()
             .map(|_| config)
             .map_err(serde::de::Error::custom)
     });
@@ -1403,7 +1460,7 @@ async fn delete_config(
 }
 
 fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
-    cfg.reject_legacy_no_tun()?;
+    cfg.validate()?;
     let server_addrs: Vec<ProtocolAddress> = cfg
         .server
         .iter()
@@ -1514,6 +1571,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         udp_stun,
         tcp_stun,
         fec: cfg.fec,
+        tunnel_addr: cfg.tunnel_addr,
         tunnel_port: cfg.tunnel_port,
         event_script: cfg.event_script,
     })
@@ -1868,6 +1926,7 @@ mod tests {
             allow_mapping: false,
             udp_stun: Vec::new(),
             tcp_stun: Vec::new(),
+            tunnel_addr: Vec::new(),
             tunnel_port: None,
             event_script: None,
         }
@@ -1886,10 +1945,10 @@ network_code = "test"
         assert_eq!(tap_cfg.device_mode, DeviceMode::Tap);
 
         let legacy: StartConfig = toml::from_str(&format!("{base}no_tun = true\n")).unwrap();
-        assert!(legacy.reject_legacy_no_tun().is_err());
+        assert!(legacy.validate().is_err());
 
         let legacy_false: StartConfig = toml::from_str(&format!("{base}no_tun = false\n")).unwrap();
-        assert!(legacy_false.reject_legacy_no_tun().is_ok());
+        assert!(legacy_false.validate().is_ok());
     }
 
     #[test]
@@ -2096,7 +2155,7 @@ network_code = "test"
         assert!(check_config_conflict(&f, &[&e_running]).is_err());
     }
 
-    /// tunnel_port 都为 Some 且相等时冲突
+    /// 旧版 tunnel_port 都为固定同端口时冲突。
     #[test]
     fn test_conflict_same_tunnel_port() {
         let mut running = new_test_config();
@@ -2115,6 +2174,42 @@ network_code = "test"
         new_other.device_id = Some("d2".to_string());
         new_other.tunnel_port = Some(23456);
         assert!(check_config_conflict(&new_other, &[&running]).is_ok());
+
+        let mut automatic = new_test_config();
+        automatic.device_id = Some("d2".to_string());
+        automatic.tunnel_port = Some(0);
+        assert!(check_config_conflict(&automatic, &[&running]).is_ok());
+    }
+
+    #[test]
+    fn test_tunnel_addr_validation_and_conflicts() {
+        let mut running = new_test_config();
+        running.device_id = Some("d1".to_string());
+        running.tunnel_addr = vec![
+            "192.168.1.10:12345".parse().unwrap(),
+            "[2001:db8::10]:12345".parse().unwrap(),
+        ];
+        assert!(running.validate().is_ok());
+
+        let mut distinct = new_test_config();
+        distinct.device_id = Some("d2".to_string());
+        distinct.tunnel_addr = vec![
+            "192.168.1.11:12345".parse().unwrap(),
+            "[2001:db8::11]:12345".parse().unwrap(),
+        ];
+        assert!(!tunnel_bindings_conflict(&distinct, &running));
+
+        distinct.tunnel_addr = vec!["192.168.1.11:12345".parse().unwrap()];
+        assert!(tunnel_bindings_conflict(&distinct, &running));
+
+        distinct.tunnel_addr = vec!["0.0.0.0:0".parse().unwrap()];
+        assert!(!tunnel_bindings_conflict(&distinct, &running));
+
+        distinct.tunnel_addr = vec![
+            "192.168.1.11:12345".parse().unwrap(),
+            "[2001:db8::11]:12346".parse().unwrap(),
+        ];
+        assert!(distinct.validate().is_err());
     }
 
     /// Starting 状态下执行停止：必须中断注册重试循环并迁移到 Stopped。

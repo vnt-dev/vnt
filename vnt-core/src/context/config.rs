@@ -370,6 +370,9 @@ pub struct Config {
     pub allow_port_mapping: bool,
     pub udp_stun: Vec<String>,
     pub tcp_stun: Vec<String>,
+    /// P2P 隧道监听地址；每个地址族最多一个地址，且必须使用同一端口。
+    pub tunnel_addr: Vec<SocketAddr>,
+    /// 旧版仅端口配置，保留用于兼容。
     pub tunnel_port: Option<u16>,
     /// 事件脚本路径/命令；网卡创建成功、掉线、重连成功、IP 变化时以参数方式调用
     pub event_script: Option<String>,
@@ -377,6 +380,7 @@ pub struct Config {
 impl Config {
     pub fn normalize(&mut self) -> anyhow::Result<()> {
         self.check_turn_rules()?;
+        self.check_tunnel_addr()?;
         let mut seen = HashSet::new();
         self.turn.retain(|rule| seen.insert(rule.clone()));
         let mut merged = Vec::<PunchRule>::new();
@@ -389,6 +393,32 @@ impl Config {
         }
         self.punch_model = merged;
         crate::nat::subnet_mapping::normalize_and_validate(&mut self.subnet_mapping, &self.output)?;
+        Ok(())
+    }
+
+    fn check_tunnel_addr(&self) -> anyhow::Result<()> {
+        if !self.tunnel_addr.is_empty() && self.tunnel_port.is_some() {
+            bail!("tunnel_addr and tunnel_port cannot be configured together")
+        }
+        let mut ipv4 = false;
+        let mut ipv6 = false;
+        let mut port = None;
+        for addr in &self.tunnel_addr {
+            let seen = match addr {
+                SocketAddr::V4(_) => &mut ipv4,
+                SocketAddr::V6(_) => &mut ipv6,
+            };
+            if *seen {
+                bail!("tunnel_addr supports at most one address per IP family")
+            }
+            *seen = true;
+            if let Some(expected) = port
+                && expected != addr.port()
+            {
+                bail!("all tunnel_addr entries must use the same port")
+            }
+            port = Some(addr.port());
+        }
         Ok(())
     }
 
@@ -410,6 +440,7 @@ impl Config {
     }
 
     pub fn check(&self) -> anyhow::Result<()> {
+        self.check_tunnel_addr()?;
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         if self.device_mode == DeviceMode::Tap {
             bail!("TAP mode is not supported on mobile VPN interfaces");
@@ -506,6 +537,45 @@ mod tests {
         }
         assert!("bridge".parse::<DeviceMode>().is_err());
         assert_eq!(DeviceMode::default(), DeviceMode::Tun);
+    }
+
+    #[test]
+    fn tunnel_addr_validation_accepts_dual_stack_with_one_port() {
+        let mut config = Config {
+            tunnel_addr: vec![
+                "192.168.1.10:29873".parse().unwrap(),
+                "[2001:db8::10]:29873".parse().unwrap(),
+            ],
+            ..Default::default()
+        };
+        config.normalize().unwrap();
+    }
+
+    #[test]
+    fn tunnel_addr_validation_rejects_ambiguous_bindings() {
+        for addrs in [
+            vec![
+                "192.168.1.10:29873".parse().unwrap(),
+                "192.168.1.11:29873".parse().unwrap(),
+            ],
+            vec![
+                "192.168.1.10:29873".parse().unwrap(),
+                "[2001:db8::10]:29874".parse().unwrap(),
+            ],
+        ] {
+            let mut config = Config {
+                tunnel_addr: addrs,
+                ..Default::default()
+            };
+            assert!(config.normalize().is_err());
+        }
+
+        let mut config = Config {
+            tunnel_addr: vec!["192.168.1.10:29873".parse().unwrap()],
+            tunnel_port: Some(29873),
+            ..Default::default()
+        };
+        assert!(config.normalize().is_err());
     }
 
     #[test]

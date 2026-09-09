@@ -456,10 +456,18 @@ const sectionChevronClass = (expanded) =>
               <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
                 <div>
                   <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                    隧道端口 <ConfigHelp :help="configHelp.tunnel_port" />
+                    隧道监听地址 <ConfigHelp :help="configHelp.tunnel_addr" />
                   </label>
-                  <input v-model.number="formData.tunnel_port" type="number" placeholder="0 (自动分配)" class="input" />
-                  <p class="mt-1.5 text-xs text-slate-400">本机监听 P2P 隧道的端口，固定端口便于端口映射和防火墙放行</p>
+                  <div v-for="(item, idx) in formData.tunnel_addr" :key="idx" class="mb-2 flex gap-2">
+                    <input v-model="formData.tunnel_addr[idx]" type="text" placeholder="例如: 192.168.1.10:29873" class="input flex-1" />
+                    <button @click="formData.tunnel_addr.splice(idx, 1)" :class="removeBtnClass">
+                      删除
+                    </button>
+                  </div>
+                  <button v-if="formData.tunnel_addr.length < 2" @click="formData.tunnel_addr.push('')" :class="addBtnClass">
+                    添加监听地址
+                  </button>
+                  <p class="mt-1.5 text-xs text-slate-400">最多各一个 IPv4/IPv6 地址；双地址端口必须相同</p>
                 </div>
                 <label :class="toggleLabelClass">
                   <div class="flex-1">

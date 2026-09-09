@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use clap::Parser;
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule};
 use vnt_core::nat::{NetInput, SubnetMapping};
@@ -46,6 +46,7 @@ pub struct FileConfig {
     pub cert_mode: Option<String>,
     pub udp_stun: Option<Vec<String>>,
     pub tcp_stun: Option<Vec<String>>,
+    pub tunnel_addr: Option<Vec<SocketAddr>>,
     pub tunnel_port: Option<u16>,
     pub event_script: Option<String>,
 }
@@ -220,8 +221,11 @@ pub struct Args {
     /// 控制端口，设置0时禁用控制服务
     #[clap(long)]
     pub ctrl_port: Option<u16>,
-    /// 隧道端口，用于P2P通信
+    /// P2P 隧道监听地址，可重复指定；IPv4 与 IPv6 地址必须使用相同端口
     #[clap(long)]
+    pub tunnel_addr: Vec<SocketAddr>,
+    /// 旧版隧道端口参数，仅保留兼容
+    #[clap(long, hide = true)]
     pub tunnel_port: Option<u16>,
     /// 事件脚本路径/命令；网卡创建成功、掉线、重连成功、IP 变化时以参数方式调用
     #[clap(long)]
@@ -293,6 +297,12 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
     } else {
         args.port_mapping
     };
+    let (tunnel_addr, tunnel_port) = resolve_tunnel_binding(
+        &args.tunnel_addr,
+        args.tunnel_port,
+        file.tunnel_addr.clone(),
+        file.tunnel_port,
+    )?;
 
     let network_code = args
         .network_code
@@ -374,7 +384,8 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         allow_port_mapping: args.allow_mapping || file.allow_mapping.unwrap_or(false),
         udp_stun,
         tcp_stun,
-        tunnel_port: args.tunnel_port.or(file.tunnel_port),
+        tunnel_addr,
+        tunnel_port,
         event_script: args.event_script.or_else(|| file.event_script.clone()),
     };
 
@@ -385,6 +396,8 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
 }
 
 fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
+    let (tunnel_addr, tunnel_port) =
+        resolve_tunnel_binding(&args.tunnel_addr, args.tunnel_port, None, None)?;
     let device_id = match args.device_id {
         Some(id) => id,
         None => vnt_core::utils::device_id::get_device_id()?,
@@ -422,7 +435,8 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         mtu: args.mtu,
         port_mapping: args.port_mapping,
         allow_port_mapping: args.allow_mapping,
-        tunnel_port: args.tunnel_port,
+        tunnel_addr,
+        tunnel_port,
         event_script: args.event_script,
         ..Default::default()
     };
@@ -443,6 +457,8 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
     let turn = file.to_turn()?;
     let punch_model = file.to_punch_model()?;
     let port_mapping = file.to_port_mapping()?;
+    let (tunnel_addr, tunnel_port) =
+        resolve_tunnel_binding(&[], None, file.tunnel_addr.clone(), file.tunnel_port)?;
 
     let cert_mode = file
         .cert_mode
@@ -500,13 +516,38 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         allow_port_mapping: file.allow_mapping.unwrap_or(false),
         udp_stun,
         tcp_stun,
-        tunnel_port: file.tunnel_port,
+        tunnel_addr,
+        tunnel_port,
         event_script: file.event_script.clone(),
     };
     let ctrl_config = CtrlConfig {
         ctrl_port: file.ctrl_port,
     };
     Ok((config, ctrl_config))
+}
+
+fn resolve_tunnel_binding(
+    cli_addr: &[SocketAddr],
+    cli_port: Option<u16>,
+    file_addr: Option<Vec<SocketAddr>>,
+    file_port: Option<u16>,
+) -> anyhow::Result<(Vec<SocketAddr>, Option<u16>)> {
+    if !cli_addr.is_empty() && cli_port.is_some() {
+        return Err(anyhow!(
+            "--tunnel-addr and --tunnel-port cannot be configured together"
+        ));
+    }
+    if !cli_addr.is_empty() || cli_port.is_some() {
+        return Ok((cli_addr.to_vec(), cli_port));
+    }
+
+    let file_addr = file_addr.unwrap_or_default();
+    if !file_addr.is_empty() && file_port.is_some() {
+        return Err(anyhow!(
+            "configuration keys 'tunnel_addr' and 'tunnel_port' cannot be used together"
+        ));
+    }
+    Ok((file_addr, file_port))
 }
 
 fn default_hostname() -> String {
@@ -535,7 +576,7 @@ server = ["quic://1.2.3.4:29872"]
 
 # 可直连节点地址列表 (可选)
 # 不带协议时同时尝试 TCP 和 UDP；也可用 tcp:// 或 udp:// 指定协议
-# 地址端口应为对端配置的 tunnel_port
+# 地址端口应为对端 tunnel_addr 中配置的监听端口
 # peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873", "udp://[::1]:29873"]
 
 # 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继
@@ -606,8 +647,10 @@ server = ["quic://1.2.3.4:29872"]
 # 控制服务的 tcp 端口
 # ctrl_port = 11233
 
-# 隧道端口，用于P2P通信 (默认为0，自动分配)
-# tunnel_port = 0
+# P2P 隧道监听地址；IPv4 与 IPv6 最多各一个且必须使用相同端口
+# 未配置的地址族仍使用通配地址，端口 0 表示自动分配
+# tunnel_addr = ["192.168.1.10:29873", "[2001:db8::10]:29873"]
+# 旧版 tunnel_port 仍兼容，但不能与 tunnel_addr 同时使用
 
 # MTU 设置
 # mtu = 1400
@@ -686,6 +729,53 @@ mod tests {
         let (config, _) = build_from_args_only(args).unwrap();
         assert_eq!(config.tunnel_port, Some(12345));
         assert_eq!(config.outbound_interface.as_deref(), Some("Ethernet"));
+    }
+
+    #[test]
+    fn test_tunnel_addr_cli_and_file_group_precedence() {
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--tunnel-addr",
+            "192.168.1.10:29873",
+            "--tunnel-addr",
+            "[2001:db8::10]:29873",
+        ])
+        .unwrap();
+        let file: FileConfig = toml::from_str(
+            "tunnel_port = 30000\nserver = [\"quic://127.0.0.1:29872\"]\nnetwork_code = \"test-net\"",
+        )
+        .unwrap();
+        let (mut config, _) = build_config_from_args_and_file(Some(args), Some(file)).unwrap();
+        assert_eq!(config.tunnel_addr.len(), 2);
+        assert_eq!(config.tunnel_port, None);
+        config.normalize().unwrap();
+
+        let file: FileConfig = toml::from_str(
+            "tunnel_addr = [\"192.168.1.10:29873\"]\ntunnel_port = 29873\nserver = [\"quic://127.0.0.1:29872\"]\nnetwork_code = \"test-net\"",
+        )
+        .unwrap();
+        assert!(build_config_from_args_and_file(None, Some(file)).is_err());
+    }
+
+    #[test]
+    fn test_tunnel_addr_rejects_cli_legacy_port_combination() {
+        let args = Args::try_parse_from([
+            "vnt",
+            "-s",
+            "quic://127.0.0.1:29872",
+            "-n",
+            "test-net",
+            "--tunnel-addr",
+            "127.0.0.1:29873",
+            "--tunnel-port",
+            "29873",
+        ])
+        .unwrap();
+        assert!(build_from_args_only(args).is_err());
     }
 
     #[test]
