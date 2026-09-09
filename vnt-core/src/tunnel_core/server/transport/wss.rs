@@ -78,7 +78,7 @@ pub async fn connect_wss(config: &ConnectConfig) -> anyhow::Result<WssStream> {
     if let Err(e) = tcp_stream.set_nodelay(true) {
         log::error!("Failed to set TCP_NODELAY: {}", e);
     }
-    let url = format!("wss://{}", server_name);
+    let url = wss_url(&server_name, server_addr.port());
 
     let dns_name = server_name
         .try_into()
@@ -94,4 +94,30 @@ pub async fn connect_wss(config: &ConnectConfig) -> anyhow::Result<WssStream> {
         .context("Failed to perform WebSocket handshake")?;
 
     Ok(ws_stream)
+}
+
+/// Build the WebSocket URL authority from the configured server name.
+///
+/// `ConnectConfig::server_name` intentionally stores IPv6 literals without
+/// brackets so it can be used as a TLS `ServerName`. URLs, however, require
+/// brackets around an IPv6 host and must include the configured port.
+fn wss_url(server_name: &str, port: u16) -> String {
+    let host = if server_name.contains(':') {
+        format!("[{server_name}]")
+    } else {
+        server_name.to_owned()
+    };
+    format!("wss://{host}:{port}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wss_url;
+
+    #[test]
+    fn url_preserves_port_and_brackets_ipv6_literal() {
+        assert_eq!(wss_url("example.com", 8443), "wss://example.com:8443");
+        assert_eq!(wss_url("192.0.2.1", 8443), "wss://192.0.2.1:8443");
+        assert_eq!(wss_url("2001:db8::1", 8443), "wss://[2001:db8::1]:8443");
+    }
 }

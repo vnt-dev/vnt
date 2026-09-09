@@ -119,10 +119,10 @@ const serverConnected = computed(() => {
               app.selectedInfo.nat_type || "Unknown"
             }}</span>
           </div>
-          <div class="flex justify-between border-b border-slate-100 pb-2 dark:border-slate-700">
+          <div class="flex gap-4 border-b border-slate-100 pb-2 dark:border-slate-700">
             <span class="muted">Public IPv6</span>
             <span
-              class="max-w-[200px] truncate font-mono text-slate-900 dark:text-white"
+              class="min-w-0 flex-1 break-all text-right font-mono text-slate-900 dark:text-white"
               :title="app.selectedInfo.public_ipv6"
               >{{ app.selectedInfo.public_ipv6 || "-" }}</span
             >
@@ -131,10 +131,10 @@ const serverConnected = computed(() => {
             <span class="muted">设备名称</span>
             <span class="text-slate-900 dark:text-white">{{ app.selectedInfo.name || "-" }}</span>
           </div>
-          <div class="flex justify-between border-b border-slate-100 pb-2 dark:border-slate-700">
+          <div class="flex gap-4 border-b border-slate-100 pb-2 dark:border-slate-700">
             <span class="muted">设备 ID</span>
             <span
-              class="max-w-[200px] truncate font-mono text-xs text-slate-500 dark:text-slate-400"
+              class="min-w-0 flex-1 break-all text-right font-mono text-xs text-slate-500 dark:text-slate-400"
               :title="app.selectedInfo.device_id"
               >{{ app.selectedInfo.device_id || "-" }}</span
             >
