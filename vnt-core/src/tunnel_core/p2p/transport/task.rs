@@ -153,8 +153,10 @@ pub(crate) async fn node_announcement_task(
     identity: NodeIdentityTemplate,
 ) {
     loop {
-        let jitter = 25 + (rand::random::<u64>() % 11);
-        tokio::time::sleep(Duration::from_secs(jitter)).await;
+        tokio::time::sleep(node_announcement_interval(
+            outbound.is_any_server_connected(),
+        ))
+        .await;
         let Some(ip) = network.ip() else {
             continue;
         };
@@ -190,6 +192,15 @@ pub(crate) async fn node_announcement_task(
             Err(error) => log::debug!("failed to build node announcement: {error}"),
         }
     }
+}
+
+fn node_announcement_interval(has_connected_server: bool) -> Duration {
+    let seconds = if has_connected_server {
+        110 + (rand::random::<u64>() % 21)
+    } else {
+        25 + (rand::random::<u64>() % 11)
+    };
+    Duration::from_secs(seconds)
 }
 
 fn sample_direct_peer_ips(mut peers: Vec<Ipv4Addr>) -> Vec<Ipv4Addr> {
@@ -506,6 +517,14 @@ mod tests {
                 .collect::<HashSet<_>>(),
             peers[..2].iter().copied().collect()
         );
+    }
+
+    #[test]
+    fn announcement_interval_slows_down_when_a_server_is_connected() {
+        for _ in 0..100 {
+            assert!((110..=130).contains(&node_announcement_interval(true).as_secs()));
+            assert!((25..=35).contains(&node_announcement_interval(false).as_secs()));
+        }
     }
 
     #[test]

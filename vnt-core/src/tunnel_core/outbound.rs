@@ -202,6 +202,10 @@ impl BasicOutbound {
             .await
     }
 
+    pub fn is_any_server_connected(&self) -> bool {
+        self.server_outbound.is_any_server_connected()
+    }
+
     pub fn graph_first_seen(&self, msg_type: MsgType, source: Ipv4Addr, seq: u32) -> bool {
         let now = Instant::now();
         let mut seen = self.graph_seen.lock();

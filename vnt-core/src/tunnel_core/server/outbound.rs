@@ -42,6 +42,10 @@ impl ServerOutbound {
     pub fn is_server_connected(&self, server_id: u32) -> bool {
         self.server_info_collection.is_server_connected(server_id)
     }
+    pub fn is_any_server_connected(&self) -> bool {
+        self.server_info_collection
+            .is_any_server_connected(Some(&self.server_id_list))
+    }
     pub fn encrypt_reserve(&self) -> usize {
         self.packet_crypto.encrypt_reserve()
     }
