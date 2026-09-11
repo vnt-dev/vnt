@@ -233,13 +233,7 @@ impl P2pInboundHandler {
         if src_ip == net.ip {
             return Ok(());
         }
-        if matches!(
-            msg_type,
-            MsgType::NodeProbe
-                | MsgType::NodeProbeReply
-                | MsgType::NodeAnnouncement
-                | MsgType::Broadcast
-        ) {
+        if matches!(msg_type, MsgType::NodeAnnouncement | MsgType::Broadcast) {
             return self
                 .process_graph_packet(&net, route_key, tunnel, net_packet)
                 .await;
@@ -284,7 +278,6 @@ impl P2pInboundHandler {
         let encrypted = NetPacket::new(packet.source_buf().clone())?.into_bytes();
         let msg_type = packet.msg_type()?;
         let source = Ipv4Addr::from(packet.src_id());
-        let destination = Ipv4Addr::from(packet.dest_id());
         let seq = packet.seq();
         let metric = packet.max_ttl().saturating_sub(packet.ttl()).max(1);
         self.packet_crypto.decrypt_in_place(&mut packet)?;
@@ -330,60 +323,12 @@ impl P2pInboundHandler {
             return Ok(());
         }
 
-        match msg_type {
-            MsgType::NodeAnnouncement => {
-                if packet.ttl() >= 1 {
-                    self.basic_outbound
-                        .flood_direct_p2p(&encrypted, Some(&route_key));
-                    self.basic_outbound
-                        .flood_connected_servers(encrypted.clone(), None)
-                        .await;
-                }
-            }
-            MsgType::NodeProbe if destination == net.ip => {
-                let payload = crate::protocol::client_message::NodeDiscovery {
-                    identity: self.identity.with_ip(net.ip),
-                    request_id: discovery.request_id,
-                }
-                .encode();
-                let mut reply = NetPacket::new(TransmissionBytes::zeroed_size(
-                    HEAD_LENGTH + payload.len(),
-                    self.packet_crypto.encrypt_reserve(),
-                ))?;
-                reply.set_msg_type(MsgType::NodeProbeReply);
-                reply.set_ttl(GOSSIP_TTL);
-                reply.set_src_id(net.ip.into());
-                reply.set_dest_id(source.into());
-                reply.set_payload(&payload)?;
-                self.basic_outbound
-                    .send_encrypted_packet(*net, source, reply)
-                    .await?;
-            }
-            MsgType::NodeProbe | MsgType::NodeProbeReply => {
-                if packet.ttl() == 0 {
-                    return Ok(());
-                }
-                if destination == net.ip {
-                    return Ok(());
-                }
-                if let Ok(route) = self.route_table.get_route_by_id(&destination)
-                    && route.route_key() != route_key
-                {
-                    // The ciphertext has already been authenticated locally;
-                    // forward it unchanged so the end-to-end sequence remains
-                    // the deduplication key.
-                    if let Some(p2p) = self.basic_outbound.p2p_outbound() {
-                        p2p.send_raw_to(encrypted, &route.route_key()).await?;
-                    }
-                } else {
-                    self.basic_outbound
-                        .flood_direct_p2p(&encrypted, Some(&route_key));
-                    self.basic_outbound
-                        .flood_connected_servers(encrypted.clone(), None)
-                        .await;
-                }
-            }
-            _ => {}
+        if msg_type == MsgType::NodeAnnouncement && packet.ttl() >= 1 {
+            self.basic_outbound
+                .flood_direct_p2p(&encrypted, Some(&route_key));
+            self.basic_outbound
+                .flood_connected_servers(encrypted, None)
+                .await;
         }
         Ok(())
     }

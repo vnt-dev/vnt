@@ -7,7 +7,6 @@ use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
 use crate::nat::AllowSubnetExternalRoute;
-use crate::protocol::client_message::NodeIdentityTemplate;
 use crate::protocol::control_message::{RegistrationMode, RequestMessage, ResponseMessage};
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
@@ -50,7 +49,6 @@ pub struct InboundHandlerConfig {
     pub allow_wireguard: bool,
     pub relay_subnets: AllowSubnetExternalRoute,
     pub basic_outbound: BasicOutbound,
-    pub node_identity: NodeIdentityTemplate,
 }
 
 pub struct ServerTurnManager {

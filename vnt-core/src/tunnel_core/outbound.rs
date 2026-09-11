@@ -5,7 +5,6 @@ use crate::crypto::PacketCrypto;
 use crate::fec::FecEncoder;
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
-use crate::protocol::client_message::{NodeDiscovery, NodeIdentityTemplate};
 use crate::protocol::control_message::ClientType;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
@@ -16,46 +15,15 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use pnet_packet::ipv4::Ipv4Packet;
 use rustp2p_core::route_table::RouteKey;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_PENDING_PER_NODE: usize = 8;
-const MAX_PENDING_BYTES_PER_NODE: usize = 64 * 1024;
-const MAX_PENDING_BYTES: usize = 2 * 1024 * 1024;
 const GRAPH_DEDUP_TTL: Duration = Duration::from_secs(60);
 const GRAPH_DEDUP_CAPACITY: usize = 8192;
-const PROBE_BACKOFF: [Duration; 5] = [
-    Duration::from_secs(5),
-    Duration::from_secs(15),
-    Duration::from_secs(30),
-    Duration::from_secs(60),
-    Duration::from_secs(300),
-];
 type GraphMessageKey = (u8, Ipv4Addr, u32);
 type GraphSeen = Arc<Mutex<HashMap<GraphMessageKey, Instant>>>;
-
-#[derive(Default)]
-struct PendingDiscovery {
-    targets: HashMap<Ipv4Addr, PendingTarget>,
-    backoff: HashMap<Ipv4Addr, ProbeBackoff>,
-    total_bytes: usize,
-    probe_times: VecDeque<Instant>,
-}
-
-struct PendingTarget {
-    packets: Vec<Bytes>,
-    bytes: usize,
-    started: Instant,
-}
-
-struct ProbeBackoff {
-    next_attempt: Instant,
-    step: usize,
-    touched: Instant,
-}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum PreferredTurn {
@@ -93,8 +61,6 @@ pub(crate) struct BasicOutbound {
     p2p_outbound: Option<P2pOutbound>,
     packet_crypto: PacketCrypto,
     turn: Arc<Vec<TurnRule>>,
-    identity: NodeIdentityTemplate,
-    pending: Arc<Mutex<PendingDiscovery>>,
     graph_seen: GraphSeen,
 }
 
@@ -104,15 +70,12 @@ impl BasicOutbound {
         p2p_outbound: Option<P2pOutbound>,
         packet_crypto: PacketCrypto,
         turn: Arc<Vec<TurnRule>>,
-        identity: NodeIdentityTemplate,
     ) -> Self {
         Self {
             server_outbound,
             p2p_outbound,
             packet_crypto,
             turn,
-            identity,
-            pending: Arc::new(Mutex::new(PendingDiscovery::default())),
             graph_seen: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -151,9 +114,7 @@ impl BasicOutbound {
             }
         });
         if !p2p_route && !self.server_outbound.exists_route(&dest) {
-            return self
-                .queue_unknown_and_probe(net, dest, packet.into_bytes())
-                .await;
+            bail!("no route to {dest}")
         }
         let packet = packet.into_bytes();
         if let Some(p2p) = self.p2p_outbound.as_ref() {
@@ -231,10 +192,6 @@ impl BasicOutbound {
             .unwrap_or(0)
     }
 
-    pub fn p2p_outbound(&self) -> Option<&P2pOutbound> {
-        self.p2p_outbound.as_ref()
-    }
-
     pub async fn flood_connected_servers(
         &self,
         packet: NetPacket<Bytes>,
@@ -274,180 +231,6 @@ impl BasicOutbound {
     ) -> anyhow::Result<()> {
         self.packet_crypto.encrypt_in_place(&mut packet)?;
         self.send_raw(net, dest, packet).await
-    }
-
-    async fn queue_unknown_and_probe(
-        &self,
-        net: NetworkAddr,
-        dest: Ipv4Addr,
-        packet: NetPacket<Bytes>,
-    ) -> anyhow::Result<()> {
-        let bytes = packet.into_buffer();
-        let packet_len = bytes.len();
-        let now = Instant::now();
-        let mut start_probe = false;
-        {
-            let mut pending = self.pending.lock();
-            pending
-                .probe_times
-                .retain(|time| now.duration_since(*time) < Duration::from_secs(1));
-            pending
-                .backoff
-                .retain(|_, state| now.duration_since(state.touched) < Duration::from_secs(600));
-            if packet_len > MAX_PENDING_BYTES_PER_NODE
-                || pending.total_bytes + packet_len > MAX_PENDING_BYTES
-            {
-                bail!("pending packet byte limit reached for {dest}")
-            }
-            if !pending.targets.contains_key(&dest) {
-                if pending
-                    .backoff
-                    .get(&dest)
-                    .is_some_and(|state| now < state.next_attempt)
-                {
-                    bail!("node discovery for {dest} is backing off")
-                }
-                if pending.probe_times.len() >= 30 {
-                    bail!("node discovery rate limit reached")
-                }
-                pending.probe_times.push_back(now);
-                pending.targets.insert(
-                    dest,
-                    PendingTarget {
-                        packets: Vec::new(),
-                        bytes: 0,
-                        started: now,
-                    },
-                );
-                start_probe = true;
-            }
-            let target = pending.targets.get(&dest).expect("pending target inserted");
-            if target.packets.len() >= MAX_PENDING_PER_NODE
-                || target.bytes + packet_len > MAX_PENDING_BYTES_PER_NODE
-            {
-                bail!("pending packet limit reached for {dest}")
-            }
-            let target = pending
-                .targets
-                .get_mut(&dest)
-                .expect("pending target inserted");
-            target.packets.push(bytes);
-            target.bytes += packet_len;
-            pending.total_bytes += packet_len;
-        }
-
-        if start_probe {
-            if let Err(error) = self.publish_node_probe(net, dest) {
-                self.remove_pending(dest);
-                return Err(error);
-            }
-            let this = self.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    if this.exists_route(&dest) {
-                        this.flush_pending(net, dest).await;
-                        break;
-                    }
-                    let expired = this
-                        .pending
-                        .lock()
-                        .targets
-                        .get(&dest)
-                        .is_none_or(|target| target.started.elapsed() >= PROBE_TIMEOUT);
-                    if expired {
-                        this.drop_pending_with_backoff(dest, "node discovery timed out");
-                        break;
-                    }
-                }
-            });
-        }
-        Ok(())
-    }
-
-    fn publish_node_probe(&self, net: NetworkAddr, dest: Ipv4Addr) -> anyhow::Result<()> {
-        let payload = NodeDiscovery {
-            identity: self.identity.with_ip(net.ip),
-            request_id: rand::random(),
-        }
-        .encode();
-        let mut probe = NetPacket::new(TransmissionBytes::zeroed_size(
-            HEAD_LENGTH + payload.len(),
-            self.encrypt_reserve(),
-        ))?;
-        probe.set_msg_type(MsgType::NodeProbe);
-        probe.set_ttl(15);
-        probe.set_src_id(net.ip.into());
-        probe.set_dest_id(dest.into());
-        probe.set_payload(&payload)?;
-        self.packet_crypto.encrypt_in_place(&mut probe)?;
-        let probe = probe.into_bytes();
-        self.graph_first_seen(MsgType::NodeProbe, net.ip, probe.seq());
-        self.flood_direct_p2p(&probe, None);
-        let server = self.server_outbound.clone();
-        tokio::spawn(async move {
-            let _ = server.flood_connected_raw(probe, None).await;
-        });
-        Ok(())
-    }
-
-    async fn flush_pending(&self, _net: NetworkAddr, dest: Ipv4Addr) {
-        let Some(target) = ({
-            let mut pending = self.pending.lock();
-            let target = pending.targets.remove(&dest);
-            pending.backoff.remove(&dest);
-            if let Some(target) = target.as_ref() {
-                pending.total_bytes = pending.total_bytes.saturating_sub(target.bytes);
-            }
-            target
-        }) else {
-            return;
-        };
-        for bytes in target.packets {
-            let Ok(packet) = NetPacket::new(bytes) else {
-                continue;
-            };
-            if let Some(p2p) = self.p2p_outbound.as_ref()
-                && let Some(route) = p2p.get_route_by_id(&dest)
-            {
-                if let Err(error) = p2p.send_raw_to(packet, &route.route_key()).await {
-                    log::debug!("failed to flush discovered P2P packet for {dest}: {error}");
-                }
-                continue;
-            }
-            if let Err(error) = self.server_outbound.send_raw(dest, packet).await {
-                log::debug!("failed to flush discovered server packet for {dest}: {error}");
-            }
-        }
-    }
-
-    fn remove_pending(&self, dest: Ipv4Addr) {
-        let mut pending = self.pending.lock();
-        if let Some(target) = pending.targets.remove(&dest) {
-            pending.total_bytes = pending.total_bytes.saturating_sub(target.bytes);
-        }
-    }
-
-    fn drop_pending_with_backoff(&self, dest: Ipv4Addr, reason: &str) {
-        let mut pending = self.pending.lock();
-        if let Some(target) = pending.targets.remove(&dest) {
-            pending.total_bytes = pending.total_bytes.saturating_sub(target.bytes);
-            let now = Instant::now();
-            let state = pending.backoff.entry(dest).or_insert(ProbeBackoff {
-                next_attempt: now,
-                step: 0,
-                touched: now,
-            });
-            let delay = PROBE_BACKOFF[state.step.min(PROBE_BACKOFF.len() - 1)];
-            state.next_attempt = now + delay;
-            state.step = (state.step + 1).min(PROBE_BACKOFF.len() - 1);
-            state.touched = now;
-            log::debug!(
-                "drop {} queued packets ({} bytes) for {dest}: {reason}",
-                target.packets.len(),
-                target.bytes
-            );
-        }
     }
 
     /// 认证并发送 FEC 外层包。FEC 内层已经是普通 AEAD 密文或 QUIC 密文，

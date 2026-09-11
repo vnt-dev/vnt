@@ -60,7 +60,6 @@ struct RegistrationContext {
     allow_wireguard: bool,
     relay_subnets: AllowSubnetExternalRoute,
     basic_outbound: BasicOutbound,
-    node_identity: NodeIdentityTemplate,
 }
 
 pub struct NetworkManager {
@@ -199,7 +198,6 @@ impl NetworkManager {
             p2p_socket.clone(),
             packet_crypto.clone(),
             turn.clone(),
-            node_identity.clone(),
         );
         if p2p_socket.is_some() {
             task_group.spawn(node_announcement_task(
@@ -358,7 +356,6 @@ impl NetworkManager {
             allow_wireguard: config.allow_wireguard,
             relay_subnets,
             basic_outbound: basic_outbound.clone(),
-            node_identity: node_identity.clone(),
         });
 
         app_state.set_config(config.clone());
@@ -487,7 +484,6 @@ impl NetworkManager {
                 allow_wireguard: ctx.allow_wireguard,
                 relay_subnets: ctx.relay_subnets.clone(),
                 basic_outbound: ctx.basic_outbound.clone(),
-                node_identity: ctx.node_identity.clone(),
             });
             turn_manager.data_handle_task(
                 task_group,

@@ -379,7 +379,6 @@ pub(crate) struct ServerTurnInboundHandler {
     allow_wireguard: bool,
     relay_subnets: AllowSubnetExternalRoute,
     basic_outbound: crate::tunnel_core::outbound::BasicOutbound,
-    node_identity: crate::protocol::client_message::NodeIdentityTemplate,
 }
 
 fn valid_server_relay_ipv4(
@@ -445,7 +444,6 @@ impl ServerTurnInboundHandler {
             allow_wireguard: config.allow_wireguard,
             relay_subnets: config.relay_subnets,
             basic_outbound: config.basic_outbound,
-            node_identity: config.node_identity,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -605,13 +603,7 @@ impl ServerTurnInboundHandler {
     ) -> anyhow::Result<()> {
         let net_packet = NetPacket::new(data)?;
         let msg_type = net_packet.msg_type()?;
-        let graph_raw = if matches!(
-            msg_type,
-            MsgType::NodeProbe
-                | MsgType::NodeProbeReply
-                | MsgType::NodeAnnouncement
-                | MsgType::Broadcast
-        ) {
+        let graph_raw = if matches!(msg_type, MsgType::NodeAnnouncement | MsgType::Broadcast) {
             let mut raw = NetPacket::new(net_packet.source_buf().clone())?;
             raw.decr_ttl();
             Some(raw.into_bytes())
@@ -656,10 +648,7 @@ impl ServerTurnInboundHandler {
         }
         if let Some(raw) = graph_raw {
             let source = Ipv4Addr::from(net_packet.src_id());
-            if matches!(
-                msg_type,
-                MsgType::NodeProbe | MsgType::NodeProbeReply | MsgType::NodeAnnouncement
-            ) {
+            if msg_type == MsgType::NodeAnnouncement {
                 crate::protocol::client_message::NodeDiscovery::from_slice(
                     net_packet.payload(),
                     source,
@@ -675,28 +664,10 @@ impl ServerTurnInboundHandler {
                 return Ok(());
             }
             if raw.ttl() >= 1 {
-                let destination = Ipv4Addr::from(net_packet.dest_id());
-                let is_discovery = matches!(msg_type, MsgType::NodeProbe | MsgType::NodeProbeReply);
-                let target_is_local = is_discovery && destination == network_addr.ip;
-                let routed = if is_discovery && !target_is_local {
-                    if let Some(p2p) = self.basic_outbound.p2p_outbound()
-                        && let Some(route) = p2p.get_route_by_id(&destination)
-                    {
-                        p2p.send_raw_to(raw.clone(), &route.route_key())
-                            .await
-                            .is_ok()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                if !target_is_local && !routed {
-                    self.basic_outbound.flood_direct_p2p(&raw, None);
-                    self.basic_outbound
-                        .flood_connected_servers(raw, Some(self.server_id))
-                        .await;
-                }
+                self.basic_outbound.flood_direct_p2p(&raw, None);
+                self.basic_outbound
+                    .flood_connected_servers(raw, Some(self.server_id))
+                    .await;
             }
         }
         self.process_plain_packet(network_addr, transport_client, net_packet)
@@ -793,29 +764,6 @@ impl ServerTurnInboundHandler {
                 log::info!("对方回复开始打洞 {:?} {src}->{dest}", peer_punch_info);
                 self.puncher.punch_uncheck(src, peer_punch_info)?;
             }
-            MsgType::NodeProbe if dest == network_addr.ip => {
-                let request = crate::protocol::client_message::NodeDiscovery::from_slice(
-                    net_packet.payload(),
-                    src,
-                )?;
-                let payload = crate::protocol::client_message::NodeDiscovery {
-                    identity: self.node_identity.with_ip(network_addr.ip),
-                    request_id: request.request_id,
-                }
-                .encode();
-                let mut reply = NetPacket::new(TransmissionBytes::zeroed_size(
-                    HEAD_LENGTH + payload.len(),
-                    self.packet_crypto.encrypt_reserve(),
-                ))?;
-                reply.set_msg_type(MsgType::NodeProbeReply);
-                reply.set_ttl(15);
-                reply.set_src_id(network_addr.ip.into());
-                reply.set_dest_id(src.into());
-                reply.set_payload(&payload)?;
-                self.basic_outbound
-                    .send_encrypted_packet(network_addr, src, reply)
-                    .await?;
-            }
             _ => {}
         }
         Ok(())
@@ -840,10 +788,7 @@ impl ServerTurnInboundHandler {
                 .await;
         }
         let dest = Ipv4Addr::from(net_packet.dest_id());
-        let graph_message = matches!(
-            net_packet.msg_type()?,
-            MsgType::NodeProbe | MsgType::NodeProbeReply | MsgType::NodeAnnouncement
-        );
+        let graph_message = net_packet.msg_type()? == MsgType::NodeAnnouncement;
         if !graph_message
             && !dest.is_broadcast()
             && !dest.is_unspecified()
