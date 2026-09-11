@@ -27,6 +27,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender};
 
+fn should_notify_reconnected(already_connected: bool, has_connected_once: bool) -> bool {
+    !already_connected && has_connected_once
+}
+
 pub struct InboundHandlerConfig {
     pub network_route: NetworkRoute,
     pub ip_update: IpUpdateContext,
@@ -220,6 +224,7 @@ impl ServerTurnManager {
 
         task_group.spawn(async move {
             let mut already_connected = initially_connected;
+            let mut has_connected_once = initially_connected;
             loop {
                 if !already_connected {
                     self.disconnect();
@@ -276,7 +281,7 @@ impl ServerTurnManager {
                     }
                 }
                 // 重连成功后触发事件脚本（首次连接不算重连）
-                if !already_connected {
+                if should_notify_reconnected(already_connected, has_connected_once) {
                     let mut params = vec![("server", self.config.server_addr.to_string())];
                     if let Some(network) = data_handler.network_addr() {
                         params.push(("ip", network.ip.to_string()));
@@ -296,19 +301,24 @@ impl ServerTurnManager {
                 }
                 log::info!("已连接服务器:{}", self.config.server_addr);
                 data_handler.handle_connected();
+                has_connected_once = true;
 
                 if let Err(e) = self.data_handle_loop(&mut receiver, &data_handler).await {
                     log::error!("Error on data_handle_loop: {:?}", e);
-                    // 从已连接状态掉线时触发事件脚本
-                    if already_connected {
-                        self.event_script
-                            .notify(
-                                EventScriptType::Disconnected,
-                                &[("server", self.config.server_addr.to_string())],
-                            )
-                            .await;
-                    }
+                    // data_handle_loop is entered only after a successful
+                    // connection, including background and reconnected
+                    // servers, so every exit is a real disconnect event.
+                    self.event_script
+                        .notify(
+                            EventScriptType::Disconnected,
+                            &[("server", self.config.server_addr.to_string())],
+                        )
+                        .await;
                 }
+                // Remove the server's reachability immediately. Waiting until
+                // the next reconnect iteration leaves a window where cached
+                // clients suppress decentralized discovery.
+                data_handler.handle_disconnected();
                 already_connected = false;
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
@@ -432,6 +442,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconnect_event_requires_a_previous_successful_connection() {
+        assert!(!should_notify_reconnected(false, false));
+        assert!(!should_notify_reconnected(true, true));
+        assert!(should_notify_reconnected(false, true));
+    }
     use crate::protocol::control_message::{ErrorResponseMsg, RegResponseMsg};
     use futures::FutureExt;
 

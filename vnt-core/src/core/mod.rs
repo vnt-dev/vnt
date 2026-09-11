@@ -204,7 +204,6 @@ impl NetworkManager {
         if p2p_socket.is_some() {
             task_group.spawn(node_announcement_task(
                 app_state.network.clone(),
-                app_state.route_table.clone(),
                 basic_outbound.clone(),
                 node_identity.clone(),
             ));
@@ -757,7 +756,9 @@ mod decentralized_loopback_tests {
             guards.push(guard);
         }
 
-        tokio::time::timeout(Duration::from_secs(20), async {
+        // Passive graph discovery waits for the first 25-35 second periodic
+        // announcement; route creation no longer triggers an immediate one.
+        tokio::time::timeout(Duration::from_secs(45), async {
             loop {
                 let a = managers[0].vnt_api();
                 let d = managers[3].vnt_api();

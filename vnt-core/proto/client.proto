@@ -86,7 +86,8 @@ message PeerHandshake {
 // Public metadata propagated through the graph. Network membership has
 // already been established by DirectConnect/Punch and is not broadcast.
 message PublicNodeIdentity {
-  fixed32 ip = 1;
+  // The enclosing NetPacket src_id is the authoritative node address.
+  reserved 1;
   string name = 2;
   string version = 3;
   repeated NodeSubnet advertised_subnets = 4;

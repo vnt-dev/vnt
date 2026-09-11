@@ -118,7 +118,6 @@ impl LocalNodeIdentity {
 
     fn to_public_proto(&self) -> proto::PublicNodeIdentity {
         proto::PublicNodeIdentity {
-            ip: self.ip.into(),
             name: self.name.clone(),
             version: self.version.clone(),
             advertised_subnets: self
@@ -132,8 +131,7 @@ impl LocalNodeIdentity {
         }
     }
 
-    fn from_public_proto(value: proto::PublicNodeIdentity) -> anyhow::Result<Self> {
-        let ip = Ipv4Addr::from(value.ip);
+    fn from_public_proto(value: proto::PublicNodeIdentity, ip: Ipv4Addr) -> anyhow::Result<Self> {
         if ip.is_unspecified() || ip.is_broadcast() {
             bail!("invalid node identity ip: {ip}")
         }
@@ -206,13 +204,13 @@ impl NodeDiscovery {
         .encode_bytes_mut()
     }
 
-    pub fn from_slice(buf: &[u8]) -> anyhow::Result<Self> {
+    pub fn from_slice(buf: &[u8], source: Ipv4Addr) -> anyhow::Result<Self> {
         let message = proto::NodeDiscovery::decode(buf)?;
         let identity = message
             .identity
             .ok_or_else(|| anyhow::anyhow!("missing node identity"))?;
         Ok(Self {
-            identity: LocalNodeIdentity::from_public_proto(identity)?,
+            identity: LocalNodeIdentity::from_public_proto(identity, source)?,
             request_id: message.request_id,
         })
     }
@@ -371,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn node_discovery_wire_identity_omits_network_code() {
+    fn node_discovery_wire_identity_omits_source_ip_and_network_code() {
         let discovery = NodeDiscovery {
             identity: LocalNodeIdentity {
                 ip: "10.26.0.2".parse().unwrap(),
@@ -391,11 +389,12 @@ mod tests {
 
         let wire = proto::NodeDiscovery::decode(encoded.as_ref()).unwrap();
         let public = wire.identity.unwrap();
-        assert_eq!(public.ip, u32::from(Ipv4Addr::new(10, 26, 0, 2)));
         assert_eq!(public.name, "node-a");
         assert_eq!(public.version, "2.0.8");
 
-        let decoded = NodeDiscovery::from_slice(encoded.as_ref()).unwrap();
+        let source = Ipv4Addr::new(10, 26, 0, 2);
+        let decoded = NodeDiscovery::from_slice(encoded.as_ref(), source).unwrap();
+        assert_eq!(decoded.identity.ip, source);
         assert!(decoded.identity.network_code.is_empty());
         assert_eq!(
             decoded.identity.advertised_subnets,

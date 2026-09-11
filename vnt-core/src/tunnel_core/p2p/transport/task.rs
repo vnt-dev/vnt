@@ -149,17 +149,12 @@ pub async fn init_tunnel(
 
 pub(crate) async fn node_announcement_task(
     network: SharedNetworkAddr,
-    route_table: RouteTable,
     outbound: BasicOutbound,
     identity: NodeIdentityTemplate,
 ) {
-    let notify = route_table.first_direct_route_notify();
     loop {
         let jitter = 25 + (rand::random::<u64>() % 11);
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(jitter)) => {}
-            _ = notify.notified() => {}
-        }
+        tokio::time::sleep(Duration::from_secs(jitter)).await;
         let Some(ip) = network.ip() else {
             continue;
         };
@@ -324,8 +319,8 @@ pub async fn ping_all(
 
         for (id, list) in vec {
             for (index, route) in list.iter().enumerate() {
-                if index > 4 {
-                    break;
+                if index > 4 && !route.is_direct() {
+                    continue;
                 }
                 let ping = match build_route_ping(
                     src,
@@ -403,7 +398,6 @@ const RELAY_ROUTE_TARGET: usize = 3;
 const RELAY_TARGETS_PER_BATCH: usize = 10;
 const RELAY_PROBES_PER_TARGET: usize = 3;
 const RELAY_RESPONSE_WAIT: Duration = Duration::from_secs(2);
-const RELAY_START_DELAY: Duration = Duration::from_secs(10);
 const RELAY_RECONCILE_INTERVAL: Duration = Duration::from_secs(120);
 const RELAY_BACKOFF: [Duration; 5] = [
     Duration::from_secs(5),
@@ -594,6 +588,7 @@ impl RelayProbeScheduler {
         actions
     }
 
+    #[cfg(test)]
     fn next_deadline(&self, now: Instant) -> Option<Instant> {
         let deadline = self.states.values().map(|state| state.next_attempt).min()?;
         if deadline <= now && self.tokens < 1.0 {
@@ -637,15 +632,14 @@ fn build_relay_probe(
     Ok(probe)
 }
 
-/// 事件驱动的客户端中继探测任务。
+/// Reconciles legacy relay routes on a fixed cadence. Route changes do not
+/// trigger control traffic between periodic runs.
 pub async fn relay_probe_task(
     network: SharedNetworkAddr,
     route_table: RouteTable,
     socket_manager: P2pOutbound,
     turn: Arc<Vec<TurnRule>>,
 ) {
-    let first_direct_route = route_table.first_direct_route_notify();
-    tokio::time::sleep(RELAY_START_DELAY).await;
     let mut reconcile = tokio::time::interval_at(
         tokio::time::Instant::now() + RELAY_RECONCILE_INTERVAL,
         RELAY_RECONCILE_INTERVAL,
@@ -653,6 +647,7 @@ pub async fn relay_probe_task(
     reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut scheduler = RelayProbeScheduler::new(Instant::now());
     loop {
+        reconcile.tick().await;
         let now = Instant::now();
         if let Some(src) = network.ip() {
             let routes = route_table.route_table();
@@ -677,20 +672,6 @@ pub async fn relay_probe_task(
                     );
                 }
             }
-        }
-
-        let retry = async {
-            if let Some(deadline) = scheduler.next_deadline(Instant::now()) {
-                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
-            } else {
-                std::future::pending::<()>().await;
-            }
-        };
-        tokio::pin!(retry);
-        tokio::select! {
-            _ = first_direct_route.notified() => {}
-            _ = reconcile.tick() => {}
-            _ = &mut retry => {}
         }
     }
 }

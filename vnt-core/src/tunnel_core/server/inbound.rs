@@ -660,10 +660,11 @@ impl ServerTurnInboundHandler {
                 msg_type,
                 MsgType::NodeProbe | MsgType::NodeProbeReply | MsgType::NodeAnnouncement
             ) {
-                let discovery = crate::protocol::client_message::NodeDiscovery::from_slice(
+                crate::protocol::client_message::NodeDiscovery::from_slice(
                     net_packet.payload(),
+                    source,
                 )?;
-                if discovery.identity.ip != source || !network_addr.network().contains(&source) {
+                if !network_addr.network().contains(&source) {
                     return Ok(());
                 }
             }
@@ -795,6 +796,7 @@ impl ServerTurnInboundHandler {
             MsgType::NodeProbe if dest == network_addr.ip => {
                 let request = crate::protocol::client_message::NodeDiscovery::from_slice(
                     net_packet.payload(),
+                    src,
                 )?;
                 let payload = crate::protocol::client_message::NodeDiscovery {
                     identity: self.node_identity.with_ip(network_addr.ip),

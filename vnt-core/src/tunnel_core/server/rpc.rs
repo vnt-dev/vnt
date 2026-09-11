@@ -106,6 +106,9 @@ impl ServerRPC {
     pub async fn client_list(&self) -> anyhow::Result<ClientListResponse> {
         let mut map: HashMap<String, ClientInfo> = HashMap::new();
         for server_id in self.tunnel_to_server.server_id_list() {
+            if !self.tunnel_to_server.is_server_connected(*server_id) {
+                continue;
+            }
             match self.client_list_target(*server_id).await {
                 Ok(rs) => {
                     for client in rs.list {

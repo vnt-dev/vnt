@@ -308,8 +308,8 @@ impl P2pInboundHandler {
         }
 
         let discovery =
-            crate::protocol::client_message::NodeDiscovery::from_slice(packet.payload())?;
-        if discovery.identity.ip != source || !net.network().contains(&source) {
+            crate::protocol::client_message::NodeDiscovery::from_slice(packet.payload(), source)?;
+        if !net.network().contains(&source) {
             bail!("invalid gossip node identity from {source}")
         }
         let node = NodeInfo {
@@ -320,9 +320,12 @@ impl P2pInboundHandler {
         };
         // Learning is deliberately done before deduplication: a duplicate
         // arriving on another edge is a useful backup next hop.
-        self.route_table
+        let identity_changed = self
+            .route_table
             .add_gossip_route(node, Route::from_default_rt(route_key, metric));
-        self.sync_gossip_subnets();
+        if identity_changed {
+            self.sync_gossip_subnets();
+        }
         if !self.basic_outbound.graph_first_seen(msg_type, source, seq) {
             return Ok(());
         }
@@ -635,12 +638,22 @@ impl P2pInboundHandler {
                             return Ok(());
                         }
                     };
-                let first = if let Some((node, _)) = identity.as_ref() {
-                    self.route_table
-                        .add_identified_owner_route(node.clone(), route_key)
+                let (first, identity_changed) = if let Some((node, _)) = identity.as_ref() {
+                    let changed = self.route_table.node_info(&ctx.src_ip).as_ref() != Some(node);
+                    (
+                        self.route_table
+                            .add_identified_owner_route(node.clone(), route_key),
+                        changed,
+                    )
                 } else {
-                    self.route_table.add_owner_route(ctx.src_ip, route_key)
+                    (
+                        self.route_table.add_owner_route(ctx.src_ip, route_key),
+                        false,
+                    )
                 };
+                if identity_changed {
+                    self.sync_gossip_subnets();
+                }
                 if first {
                     self.punch_backoff.reset(ctx.src_ip);
                 }
@@ -680,11 +693,21 @@ impl P2pInboundHandler {
                             return Ok(());
                         }
                     };
-                let first = if let Some((node, _)) = identity {
-                    self.route_table.add_identified_owner_route(node, route_key)
+                let (first, identity_changed) = if let Some((node, _)) = identity {
+                    let changed = self.route_table.node_info(&ctx.src_ip).as_ref() != Some(&node);
+                    (
+                        self.route_table.add_identified_owner_route(node, route_key),
+                        changed,
+                    )
                 } else {
-                    self.route_table.add_owner_route(ctx.src_ip, route_key)
+                    (
+                        self.route_table.add_owner_route(ctx.src_ip, route_key),
+                        false,
+                    )
                 };
+                if identity_changed {
+                    self.sync_gossip_subnets();
+                }
                 if first {
                     self.punch_backoff.reset(ctx.src_ip);
                 }

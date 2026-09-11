@@ -39,6 +39,9 @@ impl ServerOutbound {
     pub fn server_id_list(&self) -> &Vec<u32> {
         &self.server_id_list
     }
+    pub fn is_server_connected(&self, server_id: u32) -> bool {
+        self.server_info_collection.is_server_connected(server_id)
+    }
     pub fn encrypt_reserve(&self) -> usize {
         self.packet_crypto.encrypt_reserve()
     }

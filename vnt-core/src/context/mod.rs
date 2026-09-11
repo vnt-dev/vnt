@@ -447,6 +447,7 @@ impl ServerInfoCollection {
         self.server_node_map
             .read()
             .iter()
+            .filter(|(_, server)| server.connected)
             .map(|(k, v)| {
                 (
                     *k,
@@ -634,21 +635,7 @@ impl ServerInfoCollection {
         } else {
             server_node.client_map.extend(map);
         }
-        let mut client_simple_map = HashMap::<Ipv4Addr, ClientSimpleInfo>::new();
-        for server_node in guard.values() {
-            for x in server_node.client_map.values() {
-                if let Some(v) = client_simple_map.get_mut(&x.ip) {
-                    if x.online {
-                        v.online = true;
-                    }
-                    if x.client_type as i32 > v.client_type as i32 {
-                        v.client_type = x.client_type;
-                    }
-                } else {
-                    client_simple_map.insert(x.ip, x.clone());
-                }
-            }
-        }
+        let client_simple_map = merged_client_simple_map(&guard);
 
         let mut guard = self.client_simple_list.write();
         let previous_online: HashMap<Ipv4Addr, bool> =
@@ -673,9 +660,20 @@ impl ServerInfoCollection {
         let old = server_node.connected;
         server_node.connected = val;
         if !val {
+            // Keep historical entries for device lists, but never reactivate
+            // them merely because the transport reconnects. Version zero asks
+            // the server for a fresh snapshot after registration.
+            server_node.data_version = 0;
+            for client in server_node.client_map.values_mut() {
+                client.online = false;
+            }
             server_node.subnet_snapshot_hash.clear();
             server_node.subnet_nodes.clear();
         }
+        let clients = merged_client_simple_map(&mutex_guard)
+            .into_values()
+            .collect();
+        *self.client_simple_list.write() = clients;
         old
     }
     pub fn is_any_server_connected(&self, server_ids: Option<&[u32]>) -> bool {
@@ -762,6 +760,45 @@ impl ServerInfoCollection {
             server_node.subnet_nodes.clear();
         }
     }
+}
+
+/// Merge server snapshots without treating a disconnected server's cached
+/// state as current reachability. The cached maps themselves are retained so
+/// reconnecting servers can continue incremental synchronization.
+fn merged_client_simple_map(
+    servers: &HashMap<u32, ServerNodeInfo>,
+) -> HashMap<Ipv4Addr, ClientSimpleInfo> {
+    let mut clients = HashMap::<Ipv4Addr, ClientSimpleInfo>::new();
+    // Connected snapshots are authoritative. Prefer an online snapshot's
+    // metadata when connected servers temporarily disagree about one IP.
+    for server in servers.values().filter(|server| server.connected) {
+        for snapshot in server.client_map.values() {
+            if let Some(client) = clients.get_mut(&snapshot.ip) {
+                let was_online = client.online;
+                let prefer_snapshot = (snapshot.online && !was_online)
+                    || (snapshot.online == was_online
+                        && snapshot.client_type as i32 > client.client_type as i32);
+                if prefer_snapshot {
+                    *client = snapshot.clone();
+                }
+                client.online = was_online || snapshot.online;
+            } else {
+                clients.insert(snapshot.ip, snapshot.clone());
+            }
+        }
+    }
+    // Retain disconnected snapshots only as offline history. They must never
+    // overwrite metadata supplied by a currently connected server.
+    for server in servers.values().filter(|server| !server.connected) {
+        for snapshot in server.client_map.values() {
+            clients.entry(snapshot.ip).or_insert_with(|| {
+                let mut client = snapshot.clone();
+                client.online = false;
+                client
+            });
+        }
+    }
+    clients
 }
 
 fn ipv4_nets_overlap(left: Ipv4Net, right: Ipv4Net) -> bool {
@@ -884,6 +921,7 @@ mod client_status_tests {
     fn online_transitions_are_reported_once() {
         let servers = ServerInfoCollection::default();
         servers.update_server(vec![(0, ProtocolAddress::default())]);
+        servers.set_server_connected(0, true);
         let peer = Ipv4Addr::new(10, 26, 0, 2);
 
         assert_eq!(update(&servers, peer, true), vec![peer]);
@@ -897,6 +935,7 @@ mod client_status_tests {
     fn disappearing_from_full_snapshot_is_one_offline_transition() {
         let servers = ServerInfoCollection::default();
         servers.update_server(vec![(0, ProtocolAddress::default())]);
+        servers.set_server_connected(0, true);
         let peer = Ipv4Addr::new(10, 26, 0, 2);
         assert_eq!(update(&servers, peer, true), vec![peer]);
 
@@ -927,6 +966,8 @@ mod client_status_tests {
         let self_ip = Ipv4Addr::new(10, 26, 0, 1);
         let ikev2 = Ipv4Addr::new(10, 26, 0, 2);
         let wireguard = Ipv4Addr::new(10, 26, 0, 3);
+        servers.set_server_connected(0, true);
+        servers.set_server_connected(1, true);
         for (server_id, ip, client_type) in [
             (0, ikev2, ClientType::Ikev2),
             (1, wireguard, ClientType::Wireguard),
@@ -952,6 +993,86 @@ mod client_status_tests {
         assert_eq!(servers.client_type(&wireguard), Some(ClientType::Wireguard));
         assert!(!servers.client_online_ips().contains(&ikev2));
         assert!(!servers.client_online_ips().contains(&wireguard));
+    }
+
+    #[test]
+    fn disconnected_server_snapshot_is_retained_but_not_reachable() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![(0, ProtocolAddress::default())]);
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+
+        servers.set_server_connected(0, true);
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+        assert!(servers.exists_online_client_ip(&peer));
+        assert!(servers.server_client_ip_map().contains_key(&0));
+
+        servers.set_server_connected(0, false);
+        assert!(!servers.exists_online_client_ip(&peer));
+        assert!(servers.server_client_ip_map().is_empty());
+        let cached = servers
+            .client_ips()
+            .into_iter()
+            .find(|client| client.ip == peer)
+            .expect("disconnected snapshots remain available as offline history");
+        assert!(!cached.online);
+
+        servers.set_server_connected(0, true);
+        assert!(!servers.exists_online_client_ip(&peer));
+        assert_eq!(update(&servers, peer, true), vec![peer]);
+        assert!(servers.exists_online_client_ip(&peer));
+    }
+
+    #[test]
+    fn disconnected_server_metadata_does_not_override_connected_snapshot() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![
+            (0, ProtocolAddress::default()),
+            (1, ProtocolAddress::default()),
+        ]);
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+
+        servers.set_server_connected(0, true);
+        servers.set_server_connected(1, true);
+        servers.update_client_simple_list(
+            0,
+            Ipv4Addr::new(10, 26, 0, 1),
+            ClientSimpleInfoList {
+                data_version: 1,
+                list: vec![ClientSimpleInfo {
+                    ip: peer,
+                    client_type: ClientType::Vnt,
+                    online: true,
+                }],
+                is_all: true,
+                time: 0,
+            },
+            0,
+        );
+        servers.update_client_simple_list(
+            1,
+            Ipv4Addr::new(10, 26, 0, 1),
+            ClientSimpleInfoList {
+                data_version: 1,
+                list: vec![ClientSimpleInfo {
+                    ip: peer,
+                    client_type: ClientType::Wireguard,
+                    online: true,
+                }],
+                is_all: true,
+                time: 0,
+            },
+            0,
+        );
+
+        servers.set_server_connected(1, false);
+
+        let client = servers
+            .client_ips()
+            .into_iter()
+            .find(|client| client.ip == peer)
+            .unwrap();
+        assert!(client.online);
+        assert_eq!(client.client_type, ClientType::Vnt);
     }
 }
 #[derive(Copy, Clone, Debug)]

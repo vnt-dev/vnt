@@ -158,11 +158,23 @@ fn rebuild_routes(tables: &mut SubnetRouteTables) {
     let mut routes = tables.static_routes.clone();
     let mut learned = tables.automatic_routes.clone();
     learned.extend(tables.gossip_routes.clone());
+    // Locally configured routes are authoritative. A learned route which
+    // overlaps one of them must not win merely because it has a longer prefix.
+    learned.retain(|learned| {
+        !tables
+            .static_routes
+            .iter()
+            .any(|static_route| ipv4_nets_overlap(static_route.net, learned.net))
+    });
     learned.sort_by_key(|route| (route.net, route.target_ip));
     learned.dedup_by_key(|route| route.net);
     routes.extend(learned);
     routes.sort_by_key(|route| std::cmp::Reverse(route.net.prefix_len()));
     tables.effective_routes = routes;
+}
+
+fn ipv4_nets_overlap(left: Ipv4Net, right: Ipv4Net) -> bool {
+    left.contains(&right.network()) || right.contains(&left.network())
 }
 
 #[derive(Clone)]
@@ -224,5 +236,20 @@ mod tests {
             routes.route(&"192.168.0.200".parse().unwrap()),
             Some("10.26.0.2".parse().unwrap())
         );
+    }
+
+    #[test]
+    fn static_routes_override_overlapping_gossip_routes() {
+        let static_route = "192.168.0.0/24,10.26.0.9".parse::<NetInput>().unwrap();
+        let gossip_route = "192.168.0.0/25,10.26.0.2".parse::<NetInput>().unwrap();
+        let routes = SubnetExternalRoute::new(vec![static_route.clone()]);
+
+        routes.set_gossip_routes(vec![gossip_route]);
+
+        assert_eq!(
+            routes.route(&"192.168.0.20".parse().unwrap()),
+            Some(static_route.target_ip)
+        );
+        assert_eq!(routes.all_route(), vec![static_route]);
     }
 }
