@@ -209,7 +209,7 @@ export const formToToml = (formData) => {
 
   const servers = formData.server.filter((s) => s.trim());
   if (servers.length > 0) {
-    toml += "# 服务器地址列表(省略协议时默认 tcp；支持 quic / tcp / wss / dynamic) (必填)\n";
+    toml += "# 可选服务器地址列表（固定 IP 时在后台连接）\n";
     toml += "# dynamic 协议默认使用 DNS TXT 解析，也可使用 dynamic://http(s)://接口地址获取换行分隔的服务器地址列表\n";
     toml += `server = [${servers.map((s) => `"${s}"`).join(", ")}]\n`;
   }
@@ -396,7 +396,7 @@ export const NEW_CONFIG_TEMPLATE = `# config_name = "配置名称"
 # 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
 network_code = "your_network_code"
 
-# 服务器地址列表(省略协议时默认 tcp；支持 quic / tcp / wss / dynamic) (必填)
+# 可选服务器地址列表；固定 IP 时在后台连接，也可删除此项完全无服务器运行
 # dynamic 协议默认使用 DNS TXT 解析，也可使用 dynamic://http(s)://接口地址获取换行分隔的服务器地址列表
 server = ["quic://1.2.3.4:29872"]
 
@@ -415,8 +415,8 @@ server = ["quic://1.2.3.4:29872"]
 
 # ===简单使用以下参数可以不动===
 
-# 自定义虚拟 IP（配置多个服务器时必填，单服务器时可选）
-# ip = "10.10.0.2"
+# 固定虚拟 IP/CIDR（纯 IP 默认 /24；无服务器或多服务器时必填）
+# ip = "10.10.0.2/24"
 
 # 是否启用quic优化传输 (默认 false,设置为true时开启)
 # 开启后传输过程几乎不会丢包，但是延迟会有波动

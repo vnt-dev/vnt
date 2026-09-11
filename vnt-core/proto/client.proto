@@ -62,3 +62,37 @@ message PunchInfo{
   // Bit 0..3: IPv4Tcp, IPv4Udp, IPv6Tcp, IPv6Udp. Zero means legacy/all.
   uint32 punch_model = 2;
 }
+
+// Identity exchanged only between VNT clients. device_id is deliberately not
+// part of this message: the virtual IPv4 address is the node identifier.
+message NodeSubnet {
+  fixed32 network = 1;
+  uint32 prefix_len = 2;
+}
+
+message NodeIdentity {
+  fixed32 ip = 1;
+  string name = 2;
+  string version = 3;
+  string network_code = 4;
+  repeated NodeSubnet advertised_subnets = 5;
+}
+
+message PeerHandshake {
+  NodeIdentity identity = 1;
+  fixed64 request_id = 2;
+}
+
+// Public metadata propagated through the graph. Network membership has
+// already been established by DirectConnect/Punch and is not broadcast.
+message PublicNodeIdentity {
+  fixed32 ip = 1;
+  string name = 2;
+  string version = 3;
+  repeated NodeSubnet advertised_subnets = 4;
+}
+
+message NodeDiscovery {
+  PublicNodeIdentity identity = 1;
+  fixed64 request_id = 2;
+}

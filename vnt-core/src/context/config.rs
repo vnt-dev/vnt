@@ -19,6 +19,89 @@ pub const MAX_NAME_LEN: usize = 128;
 pub const MAX_VERSION_LEN: usize = 32;
 pub const MAX_MTU: u16 = 1500;
 
+/// A fixed overlay node address. Plain IPv4 values keep the historical
+/// configuration shape and use /24 when no prefix is provided.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct VirtualIp {
+    ip: Ipv4Addr,
+    prefix_len: u8,
+}
+
+impl VirtualIp {
+    pub fn new(ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<Self> {
+        let net = Ipv4Net::new(ip, prefix_len)?;
+        if prefix_len > 30 {
+            bail!("virtual IP prefix must be between 0 and 30")
+        }
+        if ip == net.network() || ip == net.broadcast() {
+            bail!("virtual IP {ip}/{prefix_len} cannot be the network or broadcast address")
+        }
+        Ok(Self { ip, prefix_len })
+    }
+
+    pub fn ip(self) -> Ipv4Addr {
+        self.ip
+    }
+
+    pub fn prefix_len(self) -> u8 {
+        self.prefix_len
+    }
+
+    pub fn network(self) -> Ipv4Net {
+        Ipv4Net::new_assert(self.ip, self.prefix_len)
+    }
+}
+
+impl FromStr for VirtualIp {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim();
+        let (ip, prefix_len) = if let Some((ip, prefix)) = value.split_once('/') {
+            (
+                ip.parse::<Ipv4Addr>()
+                    .map_err(|error| anyhow::anyhow!("invalid virtual IP '{value}': {error}"))?,
+                prefix.parse::<u8>().map_err(|error| {
+                    anyhow::anyhow!("invalid virtual IP prefix '{value}': {error}")
+                })?,
+            )
+        } else {
+            (
+                value
+                    .parse::<Ipv4Addr>()
+                    .map_err(|error| anyhow::anyhow!("invalid virtual IP '{value}': {error}"))?,
+                24,
+            )
+        };
+        Self::new(ip, prefix_len)
+    }
+}
+
+impl Display for VirtualIp {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.ip, self.prefix_len)
+    }
+}
+
+impl serde::Serialize for VirtualIp {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for VirtualIp {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        value.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 const PUNCH_POLICIES: [PunchPolicy; 4] = [
     PunchPolicy::IPv4Tcp,
     PunchPolicy::IPv4Udp,
@@ -348,7 +431,7 @@ pub struct Config {
     pub tun_name: Option<String>,
     /// 绑定 VNT 对外通信 Socket 的物理网卡名称。
     pub outbound_interface: Option<String>,
-    pub ip: Option<Ipv4Addr>,
+    pub ip: Option<VirtualIp>,
     pub password: Option<String>,
     pub no_punch: bool,
     pub no_broadcast: bool,
@@ -445,8 +528,8 @@ impl Config {
         if self.device_mode == DeviceMode::Tap {
             bail!("TAP mode is not supported on mobile VPN interfaces");
         }
-        if self.server_addr.is_empty() {
-            bail!("服务器地址不能为空");
+        if self.server_addr.is_empty() && self.ip.is_none() {
+            bail!("未配置服务器时必须指定虚拟 IP");
         }
         if self.server_addr.len() > 1 {
             let mut set = HashSet::new();
@@ -526,6 +609,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn virtual_ip_accepts_cidr_and_defaults_to_24() {
+        let plain: VirtualIp = "10.26.0.2".parse().unwrap();
+        assert_eq!(plain.ip(), Ipv4Addr::new(10, 26, 0, 2));
+        assert_eq!(plain.prefix_len(), 24);
+        assert_eq!(plain.to_string(), "10.26.0.2/24");
+
+        let cidr: VirtualIp = "10.26.8.2/20".parse().unwrap();
+        assert_eq!(cidr.prefix_len(), 20);
+        assert!("10.26.0.0/24".parse::<VirtualIp>().is_err());
+        assert!("10.26.0.255/24".parse::<VirtualIp>().is_err());
+        assert!("10.26.0.2/31".parse::<VirtualIp>().is_err());
+    }
+
+    #[test]
+    fn serverless_requires_a_fixed_virtual_ip() {
+        assert!(Config::default().check().is_err());
+        let config = Config {
+            ip: Some("10.26.0.2/24".parse().unwrap()),
+            ..Default::default()
+        };
+        assert!(config.check().is_ok());
+    }
+
+    #[test]
     fn device_mode_parse_and_display() {
         for (text, mode) in [
             ("no", DeviceMode::No),
@@ -601,14 +708,14 @@ mod tests {
 
         let fixed_ip = Config {
             server_addr: vec![first.clone(), second],
-            ip: Some(Ipv4Addr::new(10, 26, 0, 2)),
+            ip: Some("10.26.0.2".parse().unwrap()),
             ..Default::default()
         };
         assert!(fixed_ip.check().is_ok());
 
         let duplicate = Config {
             server_addr: vec![first.clone(), first],
-            ip: Some(Ipv4Addr::new(10, 26, 0, 2)),
+            ip: Some("10.26.0.2".parse().unwrap()),
             ..Default::default()
         };
         assert!(

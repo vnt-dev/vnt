@@ -56,7 +56,7 @@ public class VntApi {
             return new NetworkInfo(
                     obj.getString("ip"),
                     obj.getInt("prefix_len"),
-                    obj.getString("gateway"),
+                    obj.isNull("gateway") ? null : obj.getString("gateway"),
                     obj.getString("broadcast")
             );
         } catch (Exception e) {

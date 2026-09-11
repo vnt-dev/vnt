@@ -1,19 +1,25 @@
 use crate::compression::PacketCompression;
 use crate::context::config::{TurnRule, allow_punch};
 use crate::context::nat::PunchBackoff;
-use crate::context::{NetworkAddr, NetworkRoute, PacketLossStats};
+use crate::context::{NetworkAddr, NetworkRoute, PacketLossStats, PeerInfoMap};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::fec::FecDecoder;
+use crate::protocol::client_message::{
+    NETWORK_CODE_HASH_LEN, NodeIdentityTemplate, PeerHandshake, PunchInfo, network_code_hash,
+    network_code_hash_matches,
+};
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
-use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
+use crate::tunnel_core::p2p::route_table::{NodeInfo, Route, RouteTable};
+use crate::tunnel_core::p2p::transport::punch::{NatPuncher, PunchInfoGetter};
 use anyhow::bail;
 use rustp2p_core::endpoint::TunnelWriteHalf;
 use rustp2p_core::route_table::RouteKey;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
+const GOSSIP_TTL: u8 = 15;
 
 #[derive(Clone, Copy)]
 struct PacketContext {
@@ -32,21 +38,99 @@ fn valid_relay_probe(net: &NetworkAddr, ctx: &PacketContext) -> bool {
     valid_punch_source(net, ctx.src_ip) && ctx.dest_ip == net.ip && ctx.max_ttl == 2 && ctx.ttl == 0
 }
 
-fn build_handshake_response(
+fn build_direct_handshake_response(
     msg_type: MsgType,
     local_ip: Ipv4Addr,
     peer_ip: Ipv4Addr,
     encrypt_reserve: usize,
+    identity: Option<(&NodeIdentityTemplate, u64)>,
 ) -> anyhow::Result<NetPacket<TransmissionBytes>> {
+    let payload = if let Some((identity, request_id)) = identity {
+        PeerHandshake {
+            identity: identity.with_ip(local_ip),
+            request_id,
+        }
+        .encode()
+        .to_vec()
+    } else {
+        crate::utils::time::now_ts_ms().to_be_bytes().to_vec()
+    };
     let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
-        HEAD_LENGTH + 8,
+        HEAD_LENGTH + payload.len(),
         encrypt_reserve,
     ))?;
     packet.set_msg_type(msg_type);
     packet.set_ttl(1);
     packet.set_src_id(local_ip.into());
     packet.set_dest_id(peer_ip.into());
-    packet.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())?;
+    packet.set_payload(&payload)?;
+    Ok(packet)
+}
+
+fn direct_identity(
+    net: &NetworkAddr,
+    source: Ipv4Addr,
+    payload: &[u8],
+    local: &NodeIdentityTemplate,
+) -> anyhow::Result<Option<(NodeInfo, u64)>> {
+    if payload.len() == 8 {
+        return Ok(None);
+    }
+    let handshake = PeerHandshake::from_slice(payload)?;
+    if handshake.identity.ip != source
+        || handshake.identity.network_code != local.network_code
+        || !net.network().contains(&source)
+    {
+        bail!("peer identity does not match packet source or local network")
+    }
+    Ok(Some((
+        NodeInfo {
+            ip: source,
+            name: handshake.identity.name,
+            version: handshake.identity.version,
+            advertised_subnets: handshake.identity.advertised_subnets,
+        },
+        handshake.request_id,
+    )))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PunchPayloadKind {
+    Legacy,
+    Current,
+}
+
+fn validate_punch_payload(payload: &[u8], network_code: &str) -> anyhow::Result<PunchPayloadKind> {
+    match payload.len() {
+        8 => Ok(PunchPayloadKind::Legacy),
+        NETWORK_CODE_HASH_LEN if network_code_hash_matches(network_code, payload) => {
+            Ok(PunchPayloadKind::Current)
+        }
+        NETWORK_CODE_HASH_LEN => bail!("punch network code hash mismatch"),
+        length => bail!("invalid punch payload length: {length}"),
+    }
+}
+
+fn build_punch_response(
+    local_ip: Ipv4Addr,
+    peer_ip: Ipv4Addr,
+    encrypt_reserve: usize,
+    kind: PunchPayloadKind,
+    network_code: &str,
+) -> anyhow::Result<NetPacket<TransmissionBytes>> {
+    let payload = match kind {
+        PunchPayloadKind::Legacy => crate::utils::time::now_ts_ms().to_be_bytes().to_vec(),
+        PunchPayloadKind::Current => network_code_hash(network_code).to_vec(),
+    };
+    let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+        HEAD_LENGTH + payload.len(),
+        encrypt_reserve,
+    ))?;
+    packet.set_msg_type(MsgType::PunchRes);
+    packet.set_ttl(1);
+    packet.set_src_id(local_ip.into());
+    packet.set_dest_id(peer_ip.into());
+    packet.set_payload(&payload)?;
     Ok(packet)
 }
 
@@ -61,6 +145,11 @@ pub(crate) struct P2pInboundConfig {
     pub turn: Arc<Vec<TurnRule>>,
     pub basic_outbound: BasicOutbound,
     pub punch_backoff: PunchBackoff,
+    pub identity: NodeIdentityTemplate,
+    pub auto_sync_subnet: bool,
+    pub puncher: NatPuncher,
+    pub punch_info_getter: PunchInfoGetter,
+    pub peer_map: PeerInfoMap,
 }
 
 #[derive(Clone)]
@@ -75,6 +164,11 @@ pub(crate) struct P2pInboundHandler {
     turn: Arc<Vec<TurnRule>>,
     basic_outbound: BasicOutbound,
     punch_backoff: PunchBackoff,
+    identity: NodeIdentityTemplate,
+    auto_sync_subnet: bool,
+    puncher: NatPuncher,
+    punch_info_getter: PunchInfoGetter,
+    peer_map: PeerInfoMap,
 }
 
 impl P2pInboundHandler {
@@ -90,6 +184,11 @@ impl P2pInboundHandler {
             turn: config.turn,
             basic_outbound: config.basic_outbound,
             punch_backoff: config.punch_backoff,
+            identity: config.identity,
+            auto_sync_subnet: config.auto_sync_subnet,
+            puncher: config.puncher,
+            punch_info_getter: config.punch_info_getter,
+            peer_map: config.peer_map,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -115,7 +214,7 @@ impl P2pInboundHandler {
         tunnel: &TunnelWriteHalf,
     ) -> anyhow::Result<()> {
         let mut net_packet = NetPacket::new(buf)?;
-        let _ = net_packet.msg_type()?;
+        let msg_type = net_packet.msg_type()?;
         let src_ip = Ipv4Addr::from(net_packet.src_id());
         let dest_ip = Ipv4Addr::from(net_packet.dest_id());
         if src_ip == dest_ip {
@@ -131,6 +230,20 @@ impl P2pInboundHandler {
         let Some(net) = self.network_route.network.get() else {
             bail!("未找到自身IP")
         };
+        if src_ip == net.ip {
+            return Ok(());
+        }
+        if matches!(
+            msg_type,
+            MsgType::NodeProbe
+                | MsgType::NodeProbeReply
+                | MsgType::NodeAnnouncement
+                | MsgType::Broadcast
+        ) {
+            return self
+                .process_graph_packet(&net, route_key, tunnel, net_packet)
+                .await;
+        }
         if net.ip != dest_ip
             && !dest_ip.is_broadcast()
             && !dest_ip.is_unspecified()
@@ -159,6 +272,117 @@ impl P2pInboundHandler {
 
         self.process_inner_packet(&net, route_key, tunnel, net_packet)
             .await
+    }
+
+    async fn process_graph_packet(
+        &self,
+        net: &NetworkAddr,
+        route_key: RouteKey,
+        _tunnel: &TunnelWriteHalf,
+        mut packet: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        let encrypted = NetPacket::new(packet.source_buf().clone())?.into_bytes();
+        let msg_type = packet.msg_type()?;
+        let source = Ipv4Addr::from(packet.src_id());
+        let destination = Ipv4Addr::from(packet.dest_id());
+        let seq = packet.seq();
+        let metric = packet.max_ttl().saturating_sub(packet.ttl()).max(1);
+        self.packet_crypto.decrypt_in_place(&mut packet)?;
+
+        if msg_type == MsgType::Broadcast {
+            if !self.basic_outbound.graph_first_seen(msg_type, source, seq) {
+                return Ok(());
+            }
+            if packet.ttl() >= 1 {
+                self.basic_outbound
+                    .flood_direct_p2p(&encrypted, Some(&route_key));
+                self.basic_outbound
+                    .flood_connected_servers(encrypted.clone(), None)
+                    .await;
+            }
+            let packet = self.packet_compression.decompress(packet)?;
+            self.enhanced_inbound
+                .inbound(net, msg_type, source, packet)
+                .await?;
+            return Ok(());
+        }
+
+        let discovery =
+            crate::protocol::client_message::NodeDiscovery::from_slice(packet.payload())?;
+        if discovery.identity.ip != source || !net.network().contains(&source) {
+            bail!("invalid gossip node identity from {source}")
+        }
+        let node = NodeInfo {
+            ip: source,
+            name: discovery.identity.name,
+            version: discovery.identity.version,
+            advertised_subnets: discovery.identity.advertised_subnets,
+        };
+        // Learning is deliberately done before deduplication: a duplicate
+        // arriving on another edge is a useful backup next hop.
+        self.route_table
+            .add_gossip_route(node, Route::from_default_rt(route_key, metric));
+        self.sync_gossip_subnets();
+        if !self.basic_outbound.graph_first_seen(msg_type, source, seq) {
+            return Ok(());
+        }
+
+        match msg_type {
+            MsgType::NodeAnnouncement => {
+                if packet.ttl() >= 1 {
+                    self.basic_outbound
+                        .flood_direct_p2p(&encrypted, Some(&route_key));
+                    self.basic_outbound
+                        .flood_connected_servers(encrypted.clone(), None)
+                        .await;
+                }
+            }
+            MsgType::NodeProbe if destination == net.ip => {
+                let payload = crate::protocol::client_message::NodeDiscovery {
+                    identity: self.identity.with_ip(net.ip),
+                    request_id: discovery.request_id,
+                }
+                .encode();
+                let mut reply = NetPacket::new(TransmissionBytes::zeroed_size(
+                    HEAD_LENGTH + payload.len(),
+                    self.packet_crypto.encrypt_reserve(),
+                ))?;
+                reply.set_msg_type(MsgType::NodeProbeReply);
+                reply.set_ttl(GOSSIP_TTL);
+                reply.set_src_id(net.ip.into());
+                reply.set_dest_id(source.into());
+                reply.set_payload(&payload)?;
+                self.basic_outbound
+                    .send_encrypted_packet(*net, source, reply)
+                    .await?;
+            }
+            MsgType::NodeProbe | MsgType::NodeProbeReply => {
+                if packet.ttl() == 0 {
+                    return Ok(());
+                }
+                if destination == net.ip {
+                    return Ok(());
+                }
+                if let Ok(route) = self.route_table.get_route_by_id(&destination)
+                    && route.route_key() != route_key
+                {
+                    // The ciphertext has already been authenticated locally;
+                    // forward it unchanged so the end-to-end sequence remains
+                    // the deduplication key.
+                    if let Some(p2p) = self.basic_outbound.p2p_outbound() {
+                        p2p.send_raw_to(encrypted, &route.route_key()).await?;
+                    }
+                } else {
+                    self.basic_outbound
+                        .flood_direct_p2p(&encrypted, Some(&route_key));
+                    self.basic_outbound
+                        .flood_connected_servers(encrypted.clone(), None)
+                        .await;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// 处理网络直接收到或由 FEC 恢复的内层包。普通包在进入 FEC 前已经完成
@@ -262,8 +486,50 @@ impl P2pInboundHandler {
                     }
                 }
             }
-            MsgType::PunchStart1 => {}
-            MsgType::PunchStart2 => {}
+            MsgType::PunchStart1 => {
+                if !allow_punch(&self.turn, &ctx.src_ip) {
+                    return Ok(());
+                }
+                let peer_info = PunchInfo::from_slice(net_packet.payload())?;
+                if self
+                    .peer_map
+                    .update_nat_info(ctx.src_ip, peer_info.nat_info.clone())
+                {
+                    self.punch_backoff.cap(ctx.src_ip);
+                }
+                let Some(mut self_info) = (self.punch_info_getter)(ctx.src_ip) else {
+                    return Ok(());
+                };
+                if let Some(effective) = self.puncher.punch(ctx.src_ip, peer_info)? {
+                    self_info.punch_model = effective;
+                    let payload = self_info.encode();
+                    let mut response = NetPacket::new(TransmissionBytes::zeroed_size(
+                        HEAD_LENGTH + payload.len(),
+                        self.packet_crypto.encrypt_reserve(),
+                    ))?;
+                    response.set_msg_type(MsgType::PunchStart2);
+                    response.set_ttl(GOSSIP_TTL);
+                    response.set_src_id(net.ip.into());
+                    response.set_dest_id(ctx.src_ip.into());
+                    response.set_payload(&payload)?;
+                    self.basic_outbound
+                        .send_encrypted_packet(*net, ctx.src_ip, response)
+                        .await?;
+                }
+            }
+            MsgType::PunchStart2 => {
+                if !allow_punch(&self.turn, &ctx.src_ip) {
+                    return Ok(());
+                }
+                let peer_info = PunchInfo::from_slice(net_packet.payload())?;
+                if self
+                    .peer_map
+                    .update_nat_info(ctx.src_ip, peer_info.nat_info.clone())
+                {
+                    self.punch_backoff.cap(ctx.src_ip);
+                }
+                self.puncher.punch_uncheck(ctx.src_ip, peer_info)?;
+            }
             MsgType::PunchReq => {
                 if !allow_punch(&self.turn, &ctx.src_ip) {
                     log::debug!("ignore configured turn target PunchReq from {}", ctx.src_ip);
@@ -287,14 +553,25 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                let kind =
+                    match validate_punch_payload(net_packet.payload(), &self.identity.network_code)
+                    {
+                        Ok(kind) => kind,
+                        Err(error) => {
+                            log::warn!("reject PunchReq from {}: {error}", ctx.src_ip);
+                            return Ok(());
+                        }
+                    };
+                let first = self.route_table.add_owner_route(ctx.src_ip, route_key);
+                if first {
                     self.punch_backoff.reset(ctx.src_ip);
                 }
-                let mut packet = build_handshake_response(
-                    MsgType::PunchRes,
+                let mut packet = build_punch_response(
                     net.ip,
                     ctx.src_ip,
                     self.packet_crypto.encrypt_reserve(),
+                    kind,
+                    &self.identity.network_code,
                 )?;
 
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
@@ -323,7 +600,14 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                if let Err(error) =
+                    validate_punch_payload(net_packet.payload(), &self.identity.network_code)
+                {
+                    log::warn!("reject PunchRes from {}: {error}", ctx.src_ip);
+                    return Ok(());
+                }
+                let first = self.route_table.add_owner_route(ctx.src_ip, route_key);
+                if first {
                     self.punch_backoff.reset(ctx.src_ip);
                 }
             }
@@ -340,14 +624,34 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     net.ip
                 );
-                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                let identity =
+                    match direct_identity(net, ctx.src_ip, net_packet.payload(), &self.identity) {
+                        Ok(identity) => identity,
+                        Err(error) => {
+                            log::warn!(
+                                "reject DirectConnectReq identity from {}: {error}",
+                                ctx.src_ip
+                            );
+                            return Ok(());
+                        }
+                    };
+                let first = if let Some((node, _)) = identity.as_ref() {
+                    self.route_table
+                        .add_identified_owner_route(node.clone(), route_key)
+                } else {
+                    self.route_table.add_owner_route(ctx.src_ip, route_key)
+                };
+                if first {
                     self.punch_backoff.reset(ctx.src_ip);
                 }
-                let mut packet = build_handshake_response(
+                let mut packet = build_direct_handshake_response(
                     MsgType::DirectConnectRes,
                     net.ip,
                     ctx.src_ip,
                     self.packet_crypto.encrypt_reserve(),
+                    identity
+                        .as_ref()
+                        .map(|(_, request_id)| (&self.identity, *request_id)),
                 )?;
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
                 tunnel.send(packet.into_bytes().into_buffer()).await?;
@@ -365,7 +669,23 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                if self.route_table.add_owner_route(ctx.src_ip, route_key) {
+                let identity =
+                    match direct_identity(net, ctx.src_ip, net_packet.payload(), &self.identity) {
+                        Ok(identity) => identity,
+                        Err(error) => {
+                            log::warn!(
+                                "reject DirectConnectRes identity from {}: {error}",
+                                ctx.src_ip
+                            );
+                            return Ok(());
+                        }
+                    };
+                let first = if let Some((node, _)) = identity {
+                    self.route_table.add_identified_owner_route(node, route_key)
+                } else {
+                    self.route_table.add_owner_route(ctx.src_ip, route_key)
+                };
+                if first {
                     self.punch_backoff.reset(ctx.src_ip);
                 }
             }
@@ -419,6 +739,27 @@ impl P2pInboundHandler {
 
     pub fn tunnel_disconnect(&self, route_key: RouteKey) {
         cleanup_tunnel_routes(&self.route_table, &self.packet_loss_stats, &route_key);
+        self.sync_gossip_subnets();
+    }
+
+    fn sync_gossip_subnets(&self) {
+        if !self.auto_sync_subnet {
+            return;
+        }
+        let routes = self
+            .route_table
+            .node_infos()
+            .into_iter()
+            .flat_map(|node| {
+                node.advertised_subnets
+                    .into_iter()
+                    .map(move |net| crate::nat::NetInput {
+                        net,
+                        target_ip: node.ip,
+                    })
+            })
+            .collect();
+        self.network_route.subnet_route.set_gossip_routes(routes);
     }
 }
 
@@ -438,11 +779,49 @@ mod tests {
 
     fn network() -> NetworkAddr {
         NetworkAddr {
-            gateway: Ipv4Addr::new(10, 26, 0, 1),
+            gateway: Some(Ipv4Addr::new(10, 26, 0, 1)),
             broadcast: Ipv4Addr::new(10, 26, 0, 255),
             ip: Ipv4Addr::new(10, 26, 0, 2),
             prefix_len: 24,
         }
+    }
+
+    fn identity(network_code: &str) -> NodeIdentityTemplate {
+        NodeIdentityTemplate {
+            name: "node".to_string(),
+            version: "2".to_string(),
+            network_code: network_code.to_string(),
+            advertised_subnets: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn direct_identity_accepts_full_identity_and_legacy_payload() {
+        let net = network();
+        let peer: Ipv4Addr = "10.26.0.3".parse().unwrap();
+        let local = identity("mesh");
+        let payload = PeerHandshake {
+            identity: local.with_ip(peer),
+            request_id: 7,
+        }
+        .encode();
+        let (node, request_id) = direct_identity(&net, peer, &payload, &local)
+            .unwrap()
+            .unwrap();
+        assert_eq!(node.ip, peer);
+        assert_eq!(request_id, 7);
+        assert!(
+            direct_identity(&net, peer, &[0; 8], &local)
+                .unwrap()
+                .is_none()
+        );
+
+        let wrong = PeerHandshake {
+            identity: identity("other-mesh").with_ip(peer),
+            request_id: 8,
+        }
+        .encode();
+        assert!(direct_identity(&net, peer, &wrong, &local).is_err());
     }
 
     #[test]
@@ -455,16 +834,47 @@ mod tests {
     }
 
     #[test]
-    fn handshake_responses_identify_the_local_virtual_ip() {
+    fn direct_handshake_response_identifies_the_local_virtual_ip() {
         let local = Ipv4Addr::new(10, 26, 0, 2);
         let peer = Ipv4Addr::new(10, 26, 0, 3);
-        for msg_type in [MsgType::PunchRes, MsgType::DirectConnectRes] {
-            let packet = build_handshake_response(msg_type, local, peer, 0).unwrap();
-            assert_eq!(packet.msg_type().unwrap(), msg_type);
-            assert_eq!(Ipv4Addr::from(packet.src_id()), local);
-            assert_eq!(Ipv4Addr::from(packet.dest_id()), peer);
-            assert_eq!(packet.payload().len(), 8);
-        }
+        let packet =
+            build_direct_handshake_response(MsgType::DirectConnectRes, local, peer, 0, None)
+                .unwrap();
+        assert_eq!(packet.msg_type().unwrap(), MsgType::DirectConnectRes);
+        assert_eq!(Ipv4Addr::from(packet.src_id()), local);
+        assert_eq!(Ipv4Addr::from(packet.dest_id()), peer);
+        assert_eq!(packet.payload().len(), 8);
+    }
+
+    #[test]
+    fn punch_payload_accepts_matching_hash_and_legacy_timestamp_only() {
+        let hash = network_code_hash("mesh");
+        assert_eq!(
+            validate_punch_payload(&hash, "mesh").unwrap(),
+            PunchPayloadKind::Current
+        );
+        assert_eq!(
+            validate_punch_payload(&[0; 8], "mesh").unwrap(),
+            PunchPayloadKind::Legacy
+        );
+        assert!(validate_punch_payload(&hash, "other").is_err());
+        assert!(validate_punch_payload(&[0; 7], "mesh").is_err());
+        assert!(validate_punch_payload(&[0; 17], "mesh").is_err());
+    }
+
+    #[test]
+    fn punch_response_preserves_legacy_format_or_uses_only_hash() {
+        let local = Ipv4Addr::new(10, 26, 0, 2);
+        let peer = Ipv4Addr::new(10, 26, 0, 3);
+        let current =
+            build_punch_response(local, peer, 0, PunchPayloadKind::Current, "mesh").unwrap();
+        assert_eq!(current.msg_type().unwrap(), MsgType::PunchRes);
+        assert_eq!(current.payload(), network_code_hash("mesh"));
+        assert_eq!(current.payload().len(), NETWORK_CODE_HASH_LEN);
+
+        let legacy =
+            build_punch_response(local, peer, 0, PunchPayloadKind::Legacy, "mesh").unwrap();
+        assert_eq!(legacy.payload().len(), 8);
     }
 
     #[test]

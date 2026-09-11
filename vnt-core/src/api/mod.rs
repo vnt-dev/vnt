@@ -4,8 +4,17 @@ use crate::nat::NetInput;
 use crate::protocol::control_message::ClientSimpleInfo;
 use crate::tunnel_core::p2p::route_table::Route;
 use crate::tunnel_core::server::rpc::ServerRPC;
+use ipnet::Ipv4Net;
 use rustp2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
+
+#[derive(Clone, Debug)]
+pub struct ApiNodeInfo {
+    pub ip: Ipv4Addr,
+    pub name: String,
+    pub version: String,
+    pub advertised_subnets: Vec<Ipv4Net>,
+}
 
 #[derive(Clone)]
 pub struct VntApi {
@@ -49,6 +58,21 @@ impl VntApi {
     /// 获取所有路由
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Vec<Route>)> {
         self.app_state.route_table.route_table()
+    }
+    /// Returns identities learned from direct handshakes and Gossip
+    /// announcements. Entries disappear with their last route.
+    pub fn gossip_node_list(&self) -> Vec<ApiNodeInfo> {
+        self.app_state
+            .route_table
+            .node_infos()
+            .into_iter()
+            .map(|node| ApiNodeInfo {
+                ip: node.ip,
+                name: node.name,
+                version: node.version,
+                advertised_subnets: node.advertised_subnets,
+            })
+            .collect()
     }
     /// 获取服务器自动同步得到的子网路由
     pub fn automatic_subnet_routes(&self) -> Vec<NetInput> {

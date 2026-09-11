@@ -367,7 +367,7 @@ mod tests {
     #[test]
     fn wraps_ipv4_for_tap_and_strips_it_again() {
         let net = NetworkAddr {
-            gateway: Ipv4Addr::new(10, 26, 0, 1),
+            gateway: Some(Ipv4Addr::new(10, 26, 0, 1)),
             broadcast: Ipv4Addr::new(10, 26, 0, 255),
             ip: Ipv4Addr::new(10, 26, 0, 9),
             prefix_len: 24,

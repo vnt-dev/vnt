@@ -323,6 +323,36 @@ impl SharedNetworkAddr {
     pub fn clear(&self) {
         *self.inner.lock() = None;
     }
+
+    /// Validate a server registration against the locally active network and
+    /// adopt the first real server gateway. This is atomic so concurrently
+    /// connecting servers cannot install different gateways.
+    pub fn reconcile_server(&self, ip: Ipv4Addr, prefix_len: u8, gateway: Ipv4Addr) -> bool {
+        let Ok(network) = Ipv4Net::new(ip, prefix_len) else {
+            return false;
+        };
+        if !network.contains(&gateway)
+            || gateway == ip
+            || gateway == network.network()
+            || gateway == network.broadcast()
+        {
+            return false;
+        }
+        let mut guard = self.inner.lock();
+        let Some(current) = guard.as_mut() else {
+            return false;
+        };
+        if current.ip != ip || current.prefix_len != prefix_len {
+            return false;
+        }
+        match current.gateway {
+            Some(existing) => existing == gateway,
+            None => {
+                current.gateway = Some(gateway);
+                true
+            }
+        }
+    }
 }
 
 /// 网络路由封装，包含本地网络信息和子网路由
@@ -926,7 +956,7 @@ mod client_status_tests {
 }
 #[derive(Copy, Clone, Debug)]
 pub struct NetworkAddr {
-    pub gateway: Ipv4Addr,
+    pub gateway: Option<Ipv4Addr>,
     pub broadcast: Ipv4Addr,
     pub ip: Ipv4Addr,
     pub prefix_len: u8,
@@ -942,7 +972,7 @@ impl AppState {
         self.network.clear();
         self.server_info_collection.clear();
         self.peer_map.clear();
-        // route_table 来自外部 crate，会在任务停止后自动失效
+        self.route_table.clear();
         self.nat_info.clear();
         self.punch_backoff.clear();
         self.packet_loss_stats.clear();
@@ -991,6 +1021,32 @@ impl AppState {
             .as_ref()
             .map(|v| v.tcp_stun.clone())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod optional_gateway_tests {
+    use super::{NetworkAddr, SharedNetworkAddr};
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn first_matching_server_supplies_gateway_and_later_servers_must_match() {
+        let shared = SharedNetworkAddr::default();
+        shared.set(NetworkAddr {
+            gateway: None,
+            broadcast: "10.26.0.255".parse().unwrap(),
+            ip: "10.26.0.2".parse().unwrap(),
+            prefix_len: 24,
+        });
+        let gateway = Ipv4Addr::new(10, 26, 0, 1);
+        assert!(shared.reconcile_server("10.26.0.2".parse().unwrap(), 24, gateway));
+        assert_eq!(shared.get().unwrap().gateway, Some(gateway));
+        assert!(!shared.reconcile_server(
+            "10.26.0.2".parse().unwrap(),
+            24,
+            "10.26.0.254".parse().unwrap()
+        ));
+        assert!(!shared.reconcile_server("10.26.0.2".parse().unwrap(), 16, gateway));
     }
 }
 impl AppState {

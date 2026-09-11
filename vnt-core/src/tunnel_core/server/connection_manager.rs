@@ -7,7 +7,9 @@ use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
 use crate::nat::AllowSubnetExternalRoute;
+use crate::protocol::client_message::NodeIdentityTemplate;
 use crate::protocol::control_message::{RegistrationMode, RequestMessage, ResponseMessage};
+use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
 use crate::tunnel_core::server::inbound::{IpUpdateContext, ServerTurnInboundHandler};
 use crate::tunnel_core::server::outbound::ServerOutbound;
@@ -43,6 +45,8 @@ pub struct InboundHandlerConfig {
     pub allow_ikev2: bool,
     pub allow_wireguard: bool,
     pub relay_subnets: AllowSubnetExternalRoute,
+    pub basic_outbound: BasicOutbound,
+    pub node_identity: NodeIdentityTemplate,
 }
 
 pub struct ServerTurnManager {
@@ -69,7 +73,7 @@ pub(crate) fn create_server_tunnel(
     let mut sender_map: HashMap<u32, Sender<(Bytes, Instant)>> = HashMap::new();
     let mut server_manager_list = Vec::with_capacity(config.server_addr.len());
     let mut server_addr_list = Vec::with_capacity(config.server_addr.len());
-    let registration_ip = SharedRegistrationIp::new(config.ip);
+    let registration_ip = SharedRegistrationIp::new(config.ip.map(|ip| ip.ip()));
     for (index, server_addr) in config.server_addr.iter().enumerate() {
         let connect_reg_config =
             config.to_connect_config(index, default_interface.clone(), registration_ip.clone());
@@ -231,16 +235,17 @@ impl ServerTurnManager {
                     match &msg {
                         ResponseMessage::Reg(reg) => {
                             data_handler.set_subnet_sync_supported(reg.subnet_sync_supported);
-                            let Some(current_network) = data_handler.network_addr() else {
+                            let Some(_current_network) = data_handler.network_addr() else {
                                 log::error!("客户端当前虚拟网络状态不存在，5秒后重试");
                                 self.disconnect();
                                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                                 continue;
                             };
-                            if reg.ip != current_network.ip
-                                || reg.prefix_len != current_network.prefix_len
-                                || reg.gateway != current_network.gateway
-                            {
+                            if !data_handler.reconcile_server_network(
+                                reg.ip,
+                                reg.prefix_len,
+                                reg.gateway,
+                            ) {
                                 // 该服务器分配的虚拟网络与当前不一致，
                                 // 断开本次连接并降低重试频率，不影响其他服务器。
                                 log::error!(
@@ -276,7 +281,13 @@ impl ServerTurnManager {
                     if let Some(network) = data_handler.network_addr() {
                         params.push(("ip", network.ip.to_string()));
                         params.push(("prefix-length", network.prefix_len.to_string()));
-                        params.push(("gateway", network.gateway.to_string()));
+                        params.push((
+                            "gateway",
+                            network
+                                .gateway
+                                .map(|gateway| gateway.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                        ));
                         params.push(("broadcast", network.broadcast.to_string()));
                     }
                     self.event_script

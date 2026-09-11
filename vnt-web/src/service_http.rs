@@ -29,7 +29,7 @@ use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 use vnt_core::api::VntApi;
 use vnt_core::context::config::{
-    Config as CoreConfig, DeviceMode, PeerAddress, PunchRule, TurnRule,
+    Config as CoreConfig, DeviceMode, PeerAddress, PunchRule, TurnRule, VirtualIp,
 };
 use vnt_core::core::{DEFAULT_MTU, NetworkManager, RegisterResponse};
 use vnt_core::nat::{NetInput, SubnetMapping};
@@ -254,6 +254,7 @@ impl<T> ApiResponse<T> {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StartConfig {
     pub config_name: Option<String>,
+    #[serde(default)]
     pub server: Vec<String>,
     #[serde(default)]
     pub peer_address: Vec<String>,
@@ -267,7 +268,7 @@ pub struct StartConfig {
     pub device_name: Option<String>,
     pub tun_name: Option<String>,
     pub outbound_interface: Option<String>,
-    pub ip: Option<Ipv4Addr>,
+    pub ip: Option<VirtualIp>,
     pub password: Option<String>,
     #[serde(default)]
     pub no_punch: bool,
@@ -317,6 +318,12 @@ impl StartConfig {
     fn validate(&self) -> anyhow::Result<()> {
         if self.legacy_no_tun == Some(true) {
             bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"")
+        }
+        if self.server.is_empty() && self.ip.is_none() {
+            bail!("未配置服务器时必须指定虚拟 IP")
+        }
+        if self.server.len() > 1 && self.ip.is_none() {
+            bail!("配置多个服务器时必须指定虚拟 IP")
         }
         validate_tunnel_binding(&self.tunnel_addr, self.tunnel_port)?;
         Ok(())
@@ -420,6 +427,7 @@ struct HttpClientItem {
     nat_info: Option<HttpClientNatInfo>,
     packet_loss: Option<HttpPacketLoss>,
     traffic: Option<HttpTraffic>,
+    advertised_subnets: Vec<Ipv4Net>,
 }
 
 #[derive(Serialize)]
@@ -448,7 +456,7 @@ struct HttpRouteItem {
     routes: Vec<HttpRouteDetail>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct HttpRouteDetail {
     addr: String,
     protocol: String,
@@ -1275,7 +1283,7 @@ async fn get_info(
             version: env!("CARGO_PKG_VERSION").to_string(),
             ip: network.map(|v| v.ip),
             prefix_len: network.map(|v| v.prefix_len),
-            gateway: network.map(|v| v.gateway),
+            gateway: network.and_then(|v| v.gateway),
             device_id: config
                 .as_ref()
                 .map(|v| v.device_id.clone())
@@ -1691,46 +1699,101 @@ async fn get_peers(
                     nat_info: build_nat_info(&ip),
                     packet_loss: build_packet_loss(&ip),
                     traffic: build_traffic(&ip),
+                    advertised_subnets: Vec::new(),
                 },
             )
         })
         .collect();
 
-    // 从服务器获取更详细的信息
-    if let Ok(resp) = api.server_rpc().client_list().await {
-        for v in resp.list {
-            let ip = Ipv4Addr::from(v.ip);
-            let route = build_route(&ip);
-            // 如果有路由，说明设备在线（可以直接通信）
-            let has_route = route.is_some();
-            let client_type = match v.client_type {
-                1 => "IKEV2",
-                2 => "WIREGUARD",
-                _ => "VNT",
-            };
-            merged.insert(
+    for node in api.gossip_node_list() {
+        let ip = node.ip;
+        let route = build_route(&ip);
+        merged
+            .entry(ip)
+            .and_modify(|item| {
+                item.name = Some(node.name.clone());
+                item.version = node.version.clone();
+                item.online = true;
+                item.route = route.clone();
+                item.advertised_subnets = node.advertised_subnets.clone();
+            })
+            .or_insert_with(|| HttpClientItem {
                 ip,
-                HttpClientItem {
-                    ip,
-                    name: Some(v.name),
-                    online: v.online || has_route,
-                    route,
-                    version: v.version,
-                    client_type: client_type.to_string(),
-                    last_connected_time: v.last_connected_time,
-                    key_equal: if v.client_type != 0 {
-                        0
-                    } else {
-                        calc_key_equal(&v.key_sign)
-                    },
-                    nat_info: build_nat_info(&ip),
-                    packet_loss: build_packet_loss(&ip),
-                    traffic: build_traffic(&ip),
-                },
-            );
-        }
+                name: Some(node.name),
+                online: true,
+                route,
+                version: node.version,
+                client_type: "VNT".to_string(),
+                last_connected_time: 0,
+                key_equal: 0,
+                nat_info: build_nat_info(&ip),
+                packet_loss: build_packet_loss(&ip),
+                traffic: build_traffic(&ip),
+                advertised_subnets: node.advertised_subnets,
+            });
+    }
+
+    // 从服务器获取更详细的信息；纯去中心化模式不创建无意义的 RPC，
+    // 避免设备列表轮询持续产生“未连接服务器”告警。
+    let server_response = if api
+        .get_config()
+        .is_some_and(|config| !config.server_addr.is_empty())
+    {
+        Some(api.server_rpc().client_list().await)
     } else {
-        log::warn!("Failed to get client list from server");
+        None
+    };
+    match server_response {
+        Some(Ok(resp)) => {
+            for v in resp.list {
+                let ip = Ipv4Addr::from(v.ip);
+                let route = build_route(&ip);
+                // 如果有路由，说明设备在线（可以直接通信）
+                let has_route = route.is_some();
+                let learned = merged.get(&ip);
+                let learned_name = learned.and_then(|item| item.name.clone());
+                let learned_version = learned.map(|item| item.version.clone());
+                let advertised_subnets = learned
+                    .map(|item| item.advertised_subnets.clone())
+                    .unwrap_or_default();
+                let client_type = match v.client_type {
+                    1 => "IKEV2",
+                    2 => "WIREGUARD",
+                    _ => "VNT",
+                };
+                merged.insert(
+                    ip,
+                    HttpClientItem {
+                        ip,
+                        name: if v.name.is_empty() {
+                            learned_name
+                        } else {
+                            Some(v.name)
+                        },
+                        online: v.online || has_route,
+                        route,
+                        version: if v.version.is_empty() {
+                            learned_version.unwrap_or_default()
+                        } else {
+                            v.version
+                        },
+                        client_type: client_type.to_string(),
+                        last_connected_time: v.last_connected_time,
+                        key_equal: if v.client_type != 0 {
+                            0
+                        } else {
+                            calc_key_equal(&v.key_sign)
+                        },
+                        nat_info: build_nat_info(&ip),
+                        packet_loss: build_packet_loss(&ip),
+                        traffic: build_traffic(&ip),
+                        advertised_subnets,
+                    },
+                );
+            }
+        }
+        Some(Err(error)) => log::warn!("Failed to get client list from server: {error}"),
+        None => {}
     }
 
     let mut items: Vec<HttpClientItem> = merged.into_values().collect();
@@ -1904,7 +1967,7 @@ mod tests {
             device_name: None,
             tun_name: None,
             outbound_interface: None,
-            ip: None,
+            ip: Some("10.26.0.2/24".parse().unwrap()),
             password: None,
             no_punch: false,
             no_broadcast: false,
@@ -1949,6 +2012,33 @@ network_code = "test"
 
         let legacy_false: StartConfig = toml::from_str(&format!("{base}no_tun = false\n")).unwrap();
         assert!(legacy_false.validate().is_ok());
+    }
+
+    #[test]
+    fn test_serverless_config_requires_and_preserves_cidr() {
+        let config: StartConfig = toml::from_str(
+            r#"network_code = "test"
+ip = "10.26.0.2/20"
+"#,
+        )
+        .unwrap();
+        assert!(config.validate().is_ok());
+        let core = convert_config(config).unwrap();
+        assert_eq!(core.ip.unwrap().to_string(), "10.26.0.2/20");
+
+        let missing_ip: StartConfig = toml::from_str(r#"network_code = "test""#).unwrap();
+        assert!(missing_ip.validate().is_err());
+    }
+
+    #[test]
+    fn test_plain_virtual_ip_defaults_to_24() {
+        let config: StartConfig = toml::from_str(
+            r#"network_code = "test"
+ip = "10.26.0.2"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.ip.unwrap().to_string(), "10.26.0.2/24");
     }
 
     #[test]

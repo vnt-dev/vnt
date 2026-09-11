@@ -314,7 +314,7 @@ public class VntConfig {
         }
 
         /**
-         * 设置固定IP（可选）
+         * 设置固定 IP 或 CIDR（纯 IP 默认 /24；无服务器时必填）
          */
         public Builder setIp(String ip) {
             this.ip = ip;
@@ -450,8 +450,8 @@ public class VntConfig {
          * 构建配置对象
          */
         public VntConfig build() {
-            if (servers.isEmpty()) {
-                throw new IllegalArgumentException("At least one server must be specified");
+            if (servers.isEmpty() && (ip == null || ip.isEmpty())) {
+                throw new IllegalArgumentException("A fixed IP/CIDR is required without servers");
             }
             if (networkCode == null || networkCode.isEmpty()) {
                 throw new IllegalArgumentException("Network code must be specified");

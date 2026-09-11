@@ -1,3 +1,4 @@
+use ipnet::Ipv4Net;
 use parking_lot::{Mutex, RwLock};
 use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
 use rustp2p_core::route_table::{DEFAULT_RTT, Protocol, RouteKey};
@@ -5,6 +6,26 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeInfo {
+    pub ip: Ipv4Addr,
+    pub name: String,
+    pub version: String,
+    pub advertised_subnets: Vec<Ipv4Net>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DirectPeerInfo {
+    pub node_ip: Ipv4Addr,
+    pub identity: Option<NodeInfo>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RouteEntryInfo {
+    pub node: NodeInfo,
+    pub refreshed_at: Instant,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct Route {
@@ -19,7 +40,8 @@ pub struct Route {
 impl Route {
     pub fn from(route_key: RouteKey, metric: u8, rtt: u32) -> Self {
         let is_relay = metric > 1;
-        let score = get_channel_score(rtt, 0, is_relay, route_key.protocol().is_tcp());
+        let score = get_channel_score(rtt, 0, is_relay, route_key.protocol().is_tcp())
+            / u32::from(metric.max(1));
         Self {
             route_key,
             metric,
@@ -35,7 +57,7 @@ impl Route {
             loss_rate as u32,
             is_relay,
             route_key.protocol().is_tcp(),
-        );
+        ) / u32::from(metric.max(1));
         Self {
             route_key,
             metric,
@@ -46,7 +68,8 @@ impl Route {
     }
     pub fn from_default_rt(route_key: RouteKey, metric: u8) -> Self {
         let is_relay = metric > 1;
-        let score = get_channel_score(DEFAULT_RTT, 0, is_relay, route_key.protocol().is_tcp());
+        let score = get_channel_score(DEFAULT_RTT, 0, is_relay, route_key.protocol().is_tcp())
+            / u32::from(metric.max(1));
         Self {
             route_key,
             metric,
@@ -116,6 +139,8 @@ struct RouteTableInner {
     route_table: RwLock<HashMap<Ipv4Addr, Vec<Route>>>,
     route_key_time: Mutex<HashMap<(Ipv4Addr, RouteKey), Instant>>,
     route_key_owner: Mutex<HashMap<RouteKey, Ipv4Addr>>,
+    direct_peer_info: Mutex<HashMap<RouteKey, DirectPeerInfo>>,
+    route_info: Mutex<HashMap<(Ipv4Addr, RouteKey), RouteEntryInfo>>,
     first_direct_route_notify: Arc<tokio::sync::Notify>,
 }
 
@@ -203,6 +228,22 @@ impl RouteTable {
 
     /// 添加 owner 路由（打洞请求响应时调用）
     pub fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) -> bool {
+        // A concurrent periodic announcement may arrive ahead of PunchRes.
+        // Keep identity already learned on this same physical route.
+        let early_identity = self
+            .inner
+            .route_info
+            .lock()
+            .get(&(id, key))
+            .map(|entry| entry.node.clone());
+        self.inner
+            .direct_peer_info
+            .lock()
+            .entry(key)
+            .or_insert_with(|| DirectPeerInfo {
+                node_ip: id,
+                identity: early_identity,
+            });
         let first_direct = self.inner.add_owner_route(id, key);
         if first_direct {
             self.inner.first_direct_route_notify.notify_one();
@@ -210,8 +251,111 @@ impl RouteTable {
         first_direct
     }
 
+    /// Adds a direct peer together with identity learned from a direct
+    /// handshake. A compact punch or legacy handshake may add the owner first
+    /// and fill this identity later through NodeAnnouncement.
+    pub fn add_identified_owner_route(&self, node: NodeInfo, key: RouteKey) -> bool {
+        let newly_identified = self
+            .inner
+            .direct_peer_info
+            .lock()
+            .insert(
+                key,
+                DirectPeerInfo {
+                    node_ip: node.ip,
+                    identity: Some(node.clone()),
+                },
+            )
+            .is_none_or(|previous| previous.identity.is_none());
+        self.inner.route_info.lock().insert(
+            (node.ip, key),
+            RouteEntryInfo {
+                node: node.clone(),
+                refreshed_at: Instant::now(),
+            },
+        );
+        let first_direct = self.inner.add_owner_route(node.ip, key);
+        if first_direct || newly_identified {
+            self.inner.first_direct_route_notify.notify_one();
+        }
+        first_direct
+    }
+
+    pub fn add_gossip_route(&self, node: NodeInfo, route: Route) {
+        if route.metric() > 15 {
+            return;
+        }
+        self.inner.route_info.lock().insert(
+            (node.ip, route.route_key()),
+            RouteEntryInfo {
+                node: node.clone(),
+                refreshed_at: Instant::now(),
+            },
+        );
+        if route.is_direct() {
+            let owner = self
+                .inner
+                .route_key_owner
+                .lock()
+                .get(&route.route_key())
+                .copied();
+            if owner == Some(node.ip)
+                && let Some(peer) = self
+                    .inner
+                    .direct_peer_info
+                    .lock()
+                    .get_mut(&route.route_key())
+            {
+                peer.identity = Some(node.clone());
+            }
+        }
+        self.inner.add_route(node.ip, route, true, false);
+    }
+
+    pub fn direct_routes(&self, exclude: Option<&RouteKey>) -> Vec<RouteKey> {
+        let owners = self.inner.route_key_owner.lock().clone();
+        let peers = self.inner.direct_peer_info.lock();
+        let excluded_node = exclude.and_then(|key| owners.get(key).copied());
+        peers
+            .iter()
+            .filter_map(|(key, peer)| {
+                (owners.get(key).is_some_and(|owner| *owner == peer.node_ip)
+                    && exclude != Some(key)
+                    && excluded_node != Some(peer.node_ip))
+                .then_some(*key)
+            })
+            .collect()
+    }
+
+    pub fn node_info(&self, id: &Ipv4Addr) -> Option<NodeInfo> {
+        let route = self.get_route_by_id(id).ok()?;
+        self.inner
+            .route_info
+            .lock()
+            .get(&(*id, route.route_key()))
+            .map(|entry| {
+                let _refreshed_at = entry.refreshed_at;
+                entry.node.clone()
+            })
+    }
+
+    pub fn node_infos(&self) -> Vec<NodeInfo> {
+        let ids: Vec<_> = self.inner.route_table.read().keys().copied().collect();
+        ids.into_iter()
+            .filter_map(|id| self.node_info(&id))
+            .collect()
+    }
+
     /// 添加路由（心跳时调用，用于更新路由时间和添加跨节点转发路由）
     pub fn add_route(&self, id: Ipv4Addr, route: Route, is_default: bool) {
+        if let Some(info) = self
+            .inner
+            .route_info
+            .lock()
+            .get_mut(&(id, route.route_key()))
+        {
+            info.refreshed_at = Instant::now();
+        }
         if self.inner.add_route(id, route, false, is_default) {
             self.inner.first_direct_route_notify.notify_one();
         }
@@ -248,12 +392,25 @@ impl RouteTable {
         });
         owner_map.remove(route_key);
         time_map.retain(|(_, key), _| key != route_key);
+        self.inner.direct_peer_info.lock().remove(route_key);
+        self.inner
+            .route_info
+            .lock()
+            .retain(|(_, key), _| key != route_key);
         removed
     }
 
     /// 移除过期的路由
     pub fn remove_oldest_route(&self, expired_time: Instant) -> Vec<(Ipv4Addr, RouteKey)> {
         self.inner.remove_oldest_route(expired_time)
+    }
+
+    pub fn clear(&self) {
+        self.inner.route_table.write().clear();
+        self.inner.route_key_time.lock().clear();
+        self.inner.route_key_owner.lock().clear();
+        self.inner.direct_peer_info.lock().clear();
+        self.inner.route_info.lock().clear();
     }
 }
 
@@ -347,6 +504,7 @@ impl RouteTableInner {
 
         let mut table = self.route_table.write();
         let mut owner_map = self.route_key_owner.lock();
+        let mut route_info = self.route_info.lock();
 
         for (id, route_key) in &expired_keys {
             if let Some(list) = table.get_mut(id) {
@@ -361,7 +519,16 @@ impl RouteTableInner {
             {
                 owner_map.remove(route_key);
             }
+            route_info.remove(&(*id, *route_key));
         }
+
+        let live_keys: std::collections::HashSet<_> = table
+            .values()
+            .flat_map(|routes| routes.iter().map(Route::route_key))
+            .collect();
+        self.direct_peer_info
+            .lock()
+            .retain(|key, _| live_keys.contains(key));
 
         expired_keys
     }
@@ -504,6 +671,194 @@ mod tests {
                 .keys()
                 .all(|(_, route_key)| *route_key != key)
         );
+    }
+
+    #[test]
+    fn identified_peer_and_all_routes_on_tunnel_are_released_together() {
+        let table = RouteTable::new();
+        let key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2100".parse().unwrap(),
+            "127.0.0.1:3100".parse().unwrap(),
+        );
+        let direct = NodeInfo {
+            ip: "10.26.0.2".parse().unwrap(),
+            name: "direct".to_string(),
+            version: "2".to_string(),
+            advertised_subnets: Vec::new(),
+        };
+        let relayed = NodeInfo {
+            ip: "10.26.0.3".parse().unwrap(),
+            name: "relayed".to_string(),
+            version: "2".to_string(),
+            advertised_subnets: vec!["192.168.3.0/24".parse().unwrap()],
+        };
+        table.add_identified_owner_route(direct.clone(), key);
+        table.add_gossip_route(relayed.clone(), Route::from_default_rt(key, 2));
+        assert_eq!(table.node_info(&direct.ip), Some(direct));
+        assert_eq!(table.node_info(&relayed.ip), Some(relayed));
+
+        table.remove_route_key(&key);
+        assert!(table.node_infos().is_empty());
+        assert!(table.inner.route_info.lock().is_empty());
+    }
+
+    #[test]
+    fn graph_flood_excludes_every_tunnel_owned_by_the_ingress_node() {
+        let table = RouteTable::new();
+        let keys = [
+            RouteKey::new(
+                Protocol::TCP,
+                "127.0.0.1:2110".parse().unwrap(),
+                "127.0.0.1:3110".parse().unwrap(),
+            ),
+            RouteKey::new(
+                Protocol::UDP,
+                "127.0.0.1:2111".parse().unwrap(),
+                "127.0.0.1:3111".parse().unwrap(),
+            ),
+            RouteKey::new(
+                Protocol::TCP,
+                "127.0.0.1:2112".parse().unwrap(),
+                "127.0.0.1:3112".parse().unwrap(),
+            ),
+        ];
+        for (key, ip) in [
+            (keys[0], "10.26.0.2"),
+            (keys[1], "10.26.0.2"),
+            (keys[2], "10.26.0.3"),
+        ] {
+            table.add_identified_owner_route(
+                NodeInfo {
+                    ip: ip.parse().unwrap(),
+                    name: ip.to_string(),
+                    version: "2".to_string(),
+                    advertised_subnets: Vec::new(),
+                },
+                key,
+            );
+        }
+        assert_eq!(table.direct_routes(Some(&keys[0])), vec![keys[2]]);
+    }
+
+    #[test]
+    fn unidentified_legacy_route_is_a_graph_next_hop_and_identity_can_arrive_later() {
+        let table = RouteTable::new();
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+        let key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2190".parse().unwrap(),
+            "127.0.0.1:3190".parse().unwrap(),
+        );
+        table.add_owner_route(peer, key);
+        assert_eq!(table.direct_routes(None), vec![key]);
+        assert_eq!(
+            table
+                .inner
+                .direct_peer_info
+                .lock()
+                .get(&key)
+                .unwrap()
+                .identity,
+            None
+        );
+
+        let node = NodeInfo {
+            ip: peer,
+            name: "legacy-peer".to_string(),
+            version: "2".to_string(),
+            advertised_subnets: Vec::new(),
+        };
+        table.add_gossip_route(node.clone(), Route::from_default_rt(key, 1));
+        assert_eq!(table.node_info(&peer), Some(node.clone()));
+        assert_eq!(
+            table
+                .inner
+                .direct_peer_info
+                .lock()
+                .get(&key)
+                .unwrap()
+                .identity,
+            Some(node)
+        );
+    }
+
+    #[test]
+    fn announcement_arriving_before_punch_response_keeps_identity() {
+        let table = RouteTable::new();
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+        let key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2191".parse().unwrap(),
+            "127.0.0.1:3191".parse().unwrap(),
+        );
+        let node = NodeInfo {
+            ip: peer,
+            name: "early-announcement".to_string(),
+            version: "2".to_string(),
+            advertised_subnets: Vec::new(),
+        };
+
+        table.add_gossip_route(node.clone(), Route::from_default_rt(key, 1));
+        table.add_owner_route(peer, key);
+
+        assert_eq!(
+            table
+                .inner
+                .direct_peer_info
+                .lock()
+                .get(&key)
+                .unwrap()
+                .identity,
+            Some(node)
+        );
+        assert_eq!(table.direct_routes(None), vec![key]);
+    }
+
+    #[test]
+    fn four_node_chain_converges_through_an_initially_unidentified_edge() {
+        let table = RouteTable::new();
+        let via_b = RouteKey::new(
+            Protocol::TCP,
+            "127.0.0.1:2200".parse().unwrap(),
+            "127.0.0.1:3200".parse().unwrap(),
+        );
+        for (index, (ip, name)) in [("10.26.0.2", "B"), ("10.26.0.3", "C"), ("10.26.0.4", "D")]
+            .into_iter()
+            .enumerate()
+        {
+            let node = NodeInfo {
+                ip: ip.parse().unwrap(),
+                name: name.to_string(),
+                version: "2".to_string(),
+                advertised_subnets: Vec::new(),
+            };
+            if index == 0 {
+                table.add_owner_route(node.ip, via_b);
+                table.add_gossip_route(node, Route::from_default_rt(via_b, 1));
+            } else {
+                table.add_gossip_route(node, Route::from_default_rt(via_b, index as u8 + 1));
+            }
+        }
+        assert_eq!(
+            table
+                .get_route_by_id(&"10.26.0.4".parse().unwrap())
+                .unwrap()
+                .metric(),
+            3
+        );
+        assert_eq!(table.node_infos().len(), 3);
+
+        table.remove_route_key(&via_b);
+        assert!(table.route_table().is_empty());
+        assert!(table.node_infos().is_empty());
+    }
+
+    #[test]
+    fn hop_count_penalizes_otherwise_equal_routes() {
+        let one = Route::from_default_rt(RouteKey::default(), 1);
+        let three = Route::from_default_rt(RouteKey::default(), 3);
+        assert!(one.score() > three.score());
     }
 
     #[test]

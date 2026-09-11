@@ -176,8 +176,8 @@ const handleSave = async () => {
         return;
       }
       const servers = formData.value.server.filter((s) => s.trim());
-      if (servers.length === 0) {
-        ui.toast.error("请至少填写一个服务器地址");
+      if (servers.length === 0 && !formData.value.ip.trim()) {
+        ui.toast.error("未配置服务器时必须填写虚拟 IP/CIDR");
         return;
       }
       if (servers.length > 1 && !formData.value.ip.trim()) {
@@ -298,14 +298,14 @@ const sectionChevronClass = (expanded) =>
               </div>
               <div class="mt-4">
                 <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  服务器地址 <span class="text-red-500">*</span>
+                  服务器地址（可选）
                   <ConfigHelp :help="configHelp.server" />
                   <span class="text-xs text-slate-500 ml-2">默认 tcp://；支持 quic://、wss://、dynamic://（DNS TXT 或 HTTP(S)）</span>
                 </label>
                 <div class="space-y-2">
                   <div v-for="(server, idx) in formData.server" :key="idx" class="flex gap-2">
                     <input v-model="formData.server[idx]" type="text" placeholder="例如: quic://1.2.3.4:29872" class="input flex-1" />
-                    <button @click="formData.server.splice(idx, 1)" v-if="formData.server.length > 1" :class="removeBtnClass">
+                    <button @click="formData.server.splice(idx, 1)" :class="removeBtnClass">
                       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path
                           stroke-linecap="round"
@@ -508,13 +508,19 @@ const sectionChevronClass = (expanded) =>
                 <div>
                   <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                     自定义虚拟IP
-                    <span v-if="formData.server.filter((server) => server.trim()).length > 1" class="text-red-500">*</span>
+                    <span v-if="formData.server.filter((server) => server.trim()).length !== 1" class="text-red-500">*</span>
                     <ConfigHelp :help="configHelp.ip" />
                     <span class="text-xs text-slate-500 ml-1">
-                      {{ formData.server.filter((server) => server.trim()).length > 1 ? "(多服务器必填)" : "(可选)" }}
+                      {{
+                        formData.server.filter((server) => server.trim()).length === 0
+                          ? "(无服务器必填)"
+                          : formData.server.filter((server) => server.trim()).length > 1
+                            ? "(多服务器必填)"
+                            : "(可选)"
+                      }}
                     </span>
                   </label>
-                  <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2" class="input" />
+                  <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2/24" class="input" />
                 </div>
                 <div>
                   <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">

@@ -111,12 +111,6 @@ impl P2pOutbound {
     pub fn get_route_by_id(&self, id: &Ipv4Addr) -> Option<Route> {
         self.route_table.get_route_by_id(id).ok()
     }
-    pub fn get_p2p_route_by_id(&self, id: &Ipv4Addr) -> Option<Route> {
-        self.route_table
-            .get_route_by_id(id)
-            .ok()
-            .filter(|route| route.is_direct())
-    }
     pub fn get_direct_route_by_id(&self, id: &Ipv4Addr) -> Option<Route> {
         self.route_table.get_direct_route_by_id(id)
     }
@@ -155,36 +149,26 @@ impl P2pOutbound {
     //         .try_send_to(buf.into_buffer().into_bytes(), route_key)?;
     //     Ok(())
     // }
-    pub fn p2p_broadcast(
-        &self,
-        ips: &[Ipv4Addr],
-        max: usize,
-        buf: &NetPacket<Bytes>,
-    ) -> Vec<Ipv4Addr> {
-        let mut list = Vec::with_capacity(ips.len().min(max));
 
-        for id in ips {
-            let Some(route) = self.get_p2p_route_by_id(id) else {
-                continue;
-            };
+    pub fn flood_direct(&self, buf: &NetPacket<Bytes>, exclude: Option<&RouteKey>) -> usize {
+        let mut sent = 0;
+        for route_key in self.route_table.direct_routes(exclude) {
             if self
-                .tunnel(&route.route_key())
+                .tunnel(&route_key)
                 .and_then(|tunnel| Ok(tunnel.try_send(buf.source_buf().clone())?))
                 .is_ok()
             {
-                list.push(*id);
-                if list.len() >= max {
-                    break;
-                }
+                sent += 1;
             }
         }
-        list
+        sent
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType};
     use rustp2p_core::endpoint::{Config, TunnelIncoming};
     use std::time::Duration;
     use tokio::net::UdpSocket;
@@ -204,12 +188,26 @@ mod tests {
         let tunnel = incoming.next().await.unwrap();
         let route_key = tunnel.route_key();
         let (_reader, writer) = tunnel.split();
+        let route_table = RouteTable::new();
         let outbound = P2pOutbound::new(
             incoming.puncher(),
-            RouteTable::new(),
+            route_table.clone(),
             PacketCrypto::new_from_str(None).unwrap(),
         );
         outbound.register_tunnel(route_key, writer);
+
+        // A legacy 8-byte handshake only calls add_owner_route. That is still
+        // sufficient for Gossip, discovery and broadcast flooding.
+        route_table.add_owner_route(Ipv4Addr::new(10, 26, 0, 3), route_key);
+        let mut graph_packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH)).unwrap();
+        graph_packet.set_msg_type(MsgType::NodeAnnouncement);
+        assert_eq!(outbound.flood_direct(&graph_packet.into_bytes(), None), 1);
+        let mut buffer = [0; 64];
+        let (len, _) = tokio::time::timeout(Duration::from_secs(2), client.recv_from(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(len, HEAD_LENGTH);
 
         outbound
             .tunnel(&route_key)
@@ -217,7 +215,6 @@ mod tests {
             .send(Bytes::from_static(b"send"))
             .await
             .unwrap();
-        let mut buffer = [0; 16];
         let (len, _) = tokio::time::timeout(Duration::from_secs(2), client.recv_from(&mut buffer))
             .await
             .unwrap()

@@ -12,7 +12,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
-use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule};
+use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule, VirtualIp};
 use vnt_core::core::{NetworkManager, RegisterResponse};
 use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::port_mapping::PortMapping;
@@ -279,7 +279,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeRegister<'local>(
                         "success": true,
                         "ip": network_addr.ip.to_string(),
                         "prefix_len": network_addr.prefix_len,
-                        "gateway": network_addr.gateway.to_string(),
+                        "gateway": network_addr.gateway.map(|gateway| gateway.to_string()),
                         "broadcast": network_addr.broadcast.to_string(),
                     });
                     Ok(response_json.to_string())
@@ -578,9 +578,15 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                 })
                 .unwrap_or_default();
             let local_key = api.get_config().and_then(|config| config.key_sign());
+            let gossip_clients: HashMap<_, _> = api
+                .gossip_node_list()
+                .into_iter()
+                .map(|node| (node.ip, node))
+                .collect();
             let mut ips: Vec<_> = local_clients
                 .keys()
                 .chain(server_clients.keys())
+                .chain(gossip_clients.keys())
                 .copied()
                 .collect();
             ips.sort_unstable();
@@ -590,6 +596,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                 .into_iter()
                 .map(|ip| {
                     let server_client = server_clients.get(&ip);
+                    let gossip_client = gossip_clients.get(&ip);
                     let route = api.find_route(&ip);
                     let has_route = route.is_some();
                     let direct = route
@@ -619,8 +626,19 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetClientList<'local>(
                     });
                     serde_json::json!({
                         "ip": ip.to_string(),
-                        "name": server_client.map(|client| client.name.as_str()).unwrap_or(""),
-                        "version": server_client.map(|client| client.version.as_str()).unwrap_or(""),
+                        "name": server_client
+                            .map(|client| client.name.as_str())
+                            .filter(|name| !name.is_empty())
+                            .or_else(|| gossip_client.map(|client| client.name.as_str()))
+                            .unwrap_or(""),
+                        "version": server_client
+                            .map(|client| client.version.as_str())
+                            .filter(|version| !version.is_empty())
+                            .or_else(|| gossip_client.map(|client| client.version.as_str()))
+                            .unwrap_or(""),
+                        "advertised_subnets": gossip_client
+                            .map(|client| client.advertised_subnets.iter().map(ToString::to_string).collect::<Vec<_>>())
+                            .unwrap_or_default(),
                         "client_type": server_client
                             .map(|client| match client.client_type {
                                 1 => "IKEV2",
@@ -687,7 +705,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetNetwork<'local>(
                 let json = serde_json::json!({
                     "ip": network.ip.to_string(),
                     "prefix_len": network.prefix_len,
-                    "gateway": network.gateway.to_string(),
+                    "gateway": network.gateway.map(|gateway| gateway.to_string()),
                     "broadcast": network.broadcast.to_string(),
                 });
                 Ok(json.to_string())
@@ -1038,6 +1056,7 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetTrafficInfo<'local>(
 fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
     #[derive(serde::Deserialize)]
     struct ConfigJson {
+        #[serde(default)]
         server: Vec<String>,
         #[serde(default)]
         peer_address: Vec<String>,
@@ -1055,7 +1074,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         #[serde(default)]
         outbound_interface: Option<String>,
         #[serde(default)]
-        ip: Option<Ipv4Addr>,
+        ip: Option<VirtualIp>,
         #[serde(default)]
         password: Option<String>,
         #[serde(default)]
@@ -1485,6 +1504,35 @@ mod tests {
         assert_eq!(config.peer_address[0].to_string(), "127.0.0.1:30001");
         assert_eq!(config.peer_address[1].to_string(), "udp://127.0.0.1:30002");
         assert!(!config.no_broadcast);
+    }
+
+    #[test]
+    fn parses_serverless_cidr_and_plain_ip_default() {
+        let config = parse_config_from_json(
+            r#"{
+                "server":[],
+                "network_code":"test",
+                "ip":"10.26.0.2/20"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.ip.unwrap().to_string(), "10.26.0.2/20");
+        assert!(config.check().is_ok());
+
+        let config = parse_config_from_json(
+            r#"{
+                "network_code":"test",
+                "ip":"10.26.0.2"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.ip.unwrap().to_string(), "10.26.0.2/24");
+    }
+
+    #[test]
+    fn rejects_serverless_json_without_virtual_ip() {
+        let config = parse_config_from_json(r#"{"network_code":"test"}"#).unwrap();
+        assert!(config.check().is_err());
     }
 
     #[test]

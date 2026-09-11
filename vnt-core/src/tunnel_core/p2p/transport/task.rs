@@ -2,8 +2,11 @@ use crate::context::config::{PeerAddress, PeerProtocol, TurnRule, turn_ip_for};
 use crate::context::nat::MyNatInfo;
 use crate::context::{AppState, PacketLossStats, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
+use crate::protocol::client_message::NodeDiscovery;
+use crate::protocol::client_message::{NodeIdentityTemplate, PeerHandshake};
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
+use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::inbound::P2pInboundHandler;
 use crate::tunnel_core::p2p::outbound::P2pOutbound;
 use crate::tunnel_core::p2p::route_table::RouteTable;
@@ -26,9 +29,11 @@ pub(crate) struct P2pInitConfig {
     pub tunnel_addr: Vec<SocketAddr>,
     pub tunnel_port: Option<u16>,
     pub automatic_punch: bool,
+    pub auto_sync_subnet: bool,
     pub peer_address: Vec<PeerAddress>,
     pub turn: Arc<Vec<TurnRule>>,
     pub default_interface: Option<LocalInterface>,
+    pub identity: NodeIdentityTemplate,
 }
 
 pub async fn init_tunnel(
@@ -87,6 +92,8 @@ pub async fn init_tunnel(
     task_group.spawn(route_timeout_task(
         route_table.clone(),
         app_state.packet_loss_stats.clone(),
+        app_state.subnet_route.clone(),
+        config.auto_sync_subnet,
     ));
     if config.automatic_punch {
         let app_state_for_punch = app_state.clone();
@@ -127,6 +134,7 @@ pub async fn init_tunnel(
                 protocol,
                 peer.clone(),
                 config.default_interface.clone(),
+                config.identity.clone(),
             ));
         }
     }
@@ -139,6 +147,56 @@ pub async fn init_tunnel(
     Ok((puncher, socket_manager, p2p_task))
 }
 
+pub(crate) async fn node_announcement_task(
+    network: SharedNetworkAddr,
+    route_table: RouteTable,
+    outbound: BasicOutbound,
+    identity: NodeIdentityTemplate,
+) {
+    let notify = route_table.first_direct_route_notify();
+    loop {
+        let jitter = 25 + (rand::random::<u64>() % 11);
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(jitter)) => {}
+            _ = notify.notified() => {}
+        }
+        let Some(ip) = network.ip() else {
+            continue;
+        };
+        let payload = NodeDiscovery {
+            identity: identity.with_ip(ip),
+            request_id: rand::random(),
+        }
+        .encode();
+        let packet = (|| -> anyhow::Result<_> {
+            let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+                HEAD_LENGTH + payload.len(),
+                outbound.encrypt_reserve(),
+            ))?;
+            packet.set_msg_type(MsgType::NodeAnnouncement);
+            packet.set_ttl(15);
+            packet.set_src_id(ip.into());
+            packet.set_dest_id(Ipv4Addr::BROADCAST.into());
+            packet.set_payload(&payload)?;
+            Ok(packet)
+        })();
+        match packet {
+            Ok(mut packet) => {
+                if let Err(error) = outbound.encrypt_in_place(&mut packet) {
+                    log::debug!("failed to encrypt node announcement: {error}");
+                    continue;
+                }
+                let packet = packet.into_bytes();
+                outbound.graph_first_seen(MsgType::NodeAnnouncement, ip, packet.seq());
+                let sent = outbound.flood_direct_p2p(&packet, None);
+                outbound.flood_connected_servers(packet, None).await;
+                log::trace!("node announcement sent to {sent} direct peers");
+            }
+            Err(error) => log::debug!("failed to build node announcement: {error}"),
+        }
+    }
+}
+
 async fn direct_peer_probe_task(
     network: SharedNetworkAddr,
     route_table: RouteTable,
@@ -146,6 +204,7 @@ async fn direct_peer_probe_task(
     protocol: Protocol,
     peer: PeerAddress,
     default_interface: Option<LocalInterface>,
+    identity: NodeIdentityTemplate,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -168,10 +227,12 @@ async fn direct_peer_probe_task(
             .filter(|address| !route_table.has_direct_endpoint(protocol, *address))
             .map(|address| {
                 let socket_manager = socket_manager.clone();
+                let identity = identity.clone();
                 async move {
                     let packet = match build_direct_peer_probe(
                         src_ip,
                         socket_manager.encrypt_reserve(),
+                        &identity,
                     ) {
                         Ok(packet) => packet,
                         Err(error) => {
@@ -212,16 +273,22 @@ fn resolved_peer_addresses(
 fn build_direct_peer_probe(
     src_ip: Ipv4Addr,
     encrypt_reserve: usize,
+    identity: &NodeIdentityTemplate,
 ) -> anyhow::Result<NetPacket<TransmissionBytes>> {
+    let payload = PeerHandshake {
+        identity: identity.with_ip(src_ip),
+        request_id: rand::random(),
+    }
+    .encode();
     let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
-        HEAD_LENGTH + 8,
+        HEAD_LENGTH + payload.len(),
         encrypt_reserve,
     ))?;
     packet.set_msg_type(MsgType::DirectConnectReq);
     packet.set_ttl(1);
     packet.set_src_id(src_ip.into());
     packet.set_dest_id(Ipv4Addr::UNSPECIFIED.into());
-    packet.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())?;
+    packet.set_payload(&payload)?;
     Ok(packet)
 }
 pub struct P2pTask {
@@ -299,13 +366,33 @@ fn build_route_ping(
     ping.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())?;
     Ok(ping)
 }
-pub async fn route_timeout_task(route_table: RouteTable, packet_loss_stats: PacketLossStats) {
+pub async fn route_timeout_task(
+    route_table: RouteTable,
+    packet_loss_stats: PacketLossStats,
+    subnet_route: crate::nat::SubnetExternalRoute,
+    auto_sync_subnet: bool,
+) {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let expired_time = std::time::Instant::now() - Duration::from_secs(10);
         let removed_keys = route_table.remove_oldest_route(expired_time);
         if !removed_keys.is_empty() {
             packet_loss_stats.remove_batch(&removed_keys);
+            if auto_sync_subnet {
+                let routes = route_table
+                    .node_infos()
+                    .into_iter()
+                    .flat_map(|node| {
+                        node.advertised_subnets
+                            .into_iter()
+                            .map(move |net| crate::nat::NetInput {
+                                net,
+                                target_ip: node.ip,
+                            })
+                    })
+                    .collect();
+                subnet_route.set_gossip_routes(routes);
+            }
         }
     }
 }
@@ -688,13 +775,16 @@ mod tests {
     #[test]
     fn direct_peer_probe_uses_unspecified_destination() {
         let source = Ipv4Addr::new(10, 26, 0, 2);
-        let packet = build_direct_peer_probe(source, 0).unwrap();
+        let identity = NodeIdentityTemplate::default();
+        let packet = build_direct_peer_probe(source, 0, &identity).unwrap();
         assert_eq!(packet.msg_type().unwrap(), MsgType::DirectConnectReq);
         assert_eq!(Ipv4Addr::from(packet.src_id()), source);
         assert_eq!(Ipv4Addr::from(packet.dest_id()), Ipv4Addr::UNSPECIFIED);
         assert_eq!(packet.max_ttl(), 1);
         assert_eq!(packet.ttl(), 1);
-        assert_eq!(packet.payload().len(), 8);
+        let handshake = PeerHandshake::from_slice(packet.payload()).unwrap();
+        assert_eq!(handshake.identity.ip, source);
+        assert_ne!(handshake.request_id, 0);
     }
 
     #[test]

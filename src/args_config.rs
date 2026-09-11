@@ -4,7 +4,7 @@ use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule};
+use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule, VirtualIp};
 use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
@@ -18,7 +18,7 @@ pub struct FileConfig {
     pub turn: Option<Vec<String>>,
     pub punch_model: Option<Vec<String>>,
     pub network_code: Option<String>,
-    pub ip: Option<Ipv4Addr>,
+    pub ip: Option<VirtualIp>,
     pub no_punch: Option<bool>,
     pub no_broadcast: Option<bool>,
     pub allow_ikev2: Option<bool>,
@@ -149,9 +149,9 @@ pub struct Args {
     pub network_code: Option<String>,
     #[clap(short = 'k', long, hide = true)]
     pub token: Option<String>,
-    /// 自定义虚拟IP；配置多个服务器时必须指定
+    /// 固定虚拟 IP 或 CIDR（纯 IP 默认 /24）；无服务器或多服务器时必须指定
     #[clap(long)]
-    pub ip: Option<Ipv4Addr>,
+    pub ip: Option<VirtualIp>,
     /// 启用加密，设置加密密码
     #[clap(short, long)]
     pub password: Option<String>,
@@ -589,8 +589,9 @@ server = ["quic://1.2.3.4:29872"]
 
 # ===简单使用以下参数可以不动===
 
-# 自定义虚拟 IP（配置多个服务器时必填，单服务器时可选）
-# ip = "10.10.0.2"
+# 固定虚拟 IP/CIDR（纯 IP 默认 /24；无服务器或多服务器时必填）
+# 填写后本地网络立即启动，服务器在后台连接；无服务器时 server = []
+# ip = "10.10.0.2/24"
 
 # 是否启用quic优化传输 (默认 false,设置为true时开启)
 # rtx = false

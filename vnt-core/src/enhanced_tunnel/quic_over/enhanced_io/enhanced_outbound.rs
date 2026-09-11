@@ -51,7 +51,7 @@ impl QuicInnerOutbound {
             }
         };
         let mut packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH + buf.len()))?;
-        packet.set_ttl(5);
+        packet.set_ttl(15);
         packet.set_msg_type(MsgType::Quic);
         packet.set_dest_id(dest.into());
         packet.set_payload(buf)?;

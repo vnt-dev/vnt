@@ -76,6 +76,7 @@ pub(crate) struct IpUpdateContext {
     device_mode: DeviceMode,
     event_script: EventScript,
     server_addrs: Vec<String>,
+    fixed_ip: bool,
     #[cfg(target_os = "android")]
     android: Arc<parking_lot::Mutex<AndroidIpUpdateState>>,
 }
@@ -90,6 +91,7 @@ impl IpUpdateContext {
         event_script: EventScript,
         server_addrs: Vec<String>,
     ) -> Self {
+        let fixed_ip = registration_ip.get().is_some();
         Self {
             network,
             registration_ip,
@@ -99,6 +101,7 @@ impl IpUpdateContext {
             device_mode,
             event_script,
             server_addrs,
+            fixed_ip,
             #[cfg(target_os = "android")]
             android: Arc::new(parking_lot::Mutex::new(AndroidIpUpdateState::default())),
         }
@@ -109,7 +112,7 @@ impl IpUpdateContext {
         if !net.contains(&new_ip) {
             bail!("更新 IP {new_ip} 不属于当前网段 {net}");
         }
-        if new_ip == current.gateway {
+        if current.gateway == Some(new_ip) {
             bail!("更新 IP 不能使用网关地址 {new_ip}");
         }
         if new_ip == net.network() || new_ip == net.broadcast() {
@@ -161,6 +164,9 @@ impl IpUpdateContext {
             .network
             .get()
             .ok_or_else(|| anyhow::anyhow!("客户端尚未完成网络注册"))?;
+        if self.fixed_ip && new_ip != current.ip {
+            bail!("服务器不能修改客户端配置的固定虚拟 IP")
+        }
         let updated = Self::validate_target(current, new_ip)?;
 
         #[cfg(not(target_os = "android"))]
@@ -182,7 +188,13 @@ impl IpUpdateContext {
                             ("old-ip", current.ip.to_string()),
                             ("new-ip", updated.ip.to_string()),
                             ("prefix-length", updated.prefix_len.to_string()),
-                            ("gateway", updated.gateway.to_string()),
+                            (
+                                "gateway",
+                                updated
+                                    .gateway
+                                    .map(|gateway| gateway.to_string())
+                                    .unwrap_or_else(|| "-".to_string()),
+                            ),
                             ("broadcast", updated.broadcast.to_string()),
                             ("server", self.server_addrs.join(",")),
                         ],
@@ -366,6 +378,8 @@ pub(crate) struct ServerTurnInboundHandler {
     allow_ikev2: bool,
     allow_wireguard: bool,
     relay_subnets: AllowSubnetExternalRoute,
+    basic_outbound: crate::tunnel_core::outbound::BasicOutbound,
+    node_identity: crate::protocol::client_message::NodeIdentityTemplate,
 }
 
 fn valid_server_relay_ipv4(
@@ -396,6 +410,16 @@ fn server_relay_allowed(msg_type: MsgType, allow_ikev2: bool, allow_wireguard: b
 }
 
 impl ServerTurnInboundHandler {
+    pub fn reconcile_server_network(
+        &self,
+        ip: Ipv4Addr,
+        prefix_len: u8,
+        gateway: Ipv4Addr,
+    ) -> bool {
+        self.network_route
+            .network
+            .reconcile_server(ip, prefix_len, gateway)
+    }
     pub fn new(
         server_id: u32,
         config: Box<super::connection_manager::InboundHandlerConfig>,
@@ -420,6 +444,8 @@ impl ServerTurnInboundHandler {
             allow_ikev2: config.allow_ikev2,
             allow_wireguard: config.allow_wireguard,
             relay_subnets: config.relay_subnets,
+            basic_outbound: config.basic_outbound,
+            node_identity: config.node_identity,
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -578,21 +604,34 @@ impl ServerTurnInboundHandler {
         data: TransmissionBytes,
     ) -> anyhow::Result<()> {
         let net_packet = NetPacket::new(data)?;
-        let _ = net_packet.msg_type()?;
+        let msg_type = net_packet.msg_type()?;
+        let graph_raw = if matches!(
+            msg_type,
+            MsgType::NodeProbe
+                | MsgType::NodeProbeReply
+                | MsgType::NodeAnnouncement
+                | MsgType::Broadcast
+        ) {
+            let mut raw = NetPacket::new(net_packet.source_buf().clone())?;
+            raw.decr_ttl();
+            Some(raw.into_bytes())
+        } else {
+            None
+        };
 
         // FEC 外层只做认证，解码后再按每个内层包的类型决定是否 AEAD 解密。
         if net_packet.is_fec() {
             let packets = self.fec_decoder.receive(net_packet)?;
             if let Some(packets) = packets {
                 for pkt in packets {
-                    self.process_inner_packet(network_addr, transport_client, pkt)
+                    self.process_inner_packet(network_addr, transport_client, pkt, None)
                         .await?;
                 }
             }
             return Ok(());
         }
 
-        self.process_inner_packet(network_addr, transport_client, net_packet)
+        self.process_inner_packet(network_addr, transport_client, net_packet, graph_raw)
             .await
     }
 
@@ -601,6 +640,7 @@ impl ServerTurnInboundHandler {
         network_addr: NetworkAddr,
         transport_client: &mut TransportClient,
         mut net_packet: NetPacket<TransmissionBytes>,
+        graph_raw: Option<NetPacket<bytes::Bytes>>,
     ) -> anyhow::Result<()> {
         let msg_type = net_packet.msg_type()?;
         if msg_type != MsgType::Quic
@@ -613,6 +653,50 @@ impl ServerTurnInboundHandler {
                 Ipv4Addr::from(net_packet.dest_id())
             );
             return Ok(());
+        }
+        if let Some(raw) = graph_raw {
+            let source = Ipv4Addr::from(net_packet.src_id());
+            if matches!(
+                msg_type,
+                MsgType::NodeProbe | MsgType::NodeProbeReply | MsgType::NodeAnnouncement
+            ) {
+                let discovery = crate::protocol::client_message::NodeDiscovery::from_slice(
+                    net_packet.payload(),
+                )?;
+                if discovery.identity.ip != source || !network_addr.network().contains(&source) {
+                    return Ok(());
+                }
+            }
+            if !self
+                .basic_outbound
+                .graph_first_seen(msg_type, source, net_packet.seq())
+            {
+                return Ok(());
+            }
+            if raw.ttl() >= 1 {
+                let destination = Ipv4Addr::from(net_packet.dest_id());
+                let is_discovery = matches!(msg_type, MsgType::NodeProbe | MsgType::NodeProbeReply);
+                let target_is_local = is_discovery && destination == network_addr.ip;
+                let routed = if is_discovery && !target_is_local {
+                    if let Some(p2p) = self.basic_outbound.p2p_outbound()
+                        && let Some(route) = p2p.get_route_by_id(&destination)
+                    {
+                        p2p.send_raw_to(raw.clone(), &route.route_key())
+                            .await
+                            .is_ok()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if !target_is_local && !routed {
+                    self.basic_outbound.flood_direct_p2p(&raw, None);
+                    self.basic_outbound
+                        .flood_connected_servers(raw, Some(self.server_id))
+                        .await;
+                }
+            }
         }
         self.process_plain_packet(network_addr, transport_client, net_packet)
             .await
@@ -708,6 +792,28 @@ impl ServerTurnInboundHandler {
                 log::info!("对方回复开始打洞 {:?} {src}->{dest}", peer_punch_info);
                 self.puncher.punch_uncheck(src, peer_punch_info)?;
             }
+            MsgType::NodeProbe if dest == network_addr.ip => {
+                let request = crate::protocol::client_message::NodeDiscovery::from_slice(
+                    net_packet.payload(),
+                )?;
+                let payload = crate::protocol::client_message::NodeDiscovery {
+                    identity: self.node_identity.with_ip(network_addr.ip),
+                    request_id: request.request_id,
+                }
+                .encode();
+                let mut reply = NetPacket::new(TransmissionBytes::zeroed_size(
+                    HEAD_LENGTH + payload.len(),
+                    self.packet_crypto.encrypt_reserve(),
+                ))?;
+                reply.set_msg_type(MsgType::NodeProbeReply);
+                reply.set_ttl(15);
+                reply.set_src_id(network_addr.ip.into());
+                reply.set_dest_id(src.into());
+                reply.set_payload(&payload)?;
+                self.basic_outbound
+                    .send_encrypted_packet(network_addr, src, reply)
+                    .await?;
+            }
             _ => {}
         }
         Ok(())
@@ -732,7 +838,15 @@ impl ServerTurnInboundHandler {
                 .await;
         }
         let dest = Ipv4Addr::from(net_packet.dest_id());
-        if !dest.is_broadcast() && !dest.is_unspecified() && network_addr.ip != dest {
+        let graph_message = matches!(
+            net_packet.msg_type()?,
+            MsgType::NodeProbe | MsgType::NodeProbeReply | MsgType::NodeAnnouncement
+        );
+        if !graph_message
+            && !dest.is_broadcast()
+            && !dest.is_unspecified()
+            && network_addr.ip != dest
+        {
             return Ok(());
         }
         self.handle_client_data(network_addr, transport_client, data)
@@ -834,7 +948,7 @@ mod tests {
         NetworkAddr {
             ip,
             prefix_len: 24,
-            gateway: Ipv4Addr::new(10, 26, 0, 1),
+            gateway: Some(Ipv4Addr::new(10, 26, 0, 1)),
             broadcast: Ipv4Addr::new(10, 26, 0, 255),
         }
     }
@@ -936,7 +1050,7 @@ mod tests {
         let shared_network = SharedNetworkAddr::default();
         let initial_ip = Ipv4Addr::new(10, 26, 0, 2);
         shared_network.set(network(initial_ip));
-        let registration_ip = SharedRegistrationIp::new(Some(initial_ip));
+        let registration_ip = SharedRegistrationIp::new(None);
 
         let server_info = ServerInfoCollection::default();
         server_info.update_server(
@@ -968,6 +1082,7 @@ mod tests {
             EventScript::new(None),
             Vec::new(),
         );
+        registration_ip.set(initial_ip);
         TestUpdateContext {
             context,
             network: shared_network,
@@ -1054,6 +1169,26 @@ mod tests {
             registration_ip,
             ..
         } = update_context(DeviceMode::Tun, true, 1);
+        let old_ip = shared_network.ip().unwrap();
+        assert!(
+            context
+                .apply_and_fast_register(Ipv4Addr::new(10, 26, 0, 9))
+                .await
+                .is_err()
+        );
+        assert_eq!(shared_network.ip(), Some(old_ip));
+        assert_eq!(registration_ip.get(), Some(old_ip));
+    }
+
+    #[tokio::test]
+    async fn server_cannot_replace_a_configured_fixed_ip() {
+        let TestUpdateContext {
+            mut context,
+            network: shared_network,
+            registration_ip,
+            ..
+        } = update_context(DeviceMode::No, true, 1);
+        context.fixed_ip = true;
         let old_ip = shared_network.ip().unwrap();
         assert!(
             context

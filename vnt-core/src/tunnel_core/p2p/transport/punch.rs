@@ -2,9 +2,12 @@ use crate::context::config::{PunchRule, TurnRule, allow_punch, punch_model_for};
 use crate::context::nat::PunchBackoff;
 use crate::context::{ServerInfoCollection, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
-use crate::protocol::client_message::PunchInfo;
+use crate::protocol::client_message::{
+    NETWORK_CODE_HASH_LEN, NodeIdentityTemplate, PunchInfo, network_code_hash,
+};
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
+use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::route_table::RouteTable;
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use anyhow::bail;
@@ -122,6 +125,7 @@ pub struct NatPuncher {
     packet_crypto: PacketCrypto,
     limiter: PunchLimiter,
     punch_rules: Arc<Vec<PunchRule>>,
+    network_code_hash: [u8; NETWORK_CODE_HASH_LEN],
 }
 
 impl NatPuncher {
@@ -131,6 +135,7 @@ impl NatPuncher {
         puncher: Option<Puncher>,
         packet_crypto: PacketCrypto,
         punch_rules: Arc<Vec<PunchRule>>,
+        identity: NodeIdentityTemplate,
     ) -> Self {
         Self {
             network,
@@ -139,6 +144,7 @@ impl NatPuncher {
             packet_crypto,
             limiter: PunchLimiter::default(),
             punch_rules,
+            network_code_hash: network_code_hash(&identity.network_code),
         }
     }
     pub fn punch(
@@ -219,6 +225,7 @@ impl NatPuncher {
             bail!("not ip");
         };
         let packet_crypto = self.packet_crypto.clone();
+        let network_code_hash = self.network_code_hash;
         tokio::spawn(async move {
             let _permit = permit;
             if let Some(time) = time {
@@ -231,6 +238,7 @@ impl NatPuncher {
                 punch_info,
                 punch_model,
                 packet_crypto,
+                network_code_hash,
             )
             .await
             {
@@ -247,23 +255,88 @@ async fn punch_now(
     nat_info: PunchInfo,
     punch_model: PunchModel,
     packet_crypto: PacketCrypto,
+    network_code_hash: [u8; NETWORK_CODE_HASH_LEN],
 ) -> anyhow::Result<()> {
-    let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
-        HEAD_LENGTH + 8,
-        packet_crypto.encrypt_reserve(),
-    ))?;
-    packet.set_msg_type(MsgType::PunchReq);
-    packet.set_ttl(1);
-    packet.set_src_id(src_ip.into());
-    packet.set_dest_id(dest_ip.into());
-    packet.set_payload(&crate::utils::time::now_ts_ms().to_be_bytes())?;
-    packet_crypto.encrypt_in_place(&mut packet)?;
+    let packet = build_punch_request(src_ip, dest_ip, &packet_crypto, network_code_hash)?;
     let buf = packet.into_buffer().into_bytes().freeze();
     let punch_info = rustp2p_core::punch::PunchInfo::new(punch_model, nat_info.nat_info);
     puncher
         .punch_now(Some(buf.clone()), buf, punch_info)
         .await?;
     Ok(())
+}
+
+fn build_punch_request(
+    src_ip: Ipv4Addr,
+    dest_ip: Ipv4Addr,
+    packet_crypto: &PacketCrypto,
+    network_code_hash: [u8; NETWORK_CODE_HASH_LEN],
+) -> anyhow::Result<NetPacket<TransmissionBytes>> {
+    let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+        HEAD_LENGTH + network_code_hash.len(),
+        packet_crypto.encrypt_reserve(),
+    ))?;
+    packet.set_msg_type(MsgType::PunchReq);
+    packet.set_ttl(1);
+    packet.set_src_id(src_ip.into());
+    packet.set_dest_id(dest_ip.into());
+    packet.set_payload(&network_code_hash)?;
+    packet_crypto.encrypt_in_place(&mut packet)?;
+    Ok(packet)
+}
+
+/// Starts NAT negotiation with identities learned from Gossip. The control
+/// packet follows the normal multi-hop route, so a server is not required.
+pub async fn gossip_punch_task(
+    outbound: BasicOutbound,
+    route_table: RouteTable,
+    ctx: PunchTaskContext,
+) -> anyhow::Result<()> {
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let Some(src_ip) = ctx.network.ip() else {
+            continue;
+        };
+        let Some(net) = ctx.network.get() else {
+            continue;
+        };
+        let mut candidates = route_table.node_infos();
+        candidates.shuffle(&mut rand::rng());
+        candidates.truncate(5);
+        for node in candidates {
+            let dest_ip = node.ip;
+            if !is_other_peer(src_ip, dest_ip)
+                || !allow_punch(&ctx.turn, &dest_ip)
+                || !ctx.punch_backoff.should_punch(dest_ip)
+            {
+                continue;
+            }
+            let Some(mut self_info) = (ctx.punch_info_getter)(dest_ip) else {
+                continue;
+            };
+            let missing = route_table.missing_punch_policies(&dest_ip, &self_info.punch_model);
+            if !has_any_punch_policy(&missing) {
+                continue;
+            }
+            if !ctx.punch_backoff.try_begin(dest_ip) {
+                continue;
+            }
+            self_info.punch_model = missing;
+            let payload = self_info.encode();
+            let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+                HEAD_LENGTH + payload.len(),
+                outbound.encrypt_reserve(),
+            ))?;
+            packet.set_msg_type(MsgType::PunchStart1);
+            packet.set_ttl(15);
+            packet.set_src_id(src_ip.into());
+            packet.set_dest_id(dest_ip.into());
+            packet.set_payload(&payload)?;
+            if let Err(error) = outbound.send_encrypted_packet(net, dest_ip, packet).await {
+                log::debug!("gossip punch negotiation failed for {dest_ip}: {error}");
+            }
+        }
+    }
 }
 
 fn effective_punch_model(
@@ -304,6 +377,22 @@ mod tests {
         assert!(is_other_peer(src, Ipv4Addr::new(10, 26, 0, 1)));
         assert!(is_other_peer(src, Ipv4Addr::new(10, 26, 0, 3)));
         assert!(!is_other_peer(src, src));
+    }
+
+    #[test]
+    fn current_punch_request_contains_only_the_16_byte_network_hash() {
+        let crypto = PacketCrypto::new_from_str(None).unwrap();
+        let expected = network_code_hash("mesh-a");
+        let packet = build_punch_request(
+            Ipv4Addr::new(10, 26, 0, 2),
+            Ipv4Addr::new(10, 26, 0, 3),
+            &crypto,
+            expected,
+        )
+        .unwrap();
+        assert_eq!(packet.msg_type().unwrap(), MsgType::PunchReq);
+        assert_eq!(packet.payload(), expected);
+        assert_eq!(packet.payload().len(), 16);
     }
 
     #[test]

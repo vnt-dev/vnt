@@ -68,6 +68,7 @@ pub struct SubnetExternalRoute {
 struct SubnetRouteTables {
     static_routes: Vec<NetInput>,
     automatic_routes: Vec<NetInput>,
+    gossip_routes: Vec<NetInput>,
     effective_routes: Vec<NetInput>,
 }
 
@@ -119,8 +120,20 @@ impl SubnetExternalRoute {
     pub fn static_routes(&self) -> Vec<NetInput> {
         self.route_table.lock().static_routes.clone()
     }
+    pub fn set_gossip_routes(&self, route_table: Vec<NetInput>) {
+        let routes = {
+            let mut tables = self.route_table.lock();
+            tables.gossip_routes = route_table;
+            rebuild_routes(&mut tables);
+            tables.effective_routes.clone()
+        };
+        self.publish(routes);
+    }
     pub fn automatic_routes(&self) -> Vec<NetInput> {
-        self.route_table.lock().automatic_routes.clone()
+        let tables = self.route_table.lock();
+        let mut routes = tables.automatic_routes.clone();
+        routes.extend(tables.gossip_routes.clone());
+        routes
     }
     pub fn reset_route(&self, route_table: Vec<NetInput>) {
         self.set_route_table(route_table);
@@ -143,7 +156,11 @@ impl SubnetExternalRoute {
 
 fn rebuild_routes(tables: &mut SubnetRouteTables) {
     let mut routes = tables.static_routes.clone();
-    routes.extend(tables.automatic_routes.clone());
+    let mut learned = tables.automatic_routes.clone();
+    learned.extend(tables.gossip_routes.clone());
+    learned.sort_by_key(|route| (route.net, route.target_ip));
+    learned.dedup_by_key(|route| route.net);
+    routes.extend(learned);
     routes.sort_by_key(|route| std::cmp::Reverse(route.net.prefix_len()));
     tables.effective_routes = routes;
 }

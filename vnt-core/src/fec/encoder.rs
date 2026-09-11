@@ -253,7 +253,7 @@ async fn encode_and_send_parity(
         net_packet.set_msg_type(MsgType::Turn);
         net_packet.set_src_id(src.into());
         net_packet.set_dest_id(dest.into());
-        net_packet.set_ttl(5);
+        net_packet.set_ttl(15);
         net_packet.set_payload(&fec_payload)?;
         net_packet.set_fec_flag(true);
 

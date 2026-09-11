@@ -172,6 +172,40 @@ impl ServerOutbound {
             .context("connect server task failed")
     }
 
+    /// Sends an already encrypted graph packet to every connected server except
+    /// the ingress server. Unlike client broadcast distribution, this is a
+    /// server-to-server bridge primitive and therefore does not depend on the
+    /// current client snapshots of those servers.
+    pub async fn flood_connected_raw(
+        &self,
+        buf: NetPacket<Bytes>,
+        exclude_server: Option<u32>,
+    ) -> usize {
+        let buf = buf.into_buffer();
+        let expired = Duration::from_secs(5);
+        let mut sent = 0usize;
+        for server_id in self.server_id_list.iter().copied() {
+            if exclude_server == Some(server_id)
+                || !self.server_info_collection.is_server_connected(server_id)
+            {
+                continue;
+            }
+            let Some(sender) = self.sender.get(&server_id) else {
+                continue;
+            };
+            match sender
+                .send_timeout((buf.clone(), Instant::now() + expired), expired)
+                .await
+            {
+                Ok(()) => sent += 1,
+                Err(error) => {
+                    log::debug!("failed to bridge graph packet to server {server_id}: {error}");
+                }
+            }
+        }
+        sent
+    }
+
     pub async fn send_raw_broadcast(
         &self,
         exclude_ips: Option<Vec<Ipv4Addr>>,

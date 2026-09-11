@@ -87,7 +87,7 @@ impl EnhancedOutbound {
         if frame.ethertype == EtherTypes::Arp
             && let Some(arp) = parse_arp_ipv4(data.as_ref())
             && arp.operation == ArpOperations::Request
-            && (arp.target_ip == net.gateway
+            && (Some(arp.target_ip) == net.gateway
                 || self.hybrid_outbound.is_relay_client(&arp.target_ip))
         {
             return Ok(build_arp_reply(data.as_ref(), arp.target_ip));
@@ -110,7 +110,11 @@ impl EnhancedOutbound {
 
         // Only frames explicitly addressed to our proxy-ARP gateway enter the
         // existing L3 path. Every other Ethernet frame is switched by MAC.
-        if frame.ethertype == EtherTypes::Ipv4 && frame.destination == mac_from_ip(net.gateway) {
+        if frame.ethertype == EtherTypes::Ipv4
+            && net
+                .gateway
+                .is_some_and(|gateway| frame.destination == mac_from_ip(gateway))
+        {
             let Some(ipv4) = Ipv4Packet::new(&data[frame.payload_offset..]) else {
                 return Ok(None);
             };
@@ -156,7 +160,7 @@ impl EnhancedOutbound {
         if dest == src || dest.is_unspecified() {
             return Ok(());
         }
-        if dest == net.gateway {
+        if net.gateway == Some(dest) {
             // 发送到网关
             return self.hybrid_outbound.ipv4_gateway_outbound(net, data).await;
         }

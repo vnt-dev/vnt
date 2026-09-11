@@ -17,8 +17,8 @@ export const configHelp = {
   },
   server: {
     param: "server",
-    summary: "VNT 节点用于注册、发现对端和中继的服务器地址。",
-    usage: "可以配置多个地址用于容错。支持 QUIC、TCP、WebSocket TLS，以及通过 DNS TXT 或 HTTP(S) 接口动态发现；省略协议时默认使用 TCP。",
+    summary: "用于注册、发现对端和中继的可选服务器地址。",
+    usage: "固定虚拟 IP 时服务器只提供后台增强能力，可配置多个地址用于容错，也可完全省略。无服务器时至少配置一个可直连节点作为网络种子。",
     format: "主机:端口（默认 tcp://）、quic://主机:端口、tcp://主机:端口、wss://域名/路径、dynamic://域名，或 dynamic://http(s)://接口地址。",
     example: "quic://1.2.3.4:29872",
     notes: ["dynamic://域名 会读取 DNS TXT 记录；dynamic://http(s)://接口地址 会读取接口返回的换行分隔服务器地址列表。"],
@@ -48,10 +48,10 @@ export const configHelp = {
   },
   ip: {
     param: "ip",
-    summary: "请求一个固定的本机虚拟 IPv4 地址。",
-    usage: "适合需要固定访问地址、路由规则或端口映射的设备。配置多个服务器时必须填写，以便各服务器使用同一个地址注册。地址必须属于服务器虚拟网段，并且不能与其他在线节点冲突。",
-    format: "单个 IPv4 地址；单服务器可留空由服务端分配，多服务器时必填。",
-    example: "10.26.0.2",
+    summary: "设置固定的本机虚拟 IPv4 地址和组网前缀。",
+    usage: "填写后客户端立即启动，服务器连接不会成为启动卡点。无服务器或多服务器时必填；单服务器可留空由服务端分配。首台成功接入的服务器会补充虚拟网关。",
+    format: "IPv4 或 CIDR；纯 IPv4 默认 /24，不能填写网段地址或广播地址。",
+    example: "10.26.0.2/24",
   },
   mtu: {
     param: "mtu",

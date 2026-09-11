@@ -119,6 +119,9 @@ pub enum MsgType {
     SubnetSyncRes = 24,
     Ikev2Relay = 25,
     WireGuardRelay = 26,
+    NodeProbe = 27,
+    NodeProbeReply = 28,
+    NodeAnnouncement = 29,
 }
 impl From<MsgType> for u8 {
     fn from(val: MsgType) -> Self {
@@ -163,6 +166,9 @@ impl TryFrom<u8> for MsgType {
             24 => MsgType::SubnetSyncRes,
             25 => MsgType::Ikev2Relay,
             26 => MsgType::WireGuardRelay,
+            27 => MsgType::NodeProbe,
+            28 => MsgType::NodeProbeReply,
+            29 => MsgType::NodeAnnouncement,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -369,6 +375,9 @@ mod tests {
             MsgType::SubnetSyncRes,
             MsgType::Ikev2Relay,
             MsgType::WireGuardRelay,
+            MsgType::NodeProbe,
+            MsgType::NodeProbeReply,
+            MsgType::NodeAnnouncement,
         ];
         for msg_type in all {
             let byte = u8::from(msg_type);
@@ -380,7 +389,7 @@ mod tests {
         }
         // 未分配的取值必须报错
         assert!(MsgType::try_from(0u8).is_err());
-        assert!(MsgType::try_from(27u8).is_err());
+        assert!(MsgType::try_from(30u8).is_err());
     }
 
     #[test]

@@ -65,7 +65,7 @@ mod tests {
 
     fn network() -> NetworkAddr {
         NetworkAddr {
-            gateway: Ipv4Addr::new(10, 26, 0, 1),
+            gateway: Some(Ipv4Addr::new(10, 26, 0, 1)),
             broadcast: Ipv4Addr::new(10, 26, 0, 255),
             ip: Ipv4Addr::new(10, 26, 0, 9),
             prefix_len: 24,

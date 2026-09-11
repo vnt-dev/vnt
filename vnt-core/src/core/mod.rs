@@ -17,13 +17,16 @@ use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{
     AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable, advertised_subnets,
 };
+use crate::protocol::client_message::NodeIdentityTemplate;
 use crate::protocol::control_message::ErrorResponseMsg;
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tun::{DeviceConfig, DeviceIOManager, TunDataInbound, TunReceiver, tun_channel};
 use crate::tunnel_core::outbound::{BasicOutbound, HybridOutbound};
 use crate::tunnel_core::p2p::inbound::{P2pInboundConfig, P2pInboundHandler};
-use crate::tunnel_core::p2p::transport::punch::NatPuncher;
-use crate::tunnel_core::p2p::transport::task::{P2pInitConfig, init_tunnel};
+use crate::tunnel_core::p2p::transport::punch::{NatPuncher, PunchTaskContext, gossip_punch_task};
+use crate::tunnel_core::p2p::transport::task::{
+    P2pInitConfig, init_tunnel, node_announcement_task,
+};
 use crate::tunnel_core::server::connection_manager::{
     InboundHandlerConfig, ServerTurnManager, create_server_tunnel, register_with_first_available,
 };
@@ -56,6 +59,8 @@ struct RegistrationContext {
     allow_ikev2: bool,
     allow_wireguard: bool,
     relay_subnets: AllowSubnetExternalRoute,
+    basic_outbound: BasicOutbound,
+    node_identity: NodeIdentityTemplate,
 }
 
 pub struct NetworkManager {
@@ -113,6 +118,12 @@ impl NetworkManager {
         let mtu = config.mtu.unwrap_or(DEFAULT_MTU);
         let packet_crypto = PacketCrypto::new_from_str(config.password.as_deref())?;
         let packet_compression = PacketCompression::new(config.compress);
+        let node_identity = NodeIdentityTemplate {
+            name: config.device_name.clone(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            network_code: config.network_code.clone(),
+            advertised_subnets: advertised_subnets(&config.output, &config.subnet_mapping),
+        };
         let (server_manager_list, tunnel_to_server, server_rpc, registration_ip) =
             create_server_tunnel(
                 app_state.clone(),
@@ -152,9 +163,11 @@ impl NetworkManager {
                     tunnel_addr: config.tunnel_addr.clone(),
                     tunnel_port: config.tunnel_port,
                     automatic_punch: !config.no_punch,
+                    auto_sync_subnet: config.auto_sync_subnet,
                     peer_address: config.peer_address.clone(),
                     turn: turn.clone(),
                     default_interface: default_interface.clone(),
+                    identity: node_identity.clone(),
                 },
             )
             .await?;
@@ -173,6 +186,7 @@ impl NetworkManager {
             puncher,
             packet_crypto.clone(),
             punch_model.clone(),
+            node_identity.clone(),
         );
         let subnet_external_route = app_state.subnet_route.clone();
         subnet_external_route.set_route_table(config.input.clone());
@@ -185,7 +199,33 @@ impl NetworkManager {
             p2p_socket.clone(),
             packet_crypto.clone(),
             turn.clone(),
+            node_identity.clone(),
         );
+        if p2p_socket.is_some() {
+            task_group.spawn(node_announcement_task(
+                app_state.network.clone(),
+                app_state.route_table.clone(),
+                basic_outbound.clone(),
+                node_identity.clone(),
+            ));
+        }
+        if !config.no_punch {
+            let punch_state = app_state.clone();
+            let punch_ctx = PunchTaskContext {
+                network: app_state.network.clone(),
+                server_info: app_state.server_info_collection.clone(),
+                punch_backoff: app_state.punch_backoff.clone(),
+                punch_info_getter: std::sync::Arc::new(move |target| {
+                    punch_state.get_punch_info(target)
+                }),
+                turn: turn.clone(),
+            };
+            task_group.spawn(gossip_punch_task(
+                basic_outbound.clone(),
+                app_state.route_table.clone(),
+                punch_ctx,
+            ));
+        }
         let fec_encoder = if config.fec {
             Some(FecEncoder::new(
                 &task_group,
@@ -289,8 +329,16 @@ impl NetworkManager {
                 enhanced_inbound: enhanced_inbound.clone(),
                 fec_decoder: fec_decoder.clone(),
                 turn: turn.clone(),
-                basic_outbound,
+                basic_outbound: basic_outbound.clone(),
                 punch_backoff: app_state.punch_backoff.clone(),
+                identity: node_identity.clone(),
+                auto_sync_subnet: config.auto_sync_subnet,
+                puncher: puncher.clone(),
+                punch_info_getter: {
+                    let state = app_state.clone();
+                    std::sync::Arc::new(move |target| state.get_punch_info(target))
+                },
+                peer_map: app_state.peer_map.clone(),
             });
             p2p_task.start(handler);
         }
@@ -310,6 +358,8 @@ impl NetworkManager {
             allow_ikev2: config.allow_ikev2,
             allow_wireguard: config.allow_wireguard,
             relay_subnets,
+            basic_outbound: basic_outbound.clone(),
+            node_identity: node_identity.clone(),
         });
 
         app_state.set_config(config.clone());
@@ -338,7 +388,8 @@ impl NetworkManager {
         let Some(mut ctx) = self.registration_context.take() else {
             bail!("register can only be called once");
         };
-        match Self::register_impl(&self.app_state, &self.task_group, &mut ctx).await {
+        match Self::register_impl(&self.app_state, &self.task_group, &mut ctx, self.config.ip).await
+        {
             Ok(response) => Ok(response),
             Err(e) => {
                 // 注册失败时归还上下文，允许调用方重试
@@ -352,62 +403,66 @@ impl NetworkManager {
         app_state: &AppState,
         task_group: &TaskGroup,
         ctx: &mut RegistrationContext,
+        fixed_ip: Option<crate::context::config::VirtualIp>,
     ) -> anyhow::Result<RegisterResponse> {
-        let is_multi_server = ctx.server_managers.len() > 1;
-
-        let (initially_connected_server, response) = if is_multi_server {
-            // A fixed IP lets each server register independently. Start as soon
-            // as one server is ready and reconnect the rest in the background.
-            log::info!(
-                "Multi-server mode: registering concurrently with {} servers",
-                ctx.server_managers.len()
-            );
-            register_with_first_available(&mut ctx.server_managers).await?
+        let mut initially_connected_server = None;
+        let network_addr = if let Some(fixed_ip) = fixed_ip {
+            let network = fixed_ip.network();
+            let addr = NetworkAddr {
+                gateway: None,
+                broadcast: network.broadcast(),
+                ip: fixed_ip.ip(),
+                prefix_len: fixed_ip.prefix_len(),
+            };
+            app_state.network.set(addr);
+            log::info!("Local fixed network activated: {fixed_ip}");
+            addr
         } else {
-            // Single-server: normal registration
-            log::info!("Single-server mode: performing normal registration");
-            (
-                0,
-                ctx.server_managers[0]
-                    .connect_and_reg(crate::protocol::control_message::RegistrationMode::Normal)
-                    .await?,
-            )
-        };
-        let reg_response = match response {
-            crate::protocol::control_message::ResponseMessage::Reg(reg) => {
+            let is_multi_server = ctx.server_managers.len() > 1;
+            let (server_index, response) = if is_multi_server {
+                // A fixed IP lets each server register independently. Start as soon
+                // as one server is ready and reconnect the rest in the background.
                 log::info!(
-                    "Registration completed, IP: {}, prefix_len: {}",
-                    reg.ip,
-                    reg.prefix_len
+                    "Multi-server mode: registering concurrently with {} servers",
+                    ctx.server_managers.len()
                 );
-                reg
+                register_with_first_available(&mut ctx.server_managers).await?
+            } else {
+                log::info!("Single-server mode: performing normal registration");
+                (
+                    0,
+                    ctx.server_managers[0]
+                        .connect_and_reg(crate::protocol::control_message::RegistrationMode::Normal)
+                        .await?,
+                )
+            };
+            let reg_response = match response {
+                crate::protocol::control_message::ResponseMessage::Reg(reg) => reg,
+                crate::protocol::control_message::ResponseMessage::Error(e) => {
+                    return Ok(RegisterResponse::Failed(e));
+                }
+                crate::protocol::control_message::ResponseMessage::ConfirmReg(_) => {
+                    bail!("Unexpected ConfirmReg response");
+                }
+                crate::protocol::control_message::ResponseMessage::FastReg(_) => {
+                    bail!("Unexpected FastReg response");
+                }
+            };
+            let addr = NetworkAddr {
+                gateway: Some(reg_response.gateway),
+                broadcast: Ipv4Net::new(reg_response.ip, reg_response.prefix_len)?.broadcast(),
+                ip: reg_response.ip,
+                prefix_len: reg_response.prefix_len,
+            };
+            app_state.network.set(addr);
+            initially_connected_server = Some(server_index);
+            if !reg_response.server_version.is_empty() {
+                app_state
+                    .server_info_collection
+                    .set_server_version(server_index as u32, reg_response.server_version);
             }
-            crate::protocol::control_message::ResponseMessage::Error(e) => {
-                return Ok(RegisterResponse::Failed(e));
-            }
-            crate::protocol::control_message::ResponseMessage::ConfirmReg(_) => {
-                bail!("Unexpected ConfirmReg response");
-            }
-            crate::protocol::control_message::ResponseMessage::FastReg(_) => {
-                bail!("Unexpected FastReg response");
-            }
+            addr
         };
-        let network_addr = NetworkAddr {
-            gateway: reg_response.gateway,
-            broadcast: Ipv4Net::new(reg_response.ip, reg_response.prefix_len)?.broadcast(),
-            ip: reg_response.ip,
-            prefix_len: reg_response.prefix_len,
-        };
-        app_state.network.set(network_addr);
-
-        // 只保存本次实际完成注册的服务器版本；其他服务器会在重连后
-        // 分别更新自己的版本信息。
-        if !reg_response.server_version.is_empty() {
-            app_state.server_info_collection.set_server_version(
-                initially_connected_server as u32,
-                reg_response.server_version.clone(),
-            );
-        }
 
         // Start data handling tasks for all servers
         for (index, turn_manager) in ctx.server_managers.drain(..).enumerate() {
@@ -432,11 +487,13 @@ impl NetworkManager {
                 allow_ikev2: ctx.allow_ikev2,
                 allow_wireguard: ctx.allow_wireguard,
                 relay_subnets: ctx.relay_subnets.clone(),
+                basic_outbound: ctx.basic_outbound.clone(),
+                node_identity: ctx.node_identity.clone(),
             });
             turn_manager.data_handle_task(
                 task_group,
                 handler_config,
-                index == initially_connected_server,
+                initially_connected_server == Some(index),
             );
         }
 
@@ -543,7 +600,13 @@ impl NetworkManager {
                     &[
                         ("ip", network.ip.to_string()),
                         ("prefix-length", network.prefix_len.to_string()),
-                        ("gateway", network.gateway.to_string()),
+                        (
+                            "gateway",
+                            network
+                                .gateway
+                                .map(|gateway| gateway.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                        ),
                         ("broadcast", network.broadcast.to_string()),
                         ("server", server),
                     ],
@@ -632,5 +695,96 @@ impl NetworkManager {
 impl Drop for NetworkManager {
     fn drop(&mut self) {
         self.stop_network();
+    }
+}
+
+#[cfg(test)]
+mod decentralized_loopback_tests {
+    use super::{NetworkManager, RegisterResponse};
+    use crate::context::config::{Config, DeviceMode};
+    use crate::utils::task_control::{TaskGroupGuard, TaskGroupManager};
+    use std::net::{Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
+    use std::time::Duration;
+
+    fn reserve_loopback_ports(count: usize) -> Vec<u16> {
+        let mut listeners = Vec::with_capacity(count);
+        while listeners.len() < count {
+            let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = udp.local_addr().unwrap().port();
+            if let Ok(tcp) = TcpListener::bind((Ipv4Addr::LOCALHOST, port)) {
+                listeners.push((tcp, udp));
+            }
+        }
+        let ports = listeners
+            .iter()
+            .map(|(_, udp)| udp.local_addr().unwrap().port())
+            .collect();
+        drop(listeners);
+        ports
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn four_serverless_nodes_form_a_multihop_loopback_graph() {
+        let ports = reserve_loopback_ports(4);
+        let peers = [ports[1], ports[2], ports[3], ports[2]];
+        let mut managers = Vec::new();
+        let mut guards: Vec<TaskGroupGuard> = Vec::new();
+
+        for index in 0..4 {
+            let manager = TaskGroupManager::new();
+            let (task_group, guard) = manager.create_task().unwrap();
+            let ip = Ipv4Addr::new(10, 26, 0, index as u8 + 2);
+            let config = Config {
+                network_code: "loopback-gossip-test".to_string(),
+                device_id: format!("loopback-device-{index}"),
+                device_name: format!("node-{}", (b'A' + index as u8) as char),
+                ip: Some(format!("{ip}/24").parse().unwrap()),
+                password: Some("loopback-gossip-password".to_string()),
+                no_punch: true,
+                device_mode: DeviceMode::No,
+                tunnel_addr: vec![SocketAddr::from((Ipv4Addr::LOCALHOST, ports[index]))],
+                peer_address: vec![format!("tcp://127.0.0.1:{}", peers[index]).parse().unwrap()],
+                ..Config::default()
+            };
+            let mut network = NetworkManager::create_network(Box::new(config), task_group)
+                .await
+                .unwrap();
+            assert!(matches!(
+                network.register().await.unwrap(),
+                RegisterResponse::Success(_)
+            ));
+            managers.push(network);
+            guards.push(guard);
+        }
+
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let a = managers[0].vnt_api();
+                let d = managers[3].vnt_api();
+                let a_to_d = a.find_route(&Ipv4Addr::new(10, 26, 0, 5));
+                let d_to_a = d.find_route(&Ipv4Addr::new(10, 26, 0, 2));
+                let a_knows_d = a
+                    .gossip_node_list()
+                    .iter()
+                    .any(|node| node.ip == Ipv4Addr::new(10, 26, 0, 5) && node.name == "node-D");
+                if a_to_d.is_some_and(|route| route.metric() == 3)
+                    && d_to_a.is_some_and(|route| route.metric() == 3)
+                    && a_knows_d
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "loopback graph did not converge: A={:?}, D={:?}",
+                managers[0].vnt_api().route_table(),
+                managers[3].vnt_api().route_table()
+            )
+        });
+
+        drop(guards);
     }
 }
