@@ -829,9 +829,16 @@ fn build_headers_for_path(path: &str) -> HeaderMap {
         headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
     }
+    // Vite 会为 JS/CSS 等静态资源生成带内容哈希的文件名，可以长期缓存。
+    // 但 index.html 是资源清单的入口；若将它标记为 immutable，浏览器会在
+    // 程序升级后继续使用旧入口，进而加载旧的前端代码或引用已经不存在的资源。
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
+        if path.trim_end_matches(".gz") == "index.html" {
+            HeaderValue::from_static("no-cache")
+        } else {
+            HeaderValue::from_static("public, max-age=31536000, immutable")
+        },
     );
     headers
 }
@@ -861,8 +868,10 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
         && let Ok(content) = tokio::fs::read(&local_path).await
     {
         log::debug!("Serving file from local filesystem: {:?}", local_path);
-        let mime = from_path(&local_path).first_or_octet_stream();
-        return ([(header::CONTENT_TYPE, mime.as_ref())], content).into_response();
+        // 开发/本地静态目录与发布时内嵌资源必须使用同一缓存策略，避免
+        // 两种运行方式的刷新行为不一致。
+        let headers = build_headers_for_path(path);
+        return (headers, Body::from(content)).into_response();
     }
 
     // 从内嵌数据中读取
@@ -2012,6 +2021,27 @@ network_code = "test"
 
         let legacy_false: StartConfig = toml::from_str(&format!("{base}no_tun = false\n")).unwrap();
         assert!(legacy_false.validate().is_ok());
+    }
+
+    #[test]
+    fn index_html_must_revalidate_but_hashed_assets_can_be_immutable() {
+        let index_headers = build_headers_for_path("index.html");
+        assert_eq!(
+            index_headers.get(header::CACHE_CONTROL).unwrap(),
+            "no-cache"
+        );
+
+        let compressed_index_headers = build_headers_for_path("index.html.gz");
+        assert_eq!(
+            compressed_index_headers.get(header::CACHE_CONTROL).unwrap(),
+            "no-cache"
+        );
+
+        let asset_headers = build_headers_for_path("assets/index-abc123.js");
+        assert_eq!(
+            asset_headers.get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=31536000, immutable"
+        );
     }
 
     #[test]
