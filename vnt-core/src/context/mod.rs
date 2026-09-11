@@ -5,6 +5,7 @@ use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
     ClientSimpleInfo, ClientSimpleInfoList, ClientType, SubnetSyncResponse,
 };
+use crate::tunnel_core::p2p::node_info::NodeInfoMap;
 use crate::tunnel_core::p2p::route_table::RouteTable;
 use crate::tunnel_core::server::transport::config::ProtocolAddress;
 use ipnet::Ipv4Net;
@@ -297,6 +298,7 @@ pub(crate) struct AppState {
     pub(crate) server_info_collection: ServerInfoCollection,
     pub(crate) peer_map: PeerInfoMap,
     pub(crate) route_table: RouteTable,
+    pub(crate) node_info_map: NodeInfoMap,
     pub(crate) subnet_route: SubnetExternalRoute,
     pub(crate) nat_info: MyNatInfo,
     pub(crate) punch_backoff: PunchBackoff,
@@ -1094,6 +1096,7 @@ impl AppState {
         self.server_info_collection.clear();
         self.peer_map.clear();
         self.route_table.clear();
+        self.node_info_map.clear();
         self.nat_info.clear();
         self.punch_backoff.clear();
         self.packet_loss_stats.clear();

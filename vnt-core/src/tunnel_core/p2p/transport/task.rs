@@ -9,6 +9,7 @@ use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::inbound::P2pInboundHandler;
+use crate::tunnel_core::p2p::node_info::NodeInfoMap;
 use crate::tunnel_core::p2p::outbound::P2pOutbound;
 use crate::tunnel_core::p2p::route_table::RouteTable;
 use crate::tunnel_core::p2p::transport::nat_test::{
@@ -93,6 +94,7 @@ pub async fn init_tunnel(
 
     task_group.spawn(route_timeout_task(
         route_table.clone(),
+        app_state.node_info_map.clone(),
         app_state.packet_loss_stats.clone(),
         app_state.subnet_route.clone(),
         config.auto_sync_subnet,
@@ -105,6 +107,7 @@ pub async fn init_tunnel(
             punch_backoff: app_state.punch_backoff.clone(),
             punch_info_getter: Arc::new(move |target| app_state_for_punch.get_punch_info(target)),
             turn: config.turn.clone(),
+            node_info_map: app_state.node_info_map.clone(),
         };
         task_group.spawn(punch_task(tunnel_to_server, route_table.clone(), punch_ctx));
     }
@@ -366,6 +369,7 @@ fn build_route_ping(
 }
 pub async fn route_timeout_task(
     route_table: RouteTable,
+    node_info_map: NodeInfoMap,
     packet_loss_stats: PacketLossStats,
     subnet_route: crate::nat::SubnetExternalRoute,
     auto_sync_subnet: bool,
@@ -376,9 +380,14 @@ pub async fn route_timeout_task(
         let removed_keys = route_table.remove_oldest_route(expired_time);
         if !removed_keys.is_empty() {
             packet_loss_stats.remove_batch(&removed_keys);
+            for (ip, _) in &removed_keys {
+                if !route_table.exists(ip) {
+                    node_info_map.remove(ip);
+                }
+            }
             if auto_sync_subnet {
-                let routes = route_table
-                    .node_infos()
+                let routes = node_info_map
+                    .list()
                     .into_iter()
                     .flat_map(|node| {
                         node.advertised_subnets

@@ -63,8 +63,8 @@ impl VntApi {
     /// announcements. Entries disappear with their last route.
     pub fn gossip_node_list(&self) -> Vec<ApiNodeInfo> {
         self.app_state
-            .route_table
-            .node_infos()
+            .node_info_map
+            .list()
             .into_iter()
             .map(|node| ApiNodeInfo {
                 ip: node.ip,

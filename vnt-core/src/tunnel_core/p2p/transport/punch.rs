@@ -8,6 +8,7 @@ use crate::protocol::client_message::{
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
+use crate::tunnel_core::p2p::node_info::NodeInfoMap;
 use crate::tunnel_core::p2p::route_table::RouteTable;
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use anyhow::bail;
@@ -52,6 +53,7 @@ pub struct PunchTaskContext {
     pub punch_backoff: PunchBackoff,
     pub punch_info_getter: PunchInfoGetter,
     pub turn: Arc<Vec<TurnRule>>,
+    pub node_info_map: NodeInfoMap,
 }
 
 pub type PunchInfoGetter = std::sync::Arc<dyn Fn(Ipv4Addr) -> Option<PunchInfo> + Send + Sync>;
@@ -300,7 +302,7 @@ pub async fn gossip_punch_task(
         let Some(net) = ctx.network.get() else {
             continue;
         };
-        let mut candidates = route_table.node_infos();
+        let mut candidates = ctx.node_info_map.list();
         candidates.shuffle(&mut rand::rng());
         candidates.truncate(5);
         for node in candidates {

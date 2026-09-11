@@ -12,7 +12,8 @@ use crate::protocol::client_message::{
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
-use crate::tunnel_core::p2p::route_table::{NodeInfo, Route, RouteTable};
+use crate::tunnel_core::p2p::node_info::{NodeInfo, NodeInfoMap};
+use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
 use crate::tunnel_core::p2p::transport::punch::{NatPuncher, PunchInfoGetter};
 use anyhow::bail;
 use rustp2p_core::endpoint::TunnelWriteHalf;
@@ -173,6 +174,7 @@ fn build_punch_response(
 pub(crate) struct P2pInboundConfig {
     pub network_route: NetworkRoute,
     pub route_table: RouteTable,
+    pub node_info_map: NodeInfoMap,
     pub packet_loss_stats: PacketLossStats,
     pub packet_crypto: PacketCrypto,
     pub packet_compression: PacketCompression,
@@ -192,6 +194,7 @@ pub(crate) struct P2pInboundConfig {
 pub(crate) struct P2pInboundHandler {
     network_route: NetworkRoute,
     route_table: RouteTable,
+    node_info_map: NodeInfoMap,
     packet_loss_stats: PacketLossStats,
     packet_crypto: PacketCrypto,
     packet_compression: PacketCompression,
@@ -212,6 +215,7 @@ impl P2pInboundHandler {
         Self {
             network_route: config.network_route,
             route_table: config.route_table,
+            node_info_map: config.node_info_map,
             packet_loss_stats: config.packet_loss_stats,
             packet_crypto: config.packet_crypto,
             packet_compression: config.packet_compression,
@@ -351,9 +355,10 @@ impl P2pInboundHandler {
         };
         // Learning is deliberately done before deduplication: a duplicate
         // arriving on another edge is a useful backup next hop.
-        let identity_changed = self
+        let accepted = self
             .route_table
-            .add_gossip_route(node, Route::from_default_rt(route_key, metric));
+            .add_gossip_route(node.ip, Route::from_default_rt(route_key, metric));
+        let identity_changed = accepted && self.node_info_map.upsert(node);
         if identity_changed {
             self.sync_gossip_subnets();
         }
@@ -630,12 +635,9 @@ impl P2pInboundHandler {
                         }
                     };
                 let (first, identity_changed) = if let Some((node, _)) = identity.as_ref() {
-                    let changed = self.route_table.node_info(&ctx.src_ip).as_ref() != Some(node);
-                    (
-                        self.route_table
-                            .add_identified_owner_route(node.clone(), route_key),
-                        changed,
-                    )
+                    let first = self.route_table.add_owner_route(node.ip, route_key);
+                    let changed = self.node_info_map.upsert(node.clone());
+                    (first, changed)
                 } else {
                     (
                         self.route_table.add_owner_route(ctx.src_ip, route_key),
@@ -685,11 +687,9 @@ impl P2pInboundHandler {
                         }
                     };
                 let (first, identity_changed) = if let Some((node, _)) = identity {
-                    let changed = self.route_table.node_info(&ctx.src_ip).as_ref() != Some(&node);
-                    (
-                        self.route_table.add_identified_owner_route(node, route_key),
-                        changed,
-                    )
+                    let first = self.route_table.add_owner_route(node.ip, route_key);
+                    let changed = self.node_info_map.upsert(node);
+                    (first, changed)
                 } else {
                     (
                         self.route_table.add_owner_route(ctx.src_ip, route_key),
@@ -711,7 +711,12 @@ impl P2pInboundHandler {
     }
 
     pub fn tunnel_disconnect(&self, route_key: RouteKey) {
-        cleanup_tunnel_routes(&self.route_table, &self.packet_loss_stats, &route_key);
+        cleanup_tunnel_routes(
+            &self.route_table,
+            &self.node_info_map,
+            &self.packet_loss_stats,
+            &route_key,
+        );
         self.sync_gossip_subnets();
     }
 
@@ -720,8 +725,8 @@ impl P2pInboundHandler {
             return;
         }
         let routes = self
-            .route_table
-            .node_infos()
+            .node_info_map
+            .list()
             .into_iter()
             .flat_map(|node| {
                 node.advertised_subnets
@@ -738,11 +743,17 @@ impl P2pInboundHandler {
 
 fn cleanup_tunnel_routes(
     route_table: &RouteTable,
+    node_info_map: &NodeInfoMap,
     packet_loss_stats: &PacketLossStats,
     route_key: &RouteKey,
 ) {
     let removed = route_table.remove_route_key(route_key);
     packet_loss_stats.remove_batch(&removed);
+    for (ip, _) in removed {
+        if !route_table.exists(&ip) {
+            node_info_map.remove(&ip);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -898,6 +909,7 @@ mod tests {
     #[test]
     fn tunnel_cleanup_removes_all_packet_loss_stats_for_the_route_key() {
         let route_table = RouteTable::new();
+        let node_info_map = NodeInfoMap::default();
         let packet_loss_stats = PacketLossStats::default();
         let direct = Ipv4Addr::new(10, 26, 0, 3);
         let relayed = Ipv4Addr::new(10, 26, 0, 4);
@@ -909,13 +921,26 @@ mod tests {
 
         route_table.add_owner_route(direct, route_key);
         route_table.add_gossip_relay_route(relayed, Route::from_default_rt(route_key, 2));
+        node_info_map.upsert(NodeInfo {
+            ip: direct,
+            name: "direct".to_string(),
+            version: "2".to_string(),
+            advertised_subnets: Vec::new(),
+        });
+        node_info_map.upsert(NodeInfo {
+            ip: relayed,
+            name: "relayed".to_string(),
+            version: "2".to_string(),
+            advertised_subnets: Vec::new(),
+        });
         packet_loss_stats.record_sent(direct, route_key);
         packet_loss_stats.record_sent(relayed, route_key);
 
-        cleanup_tunnel_routes(&route_table, &packet_loss_stats, &route_key);
+        cleanup_tunnel_routes(&route_table, &node_info_map, &packet_loss_stats, &route_key);
 
         assert!(!route_table.exists(&direct));
         assert!(!route_table.exists(&relayed));
+        assert!(node_info_map.list().is_empty());
         assert!(
             packet_loss_stats
                 .get_loss_info(&direct, &route_key)
@@ -926,5 +951,44 @@ mod tests {
                 .get_loss_info(&relayed, &route_key)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn tunnel_cleanup_keeps_identity_until_the_last_peer_route_is_removed() {
+        let route_table = RouteTable::new();
+        let node_info_map = NodeInfoMap::default();
+        let packet_loss_stats = PacketLossStats::default();
+        let peer = Ipv4Addr::new(10, 26, 0, 3);
+        let first_key = RouteKey::new(
+            Protocol::TCP,
+            "127.0.0.1:2001".parse().unwrap(),
+            "127.0.0.1:3001".parse().unwrap(),
+        );
+        let second_key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2002".parse().unwrap(),
+            "127.0.0.1:3002".parse().unwrap(),
+        );
+        let node = NodeInfo {
+            ip: peer,
+            name: "peer".to_string(),
+            version: "2".to_string(),
+            advertised_subnets: Vec::new(),
+        };
+
+        route_table.add_owner_route(peer, first_key);
+        route_table.add_owner_route(peer, second_key);
+        node_info_map.upsert(node.clone());
+
+        cleanup_tunnel_routes(&route_table, &node_info_map, &packet_loss_stats, &first_key);
+        assert_eq!(node_info_map.get(&peer), Some(node));
+
+        cleanup_tunnel_routes(
+            &route_table,
+            &node_info_map,
+            &packet_loss_stats,
+            &second_key,
+        );
+        assert!(node_info_map.get(&peer).is_none());
     }
 }

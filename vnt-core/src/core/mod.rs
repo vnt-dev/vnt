@@ -217,6 +217,7 @@ impl NetworkManager {
                     punch_state.get_punch_info(target)
                 }),
                 turn: turn.clone(),
+                node_info_map: app_state.node_info_map.clone(),
             };
             task_group.spawn(gossip_punch_task(
                 basic_outbound.clone(),
@@ -321,6 +322,7 @@ impl NetworkManager {
                     subnet_external_route.clone(),
                 ),
                 route_table: app_state.route_table.clone(),
+                node_info_map: app_state.node_info_map.clone(),
                 packet_loss_stats: app_state.packet_loss_stats.clone(),
                 packet_crypto: packet_crypto.clone(),
                 packet_compression: packet_compression.clone(),
