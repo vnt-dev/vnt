@@ -17,6 +17,7 @@ use crate::tunnel_core::p2p::transport::punch::{NatPuncher, PunchInfoGetter};
 use anyhow::bail;
 use rustp2p_core::endpoint::TunnelWriteHalf;
 use rustp2p_core::route_table::RouteKey;
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 const GOSSIP_TTL: u8 = 15;
@@ -34,8 +35,43 @@ fn valid_punch_source(net: &NetworkAddr, source: Ipv4Addr) -> bool {
     !source.is_unspecified() && source != net.ip && net.network().contains(&source)
 }
 
-fn valid_relay_probe(net: &NetworkAddr, ctx: &PacketContext) -> bool {
-    valid_punch_source(net, ctx.src_ip) && ctx.dest_ip == net.ip && ctx.max_ttl == 2 && ctx.ttl == 0
+fn gossip_relay_targets(
+    net: &NetworkAddr,
+    source: Ipv4Addr,
+    source_metric: u8,
+    advertised: &[Ipv4Addr],
+) -> Vec<Ipv4Addr> {
+    if source_metric != 1 {
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    advertised
+        .iter()
+        .copied()
+        .filter(|target| {
+            *target != net.ip
+                && *target != source
+                && !target.is_unspecified()
+                && !target.is_broadcast()
+                && *target != net.broadcast
+                && net.network().contains(target)
+                && seen.insert(*target)
+        })
+        .collect()
+}
+
+fn learn_gossip_relay_routes(
+    route_table: &RouteTable,
+    net: &NetworkAddr,
+    source: Ipv4Addr,
+    source_metric: u8,
+    route_key: RouteKey,
+    advertised: &[Ipv4Addr],
+) {
+    let relay_metric = source_metric.saturating_add(1);
+    for target in gossip_relay_targets(net, source, source_metric, advertised) {
+        route_table.add_gossip_relay_route(target, Route::from_default_rt(route_key, relay_metric));
+    }
 }
 
 fn build_direct_handshake_response(
@@ -300,16 +336,18 @@ impl P2pInboundHandler {
             return Ok(());
         }
 
-        let discovery =
-            crate::protocol::client_message::NodeDiscovery::from_slice(packet.payload(), source)?;
+        let announcement = crate::protocol::client_message::NodeAnnouncement::from_slice(
+            packet.payload(),
+            source,
+        )?;
         if !net.network().contains(&source) {
             bail!("invalid gossip node identity from {source}")
         }
         let node = NodeInfo {
             ip: source,
-            name: discovery.identity.name,
-            version: discovery.identity.version,
-            advertised_subnets: discovery.identity.advertised_subnets,
+            name: announcement.identity.name,
+            version: announcement.identity.version,
+            advertised_subnets: announcement.identity.advertised_subnets,
         };
         // Learning is deliberately done before deduplication: a duplicate
         // arriving on another edge is a useful backup next hop.
@@ -319,6 +357,14 @@ impl P2pInboundHandler {
         if identity_changed {
             self.sync_gossip_subnets();
         }
+        learn_gossip_relay_routes(
+            &self.route_table,
+            net,
+            source,
+            metric,
+            route_key,
+            &announcement.direct_peer_ips,
+        );
         if !self.basic_outbound.graph_first_seen(msg_type, source, seq) {
             return Ok(());
         }
@@ -659,47 +705,6 @@ impl P2pInboundHandler {
             }
             MsgType::PingTurn => {}
             MsgType::PongTurn => {}
-            MsgType::RelayProbe => {
-                if !valid_relay_probe(net, ctx) {
-                    log::debug!(
-                        "ignore invalid RelayProbe from {} to {} with ttl {}/{}",
-                        ctx.src_ip,
-                        ctx.dest_ip,
-                        ctx.ttl,
-                        ctx.max_ttl
-                    );
-                    return Ok(());
-                }
-                let metric = ctx.max_ttl - ctx.ttl;
-                self.route_table
-                    .add_relay_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
-                let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
-                    HEAD_LENGTH,
-                    self.packet_crypto.encrypt_reserve(),
-                ))?;
-                packet.set_msg_type(MsgType::RelayProbeReply);
-                // 与 RelayProbe 对称：允许中继一次，到达发起方时 curr_ttl 为 0，metric = 2
-                packet.set_ttl(2);
-                packet.set_src_id(ctx.dest_ip.into());
-                packet.set_dest_id(ctx.src_ip.into());
-                self.packet_crypto.encrypt_in_place(&mut packet)?;
-                tunnel.send(packet.into_bytes().into_buffer()).await?;
-            }
-            MsgType::RelayProbeReply => {
-                if !valid_relay_probe(net, ctx) {
-                    log::debug!(
-                        "ignore invalid RelayProbeReply from {} to {} with ttl {}/{}",
-                        ctx.src_ip,
-                        ctx.dest_ip,
-                        ctx.ttl,
-                        ctx.max_ttl
-                    );
-                    return Ok(());
-                }
-                let metric = ctx.max_ttl - ctx.ttl;
-                self.route_table
-                    .add_relay_route(ctx.src_ip, Route::from_default_rt(route_key, metric));
-            }
             _ => {}
         }
         Ok(())
@@ -846,43 +851,48 @@ mod tests {
     }
 
     #[test]
-    fn relay_probe_requires_valid_virtual_endpoints_and_exactly_two_hops() {
+    fn direct_announcement_filters_and_deduplicates_relay_hints() {
         let net = network();
-        let valid = PacketContext {
-            msg_type: MsgType::RelayProbe,
-            src_ip: Ipv4Addr::new(10, 26, 0, 3),
-            dest_ip: net.ip,
-            max_ttl: 2,
-            ttl: 0,
-        };
-        assert!(valid_relay_probe(&net, &valid));
+        let source = Ipv4Addr::new(10, 26, 0, 3);
+        let target = Ipv4Addr::new(10, 26, 0, 4);
+        let advertised = [
+            target,
+            target,
+            source,
+            net.ip,
+            net.broadcast,
+            Ipv4Addr::UNSPECIFIED,
+            Ipv4Addr::BROADCAST,
+            Ipv4Addr::new(10, 27, 0, 4),
+        ];
 
-        for invalid in [
-            PacketContext {
-                src_ip: Ipv4Addr::UNSPECIFIED,
-                ..valid
-            },
-            PacketContext {
-                src_ip: net.ip,
-                ..valid
-            },
-            PacketContext {
-                src_ip: Ipv4Addr::new(10, 27, 0, 3),
-                ..valid
-            },
-            PacketContext {
-                dest_ip: Ipv4Addr::new(10, 26, 0, 4),
-                ..valid
-            },
-            PacketContext {
-                max_ttl: 1,
-                ttl: 0,
-                ..valid
-            },
-            PacketContext { ttl: 1, ..valid },
-        ] {
-            assert!(!valid_relay_probe(&net, &invalid));
-        }
+        assert_eq!(
+            gossip_relay_targets(&net, source, 1, &advertised),
+            vec![target]
+        );
+        assert!(gossip_relay_targets(&net, source, 2, &advertised).is_empty());
+    }
+
+    #[test]
+    fn direct_announcement_bootstraps_exactly_two_hop_route() {
+        let net = network();
+        let source = Ipv4Addr::new(10, 26, 0, 3);
+        let target = Ipv4Addr::new(10, 26, 0, 4);
+        let route_key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:1998".parse().unwrap(),
+            "127.0.0.1:2998".parse().unwrap(),
+        );
+        let direct_table = RouteTable::new();
+        learn_gossip_relay_routes(&direct_table, &net, source, 1, route_key, &[target]);
+
+        let route = direct_table.get_route_by_id(&target).unwrap();
+        assert_eq!(route.route_key(), route_key);
+        assert_eq!(route.metric(), 2);
+
+        let multihop_table = RouteTable::new();
+        learn_gossip_relay_routes(&multihop_table, &net, source, 2, route_key, &[target]);
+        assert!(!multihop_table.exists(&target));
     }
 
     #[test]
@@ -898,7 +908,7 @@ mod tests {
         );
 
         route_table.add_owner_route(direct, route_key);
-        route_table.add_relay_route(relayed, Route::from_default_rt(route_key, 2));
+        route_table.add_gossip_relay_route(relayed, Route::from_default_rt(route_key, 2));
         packet_loss_stats.record_sent(direct, route_key);
         packet_loss_stats.record_sent(relayed, route_key);
 

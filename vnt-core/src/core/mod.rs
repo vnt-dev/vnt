@@ -203,6 +203,7 @@ impl NetworkManager {
             task_group.spawn(node_announcement_task(
                 app_state.network.clone(),
                 basic_outbound.clone(),
+                app_state.route_table.clone(),
                 node_identity.clone(),
             ));
         }

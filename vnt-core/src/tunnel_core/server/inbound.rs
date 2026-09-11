@@ -649,7 +649,7 @@ impl ServerTurnInboundHandler {
         if let Some(raw) = graph_raw {
             let source = Ipv4Addr::from(net_packet.src_id());
             if msg_type == MsgType::NodeAnnouncement {
-                crate::protocol::client_message::NodeDiscovery::from_slice(
+                crate::protocol::client_message::NodeAnnouncement::from_slice(
                     net_packet.payload(),
                     source,
                 )?;

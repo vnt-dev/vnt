@@ -93,7 +93,7 @@ message PublicNodeIdentity {
   repeated NodeSubnet advertised_subnets = 4;
 }
 
-message NodeDiscovery {
+message NodeAnnouncement {
   PublicNodeIdentity identity = 1;
-  fixed64 request_id = 2;
+  repeated fixed32 direct_peer_ips = 2;
 }

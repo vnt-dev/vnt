@@ -15,6 +15,7 @@ use crate::protocol::ProtoToBytesMut;
 pub use proto::*;
 
 pub const NETWORK_CODE_HASH_LEN: usize = 16;
+pub const MAX_ANNOUNCED_DIRECT_PEERS: usize = 3;
 const NETWORK_CODE_HASH_DOMAIN: &[u8] = b"VNT-NETWORK-CODE-V1\0";
 
 /// Returns the compact, domain-separated network identifier used only by the
@@ -190,28 +191,40 @@ impl PeerHandshake {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NodeDiscovery {
+pub struct NodeAnnouncement {
     pub identity: LocalNodeIdentity,
-    pub request_id: u64,
+    pub direct_peer_ips: Vec<Ipv4Addr>,
 }
 
-impl NodeDiscovery {
+impl NodeAnnouncement {
     pub fn encode(&self) -> BytesMut {
-        proto::NodeDiscovery {
+        proto::NodeAnnouncement {
             identity: Some(self.identity.to_public_proto()),
-            request_id: self.request_id,
+            direct_peer_ips: self
+                .direct_peer_ips
+                .iter()
+                .copied()
+                .map(Into::into)
+                .collect(),
         }
         .encode_bytes_mut()
     }
 
     pub fn from_slice(buf: &[u8], source: Ipv4Addr) -> anyhow::Result<Self> {
-        let message = proto::NodeDiscovery::decode(buf)?;
+        let message = proto::NodeAnnouncement::decode(buf)?;
+        if message.direct_peer_ips.len() > MAX_ANNOUNCED_DIRECT_PEERS {
+            bail!("node announcement contains too many direct peers")
+        }
         let identity = message
             .identity
             .ok_or_else(|| anyhow::anyhow!("missing node identity"))?;
         Ok(Self {
             identity: LocalNodeIdentity::from_public_proto(identity, source)?,
-            request_id: message.request_id,
+            direct_peer_ips: message
+                .direct_peer_ips
+                .into_iter()
+                .map(Ipv4Addr::from)
+                .collect(),
         })
     }
 }
@@ -369,8 +382,8 @@ mod tests {
     }
 
     #[test]
-    fn node_discovery_wire_identity_omits_source_ip_and_network_code() {
-        let discovery = NodeDiscovery {
+    fn node_announcement_wire_identity_omits_source_ip_and_network_code() {
+        let announcement = NodeAnnouncement {
             identity: LocalNodeIdentity {
                 ip: "10.26.0.2".parse().unwrap(),
                 name: "node-a".to_string(),
@@ -378,28 +391,50 @@ mod tests {
                 network_code: "must-not-be-broadcast".to_string(),
                 advertised_subnets: vec!["192.168.10.0/24".parse().unwrap()],
             },
-            request_id: 43,
+            direct_peer_ips: vec![
+                "10.26.0.3".parse().unwrap(),
+                "10.26.0.4".parse().unwrap(),
+                "10.26.0.5".parse().unwrap(),
+            ],
         };
-        let encoded = discovery.encode();
+        let encoded = announcement.encode();
         assert!(
             !encoded
                 .windows("must-not-be-broadcast".len())
                 .any(|window| window == b"must-not-be-broadcast")
         );
 
-        let wire = proto::NodeDiscovery::decode(encoded.as_ref()).unwrap();
+        let wire = proto::NodeAnnouncement::decode(encoded.as_ref()).unwrap();
         let public = wire.identity.unwrap();
         assert_eq!(public.name, "node-a");
         assert_eq!(public.version, "2.0.8");
 
         let source = Ipv4Addr::new(10, 26, 0, 2);
-        let decoded = NodeDiscovery::from_slice(encoded.as_ref(), source).unwrap();
+        let decoded = NodeAnnouncement::from_slice(encoded.as_ref(), source).unwrap();
         assert_eq!(decoded.identity.ip, source);
         assert!(decoded.identity.network_code.is_empty());
         assert_eq!(
             decoded.identity.advertised_subnets,
-            discovery.identity.advertised_subnets
+            announcement.identity.advertised_subnets
         );
+        assert_eq!(decoded.direct_peer_ips, announcement.direct_peer_ips);
+    }
+
+    #[test]
+    fn node_announcement_rejects_more_than_three_direct_peers() {
+        let encoded = proto::NodeAnnouncement {
+            identity: Some(proto::PublicNodeIdentity {
+                name: "node-a".to_string(),
+                version: "2".to_string(),
+                advertised_subnets: Vec::new(),
+            }),
+            direct_peer_ips: (2..=5)
+                .map(|last| Ipv4Addr::new(10, 26, 0, last).into())
+                .collect(),
+        }
+        .encode_bytes_mut();
+
+        assert!(NodeAnnouncement::from_slice(&encoded, Ipv4Addr::new(10, 26, 0, 1)).is_err());
     }
 
     #[test]

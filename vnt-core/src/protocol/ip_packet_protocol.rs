@@ -109,8 +109,6 @@ pub enum MsgType {
     UpdateIp = 16,
 
     Quic = 17,
-    RelayProbe = 18,
-    RelayProbeReply = 19,
     DirectConnectReq = 20,
     DirectConnectRes = 21,
 
@@ -155,8 +153,6 @@ impl TryFrom<u8> for MsgType {
             16 => MsgType::UpdateIp,
 
             17 => MsgType::Quic,
-            18 => MsgType::RelayProbe,
-            19 => MsgType::RelayProbeReply,
             20 => MsgType::DirectConnectReq,
             21 => MsgType::DirectConnectRes,
             22 => MsgType::FastReg,
@@ -362,8 +358,6 @@ mod tests {
             MsgType::RpcRes,
             MsgType::UpdateIp,
             MsgType::Quic,
-            MsgType::RelayProbe,
-            MsgType::RelayProbeReply,
             MsgType::DirectConnectReq,
             MsgType::DirectConnectRes,
             MsgType::FastReg,
@@ -383,6 +377,8 @@ mod tests {
         }
         // 未分配的取值必须报错
         assert!(MsgType::try_from(0u8).is_err());
+        assert!(MsgType::try_from(18u8).is_err());
+        assert!(MsgType::try_from(19u8).is_err());
         assert!(MsgType::try_from(27u8).is_err());
         assert!(MsgType::try_from(28u8).is_err());
         assert!(MsgType::try_from(30u8).is_err());
@@ -399,25 +395,5 @@ mod tests {
         packet.set_ethernet_flag(false);
         assert!(!packet.is_ethernet());
         assert!(packet.is_fec());
-    }
-
-    /// 中继转发语义：包每经过一跳 curr_ttl 减 1，curr_ttl >= 1 时才继续转发，
-    /// 接收方以 metric = max_ttl - curr_ttl 计算路由距离。
-    #[test]
-    fn relay_reply_survives_one_hop() {
-        let mut packet = NetPacket::new(BytesMut::from(&[0u8; HEAD_LENGTH][..])).unwrap();
-        packet.set_msg_type(MsgType::RelayProbeReply);
-        // 目标方回复时 TTL 必须允许一次中继
-        packet.set_ttl(2);
-
-        // 中继节点：decr 后 curr_ttl == 1，满足转发条件 ttl >= 1
-        packet.decr_ttl();
-        assert_eq!(packet.ttl(), 1);
-        assert!(packet.ttl() >= 1, "relay node would drop this packet");
-
-        // 发起方：decr 后 curr_ttl == 0，metric = 2（经由一个中继）
-        packet.decr_ttl();
-        assert_eq!(packet.ttl(), 0);
-        assert_eq!(packet.max_ttl() - packet.ttl(), 2);
     }
 }

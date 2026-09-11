@@ -2,7 +2,7 @@ use ipnet::Ipv4Net;
 use parking_lot::{Mutex, RwLock};
 use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
 use rustp2p_core::route_table::{DEFAULT_RTT, Protocol, RouteKey};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
@@ -318,6 +318,25 @@ impl RouteTable {
             .collect()
     }
 
+    /// Returns unique virtual IPs currently reachable over a direct tunnel.
+    pub fn direct_peer_ips(&self) -> Vec<Ipv4Addr> {
+        let owners = self.inner.route_key_owner.lock();
+        let peers = self.inner.direct_peer_info.lock();
+        let mut ips = peers
+            .iter()
+            .filter_map(|(key, peer)| {
+                owners
+                    .get(key)
+                    .is_some_and(|owner| *owner == peer.node_ip)
+                    .then_some(peer.node_ip)
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        ips.sort_unstable();
+        ips
+    }
+
     pub fn node_info(&self, id: &Ipv4Addr) -> Option<NodeInfo> {
         let route_keys = self
             .inner
@@ -355,8 +374,9 @@ impl RouteTable {
         self.inner.add_route(id, route, false, is_default);
     }
 
-    /// 添加由 RelayProbe 验证得到的中继路由，允许为目标建立第一条路由。
-    pub fn add_relay_route(&self, id: Ipv4Addr, route: Route) {
+    /// Adds a two-hop route advertised by a directly connected Gossip peer.
+    /// The target identity is learned separately from its own announcement.
+    pub fn add_gossip_relay_route(&self, id: Ipv4Addr, route: Route) {
         if route.is_direct() {
             return;
         }
@@ -617,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn relay_probe_can_bootstrap_route_but_regular_updates_cannot() {
+    fn gossip_hint_can_bootstrap_route_but_regular_updates_cannot() {
         let table = RouteTable::new();
         let target = Ipv4Addr::new(10, 0, 0, 8);
         let route = Route::from_default_rt(RouteKey::default(), 2);
@@ -625,7 +645,7 @@ mod tests {
         table.add_route(target, route, true);
         assert!(!table.exists(&target));
 
-        table.add_relay_route(target, route);
+        table.add_gossip_relay_route(target, route);
         let inserted = table.get_route_by_id(&target).unwrap();
         assert_eq!(inserted.metric(), 2);
     }
@@ -659,7 +679,7 @@ mod tests {
             "127.0.0.1:2994".parse().unwrap(),
         );
 
-        table.add_relay_route(peer, Route::from_with_loss(key, 2, 51, 375));
+        table.add_gossip_relay_route(peer, Route::from_with_loss(key, 2, 51, 375));
         assert!(table.add_owner_route(peer, key));
 
         let route = table.get_route_by_id(&peer).unwrap();
@@ -787,7 +807,7 @@ mod tests {
         );
 
         table.add_owner_route(owner, key);
-        table.add_relay_route(relayed, Route::from_default_rt(key, 2));
+        table.add_gossip_relay_route(relayed, Route::from_default_rt(key, 2));
         table.add_owner_route(unrelated, other_key);
 
         assert_eq!(table.inner.route_key_owner.lock().get(&key), Some(&owner));
@@ -885,6 +905,40 @@ mod tests {
             );
         }
         assert_eq!(table.direct_routes(Some(&keys[0])), vec![keys[2]]);
+        assert_eq!(
+            table.direct_peer_ips(),
+            vec![Ipv4Addr::new(10, 26, 0, 2), Ipv4Addr::new(10, 26, 0, 3)]
+        );
+    }
+
+    #[test]
+    fn gossip_hint_keeps_alternatives_from_distinct_direct_routes() {
+        let table = RouteTable::new();
+        let target = Ipv4Addr::new(10, 26, 0, 9);
+        let keys = [
+            RouteKey::new(
+                Protocol::TCP,
+                "127.0.0.1:2120".parse().unwrap(),
+                "127.0.0.1:3120".parse().unwrap(),
+            ),
+            RouteKey::new(
+                Protocol::UDP,
+                "127.0.0.1:2121".parse().unwrap(),
+                "127.0.0.1:3121".parse().unwrap(),
+            ),
+        ];
+
+        for key in keys {
+            table.add_gossip_relay_route(target, Route::from_default_rt(key, 2));
+        }
+
+        let routes = table
+            .route_table()
+            .into_iter()
+            .find_map(|(ip, routes)| (ip == target).then_some(routes))
+            .unwrap();
+        assert_eq!(routes.len(), 2);
+        assert!(routes.iter().all(|route| route.metric() == 2));
     }
 
     #[test]
@@ -1034,7 +1088,7 @@ mod tests {
         configured.or(PunchPolicy::IPv4Udp);
 
         table.add_owner_route(target, ipv4_tcp);
-        table.add_relay_route(target, Route::from_default_rt(ipv4_udp, 2));
+        table.add_gossip_relay_route(target, Route::from_default_rt(ipv4_udp, 2));
 
         let missing = table.missing_punch_policies(&target, &configured);
         assert!(!missing.is_match(PunchPolicy::IPv4Tcp));
