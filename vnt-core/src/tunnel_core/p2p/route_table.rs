@@ -1,4 +1,4 @@
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
 use rustp2p_core::route_table::{DEFAULT_RTT, Protocol, RouteKey};
 use std::collections::{HashMap, HashSet};
@@ -119,15 +119,20 @@ pub struct RouteTable {
 
 #[derive(Default)]
 struct RouteTableInner {
-    route_table: RwLock<HashMap<Ipv4Addr, Vec<Route>>>,
-    route_key_time: Mutex<HashMap<(Ipv4Addr, RouteKey), Instant>>,
+    state: RwLock<RouteState>,
+}
+
+#[derive(Default)]
+struct RouteState {
+    route_table: HashMap<Ipv4Addr, Vec<Route>>,
+    route_key_time: HashMap<(Ipv4Addr, RouteKey), Instant>,
     /// Confirmed physical tunnel owner. A RouteKey reused by relayed routes
     /// still belongs only to its directly connected peer.
-    route_key_owner: Mutex<HashMap<RouteKey, Ipv4Addr>>,
+    route_key_owner: HashMap<RouteKey, Ipv4Addr>,
     /// Temporary negative reachability keyed by (destination, direct next hop).
     /// One peer may own several RouteKeys, so suppression must not be keyed by
     /// the physical route itself.
-    unreachable_paths: Mutex<HashMap<(Ipv4Addr, Ipv4Addr), Instant>>,
+    unreachable_paths: HashMap<(Ipv4Addr, Ipv4Addr), Instant>,
 }
 
 impl Default for RouteTable {
@@ -171,7 +176,7 @@ impl RouteTable {
 
     /// 检查是否存在到指定 ID 的路由
     pub fn exists(&self, id: &Ipv4Addr) -> bool {
-        self.inner.route_table.read().contains_key(id)
+        self.inner.state.read().route_table.contains_key(id)
     }
 
     /// 返回配置允许、但当前尚未建立直连路由的打洞类型。
@@ -180,8 +185,12 @@ impl RouteTable {
         id: &Ipv4Addr,
         configured: &PunchPolicySet,
     ) -> PunchPolicySet {
-        let guard = self.inner.route_table.read();
-        let routes = guard.get(id).map(Vec::as_slice).unwrap_or_default();
+        let guard = self.inner.state.read();
+        let routes = guard
+            .route_table
+            .get(id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let mut missing = PunchPolicySet::empty();
         for policy in [
             PunchPolicy::IPv4Tcp,
@@ -202,8 +211,8 @@ impl RouteTable {
 
     /// 获取直连路由数量（用于判断是否直连）
     pub fn p2p_num(&self, id: &Ipv4Addr) -> usize {
-        let guard = self.inner.route_table.read();
-        let Some(list) = guard.get(id) else {
+        let guard = self.inner.state.read();
+        let Some(list) = guard.route_table.get(id) else {
             return 0;
         };
         list.iter().filter(|r| r.is_direct()).count()
@@ -211,8 +220,8 @@ impl RouteTable {
 
     /// 检查指定传输协议和物理地址是否已有直连路由。
     pub fn has_direct_endpoint(&self, protocol: Protocol, address: SocketAddr) -> bool {
-        let guard = self.inner.route_table.read();
-        guard.values().any(|routes| {
+        let guard = self.inner.state.read();
+        guard.route_table.values().any(|routes| {
             routes.iter().any(|route| {
                 route.is_direct()
                     && route.route_key().protocol() == protocol
@@ -223,9 +232,7 @@ impl RouteTable {
 
     /// 添加 owner 路由（打洞请求响应时调用）
     pub fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) -> bool {
-        let added = self.inner.add_owner_route(id, key);
-        self.inner.clear_unreachable_for_route(id, key);
-        added
+        self.inner.add_owner_route(id, key)
     }
 
     /// Adds or refreshes one Gossip path. Returns false when the route is
@@ -238,13 +245,12 @@ impl RouteTable {
         // lifetime. Once Ping/Pong has measured this route, repeated
         // announcements must not replace its RTT/loss/score with defaults.
         self.inner.add_route(id, route, true, true);
-        self.inner
-            .clear_unreachable_for_route(id, route.route_key());
         true
     }
 
     pub fn direct_routes(&self, exclude: Option<&RouteKey>) -> Vec<RouteKey> {
-        let owners = self.inner.route_key_owner.lock();
+        let state = self.inner.state.read();
+        let owners = &state.route_key_owner;
         let excluded_node = exclude.and_then(|key| owners.get(key).copied());
         owners
             .iter()
@@ -256,10 +262,9 @@ impl RouteTable {
 
     /// Returns unique virtual IPs currently reachable over a direct tunnel.
     pub fn direct_peer_ips(&self) -> Vec<Ipv4Addr> {
-        let mut ips = self
-            .inner
+        let state = self.inner.state.read();
+        let mut ips = state
             .route_key_owner
-            .lock()
             .values()
             .copied()
             .collect::<HashSet<_>>()
@@ -281,7 +286,12 @@ impl RouteTable {
     }
 
     pub fn route_owner(&self, route_key: &RouteKey) -> Option<Ipv4Addr> {
-        self.inner.route_key_owner.lock().get(route_key).copied()
+        self.inner
+            .state
+            .read()
+            .route_key_owner
+            .get(route_key)
+            .copied()
     }
 
     pub fn suppress_path(&self, destination: Ipv4Addr, next_hop: Ipv4Addr) {
@@ -291,16 +301,15 @@ impl RouteTable {
 
     pub fn clear_suppressed_path(&self, destination: Ipv4Addr, next_hop: Ipv4Addr) {
         self.inner
+            .state
+            .write()
             .unreachable_paths
-            .lock()
             .remove(&(destination, next_hop));
     }
 
     /// 添加路由（心跳时调用，用于更新路由时间和添加跨节点转发路由）
     pub fn add_route(&self, id: Ipv4Addr, route: Route, is_default: bool) {
         self.inner.add_route(id, route, false, is_default);
-        self.inner
-            .clear_unreachable_for_route(id, route.route_key());
     }
 
     /// Adds a two-hop route advertised by a directly connected Gossip peer.
@@ -310,24 +319,24 @@ impl RouteTable {
             return;
         }
         self.inner.add_route(id, route, true, true);
-        self.inner
-            .clear_unreachable_for_route(id, route.route_key());
     }
 
     /// 获取所有路由表
     pub fn route_table(&self) -> Vec<(Ipv4Addr, Vec<Route>)> {
-        let guard = self.inner.route_table.read();
-        guard.iter().map(|(k, v)| (*k, v.clone())).collect()
+        let guard = self.inner.state.read();
+        guard
+            .route_table
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect()
     }
 
     /// Removes every logical route carried by one physical tunnel.
     pub fn remove_route_key(&self, route_key: &RouteKey) -> Vec<(Ipv4Addr, RouteKey)> {
-        let mut table = self.inner.route_table.write();
-        let mut owner_map = self.inner.route_key_owner.lock();
-        let mut time_map = self.inner.route_key_time.lock();
+        let mut state = self.inner.state.write();
         let mut removed = Vec::new();
 
-        table.retain(|id, routes| {
+        state.route_table.retain(|id, routes| {
             let old_len = routes.len();
             routes.retain(|route| route.route_key() != *route_key);
             if routes.len() != old_len {
@@ -335,16 +344,19 @@ impl RouteTable {
             }
             !routes.is_empty()
         });
-        let removed_owner = owner_map.remove(route_key);
-        time_map.retain(|(_, key), _| key != route_key);
+        let removed_owner = state.route_key_owner.remove(route_key);
+        state.route_key_time.retain(|(_, key), _| key != route_key);
         if let Some(owner) = removed_owner
-            && !owner_map.values().any(|candidate| *candidate == owner)
+            && !state
+                .route_key_owner
+                .values()
+                .any(|candidate| *candidate == owner)
         {
-            self.inner
+            state
                 .unreachable_paths
-                .lock()
                 .retain(|(_, next_hop), _| *next_hop != owner);
         }
+        prune_unreachable(&mut state, Instant::now());
         removed
     }
 
@@ -354,35 +366,31 @@ impl RouteTable {
     }
 
     pub fn clear(&self) {
-        self.inner.route_table.write().clear();
-        self.inner.route_key_time.lock().clear();
-        self.inner.route_key_owner.lock().clear();
-        self.inner.unreachable_paths.lock().clear();
+        let mut state = self.inner.state.write();
+        state.route_table.clear();
+        state.route_key_time.clear();
+        state.route_key_owner.clear();
+        state.unreachable_paths.clear();
     }
 }
 
 impl RouteTableInner {
     fn get_by_id(&self, id: &Ipv4Addr, exclude: Option<&RouteKey>) -> Option<Route> {
         let now = Instant::now();
-        let owners = self.route_key_owner.lock().clone();
-        let excluded_owner = exclude.and_then(|key| owners.get(key).copied());
-        let mut unreachable = self.unreachable_paths.lock();
-        unreachable.retain(|_, expires_at| *expires_at > now);
-        let suppressed = unreachable.keys().copied().collect::<HashSet<_>>();
-        drop(unreachable);
-        let guard = self.route_table.read();
-        let list = guard.get(id)?;
+        let state = self.state.read();
+        let excluded_owner = exclude.and_then(|key| state.route_key_owner.get(key).copied());
+        let list = state.route_table.get(id)?;
         list.iter()
             .find(|route| {
                 let key = route.route_key();
                 if exclude == Some(&key) {
                     return false;
                 }
-                let owner = owners.get(&key).copied();
+                let owner = state.route_key_owner.get(&key).copied();
                 if owner.is_some() && owner == excluded_owner {
                     return false;
                 }
-                owner.is_none_or(|next_hop| !suppressed.contains(&(*id, next_hop)))
+                owner.is_none_or(|next_hop| !is_suppressed(&state, *id, next_hop, now))
             })
             .copied()
     }
@@ -394,24 +402,21 @@ impl RouteTableInner {
         exclude: Option<&RouteKey>,
     ) -> Option<Route> {
         let now = Instant::now();
-        let owners = self.route_key_owner.lock().clone();
-        if exclude.and_then(|key| owners.get(key).copied()) == Some(peer) {
+        let state = self.state.read();
+        if exclude.and_then(|key| state.route_key_owner.get(key).copied()) == Some(peer) {
             return None;
         }
-        let mut unreachable = self.unreachable_paths.lock();
-        unreachable.retain(|_, expires_at| *expires_at > now);
-        if unreachable.contains_key(&(destination, peer)) {
+        if is_suppressed(&state, destination, peer, now) {
             return None;
         }
-        drop(unreachable);
-        let routes = self.route_table.read();
-        routes
+        state
+            .route_table
             .get(&peer)?
             .iter()
             .filter(|route| {
                 route.is_direct()
                     && exclude != Some(&route.route_key())
-                    && owners.get(&route.route_key()).copied() == Some(peer)
+                    && state.route_key_owner.get(&route.route_key()).copied() == Some(peer)
             })
             .max_by_key(|route| route.score())
             .copied()
@@ -423,68 +428,74 @@ impl RouteTableInner {
         exclude: Option<&RouteKey>,
     ) -> Option<(Ipv4Addr, Route)> {
         let now = Instant::now();
-        let owners = self.route_key_owner.lock().clone();
-        let excluded_owner = exclude.and_then(|key| owners.get(key).copied());
-        let mut unreachable = self.unreachable_paths.lock();
-        unreachable.retain(|_, expires_at| *expires_at > now);
-        let suppressed = unreachable.keys().copied().collect::<HashSet<_>>();
-        drop(unreachable);
-        let routes = self.route_table.read();
-        let mut candidates = owners
-            .iter()
-            .filter_map(|(key, peer)| {
-                if exclude == Some(key)
-                    || excluded_owner == Some(*peer)
-                    || suppressed.contains(&(destination, *peer))
-                {
-                    return None;
-                }
-                let route = routes
-                    .get(peer)?
-                    .iter()
-                    .filter(|route| route.is_direct() && route.route_key() == *key)
-                    .max_by_key(|route| route.score())
-                    .copied()?;
-                Some((*peer, route))
-            })
-            .collect::<Vec<_>>();
-        // Collapse multiple RouteKeys owned by one node to its best direct route.
-        candidates.sort_by_key(|(peer, route)| (*peer, std::cmp::Reverse(route.score())));
-        candidates.dedup_by_key(|(peer, _)| *peer);
-        candidates
-            .into_iter()
-            .max_by_key(|(peer, _)| (opportunity_hash(destination, *peer), u32::from(*peer)))
+        let state = self.state.read();
+        let excluded_owner = exclude.and_then(|key| state.route_key_owner.get(key).copied());
+        let mut selected = None;
+
+        for (peer, routes) in &state.route_table {
+            if excluded_owner == Some(*peer) || is_suppressed(&state, destination, *peer, now) {
+                continue;
+            }
+            let Some(route) = routes
+                .iter()
+                .filter(|route| {
+                    route.is_direct()
+                        && exclude != Some(&route.route_key())
+                        && state.route_key_owner.get(&route.route_key()).copied() == Some(*peer)
+                })
+                .max_by_key(|route| route.score())
+                .copied()
+            else {
+                continue;
+            };
+            let rank = (opportunity_hash(destination, *peer), u32::from(*peer));
+            if selected
+                .as_ref()
+                .is_none_or(|(_, _, selected_rank)| rank > *selected_rank)
+            {
+                selected = Some((*peer, route, rank));
+            }
+        }
+        selected.map(|(peer, route, _)| (peer, route))
     }
 
     fn suppress_path(&self, destination: Ipv4Addr, next_hop: Ipv4Addr, now: Instant) {
-        let mut unreachable = self.unreachable_paths.lock();
-        unreachable.retain(|_, expires_at| *expires_at > now);
-        if unreachable.len() >= MAX_UNREACHABLE_PATHS
-            && !unreachable.contains_key(&(destination, next_hop))
-            && let Some(oldest) = unreachable
+        let mut state = self.state.write();
+        prune_unreachable(&mut state, now);
+        if state.unreachable_paths.len() >= MAX_UNREACHABLE_PATHS
+            && !state
+                .unreachable_paths
+                .contains_key(&(destination, next_hop))
+            && let Some(oldest) = state
+                .unreachable_paths
                 .iter()
                 .min_by_key(|(_, expires_at)| **expires_at)
                 .map(|(key, _)| *key)
         {
-            unreachable.remove(&oldest);
+            state.unreachable_paths.remove(&oldest);
         }
-        unreachable.insert((destination, next_hop), now + UNREACHABLE_TTL);
-    }
-
-    fn clear_unreachable_for_route(&self, destination: Ipv4Addr, route_key: RouteKey) {
-        if let Some(next_hop) = self.route_key_owner.lock().get(&route_key).copied() {
-            self.unreachable_paths
-                .lock()
-                .remove(&(destination, next_hop));
-        }
+        state
+            .unreachable_paths
+            .insert((destination, next_hop), now + UNREACHABLE_TTL);
     }
 
     fn add_owner_route(&self, id: Ipv4Addr, key: RouteKey) -> bool {
-        self.route_key_owner.lock().insert(key, id);
+        let now = Instant::now();
+        let mut state = self.state.write();
+        state.route_key_owner.insert(key, id);
         // The handshake supplies only an initial route. Repeated Punch or
         // DirectConnect packets must refresh its lifetime without replacing
         // RTT/loss measurements learned from Ping/Pong.
-        self.add_route(id, Route::from_default_rt(key, 1), false, true)
+        let added = add_route_locked(
+            &mut state,
+            id,
+            Route::from_default_rt(key, 1),
+            false,
+            true,
+            now,
+        );
+        clear_unreachable_for_route(&mut state, id, key);
+        added
     }
 
     fn add_route(
@@ -494,120 +505,169 @@ impl RouteTableInner {
         allow_relay_bootstrap: bool,
         is_default: bool,
     ) -> bool {
-        let key = route.route_key();
-        let mut guard = self.route_table.write();
-        let had_direct = guard
-            .get(&id)
-            .is_some_and(|routes| routes.iter().any(Route::is_direct));
-
-        if !route.is_direct() && !allow_relay_bootstrap && !guard.contains_key(&id) {
-            return false;
-        }
-
-        // 更新时间
-        self.route_key_time.lock().insert((id, key), Instant::now());
-
-        let list = guard.entry(id).or_insert_with(|| Vec::with_capacity(6));
-
-        // 如果路由已存在，更新并重新排序
-        if let Some(idx) = list.iter().position(|v| v.route_key() == key) {
-            let route = if is_default {
-                let current = list[idx];
-                if current.metric() == route.metric() {
-                    return false;
-                }
-                // Handshakes and Gossip know the current hop count but do not
-                // carry quality measurements. Keep measured RTT/loss while
-                // still allowing a relayed RouteKey to become direct (or a
-                // changed Gossip path to update its metric).
-                Route::from_with_loss(key, route.metric(), current.rtt(), current.loss_rate())
-            } else {
-                route
-            };
-            if list[idx].metric() == route.metric()
-                && list[idx].rtt() == route.rtt()
-                && list[idx].loss_rate() == route.loss_rate()
-            {
-                return false;
-            }
-            list[idx] = route;
-            // 向前冒泡（如果评分更高）
-            let mut i = idx;
-            while i > 0 && list[i].score() > list[i - 1].score() {
-                list.swap(i, i - 1);
-                i -= 1;
-            }
-            // 向后冒泡（如果评分更低）
-            while i + 1 < list.len() && list[i].score() < list[i + 1].score() {
-                list.swap(i, i + 1);
-                i += 1;
-            }
-            return route.is_direct() && !had_direct;
-        }
-
-        // 插入新路由，保持按评分降序排序（评分高的在前）
-        let mut pos = list.len();
-        for (i, r) in list.iter().enumerate() {
-            if route.score() > r.score() {
-                pos = i;
-                break;
-            }
-        }
-        list.insert(pos, route);
-
-        // Bound the number of learned alternatives so routes which are never
-        // probed do not expire and get recreated by every announcement. Direct
-        // tunnels are physical connectivity and are therefore never evicted by
-        // this logical route cap.
-        while list.len() > MAX_ROUTES_PER_NODE {
-            let Some(index) = list.iter().rposition(|candidate| !candidate.is_direct()) else {
-                break;
-            };
-            let removed = list.remove(index);
-            self.route_key_time
-                .lock()
-                .remove(&(id, removed.route_key()));
-        }
-        route.is_direct() && !had_direct
+        let now = Instant::now();
+        let mut state = self.state.write();
+        let added = add_route_locked(
+            &mut state,
+            id,
+            route,
+            allow_relay_bootstrap,
+            is_default,
+            now,
+        );
+        clear_unreachable_for_route(&mut state, id, route.route_key());
+        added
     }
 
     fn remove_oldest_route(&self, expired_time: Instant) -> Vec<(Ipv4Addr, RouteKey)> {
+        let now = Instant::now();
+        let mut state = self.state.write();
+        prune_unreachable(&mut state, now);
         let mut expired_keys = Vec::new();
-        {
-            let mut time_map = self.route_key_time.lock();
-            time_map.retain(|(id, route_key), t| {
-                if *t <= expired_time {
-                    expired_keys.push((*id, *route_key));
-                    false
-                } else {
-                    true
-                }
-            });
-        }
+        state.route_key_time.retain(|(id, route_key), time| {
+            if *time <= expired_time {
+                expired_keys.push((*id, *route_key));
+                false
+            } else {
+                true
+            }
+        });
 
-        if expired_keys.is_empty() {
-            return expired_keys;
-        }
-
-        let mut table = self.route_table.write();
-        let mut owner_map = self.route_key_owner.lock();
         for (id, route_key) in &expired_keys {
-            if let Some(list) = table.get_mut(id) {
-                list.retain(|r| r.route_key() != *route_key);
+            if let Some(list) = state.route_table.get_mut(id) {
+                list.retain(|route| route.route_key() != *route_key);
                 if list.is_empty() {
-                    table.remove(id);
+                    state.route_table.remove(id);
                 }
             }
 
-            if let Some(owner_id) = owner_map.get(route_key)
-                && *owner_id == *id
-            {
-                owner_map.remove(route_key);
+            let owner = state.route_key_owner.get(route_key).copied();
+            if owner == Some(*id) {
+                state.route_key_owner.remove(route_key);
+                if !state
+                    .route_key_owner
+                    .values()
+                    .any(|candidate| Some(*candidate) == owner)
+                {
+                    state
+                        .unreachable_paths
+                        .retain(|(_, next_hop), _| Some(*next_hop) != owner);
+                }
             }
         }
 
         expired_keys
     }
+}
+
+fn add_route_locked(
+    state: &mut RouteState,
+    id: Ipv4Addr,
+    route: Route,
+    allow_relay_bootstrap: bool,
+    is_default: bool,
+    now: Instant,
+) -> bool {
+    let key = route.route_key();
+    let had_direct = state
+        .route_table
+        .get(&id)
+        .is_some_and(|routes| routes.iter().any(Route::is_direct));
+
+    if !route.is_direct() && !allow_relay_bootstrap && !state.route_table.contains_key(&id) {
+        return false;
+    }
+
+    // 更新时间
+    state.route_key_time.insert((id, key), now);
+
+    let list = state
+        .route_table
+        .entry(id)
+        .or_insert_with(|| Vec::with_capacity(6));
+
+    // 如果路由已存在，更新并重新排序
+    if let Some(idx) = list.iter().position(|v| v.route_key() == key) {
+        let route = if is_default {
+            let current = list[idx];
+            if current.metric() == route.metric() {
+                return false;
+            }
+            // Handshakes and Gossip know the current hop count but do not
+            // carry quality measurements. Keep measured RTT/loss while
+            // still allowing a relayed RouteKey to become direct (or a
+            // changed Gossip path to update its metric).
+            Route::from_with_loss(key, route.metric(), current.rtt(), current.loss_rate())
+        } else {
+            route
+        };
+        if list[idx].metric() == route.metric()
+            && list[idx].rtt() == route.rtt()
+            && list[idx].loss_rate() == route.loss_rate()
+        {
+            return false;
+        }
+        list[idx] = route;
+        // 向前冒泡（如果评分更高）
+        let mut i = idx;
+        while i > 0 && list[i].score() > list[i - 1].score() {
+            list.swap(i, i - 1);
+            i -= 1;
+        }
+        // 向后冒泡（如果评分更低）
+        while i + 1 < list.len() && list[i].score() < list[i + 1].score() {
+            list.swap(i, i + 1);
+            i += 1;
+        }
+        return route.is_direct() && !had_direct;
+    }
+
+    // 插入新路由，保持按评分降序排序（评分高的在前）
+    let mut pos = list.len();
+    for (i, r) in list.iter().enumerate() {
+        if route.score() > r.score() {
+            pos = i;
+            break;
+        }
+    }
+    list.insert(pos, route);
+
+    // Bound the number of learned alternatives so routes which are never
+    // probed do not expire and get recreated by every announcement. Direct
+    // tunnels are physical connectivity and are therefore never evicted by
+    // this logical route cap.
+    while list.len() > MAX_ROUTES_PER_NODE {
+        let Some(index) = list.iter().rposition(|candidate| !candidate.is_direct()) else {
+            break;
+        };
+        let removed = list.remove(index);
+        state.route_key_time.remove(&(id, removed.route_key()));
+    }
+    route.is_direct() && !had_direct
+}
+
+fn clear_unreachable_for_route(state: &mut RouteState, destination: Ipv4Addr, route_key: RouteKey) {
+    if let Some(next_hop) = state.route_key_owner.get(&route_key).copied() {
+        state.unreachable_paths.remove(&(destination, next_hop));
+    }
+}
+
+fn is_suppressed(
+    state: &RouteState,
+    destination: Ipv4Addr,
+    next_hop: Ipv4Addr,
+    now: Instant,
+) -> bool {
+    state
+        .unreachable_paths
+        .get(&(destination, next_hop))
+        .is_some_and(|expires_at| *expires_at > now)
+}
+
+fn prune_unreachable(state: &mut RouteState, now: Instant) {
+    state
+        .unreachable_paths
+        .retain(|_, expires_at| *expires_at > now);
 }
 
 fn opportunity_hash(destination: Ipv4Addr, peer: Ipv4Addr) -> u64 {
@@ -838,12 +898,16 @@ mod tests {
         table.add_gossip_relay_route(relayed, Route::from_default_rt(key, 2));
         table.add_owner_route(unrelated, other_key);
 
-        assert_eq!(table.inner.route_key_owner.lock().get(&key), Some(&owner));
+        assert_eq!(
+            table.inner.state.read().route_key_owner.get(&key),
+            Some(&owner)
+        );
         assert_eq!(
             table
                 .inner
+                .state
+                .read()
                 .route_key_time
-                .lock()
                 .keys()
                 .filter(|(_, route_key)| *route_key == key)
                 .count(),
@@ -856,12 +920,13 @@ mod tests {
         assert!(!table.exists(&owner));
         assert!(!table.exists(&relayed));
         assert!(table.exists(&unrelated));
-        assert!(!table.inner.route_key_owner.lock().contains_key(&key));
+        assert!(!table.inner.state.read().route_key_owner.contains_key(&key));
         assert!(
             table
                 .inner
+                .state
+                .read()
                 .route_key_time
-                .lock()
                 .keys()
                 .all(|(_, route_key)| *route_key != key)
         );
@@ -933,7 +998,7 @@ mod tests {
         table.add_gossip_relay_route(relayed_peer, Route::from_default_rt(key, 2));
 
         assert_eq!(
-            table.inner.route_key_owner.lock().get(&key),
+            table.inner.state.read().route_key_owner.get(&key),
             Some(&direct_peer)
         );
         assert_eq!(table.direct_peer_ips(), vec![direct_peer]);
@@ -952,7 +1017,7 @@ mod tests {
 
         assert!(table.add_gossip_route(peer, Route::from_default_rt(key, 1)));
         assert!(table.direct_routes(None).is_empty());
-        assert!(!table.inner.route_key_owner.lock().contains_key(&key));
+        assert!(!table.inner.state.read().route_key_owner.contains_key(&key));
 
         table.add_owner_route(peer, key);
         assert_eq!(table.direct_routes(None), vec![key]);
@@ -1335,11 +1400,66 @@ mod tests {
         assert!(
             table
                 .inner
+                .state
+                .read()
                 .unreachable_paths
-                .lock()
                 .contains_key(&(target, peer))
         );
         table.remove_route_key(&second);
-        assert!(table.inner.unreachable_paths.lock().is_empty());
+        assert!(table.inner.state.read().unreachable_paths.is_empty());
+    }
+
+    #[test]
+    fn concurrent_route_reads_and_updates_keep_state_coherent() {
+        let table = RouteTable::new();
+        let peer = Ipv4Addr::new(10, 26, 0, 2);
+        let target = Ipv4Addr::new(10, 26, 0, 9);
+        let primary = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2400".parse().unwrap(),
+            "127.0.0.1:3400".parse().unwrap(),
+        );
+        let alternate = RouteKey::new(
+            Protocol::TCP,
+            "127.0.0.1:2401".parse().unwrap(),
+            "127.0.0.1:3401".parse().unwrap(),
+        );
+        table.add_owner_route(peer, primary);
+        table.add_gossip_relay_route(target, Route::from_default_rt(primary, 2));
+
+        let readers = (0..4)
+            .map(|_| {
+                let table = table.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..10_000 {
+                        let route = table.get_route_by_id(&peer).unwrap();
+                        assert!(route.is_direct());
+                        let _ = table.get_route_by_id(&target);
+                        let _ = table.direct_candidate(target, None);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let writer_table = table.clone();
+        let writer = std::thread::spawn(move || {
+            for rtt in 1..=2_000 {
+                writer_table.add_route(peer, Route::from(primary, 1, rtt), false);
+                writer_table.suppress_path(target, peer);
+                writer_table.clear_suppressed_path(target, peer);
+                writer_table.add_owner_route(peer, alternate);
+                writer_table.remove_route_key(&alternate);
+            }
+        });
+
+        for reader in readers {
+            reader.join().unwrap();
+        }
+        writer.join().unwrap();
+
+        let route = table.get_route_by_id(&peer).unwrap();
+        assert_eq!(route.route_key(), primary);
+        assert_eq!(table.route_owner(&primary), Some(peer));
+        assert_eq!(table.route_owner(&alternate), None);
     }
 }

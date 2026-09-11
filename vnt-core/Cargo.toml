@@ -4,6 +4,9 @@ version = "2.0.8"
 edition = "2024"
 license = "Apache-2.0"
 
+[features]
+internal-bench = []
+
 [dependencies]
 
 tokio = { workspace = true, features = ["full"] }
@@ -74,3 +77,11 @@ webpki-roots = "1"
 [build-dependencies]
 prost-build = "0.14"
 protoc-bin-vendored = "3"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "route_lookup"
+harness = false
+required-features = ["internal-bench"]

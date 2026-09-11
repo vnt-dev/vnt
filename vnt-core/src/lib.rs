@@ -17,3 +17,9 @@ pub mod utils;
 pub mod api;
 pub(crate) mod enhanced_tunnel;
 pub mod port_mapping;
+
+#[cfg(feature = "internal-bench")]
+#[doc(hidden)]
+pub mod internal_bench {
+    pub use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
+}
