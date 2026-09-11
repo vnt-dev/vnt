@@ -171,6 +171,35 @@ fn build_punch_response(
     Ok(packet)
 }
 
+fn build_destination_unreachable(
+    local_ip: Ipv4Addr,
+    upstream_ip: Ipv4Addr,
+    destination: Ipv4Addr,
+    encrypt_reserve: usize,
+) -> anyhow::Result<NetPacket<TransmissionBytes>> {
+    let mut packet = NetPacket::new(TransmissionBytes::zeroed_size(
+        HEAD_LENGTH + 4,
+        encrypt_reserve,
+    ))?;
+    packet.set_msg_type(MsgType::DestinationUnreachable);
+    packet.set_ttl(1);
+    packet.set_src_id(local_ip.into());
+    packet.set_dest_id(upstream_ip.into());
+    packet.set_payload(&destination.octets())?;
+    Ok(packet)
+}
+
+fn parse_destination_unreachable(net: &NetworkAddr, payload: &[u8]) -> Option<Ipv4Addr> {
+    let octets: [u8; 4] = payload.try_into().ok()?;
+    let destination = Ipv4Addr::from(octets);
+    (destination != net.ip
+        && !destination.is_unspecified()
+        && !destination.is_broadcast()
+        && destination != net.broadcast
+        && net.network().contains(&destination))
+    .then_some(destination)
+}
+
 pub(crate) struct P2pInboundConfig {
     pub network_route: NetworkRoute,
     pub route_table: RouteTable,
@@ -283,12 +312,23 @@ impl P2pInboundHandler {
             && !dest_ip.is_unspecified()
             && dest_ip != net.broadcast
         {
-            // 帮忙转发数据包
-            if ttl >= 1 {
-                self.basic_outbound
-                    .send_raw(net, dest_ip, net_packet)
-                    .await?;
+            // An unreachable notification is strictly one hop. A malformed or
+            // stale notification addressed elsewhere must never recurse into
+            // another unreachable notification.
+            if msg_type == MsgType::DestinationUnreachable {
+                return Ok(());
             }
+            // 帮忙转发数据包
+            if ttl >= 1
+                && self
+                    .basic_outbound
+                    .try_send_raw(net, dest_ip, net_packet, Some(&route_key))
+                    .await?
+            {
+                return Ok(());
+            }
+            self.send_destination_unreachable(net, dest_ip, route_key, tunnel)
+                .await?;
             return Ok(());
         }
 
@@ -395,6 +435,10 @@ impl P2pInboundHandler {
     ) -> anyhow::Result<()> {
         if net_packet.msg_type()? != MsgType::Quic {
             self.packet_crypto.decrypt_in_place(&mut net_packet)?;
+            let source = Ipv4Addr::from(net_packet.src_id());
+            if let Some(next_hop) = self.route_table.route_owner(&route_key) {
+                self.route_table.clear_suppressed_path(source, next_hop);
+            }
         }
         self.process_plain_packet(net, route_key, tunnel, net_packet)
             .await
@@ -484,6 +528,25 @@ impl P2pInboundHandler {
                         );
                     }
                 }
+            }
+            MsgType::DestinationUnreachable => {
+                if ctx.dest_ip != net.ip {
+                    return Ok(());
+                }
+                let Some(next_hop) = self.route_table.route_owner(&route_key) else {
+                    return Ok(());
+                };
+                if next_hop != ctx.src_ip {
+                    return Ok(());
+                }
+                let Some(destination) = parse_destination_unreachable(net, net_packet.payload())
+                else {
+                    return Ok(());
+                };
+                self.route_table.suppress_path(destination, next_hop);
+                log::debug!(
+                    "temporarily suppress route to {destination} through direct peer {next_hop}"
+                );
             }
             MsgType::PunchStart1 => {
                 if !allow_punch(&self.turn, &ctx.src_ip) {
@@ -707,6 +770,29 @@ impl P2pInboundHandler {
             MsgType::PongTurn => {}
             _ => {}
         }
+        Ok(())
+    }
+
+    async fn send_destination_unreachable(
+        &self,
+        net: NetworkAddr,
+        destination: Ipv4Addr,
+        route_key: RouteKey,
+        tunnel: &TunnelWriteHalf,
+    ) -> anyhow::Result<()> {
+        let Some(upstream_ip) = self.route_table.route_owner(&route_key) else {
+            return Ok(());
+        };
+        let mut response = build_destination_unreachable(
+            net.ip,
+            upstream_ip,
+            destination,
+            self.packet_crypto.encrypt_reserve(),
+        )?;
+        self.packet_crypto.encrypt_in_place(&mut response)?;
+        tunnel
+            .send(response.into_buffer().into_bytes().freeze())
+            .await?;
         Ok(())
     }
 
@@ -990,5 +1076,33 @@ mod tests {
             &second_key,
         );
         assert!(node_info_map.get(&peer).is_none());
+    }
+
+    #[test]
+    fn destination_unreachable_packet_has_fixed_payload_and_one_hop_ttl() {
+        let local = Ipv4Addr::new(10, 26, 0, 2);
+        let upstream = Ipv4Addr::new(10, 26, 0, 1);
+        let destination = Ipv4Addr::new(10, 26, 0, 9);
+        let packet = build_destination_unreachable(local, upstream, destination, 0).unwrap();
+
+        assert_eq!(packet.msg_type().unwrap(), MsgType::DestinationUnreachable);
+        assert_eq!(packet.ttl(), 1);
+        assert_eq!(Ipv4Addr::from(packet.src_id()), local);
+        assert_eq!(Ipv4Addr::from(packet.dest_id()), upstream);
+        assert_eq!(packet.payload(), destination.octets());
+    }
+
+    #[test]
+    fn destination_unreachable_payload_rejects_invalid_targets_and_sizes() {
+        let net = network();
+        let target = Ipv4Addr::new(10, 26, 0, 9);
+        assert_eq!(
+            parse_destination_unreachable(&net, &target.octets()),
+            Some(target)
+        );
+        assert!(parse_destination_unreachable(&net, &[10, 26, 0]).is_none());
+        assert!(parse_destination_unreachable(&net, &net.ip.octets()).is_none());
+        assert!(parse_destination_unreachable(&net, &[192, 168, 1, 1]).is_none());
+        assert!(parse_destination_unreachable(&net, &[255, 255, 255, 255]).is_none());
     }
 }

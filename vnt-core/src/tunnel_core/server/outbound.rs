@@ -34,7 +34,9 @@ impl ServerOutbound {
         }
     }
     pub fn exists_route(&self, dest: &Ipv4Addr) -> bool {
-        self.server_info_collection.exists_online_client_ip(dest)
+        self.server_info_collection
+            .find_ip_to_server(&self.server_id_list, dest)
+            .is_some()
     }
     pub fn server_id_list(&self) -> &Vec<u32> {
         &self.server_id_list

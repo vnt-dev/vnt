@@ -104,40 +104,57 @@ impl BasicOutbound {
         dest: Ipv4Addr,
         packet: NetPacket<TransmissionBytes>,
     ) -> anyhow::Result<()> {
-        let p2p_route = self.p2p_outbound.as_ref().is_some_and(|p2p| {
-            match preferred_turn(net, &self.turn, &dest) {
-                Some(PreferredTurn::Peer(turn_ip)) => {
-                    p2p.get_direct_route_by_id(&turn_ip).is_some()
-                }
-                Some(PreferredTurn::Server) => false,
-                None => p2p.get_route_by_id(&dest).is_some(),
-            }
-        });
-        if !p2p_route && !self.server_outbound.exists_route(&dest) {
+        if !self.try_send_raw(net, dest, packet, None).await? {
             bail!("no route to {dest}")
         }
+        Ok(())
+    }
+
+    /// Sends one packet using a normal P2P route, a server which currently
+    /// advertises the destination, or one deterministic direct peer as an
+    /// opportunity-forwarding fallback. `exclude` is the physical ingress
+    /// route of a relayed packet; all RouteKeys owned by that peer are skipped.
+    pub async fn try_send_raw(
+        &self,
+        net: NetworkAddr,
+        dest: Ipv4Addr,
+        packet: NetPacket<TransmissionBytes>,
+        exclude: Option<&RouteKey>,
+    ) -> anyhow::Result<bool> {
+        let preferred = preferred_turn(net, &self.turn, &dest);
+        let selected_p2p = self.p2p_outbound.as_ref().and_then(|p2p| match preferred {
+            Some(PreferredTurn::Peer(turn_ip)) => {
+                p2p.get_direct_route_to_peer(dest, turn_ip, exclude)
+            }
+            Some(PreferredTurn::Server) => None,
+            None => p2p.get_route_by_id_excluding(&dest, exclude),
+        });
+
         let packet = packet.into_bytes();
         if let Some(p2p) = self.p2p_outbound.as_ref() {
-            match preferred_turn(net, &self.turn, &dest) {
-                Some(PreferredTurn::Server) => {
+            if preferred == Some(PreferredTurn::Server) {
+                if self.server_outbound.exists_route(&dest) {
                     self.server_outbound.send_raw(dest, packet).await?;
-                    return Ok(());
+                    return Ok(true);
                 }
-                Some(PreferredTurn::Peer(turn_ip))
-                    if let Some(route) = p2p.get_direct_route_by_id(&turn_ip) =>
-                {
-                    p2p.send_raw_to(packet, &route.route_key()).await?;
-                    return Ok(());
-                }
-                _ => {}
+                return Ok(false);
             }
-            if let Some(route) = p2p.get_route_by_id(&dest) {
+            if let Some(route) = selected_p2p {
                 p2p.send_raw_to(packet, &route.route_key()).await?;
-                return Ok(());
+                return Ok(true);
             }
         }
-        self.server_outbound.send_raw(dest, packet).await?;
-        Ok(())
+        if self.server_outbound.exists_route(&dest) {
+            self.server_outbound.send_raw(dest, packet).await?;
+            return Ok(true);
+        }
+        if let Some(p2p) = self.p2p_outbound.as_ref()
+            && let Some((_peer, route)) = p2p.direct_candidate(dest, exclude)
+        {
+            p2p.send_raw_to(packet, &route.route_key()).await?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// 发送到默认服务器
@@ -175,7 +192,7 @@ impl BasicOutbound {
     /// 检查是否存在到目标的路由
     pub fn exists_route(&self, dest: &Ipv4Addr) -> bool {
         if let Some(p2p) = self.p2p_outbound.as_ref()
-            && p2p.exists_route_by_id(dest)
+            && (p2p.exists_route_by_id(dest) || p2p.direct_candidate(*dest, None).is_some())
         {
             return true;
         }

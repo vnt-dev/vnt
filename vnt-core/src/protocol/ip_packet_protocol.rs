@@ -118,6 +118,7 @@ pub enum MsgType {
     Ikev2Relay = 25,
     WireGuardRelay = 26,
     NodeAnnouncement = 29,
+    DestinationUnreachable = 30,
 }
 impl From<MsgType> for u8 {
     fn from(val: MsgType) -> Self {
@@ -161,6 +162,7 @@ impl TryFrom<u8> for MsgType {
             25 => MsgType::Ikev2Relay,
             26 => MsgType::WireGuardRelay,
             29 => MsgType::NodeAnnouncement,
+            30 => MsgType::DestinationUnreachable,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -366,6 +368,7 @@ mod tests {
             MsgType::Ikev2Relay,
             MsgType::WireGuardRelay,
             MsgType::NodeAnnouncement,
+            MsgType::DestinationUnreachable,
         ];
         for msg_type in all {
             let byte = u8::from(msg_type);
@@ -381,7 +384,7 @@ mod tests {
         assert!(MsgType::try_from(19u8).is_err());
         assert!(MsgType::try_from(27u8).is_err());
         assert!(MsgType::try_from(28u8).is_err());
-        assert!(MsgType::try_from(30u8).is_err());
+        assert!(MsgType::try_from(31u8).is_err());
     }
 
     #[test]

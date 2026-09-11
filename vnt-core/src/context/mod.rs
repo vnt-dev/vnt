@@ -741,7 +741,8 @@ impl ServerInfoCollection {
         }
         None
     }
-    pub fn exists_online_client_ip(&self, ip: &Ipv4Addr) -> bool {
+    #[cfg(test)]
+    fn exists_online_client_ip(&self, ip: &Ipv4Addr) -> bool {
         self.client_simple_list
             .read()
             .iter()

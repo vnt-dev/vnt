@@ -98,14 +98,31 @@ impl P2pOutbound {
         }
         Ok(())
     }
-    pub fn get_route_by_id(&self, id: &Ipv4Addr) -> Option<Route> {
-        self.route_table.get_route_by_id(id).ok()
+    pub fn get_route_by_id_excluding(
+        &self,
+        id: &Ipv4Addr,
+        exclude: Option<&RouteKey>,
+    ) -> Option<Route> {
+        self.route_table.get_route_by_id_excluding(id, exclude)
     }
-    pub fn get_direct_route_by_id(&self, id: &Ipv4Addr) -> Option<Route> {
-        self.route_table.get_direct_route_by_id(id)
+    pub fn get_direct_route_to_peer(
+        &self,
+        destination: Ipv4Addr,
+        peer: Ipv4Addr,
+        exclude: Option<&RouteKey>,
+    ) -> Option<Route> {
+        self.route_table
+            .get_direct_route_to_peer(destination, peer, exclude)
     }
     pub fn exists_route_by_id(&self, id: &Ipv4Addr) -> bool {
-        self.route_table.exists(id)
+        self.route_table.get_route_by_id(id).is_ok()
+    }
+    pub fn direct_candidate(
+        &self,
+        destination: Ipv4Addr,
+        exclude: Option<&RouteKey>,
+    ) -> Option<(Ipv4Addr, Route)> {
+        self.route_table.direct_candidate(destination, exclude)
     }
 
     // pub async fn send_to_id(
