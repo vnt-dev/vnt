@@ -135,7 +135,7 @@ pub struct Args {
     /// 服务器地址 例如 `-s quic://127.0.0.1:29872`, 支持quic/tcp/wss/dynamic；dynamic 默认解析dns txt记录，也可填入http(s)接口如 dynamic://https://xxx
     #[clap(short, long)]
     pub server: Vec<ProtocolAddress>,
-    /// 可直连节点地址，可重复指定；支持 ip:端口、tcp://ip:端口、udp://ip:端口
+    /// 可直连节点地址，可重复指定；支持 ip:端口、tcp://、udp://，以及 dynamic:// 域名或 HTTP(S) 地址列表
     #[clap(long)]
     pub peer_address: Vec<PeerAddress>,
     /// 指定目标 IP/网段的优先中转节点，可重复指定，格式为 target,turn_ip
@@ -574,10 +574,11 @@ network_code = "your_network_code"
 # dynamic 协议默认使用dns txt解析记录值，也支持填入http(s)接口如 dynamic://https://example.com/servers，接口返回换行符分隔的服务器地址列表
 server = ["quic://1.2.3.4:29872"]
 
-# 可直连节点地址列表 (可选)
+# 可直连节点地址列表
 # 不带协议时同时尝试 TCP 和 UDP；也可用 tcp:// 或 udp:// 指定协议
+# dynamic://域名 读取 DNS TXT；dynamic://http(s)://接口读取换行分隔的直连节点地址列表
 # 地址端口应为对端 tunnel_addr 中配置的监听端口
-# peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873", "udp://[::1]:29873"]
+# peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873", "udp://[::1]:29873", "dynamic://peers.example.com"]
 
 # 指定目标虚拟 IP 或网段的优先中转虚拟 IP；填写网关 IP 时强制走服务器中继
 # 命中目标不参与 P2P 打洞
@@ -844,20 +845,30 @@ mod tests {
             "tcp://127.0.0.1:30002",
             "--peer-address",
             "127.0.0.1:30003",
+            "--peer-address",
+            "dynamic://peers.example.com",
         ])
         .unwrap();
         let (config, _) = build_config_from_args_and_file(Some(args), Some(file)).unwrap();
-        assert_eq!(config.peer_address.len(), 2);
+        assert_eq!(config.peer_address.len(), 3);
         assert_eq!(config.peer_address[0].to_string(), "tcp://127.0.0.1:30002");
         assert_eq!(config.peer_address[1].to_string(), "127.0.0.1:30003");
+        assert_eq!(
+            config.peer_address[2].to_string(),
+            "dynamic://peers.example.com"
+        );
 
         let file: FileConfig = toml::from_str(
-            "peer_address = [\"udp://127.0.0.1:30001\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
+            "peer_address = [\"udp://127.0.0.1:30001\", \"dynamic://peers.example.com\"]\nnetwork_code = \"test-net\"\nserver = [\"quic://127.0.0.1:29872\"]",
         )
         .unwrap();
         let (config, _) = build_config_from_args_and_file(None, Some(file)).unwrap();
-        assert_eq!(config.peer_address.len(), 1);
+        assert_eq!(config.peer_address.len(), 2);
         assert_eq!(config.peer_address[0].to_string(), "udp://127.0.0.1:30001");
+        assert_eq!(
+            config.peer_address[1].to_string(),
+            "dynamic://peers.example.com"
+        );
     }
 
     #[test]

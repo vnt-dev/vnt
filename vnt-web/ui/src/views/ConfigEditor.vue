@@ -298,7 +298,7 @@ const sectionChevronClass = (expanded) =>
               </div>
               <div class="mt-4">
                 <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  服务器地址（可选）
+                  服务器地址
                   <ConfigHelp :help="configHelp.server" />
                   <span class="text-xs text-slate-500 ml-2">默认 tcp://；支持 quic://、wss://、dynamic://（DNS TXT 或 HTTP(S)）</span>
                 </label>
@@ -327,35 +327,10 @@ const sectionChevronClass = (expanded) =>
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-
-          <!-- 连接与打洞 -->
-          <div class="card">
-            <div
-              class="flex w-full cursor-pointer select-none items-center justify-between"
-              @click="toggleSection('connect')"
-            >
-              <h4 :class="sectionTitleClass">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"
-                  />
-                </svg>
-                连接与打洞
-              </h4>
-              <svg :class="sectionChevronClass(sectionExpanded.connect)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </div>
-            <div v-show="sectionExpanded.connect" class="mt-4">
-              <div>
+              <div class="mt-4">
                 <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                  可直连节点地址                  <ConfigHelp :help="configHelp.peer_address" />
-                  <span class="text-xs text-slate-500 ml-2">支持 ip:端口、tcp://、udp://</span>
+                  可直连节点地址 <ConfigHelp :help="configHelp.peer_address" />
+                  <span class="text-xs text-slate-500 ml-2">支持 ip:端口、tcp://、udp://、dynamic://</span>
                 </label>
                 <div class="space-y-2">
                   <div v-for="(peerAddress, idx) in formData.peer_address" :key="idx" class="flex gap-2">
@@ -383,9 +358,41 @@ const sectionChevronClass = (expanded) =>
                     添加可直连节点
                   </button>
                 </div>
-                <p class="mt-2 text-xs text-slate-400">不带协议时会同时尝试 TCP 和 UDP；端口填写对端的隧道端口。</p>
+                <p class="mt-2 text-xs text-slate-400">不带协议时会同时尝试 TCP 和 UDP；dynamic:// 支持 DNS TXT 或 HTTP(S) 地址列表；端口填写对端的隧道端口。</p>
               </div>
               <div class="mt-4">
+                <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                  自定义虚拟IP
+                  <ConfigHelp :help="configHelp.ip" />
+                </label>
+                <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2/24" class="input" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 连接与打洞 -->
+          <div class="card">
+            <div
+              class="flex w-full cursor-pointer select-none items-center justify-between"
+              @click="toggleSection('connect')"
+            >
+              <h4 :class="sectionTitleClass">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"
+                  />
+                </svg>
+                连接与打洞
+              </h4>
+              <svg :class="sectionChevronClass(sectionExpanded.connect)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            <div v-show="sectionExpanded.connect" class="mt-4">
+              <div>
                 <label class="mb-2 flex flex-wrap items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                   指定中转规则
                   <ConfigHelp :help="configHelp.turn" />
@@ -505,23 +512,6 @@ const sectionChevronClass = (expanded) =>
             </div>
             <div v-show="sectionExpanded.network" class="mt-4">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
-                    自定义虚拟IP
-                    <span v-if="formData.server.filter((server) => server.trim()).length !== 1" class="text-red-500">*</span>
-                    <ConfigHelp :help="configHelp.ip" />
-                    <span class="text-xs text-slate-500 ml-1">
-                      {{
-                        formData.server.filter((server) => server.trim()).length === 0
-                          ? "(无服务器必填)"
-                          : formData.server.filter((server) => server.trim()).length > 1
-                            ? "(多服务器必填)"
-                            : "(可选)"
-                      }}
-                    </span>
-                  </label>
-                  <input v-model="formData.ip" type="text" placeholder="例如: 10.26.0.2/24" class="input" />
-                </div>
                 <div>
                   <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
                     MTU <ConfigHelp :help="configHelp.mtu" />

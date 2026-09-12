@@ -1496,13 +1496,17 @@ mod tests {
             r#"{
                 "server":["tcp://127.0.0.1:29872"],
                 "network_code":"test",
-                "peer_address":["127.0.0.1:30001","udp://127.0.0.1:30002"]
+                "peer_address":["127.0.0.1:30001","udp://127.0.0.1:30002","dynamic://peers.example.com"]
             }"#,
         )
         .unwrap();
-        assert_eq!(config.peer_address.len(), 2);
+        assert_eq!(config.peer_address.len(), 3);
         assert_eq!(config.peer_address[0].to_string(), "127.0.0.1:30001");
         assert_eq!(config.peer_address[1].to_string(), "udp://127.0.0.1:30002");
+        assert_eq!(
+            config.peer_address[2].to_string(),
+            "dynamic://peers.example.com"
+        );
         assert!(!config.no_broadcast);
     }
 

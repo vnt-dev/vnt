@@ -204,19 +204,19 @@ export const formToToml = (formData) => {
   }
 
   toml += "\n# --- 网络配置 ---\n";
-  toml += "# 网络编号，相同网络编号的会组在同一个虚拟网 (必填)\n";
+  toml += "# 网络编号，相同网络编号的会组在同一个虚拟网\n";
   toml += `network_code = "${formData.network_code}"\n\n`;
 
   const servers = formData.server.filter((s) => s.trim());
   if (servers.length > 0) {
-    toml += "# 可选服务器地址列表（固定 IP 时在后台连接）\n";
+    toml += "# 服务器地址列表，固定 IP 时在后台连接\n";
     toml += "# dynamic 协议默认使用 DNS TXT 解析，也可使用 dynamic://http(s)://接口地址获取换行分隔的服务器地址列表\n";
     toml += `server = [${servers.map((s) => `"${s}"`).join(", ")}]\n`;
   }
 
   const peerAddresses = formData.peer_address.filter((s) => s.trim());
   if (peerAddresses.length > 0) {
-    toml += "\n# 可直连节点地址；无协议时同时尝试 TCP 和 UDP\n";
+    toml += "\n# 可直连节点地址；无协议时同时尝试 TCP 和 UDP；支持 dynamic:// DNS TXT 或 HTTP(S) 地址列表\n";
     toml += "# 端口应为对端 tunnel_addr 中配置的监听端口\n";
     toml += `peer_address = [${peerAddresses.map((s) => `"${s}"`).join(", ")}]\n`;
   }
@@ -393,15 +393,15 @@ export const formToToml = (formData) => {
 // 新建配置的 TOML 模板(从旧代码逐字迁移)
 export const NEW_CONFIG_TEMPLATE = `# config_name = "配置名称"
 # --- 网络配置 ---
-# 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
+# 网络编号，相同网络编号的会组在同一个虚拟网
 network_code = "your_network_code"
 
-# 可选服务器地址列表；固定 IP 时在后台连接，也可删除此项完全无服务器运行
+# 服务器地址列表；固定 IP 时在后台连接，也可删除此项完全无服务器运行
 # dynamic 协议默认使用 DNS TXT 解析，也可使用 dynamic://http(s)://接口地址获取换行分隔的服务器地址列表
 server = ["quic://1.2.3.4:29872"]
 
-# 可直连节点地址列表 (可选)
-# peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873"]
+# 可直连节点地址列表；支持 dynamic:// DNS TXT 或 HTTP(S) 地址列表
+# peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873", "dynamic://peers.example.com"]
 
 # P2P 隧道监听地址；IPv4 与 IPv6 最多各一个且端口必须相同
 # tunnel_addr = ["192.168.1.10:29873", "[2001:db8::10]:29873"]
@@ -415,7 +415,7 @@ server = ["quic://1.2.3.4:29872"]
 
 # ===简单使用以下参数可以不动===
 
-# 固定虚拟 IP/CIDR（纯 IP 默认 /24；无服务器或多服务器时必填）
+# 固定虚拟 IP/CIDR（纯 IP 默认 /24；无服务器或多服务器时需要设置）
 # ip = "10.10.0.2/24"
 
 # 是否启用quic优化传输 (默认 false,设置为true时开启)

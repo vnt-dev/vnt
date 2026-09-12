@@ -1,4 +1,4 @@
-use crate::context::config::{PeerAddress, PeerProtocol, TurnRule};
+use crate::context::config::{PeerAddress, TurnRule};
 use crate::context::nat::MyNatInfo;
 use crate::context::{AppState, PacketLossStats, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
@@ -21,12 +21,14 @@ use crate::utils::task_control::TaskGroup;
 use rand::seq::SliceRandom;
 use rustp2p_core::endpoint::{Config as TunnelConfig, LengthPrefixedInitCodec, TunnelIncoming};
 use rustp2p_core::punch::Puncher;
-use rustp2p_core::route_table::Protocol;
 use rustp2p_core::socket::LocalInterface;
+#[cfg(test)]
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const DYNAMIC_PEER_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 pub(crate) struct P2pInitConfig {
     pub tunnel_addr: Vec<SocketAddr>,
@@ -117,25 +119,16 @@ pub async fn init_tunnel(
         route_table.clone(),
         socket_manager.clone(),
     ));
-    // peer_address 支持域名；域名不在启动时解析，由 direct_peer_probe_task
-    // 在每次使用时解析出地址（支持 DNS 变更），解析失败只告警跳过
+    // peer_address 支持域名与动态地址；均在探测任务内解析，避免启动时阻塞。
     for peer in &config.peer_address {
-        let protocols: &[Protocol] = match peer.protocol() {
-            PeerProtocol::Both => &[Protocol::TCP, Protocol::UDP],
-            PeerProtocol::Tcp => &[Protocol::TCP],
-            PeerProtocol::Udp => &[Protocol::UDP],
-        };
-        for &protocol in protocols {
-            task_group.spawn(direct_peer_probe_task(
-                app_state.network.clone(),
-                route_table.clone(),
-                socket_manager.clone(),
-                protocol,
-                peer.clone(),
-                config.default_interface.clone(),
-                config.identity.clone(),
-            ));
-        }
+        task_group.spawn(direct_peer_probe_task(
+            app_state.network.clone(),
+            route_table.clone(),
+            socket_manager.clone(),
+            peer.clone(),
+            config.default_interface.clone(),
+            config.identity.clone(),
+        ));
     }
     let p2p_task = P2pTask {
         task_group,
@@ -213,34 +206,49 @@ async fn direct_peer_probe_task(
     network: SharedNetworkAddr,
     route_table: RouteTable,
     socket_manager: P2pOutbound,
-    protocol: Protocol,
     peer: PeerAddress,
     default_interface: Option<LocalInterface>,
     identity: NodeIdentityTemplate,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut cached_dynamic_peers = Vec::new();
+    let mut next_dynamic_refresh = Instant::now();
     loop {
         interval.tick().await;
         let Some(src_ip) = network.ip() else {
             continue;
         };
-        // peer 可能为域名，每次使用时解析出当前地址（支持 DNS 变化）
-        let resolved = match peer.endpoints(&default_interface).await {
-            Ok(list) => list,
-            Err(error) => {
-                log::warn!("failed to resolve peer {peer} for {protocol}: {error}");
-                continue;
+        let peers = if peer.is_dynamic() {
+            if Instant::now() >= next_dynamic_refresh {
+                next_dynamic_refresh = Instant::now() + DYNAMIC_PEER_REFRESH_INTERVAL;
+                match peer.resolve_dynamic(&default_interface).await {
+                    Ok(peers) => cached_dynamic_peers = peers,
+                    Err(error) => log::warn!("failed to refresh dynamic peer {peer}: {error}"),
+                }
             }
+            cached_dynamic_peers.clone()
+        } else {
+            vec![peer.clone()]
         };
-        let addresses = resolved_peer_addresses(resolved, protocol);
-        let attempts = addresses
-            .into_iter()
-            .filter(|address| !route_table.has_direct_endpoint(protocol, *address))
-            .map(|address| {
+
+        let mut attempts = Vec::new();
+        for peer in peers {
+            // 静态域名在每轮探测时重新解析，以便跟随 DNS A/AAAA 记录变化。
+            let resolved = match peer.endpoints(&default_interface).await {
+                Ok(list) => list,
+                Err(error) => {
+                    log::warn!("failed to resolve peer {peer}: {error}");
+                    continue;
+                }
+            };
+            for (protocol, address) in resolved {
+                if route_table.has_direct_endpoint(protocol, address) {
+                    continue;
+                }
                 let socket_manager = socket_manager.clone();
                 let identity = identity.clone();
-                async move {
+                attempts.push(async move {
                     let packet = match build_direct_peer_probe(
                         src_ip,
                         socket_manager.encrypt_reserve(),
@@ -254,32 +262,15 @@ async fn direct_peer_probe_task(
                             return;
                         }
                     };
-                    if let Err(error) = socket_manager
-                        .send_to_addr(packet, protocol, address)
-                        .await
-                    {
-                        log::debug!(
-                            "direct peer probe failed for {protocol}://{address}: {error:?}"
-                        );
+                    if let Err(error) = socket_manager.send_to_addr(packet, protocol, address).await {
+                        log::debug!("direct peer probe failed for {protocol}://{address}: {error:?}");
                     }
-                }
-            });
-        // 同一域名的多个候选地址并行探测，避免首个不可达地址阻塞后续地址。
+                });
+            }
+        }
+        // 同一域名或动态列表的多个候选地址并行探测，避免单个不可达地址阻塞其余地址。
         futures::future::join_all(attempts).await;
     }
-}
-
-fn resolved_peer_addresses(
-    resolved: Vec<(Protocol, SocketAddr)>,
-    protocol: Protocol,
-) -> Vec<SocketAddr> {
-    let mut seen = HashSet::new();
-    resolved
-        .into_iter()
-        .filter_map(|(resolved_protocol, address)| {
-            (resolved_protocol == protocol && seen.insert(address)).then_some(address)
-        })
-        .collect()
 }
 
 fn build_direct_peer_probe(
@@ -485,20 +476,8 @@ mod tests {
     }
 
     #[test]
-    fn direct_peer_probe_keeps_all_resolved_addresses_for_protocol() {
-        let first: SocketAddr = "192.0.2.1:29872".parse().unwrap();
-        let second: SocketAddr = "[2001:db8::1]:29872".parse().unwrap();
-        let endpoints = vec![
-            (Protocol::TCP, first),
-            (Protocol::UDP, first),
-            (Protocol::TCP, second),
-            (Protocol::TCP, first),
-        ];
-
-        assert_eq!(
-            resolved_peer_addresses(endpoints, Protocol::TCP),
-            vec![first, second]
-        );
+    fn dynamic_peer_refresh_interval_is_one_minute() {
+        assert_eq!(DYNAMIC_PEER_REFRESH_INTERVAL, Duration::from_secs(60));
     }
 
     #[test]

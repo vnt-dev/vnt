@@ -2078,11 +2078,16 @@ ip = "10.26.0.2"
         config.peer_address = vec![
             "127.0.0.1:30001".to_string(),
             "tcp://127.0.0.1:30002".to_string(),
+            "dynamic://peers.example.com".to_string(),
         ];
         let core = convert_config(config).unwrap();
-        assert_eq!(core.peer_address.len(), 2);
+        assert_eq!(core.peer_address.len(), 3);
         assert_eq!(core.peer_address[0].to_string(), "127.0.0.1:30001");
         assert_eq!(core.peer_address[1].to_string(), "tcp://127.0.0.1:30002");
+        assert_eq!(
+            core.peer_address[2].to_string(),
+            "dynamic://peers.example.com"
+        );
     }
 
     #[test]

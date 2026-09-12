@@ -27,9 +27,9 @@ export const configHelp = {
     param: "peer_address",
     summary: "预先告诉本机某个 VNT 节点可能直连的公网或局域网地址。",
     usage: "适用于固定公网 IP、同一局域网或端口已映射的节点，可减少发现和打洞等待。端口必须是对端的隧道端口。",
-    format: "ip:端口、域名:端口、tcp://地址:端口 或 udp://地址:端口。",
+    format: "ip:端口、域名:端口、tcp://地址:端口、udp://地址:端口、dynamic://域名，或 dynamic://http(s)://接口地址。",
     example: "192.168.1.10:29873",
-    notes: ["不带协议时会同时尝试 TCP 和 UDP。", "这不是对端的服务端口，而是 VNT 隧道端口。"],
+    notes: ["不带协议时会同时尝试 TCP 和 UDP。", "dynamic://域名 会读取 DNS TXT；dynamic://http(s)://接口会读取换行分隔的直连节点地址列表。", "这不是对端的服务端口，而是 VNT 隧道端口。"],
   },
   turn: {
     param: "turn",

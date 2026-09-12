@@ -215,7 +215,7 @@ public class VntConfig {
 
         /**
          * 添加可直连节点地址（可选）。
-         * @param peerAddress 格式：ip:port、tcp://ip:port 或 udp://ip:port
+         * @param peerAddress 格式：ip:port、tcp://ip:port、udp://ip:port，或 dynamic://域名 / dynamic://http(s)://地址列表接口
          */
         public Builder addPeerAddress(String peerAddress) {
             this.peerAddresses.add(peerAddress);

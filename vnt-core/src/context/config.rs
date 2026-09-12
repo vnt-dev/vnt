@@ -3,7 +3,7 @@ use crate::nat::{NetInput, SubnetMapping};
 use crate::port_mapping::PortMapping;
 use crate::tls::verifier::CertValidationMode;
 use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAddress};
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use ipnet::Ipv4Net;
 use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
 use rustp2p_core::route_table::Protocol;
@@ -293,16 +293,84 @@ pub enum PeerProtocol {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PeerAddress {
-    protocol: PeerProtocol,
-    /// host 为 IP 字面量或域名；IPv6 存储时不含方括号。
-    /// 域名不做解析时解析，由调用方在使用时解析出 SocketAddr。
-    host: String,
-    port: u16,
+    kind: PeerAddressKind,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum PeerAddressKind {
+    Static {
+        protocol: PeerProtocol,
+        /// host 为 IP 字面量或域名；IPv6 存储时不含方括号。
+        host: String,
+        port: u16,
+    },
+    /// `dynamic://` 后的 DNS 域名或 HTTP(S) 地址列表 URL。
+    Dynamic { source: String },
 }
 
 impl PeerAddress {
     pub fn protocol(&self) -> PeerProtocol {
-        self.protocol
+        match &self.kind {
+            PeerAddressKind::Static { protocol, .. } => *protocol,
+            // 保持此公共方法的兼容性；动态地址实际协议由解析结果决定。
+            PeerAddressKind::Dynamic { .. } => PeerProtocol::Both,
+        }
+    }
+
+    pub fn is_dynamic(&self) -> bool {
+        matches!(self.kind, PeerAddressKind::Dynamic { .. })
+    }
+
+    /// 解析动态地址列表。DNS TXT 或 HTTP(S) 响应的每个非空行均为一条普通
+    /// peer_address；无效条目仅告警，不影响同一列表中的其他地址。
+    pub async fn resolve_dynamic(
+        &self,
+        default_interface: &Option<LocalInterface>,
+    ) -> anyhow::Result<Vec<Self>> {
+        let PeerAddressKind::Dynamic { source } = &self.kind else {
+            return Ok(vec![self.clone()]);
+        };
+        let lower_source = source.to_ascii_lowercase();
+        let entries: Vec<String> =
+            if lower_source.starts_with("http://") || lower_source.starts_with("https://") {
+                crate::utils::http_get::http_get_text(source)
+                    .await?
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            } else {
+                crate::utils::dns_query::dns_query_txt(source, vec![], default_interface)
+                    .await?
+                    .into_iter()
+                    .flat_map(|entry| {
+                        entry
+                            .lines()
+                            .map(str::trim)
+                            .filter(|line| !line.is_empty())
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            };
+
+        let mut peers = Vec::new();
+        for entry in entries {
+            match entry.parse::<PeerAddress>() {
+                Ok(peer) if !peer.is_dynamic() => peers.push(peer),
+                Ok(_) => log::warn!(
+                    "dynamic peer address {self} contains nested dynamic entry {entry:?}; skipping"
+                ),
+                Err(error) => log::warn!(
+                    "invalid dynamic peer address entry {entry:?} from {self}: {error}; skipping"
+                ),
+            }
+        }
+        if peers.is_empty() {
+            bail!("no valid peer addresses resolved for {self}")
+        }
+        Ok(peers)
     }
 
     /// 在使用时解析出实际地址：
@@ -312,18 +380,26 @@ impl PeerAddress {
         &self,
         default_interface: &Option<LocalInterface>,
     ) -> anyhow::Result<Vec<(Protocol, SocketAddr)>> {
-        let addrs = if let Ok(ip) = self.host.parse::<IpAddr>() {
-            vec![SocketAddr::new(ip, self.port)]
+        let PeerAddressKind::Static {
+            protocol,
+            host,
+            port,
+        } = &self.kind
+        else {
+            bail!("dynamic peer address {self} must be resolved before probing")
+        };
+        let addrs = if let Ok(ip) = host.parse::<IpAddr>() {
+            vec![SocketAddr::new(ip, *port)]
         } else {
-            crate::utils::dns_query::dns_query_all(&self.host, &vec![], default_interface)
+            crate::utils::dns_query::dns_query_all(host, &vec![], default_interface)
                 .await?
                 .into_iter()
-                .map(|ip| SocketAddr::new(ip, self.port))
+                .map(|ip| SocketAddr::new(ip, *port))
                 .collect::<Vec<_>>()
         };
         let mut endpoints = Vec::with_capacity(addrs.len() * 2);
         for addr in addrs {
-            match self.protocol {
+            match protocol {
                 PeerProtocol::Both => {
                     endpoints.push((Protocol::TCP, addr));
                     endpoints.push((Protocol::UDP, addr));
@@ -342,40 +418,61 @@ impl FromStr for PeerAddress {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let value = value.trim();
         let lower = value.to_ascii_lowercase();
+        if lower.starts_with("dynamic://") {
+            let source = value[10..].trim();
+            if source.is_empty() {
+                bail!("dynamic peer address source must not be empty")
+            }
+            return Ok(Self {
+                kind: PeerAddressKind::Dynamic {
+                    source: source.to_owned(),
+                },
+            });
+        }
         let (protocol, address) = if lower.starts_with("tcp://") {
             (PeerProtocol::Tcp, &value[6..])
         } else if lower.starts_with("udp://") {
             (PeerProtocol::Udp, &value[6..])
         } else if value.contains("://") {
-            bail!("invalid peer protocol in '{value}', expected tcp:// or udp://")
+            bail!("invalid peer protocol in '{value}', expected tcp://, udp://, or dynamic://")
         } else {
             (PeerProtocol::Both, value)
         };
-        // 此处只拆分 host 与端口，不做 DNS 解析；域名在使用时解析出地址
         let (host, port) = crate::utils::addr::split_host_port(address)
-            .map_err(|error| anyhow::anyhow!("invalid peer address '{value}': {error}"))?;
+            .map_err(|error| anyhow!("invalid peer address '{value}': {error}"))?;
         if port == 0 {
             bail!("invalid peer address '{value}': port must not be 0")
         }
         Ok(Self {
-            protocol,
-            host: host.to_string(),
-            port,
+            kind: PeerAddressKind::Static {
+                protocol,
+                host: host.to_string(),
+                port,
+            },
         })
     }
 }
 
 impl Display for PeerAddress {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let address = if self.host.contains(':') {
-            format!("[{}]:{}", self.host, self.port)
-        } else {
-            format!("{}:{}", self.host, self.port)
-        };
-        match self.protocol {
-            PeerProtocol::Both => write!(f, "{address}"),
-            PeerProtocol::Tcp => write!(f, "tcp://{address}"),
-            PeerProtocol::Udp => write!(f, "udp://{address}"),
+        match &self.kind {
+            PeerAddressKind::Dynamic { source } => write!(f, "dynamic://{source}"),
+            PeerAddressKind::Static {
+                protocol,
+                host,
+                port,
+            } => {
+                let address = if host.contains(':') {
+                    format!("[{host}]:{port}")
+                } else {
+                    format!("{host}:{port}")
+                };
+                match protocol {
+                    PeerProtocol::Both => write!(f, "{address}"),
+                    PeerProtocol::Tcp => write!(f, "tcp://{address}"),
+                    PeerProtocol::Udp => write!(f, "udp://{address}"),
+                }
+            }
         }
     }
 }
@@ -607,6 +704,19 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn spawn_http_server(response: String) -> SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        address
+    }
 
     #[test]
     fn virtual_ip_accepts_cidr_and_defaults_to_24() {
@@ -757,6 +867,38 @@ mod tests {
         let udp = "udp://[::1]:29872".parse::<PeerAddress>().unwrap();
         assert_eq!(udp.protocol(), PeerProtocol::Udp);
         assert_eq!(udp.to_string(), "udp://[::1]:29872");
+
+        let dynamic = "DYNAMIC://https://Example.com/Peers?token=AbC"
+            .parse::<PeerAddress>()
+            .unwrap();
+        assert!(dynamic.is_dynamic());
+        assert_eq!(dynamic.protocol(), PeerProtocol::Both);
+        assert_eq!(
+            dynamic.to_string(),
+            "dynamic://https://Example.com/Peers?token=AbC"
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_peer_address_http_skips_invalid_entries() {
+        let body = "127.0.0.1:30001\ntcp://127.0.0.1:30002\nudp://[::1]:30003\nquic://127.0.0.1:30004\ndynamic://nested.example\n";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let address = spawn_http_server(response).await;
+        let dynamic: PeerAddress = format!("dynamic://http://{address}/peers").parse().unwrap();
+
+        let peers = dynamic.resolve_dynamic(&None).await.unwrap();
+        assert_eq!(
+            peers.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            vec![
+                "127.0.0.1:30001",
+                "tcp://127.0.0.1:30002",
+                "udp://[::1]:30003",
+            ]
+        );
     }
 
     #[test]
@@ -776,6 +918,7 @@ mod tests {
     fn peer_address_rejects_invalid_values() {
         for value in [
             "quic://127.0.0.1:29872",
+            "dynamic://",
             "127.0.0.1",
             "example.com",
             "127.0.0.1:0",
