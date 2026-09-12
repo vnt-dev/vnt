@@ -14,7 +14,7 @@ use rustp2p_core::nat::NatInfo;
 use rustp2p_core::route_table::RouteKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 #[derive(Default)]
 struct PingStats {
@@ -304,6 +304,14 @@ pub(crate) struct AppState {
     pub(crate) punch_backoff: PunchBackoff,
     pub(crate) packet_loss_stats: PacketLossStats,
     pub(crate) traffic_stats: TrafficStats,
+    p2p_listen_addrs: Arc<Mutex<Vec<TunnelListenAddr>>>,
+}
+
+/// A local P2P transport listener that was successfully bound at startup.
+#[derive(Clone, Debug)]
+pub struct TunnelListenAddr {
+    pub protocol: &'static str,
+    pub addr: SocketAddr,
 }
 #[derive(Clone, Default)]
 pub(crate) struct SharedNetworkAddr {
@@ -1102,6 +1110,7 @@ impl AppState {
         self.punch_backoff.clear();
         self.packet_loss_stats.clear();
         self.traffic_stats.clear();
+        self.p2p_listen_addrs.lock().clear();
     }
 
     fn network(&self) -> Option<Ipv4Net> {
@@ -1132,6 +1141,12 @@ impl AppState {
 
     pub fn get_config(&self) -> Option<Box<Config>> {
         self.config.lock().clone()
+    }
+    pub(crate) fn set_p2p_listen_addrs(&self, addrs: Vec<TunnelListenAddr>) {
+        *self.p2p_listen_addrs.lock() = addrs;
+    }
+    pub fn p2p_listen_addrs(&self) -> Vec<TunnelListenAddr> {
+        self.p2p_listen_addrs.lock().clone()
     }
     pub(crate) fn udp_stun(&self) -> Vec<String> {
         self.config

@@ -25,6 +25,11 @@ const serverConnected = computed(() => {
   return { connected: connected.length, total: running.length };
 });
 
+const tunnelListenAddresses = computed(() => {
+  const addrs = app.selectedInfo?.tunnel_listen_addrs || [];
+  return [...new Set(addrs.map((item) => item.address))];
+});
+
 </script>
 
 <template>
@@ -125,6 +130,14 @@ const serverConnected = computed(() => {
               class="min-w-0 flex-1 break-all text-right font-mono text-slate-900 dark:text-white"
               :title="app.selectedInfo.public_ipv6"
               >{{ app.selectedInfo.public_ipv6 || "-" }}</span
+            >
+          </div>
+          <div class="flex gap-4 border-b border-slate-100 pb-2 dark:border-slate-700">
+            <span class="muted">隧道监听地址</span>
+            <span
+              class="min-w-0 flex-1 whitespace-pre-line break-all text-right font-mono text-slate-900 dark:text-white"
+              :title="tunnelListenAddresses.join('\n')"
+              >{{ tunnelListenAddresses.join('\n') || "-" }}</span
             >
           </div>
           <div class="flex justify-between border-b border-slate-100 pb-2 dark:border-slate-700">

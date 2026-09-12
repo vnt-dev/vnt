@@ -399,6 +399,7 @@ struct HttpAppInfo {
     rtx: Option<bool>,
     allow_ikev2: bool,
     allow_wireguard: bool,
+    tunnel_listen_addrs: Vec<HttpTunnelListenAddr>,
     input: Vec<NetInput>,
     output: Vec<Ipv4Net>,
     automatic_input: Vec<NetInput>,
@@ -412,6 +413,12 @@ struct HttpServerInfo {
     connected: bool,
     server_rtt: Option<u32>,
     server_version: Option<String>,
+}
+
+#[derive(Serialize)]
+struct HttpTunnelListenAddr {
+    protocol: String,
+    address: SocketAddr,
 }
 
 #[derive(Serialize)]
@@ -1326,6 +1333,14 @@ async fn get_info(
             rtx: config.as_ref().map(|v| v.rtx),
             allow_ikev2: config.as_ref().is_some_and(|v| v.allow_ikev2),
             allow_wireguard: config.as_ref().is_some_and(|v| v.allow_wireguard),
+            tunnel_listen_addrs: api
+                .p2p_listen_addrs()
+                .into_iter()
+                .map(|v| HttpTunnelListenAddr {
+                    protocol: v.protocol.to_string(),
+                    address: v.addr,
+                })
+                .collect(),
             input: config.as_ref().map(|v| v.input.clone()).unwrap_or_default(),
             output: config
                 .as_ref()

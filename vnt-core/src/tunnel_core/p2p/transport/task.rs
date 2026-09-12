@@ -1,6 +1,6 @@
 use crate::context::config::{PeerAddress, TurnRule};
 use crate::context::nat::MyNatInfo;
-use crate::context::{AppState, PacketLossStats, SharedNetworkAddr};
+use crate::context::{AppState, PacketLossStats, SharedNetworkAddr, TunnelListenAddr};
 use crate::crypto::PacketCrypto;
 use crate::protocol::client_message::{
     MAX_ANNOUNCED_DIRECT_PEERS, NodeAnnouncement, NodeIdentityTemplate, PeerHandshake,
@@ -70,11 +70,36 @@ pub async fn init_tunnel(
         tunnel_config = tunnel_config.default_interface(interface);
     }
     let tunnel_incoming = TunnelIncoming::bind(tunnel_config).await?;
+    let local_tcp_addr = tunnel_incoming.local_tcp_addr();
+    let local_tcp_ipv6_addr = tunnel_incoming.local_tcp_ipv6_addr();
+    let mut listen_addrs = Vec::new();
+    if let Some(addr) = local_tcp_addr {
+        listen_addrs.push(TunnelListenAddr {
+            protocol: "TCP",
+            addr,
+        });
+    }
+    if let Some(addr) = local_tcp_ipv6_addr {
+        listen_addrs.push(TunnelListenAddr {
+            protocol: "TCP",
+            addr,
+        });
+    }
+    if let Ok(addr) = tunnel_incoming.local_addr() {
+        listen_addrs.push(TunnelListenAddr {
+            protocol: "UDP",
+            addr,
+        });
+    }
+    if let Some(addr) = tunnel_incoming.local_udp_ipv6_addr() {
+        listen_addrs.push(TunnelListenAddr {
+            protocol: "UDP",
+            addr,
+        });
+    }
+    app_state.set_p2p_listen_addrs(listen_addrs);
     let puncher = tunnel_incoming.puncher();
-    let local_tcp_port = tunnel_incoming
-        .local_tcp_addr()
-        .map(|addr| addr.port())
-        .unwrap_or_default();
+    let local_tcp_port = local_tcp_addr.map(|addr| addr.port()).unwrap_or_default();
     let route_table = app_state.route_table.clone();
     let socket_manager = P2pOutbound::new(puncher.clone(), route_table.clone(), packet_crypto);
     if config.automatic_punch {

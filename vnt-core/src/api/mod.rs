@@ -1,5 +1,7 @@
 use crate::context::config::Config;
-use crate::context::{AppState, NetworkAddr, PacketLossInfo, ServerNodeInfo, TrafficInfo};
+use crate::context::{
+    AppState, NetworkAddr, PacketLossInfo, ServerNodeInfo, TrafficInfo, TunnelListenAddr,
+};
 use crate::nat::NetInput;
 use crate::protocol::control_message::ClientSimpleInfo;
 use crate::tunnel_core::p2p::route_table::Route;
@@ -92,6 +94,10 @@ impl VntApi {
     /// 获取当前的nat信息
     pub fn nat_info(&self) -> Option<NatInfo> {
         self.app_state.get_nat_info()
+    }
+    /// Returns the P2P TCP/UDP sockets that are actually bound by this instance.
+    pub fn p2p_listen_addrs(&self) -> Vec<TunnelListenAddr> {
+        self.app_state.p2p_listen_addrs()
     }
     pub fn peer_nat_info(&self, ip: &Ipv4Addr) -> Option<NatInfo> {
         self.app_state.get_peer_info(ip).and_then(|v| v.nat_info)
