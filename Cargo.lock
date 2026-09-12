@@ -4619,7 +4619,7 @@ dependencies = [
 [[package]]
 name = "rustp2p-core"
 version = "0.1.1"
-source = "git+https://github.com/rustp2p/rustp2p#a6ad4f4e43e27d20e5aa1f56aa5ce2019ea3134a"
+source = "git+https://github.com/rustp2p/rustp2p#04a3e26ba19d9ed08b5addb74c00a23e7a2b7933"
 dependencies = [
  "bytes",
  "dashmap",
