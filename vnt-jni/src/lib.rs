@@ -769,6 +769,43 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetNatInfo<'local>(
     })
 }
 
+/// 获取实际绑定的 P2P 隧道监听地址
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntApi_nativeGetTunnelListenAddresses<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    api_handle: jlong,
+) -> jstring {
+    jni_guard!(env, std::ptr::null_mut(), {
+        let result: anyhow::Result<String> = (|| {
+            let global_state = GLOBAL_STATE.lock();
+            let state = global_state.as_ref().context("VNT not initialized")?;
+            let api = state
+                .vnt_apis
+                .get(&api_handle)
+                .context("Invalid API handle")?;
+
+            let addrs: Vec<String> = api
+                .p2p_listen_addrs()
+                .into_iter()
+                .map(|listener| listener.addr.to_string())
+                .collect();
+            Ok(serde_json::to_string(&addrs)?)
+        })();
+
+        match result {
+            Ok(json_str) => env
+                .new_string(json_str)
+                .unwrap_or_else(|_| JObject::null().into())
+                .into_raw(),
+            Err(e) => {
+                let _ = env.throw(format!("Failed to get tunnel listen addresses: {:?}", e));
+                JObject::null().into_raw()
+            }
+        }
+    })
+}
+
 /// 获取服务器节点列表
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntApi_nativeGetServerList<'local>(
