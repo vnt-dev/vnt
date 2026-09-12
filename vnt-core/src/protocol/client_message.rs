@@ -371,7 +371,7 @@ mod tests {
             identity: LocalNodeIdentity {
                 ip: "10.26.0.2".parse().unwrap(),
                 name: "node-a".to_string(),
-                version: "2.0.8".to_string(),
+                version: "2.0.9".to_string(),
                 network_code: "mesh-a".to_string(),
                 advertised_subnets: vec!["192.168.10.0/24".parse().unwrap()],
             },
@@ -387,7 +387,7 @@ mod tests {
             identity: LocalNodeIdentity {
                 ip: "10.26.0.2".parse().unwrap(),
                 name: "node-a".to_string(),
-                version: "2.0.8".to_string(),
+                version: "2.0.9".to_string(),
                 network_code: "must-not-be-broadcast".to_string(),
                 advertised_subnets: vec!["192.168.10.0/24".parse().unwrap()],
             },
@@ -407,7 +407,7 @@ mod tests {
         let wire = proto::NodeAnnouncement::decode(encoded.as_ref()).unwrap();
         let public = wire.identity.unwrap();
         assert_eq!(public.name, "node-a");
-        assert_eq!(public.version, "2.0.8");
+        assert_eq!(public.version, "2.0.9");
 
         let source = Ipv4Addr::new(10, 26, 0, 2);
         let decoded = NodeAnnouncement::from_slice(encoded.as_ref(), source).unwrap();
