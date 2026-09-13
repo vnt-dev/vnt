@@ -603,7 +603,7 @@ impl ServerTurnInboundHandler {
     ) -> anyhow::Result<()> {
         let net_packet = NetPacket::new(data)?;
         let msg_type = net_packet.msg_type()?;
-        let graph_raw = if matches!(msg_type, MsgType::NodeAnnouncement | MsgType::Broadcast) {
+        let graph_raw = if msg_type == MsgType::NodeAnnouncement {
             let mut raw = NetPacket::new(net_packet.source_buf().clone())?;
             raw.decr_ttl();
             Some(raw.into_bytes())
@@ -714,10 +714,27 @@ impl ServerTurnInboundHandler {
         dest: Ipv4Addr,
     ) -> anyhow::Result<()> {
         match msg_type {
-            MsgType::Turn | MsgType::Broadcast => {
+            MsgType::Turn => {
                 self.enhanced_inbound
                     .inbound(&network_addr, msg_type, src, net_packet)
                     .await?;
+            }
+            MsgType::Broadcast => {
+                if network_addr.network().contains(&src)
+                    && src != network_addr.ip
+                    && src != network_addr.network().network()
+                    && src != network_addr.broadcast
+                    && !src.is_unspecified()
+                    && !src.is_broadcast()
+                    && !src.is_multicast()
+                    && self
+                        .basic_outbound
+                        .broadcast_first_delivery(src, net_packet.seq())
+                {
+                    self.enhanced_inbound
+                        .inbound(&network_addr, msg_type, src, net_packet)
+                        .await?;
+                }
             }
             MsgType::PunchStart1 => {
                 if !allow_punch(&self.turn, &src) {

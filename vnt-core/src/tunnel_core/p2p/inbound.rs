@@ -9,6 +9,7 @@ use crate::protocol::client_message::{
     NETWORK_CODE_HASH_LEN, NodeIdentityTemplate, PeerHandshake, PunchInfo, network_code_hash,
     network_code_hash_matches,
 };
+use crate::protocol::control_message::SelectiveBroadcast;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::BasicOutbound;
@@ -16,6 +17,7 @@ use crate::tunnel_core::p2p::node_info::{NodeInfo, NodeInfoMap};
 use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
 use crate::tunnel_core::p2p::transport::punch::{NatPuncher, PunchInfoGetter};
 use anyhow::bail;
+use prost::Message;
 use rustp2p_core::endpoint::TunnelWriteHalf;
 use rustp2p_core::route_table::RouteKey;
 use std::collections::HashSet;
@@ -34,6 +36,30 @@ struct PacketContext {
 
 fn valid_punch_source(net: &NetworkAddr, source: Ipv4Addr) -> bool {
     !source.is_unspecified() && source != net.ip && net.network().contains(&source)
+}
+
+fn normalize_broadcast_targets(
+    net: &NetworkAddr,
+    source: Ipv4Addr,
+    ips: Vec<u32>,
+) -> Vec<Ipv4Addr> {
+    let mut targets = ips
+        .into_iter()
+        .map(Ipv4Addr::from)
+        .filter(|target| {
+            *target != source
+                && !target.is_unspecified()
+                && !target.is_broadcast()
+                && !target.is_multicast()
+                && *target != net.network().network()
+                && *target != net.broadcast
+                && net.network().contains(target)
+        })
+        .collect::<Vec<_>>();
+    targets.sort_unstable();
+    targets.dedup();
+    targets.truncate(255);
+    targets
 }
 
 fn gossip_relay_targets(
@@ -302,7 +328,7 @@ impl P2pInboundHandler {
         if src_ip == net.ip {
             return Ok(());
         }
-        if matches!(msg_type, MsgType::NodeAnnouncement | MsgType::Broadcast) {
+        if msg_type == MsgType::NodeAnnouncement {
             return self
                 .process_graph_packet(&net, route_key, tunnel, net_packet)
                 .await;
@@ -361,24 +387,6 @@ impl P2pInboundHandler {
         let seq = packet.seq();
         let metric = packet.max_ttl().saturating_sub(packet.ttl()).max(1);
         self.packet_crypto.decrypt_in_place(&mut packet)?;
-
-        if msg_type == MsgType::Broadcast {
-            if !self.basic_outbound.graph_first_seen(msg_type, source, seq) {
-                return Ok(());
-            }
-            if packet.ttl() >= 1 {
-                self.basic_outbound
-                    .flood_direct_p2p(&encrypted, Some(&route_key));
-                self.basic_outbound
-                    .flood_connected_servers(encrypted.clone(), None)
-                    .await;
-            }
-            let packet = self.packet_compression.decompress(packet)?;
-            self.enhanced_inbound
-                .inbound(net, msg_type, source, packet)
-                .await?;
-            return Ok(());
-        }
 
         let announcement = crate::protocol::client_message::NodeAnnouncement::from_slice(
             packet.payload(),
@@ -463,6 +471,12 @@ impl P2pInboundHandler {
                 .await;
         }
 
+        if msg_type == MsgType::TargetBroadcast {
+            return self
+                .process_target_broadcast(net, route_key, net_packet)
+                .await;
+        }
+
         let ctx = PacketContext {
             msg_type,
             src_ip,
@@ -484,10 +498,27 @@ impl P2pInboundHandler {
         ctx: &PacketContext,
     ) -> anyhow::Result<()> {
         match ctx.msg_type {
-            MsgType::Turn | MsgType::Broadcast | MsgType::ExcludeBroadcast => {
+            MsgType::Turn | MsgType::ExcludeBroadcast => {
                 self.enhanced_inbound
                     .inbound(net, ctx.msg_type, ctx.src_ip, net_packet)
                     .await?;
+            }
+            MsgType::Broadcast => {
+                if net.network().contains(&ctx.src_ip)
+                    && ctx.src_ip != net.ip
+                    && ctx.src_ip != net.network().network()
+                    && ctx.src_ip != net.broadcast
+                    && !ctx.src_ip.is_unspecified()
+                    && !ctx.src_ip.is_broadcast()
+                    && !ctx.src_ip.is_multicast()
+                    && self
+                        .basic_outbound
+                        .broadcast_first_delivery(ctx.src_ip, net_packet.seq())
+                {
+                    self.enhanced_inbound
+                        .inbound(net, ctx.msg_type, ctx.src_ip, net_packet)
+                        .await?;
+                }
             }
             MsgType::Ping => {
                 let metric = ctx.max_ttl - ctx.ttl;
@@ -773,6 +804,85 @@ impl P2pInboundHandler {
         Ok(())
     }
 
+    async fn process_target_broadcast(
+        &self,
+        net: &NetworkAddr,
+        route_key: RouteKey,
+        outer: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        let outer_source = Ipv4Addr::from(outer.src_id());
+        if Ipv4Addr::from(outer.dest_id()) != net.ip
+            || self.route_table.route_owner(&route_key) != Some(outer_source)
+            || !net.network().contains(&outer_source)
+            || outer_source == net.network().network()
+            || outer_source.is_unspecified()
+            || outer_source.is_broadcast()
+            || outer_source.is_multicast()
+        {
+            return Ok(());
+        }
+        let task = SelectiveBroadcast::decode(outer.payload())?;
+        let mut inner = NetPacket::new(TransmissionBytes::from(task.data.as_slice()))?;
+        if inner.msg_type()? != MsgType::Broadcast {
+            return Ok(());
+        }
+        let source = Ipv4Addr::from(inner.src_id());
+        if source == net.ip
+            || !net.network().contains(&source)
+            || source.is_unspecified()
+            || source.is_broadcast()
+            || source.is_multicast()
+            || source == net.network().network()
+            || source == net.broadcast
+        {
+            return Ok(());
+        }
+        if inner.ttl() == 0 {
+            return Ok(());
+        }
+        inner.decr_ttl();
+        if inner.ttl() == 0 || inner.max_ttl() <= inner.ttl() {
+            return Ok(());
+        }
+
+        let targets = normalize_broadcast_targets(net, source, task.ips);
+        let targets = self
+            .basic_outbound
+            .take_broadcast_targets(source, inner.seq(), targets);
+        if targets.is_empty() {
+            return Ok(());
+        }
+
+        if targets.contains(&net.ip)
+            && self
+                .basic_outbound
+                .broadcast_first_delivery(source, inner.seq())
+        {
+            let mut local = NetPacket::new(inner.source_buf().clone())?;
+            self.packet_crypto.decrypt_in_place(&mut local)?;
+            let local = self.packet_compression.decompress(local)?;
+            self.enhanced_inbound
+                .inbound(net, MsgType::Broadcast, source, local)
+                .await?;
+        }
+
+        let remaining = targets
+            .into_iter()
+            .filter(|target| *target != net.ip)
+            .collect::<Vec<_>>();
+        if !remaining.is_empty() {
+            self.basic_outbound
+                .distribute_broadcast(
+                    *net,
+                    inner.into_bytes(),
+                    Some(remaining),
+                    Some(outer_source),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn send_destination_unreachable(
         &self,
         net: NetworkAddr,
@@ -863,6 +973,39 @@ mod tests {
             network_code: network_code.to_string(),
             advertised_subnets: Vec::new(),
         }
+    }
+
+    #[test]
+    fn broadcast_target_validation_filters_sorts_deduplicates_and_caps() {
+        let net = NetworkAddr {
+            broadcast: Ipv4Addr::new(10, 26, 255, 255),
+            prefix_len: 16,
+            ..network()
+        };
+        let source = Ipv4Addr::new(10, 26, 0, 3);
+        let mut ips = (1..=300)
+            .rev()
+            .map(|value| {
+                u32::from(Ipv4Addr::new(
+                    10,
+                    26,
+                    1 + (value / 250) as u8,
+                    (value % 250) as u8,
+                ))
+            })
+            .collect::<Vec<_>>();
+        ips.extend([
+            u32::from(source),
+            u32::from(net.broadcast),
+            u32::from(net.network().network()),
+            u32::from(Ipv4Addr::UNSPECIFIED),
+            u32::from(Ipv4Addr::new(224, 0, 0, 1)),
+        ]);
+        let targets = normalize_broadcast_targets(&net, source, ips);
+        assert_eq!(targets.len(), 255);
+        assert!(targets.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(!targets.contains(&source));
+        assert!(!targets.contains(&net.broadcast));
     }
 
     #[test]

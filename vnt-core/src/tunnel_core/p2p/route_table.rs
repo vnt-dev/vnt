@@ -331,6 +331,51 @@ impl RouteTable {
             .collect()
     }
 
+    /// Snapshot of every usable broadcast path, annotated with the directly
+    /// connected peer which owns the physical RouteKey. Relayed routes whose
+    /// physical owner is no longer known are deliberately omitted.
+    pub fn broadcast_routes(&self) -> Vec<(Ipv4Addr, Vec<(Ipv4Addr, Route)>)> {
+        let now = Instant::now();
+        let state = self.inner.state.read();
+        state
+            .route_table
+            .iter()
+            .filter_map(|(destination, routes)| {
+                let candidates = routes
+                    .iter()
+                    .filter_map(|route| {
+                        let owner = state.route_key_owner.get(&route.route_key()).copied()?;
+                        (!is_suppressed(&state, *destination, owner, now))
+                            .then_some((owner, *route))
+                    })
+                    .collect::<Vec<_>>();
+                (!candidates.is_empty()).then_some((*destination, candidates))
+            })
+            .collect()
+    }
+
+    /// Best physical route to one direct peer. A peer can own several UDP/TCP
+    /// tunnels, but a broadcast must consume only the best one.
+    pub fn best_direct_route(&self, peer: Ipv4Addr) -> Option<Route> {
+        let state = self.inner.state.read();
+        state
+            .route_table
+            .get(&peer)?
+            .iter()
+            .filter(|route| {
+                route.is_direct()
+                    && state.route_key_owner.get(&route.route_key()).copied() == Some(peer)
+            })
+            .max_by(|left, right| {
+                left.score()
+                    .cmp(&right.score())
+                    .then_with(|| right.loss_rate().cmp(&left.loss_rate()))
+                    .then_with(|| right.rtt().cmp(&left.rtt()))
+                    .then_with(|| right.route_key().cmp(&left.route_key()))
+            })
+            .copied()
+    }
+
     /// Removes every logical route carried by one physical tunnel.
     pub fn remove_route_key(&self, route_key: &RouteKey) -> Vec<(Ipv4Addr, RouteKey)> {
         let mut state = self.inner.state.write();
@@ -768,6 +813,27 @@ mod tests {
         let route = table.get_route_by_id(&peer).unwrap();
         assert_eq!(route.rtt(), 37);
         assert_eq!(route.loss_rate(), 125);
+    }
+
+    #[test]
+    fn broadcast_uses_only_the_best_physical_route_to_a_direct_peer() {
+        let table = RouteTable::new();
+        let peer = Ipv4Addr::new(10, 0, 0, 2);
+        let slow = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2100".parse().unwrap(),
+            "127.0.0.1:3100".parse().unwrap(),
+        );
+        let fast = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2101".parse().unwrap(),
+            "127.0.0.1:3101".parse().unwrap(),
+        );
+        table.add_owner_route(peer, slow);
+        table.add_owner_route(peer, fast);
+        table.add_route(peer, Route::from_with_loss(slow, 1, 80, 200), false);
+        table.add_route(peer, Route::from_with_loss(fast, 1, 12, 0), false);
+        assert_eq!(table.best_direct_route(peer).unwrap().route_key(), fast);
     }
 
     #[test]

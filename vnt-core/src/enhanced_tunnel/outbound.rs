@@ -31,6 +31,10 @@ fn learned_unicast_peer(
     None
 }
 
+fn suppress_ipv4_flood(no_broadcast: bool, net_broadcast: Ipv4Addr, dest: Ipv4Addr) -> bool {
+    no_broadcast && (dest.is_multicast() || dest == net_broadcast || dest.is_broadcast())
+}
+
 pub struct EnhancedOutbound {
     network: SharedNetworkAddr,
     enhanced_quic_outbound: EnhancedQuicOutbound,
@@ -98,6 +102,13 @@ impl EnhancedOutbound {
                 return Ok(None);
             };
             let dest = ipv4.get_destination();
+            // In TAP mode an IPv4 broadcast/multicast frame normally falls
+            // through to the L2 flood path (its destination MAC is not the
+            // proxy gateway). Apply the L3 no_broadcast policy here as well;
+            // ARP and other Ethernet broadcasts deliberately remain enabled.
+            if suppress_ipv4_flood(self.hybrid_outbound.no_broadcast(), net.broadcast, dest) {
+                return Ok(None);
+            }
             if self.hybrid_outbound.is_relay_client(&dest) {
                 if let Some(ip) = strip_ipv4(data) {
                     self.hybrid_outbound
@@ -246,5 +257,23 @@ mod tests {
             None
         );
         assert_eq!(mac_table.lookup(remote_mac), None);
+    }
+
+    #[test]
+    fn tap_no_broadcast_blocks_ipv4_broadcast_and_multicast_only() {
+        let broadcast = Ipv4Addr::new(10, 26, 255, 255);
+        assert!(suppress_ipv4_flood(true, broadcast, broadcast));
+        assert!(suppress_ipv4_flood(
+            true,
+            broadcast,
+            Ipv4Addr::new(224, 0, 0, 251)
+        ));
+        assert!(suppress_ipv4_flood(true, broadcast, Ipv4Addr::BROADCAST));
+        assert!(!suppress_ipv4_flood(false, broadcast, Ipv4Addr::BROADCAST));
+        assert!(!suppress_ipv4_flood(
+            true,
+            broadcast,
+            Ipv4Addr::new(10, 26, 0, 8)
+        ));
     }
 }

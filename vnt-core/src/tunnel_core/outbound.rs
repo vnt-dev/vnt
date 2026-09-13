@@ -5,17 +5,20 @@ use crate::crypto::PacketCrypto;
 use crate::fec::FecEncoder;
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
+use crate::protocol::ProtoToBytesMut;
 use crate::protocol::control_message::ClientType;
+use crate::protocol::control_message::SelectiveBroadcast;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::p2p::outbound::P2pOutbound;
+use crate::tunnel_core::p2p::route_table::Route;
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use anyhow::bail;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use pnet_packet::ipv4::Ipv4Packet;
 use rustp2p_core::route_table::RouteKey;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,6 +27,34 @@ const GRAPH_DEDUP_TTL: Duration = Duration::from_secs(60);
 const GRAPH_DEDUP_CAPACITY: usize = 8192;
 type GraphMessageKey = (u8, Ipv4Addr, u32);
 type GraphSeen = Arc<Mutex<HashMap<GraphMessageKey, Instant>>>;
+type BroadcastMessageKey = (Ipv4Addr, u32);
+
+const BROADCAST_DEDUP_TTL: Duration = Duration::from_secs(60);
+const BROADCAST_DEDUP_CAPACITY: usize = 8192;
+const BROADCAST_TARGET_CAPACITY: usize = 8192;
+const MAX_SELECTIVE_BROADCAST_IPS: usize = 255;
+
+#[derive(Default)]
+struct BroadcastSeenEntry {
+    updated: Option<Instant>,
+    delivered: bool,
+    targets: HashSet<Ipv4Addr>,
+}
+
+type BroadcastSeen = Arc<Mutex<HashMap<BroadcastMessageKey, BroadcastSeenEntry>>>;
+
+#[derive(Copy, Clone, Debug)]
+struct BroadcastPath {
+    owner: Ipv4Addr,
+    route: Route,
+}
+
+#[derive(Debug)]
+struct BroadcastP2pTask {
+    owner: Ipv4Addr,
+    route: Route,
+    targets: Vec<Ipv4Addr>,
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum PreferredTurn {
@@ -62,6 +93,7 @@ pub(crate) struct BasicOutbound {
     packet_crypto: PacketCrypto,
     turn: Arc<Vec<TurnRule>>,
     graph_seen: GraphSeen,
+    broadcast_seen: BroadcastSeen,
 }
 
 impl BasicOutbound {
@@ -77,6 +109,7 @@ impl BasicOutbound {
             packet_crypto,
             turn,
             graph_seen: Arc::new(Mutex::new(HashMap::new())),
+            broadcast_seen: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -178,17 +211,6 @@ impl BasicOutbound {
             .await
     }
 
-    /// 广播发送
-    pub async fn send_raw_broadcast(
-        &self,
-        exclude_ips: Option<Vec<Ipv4Addr>>,
-        packet: NetPacket<Bytes>,
-    ) -> anyhow::Result<()> {
-        self.server_outbound
-            .send_raw_broadcast(exclude_ips, packet)
-            .await
-    }
-
     /// 检查是否存在到目标的路由
     pub fn exists_route(&self, dest: &Ipv4Addr) -> bool {
         if let Some(p2p) = self.p2p_outbound.as_ref()
@@ -243,6 +265,387 @@ impl BasicOutbound {
         true
     }
 
+    /// Marks local delivery independently from target processing. A terminal
+    /// Broadcast may arrive through a direct tunnel and a server at the same
+    /// time, while disjoint TargetBroadcast shards must still be accepted.
+    pub fn broadcast_first_delivery(&self, source: Ipv4Addr, seq: u32) -> bool {
+        let now = Instant::now();
+        let mut seen = self.broadcast_seen.lock();
+        prune_broadcast_seen(&mut seen, now);
+        let entry = broadcast_seen_entry(&mut seen, (source, seq), now);
+        if entry.delivered {
+            return false;
+        }
+        entry.delivered = true;
+        entry.updated = Some(now);
+        true
+    }
+
+    /// Returns only targets not processed by an earlier shard of this inner
+    /// broadcast. Targets are reserved before forwarding, which closes loops
+    /// even when overlapping tasks arrive concurrently.
+    pub fn take_broadcast_targets(
+        &self,
+        source: Ipv4Addr,
+        seq: u32,
+        targets: Vec<Ipv4Addr>,
+    ) -> Vec<Ipv4Addr> {
+        let now = Instant::now();
+        let mut seen = self.broadcast_seen.lock();
+        prune_broadcast_seen(&mut seen, now);
+        let entry = broadcast_seen_entry(&mut seen, (source, seq), now);
+        entry.updated = Some(now);
+        let mut fresh = Vec::new();
+        for target in targets {
+            if entry.targets.len() >= BROADCAST_TARGET_CAPACITY {
+                break;
+            }
+            if entry.targets.insert(target) {
+                fresh.push(target);
+            }
+        }
+        fresh
+    }
+
+    /// Distributes one encrypted inner Broadcast. `scope` is exact when this
+    /// node is relaying a TargetBroadcast; otherwise the current route and
+    /// server snapshots define the known target universe.
+    pub async fn distribute_broadcast(
+        &self,
+        net: NetworkAddr,
+        packet: NetPacket<Bytes>,
+        scope: Option<Vec<Ipv4Addr>>,
+        ingress_peer: Option<Ipv4Addr>,
+    ) -> anyhow::Result<()> {
+        let source = Ipv4Addr::from(packet.src_id());
+        if !valid_broadcast_ip(&net, source) {
+            return Ok(());
+        }
+
+        let server_coverage = self.server_outbound.broadcast_coverage();
+        let server_union = server_coverage
+            .values()
+            .flat_map(|(ips, _)| ips.iter().copied())
+            .collect::<HashSet<_>>();
+        let route_snapshot = self
+            .p2p_outbound
+            .as_ref()
+            .map(P2pOutbound::broadcast_routes)
+            .unwrap_or_default();
+        let mut paths = HashMap::<Ipv4Addr, Vec<BroadcastPath>>::new();
+        for (target, routes) in route_snapshot {
+            let candidates = routes
+                .into_iter()
+                .filter(|(owner, _)| {
+                    *owner != source && Some(*owner) != ingress_peer && *owner != net.ip
+                })
+                .map(|(owner, route)| BroadcastPath { owner, route })
+                .collect::<Vec<_>>();
+            if !candidates.is_empty() {
+                paths.insert(target, candidates);
+            }
+        }
+
+        let exact_scope = scope.is_some();
+        let mut targets = scope.unwrap_or_else(|| {
+            paths
+                .keys()
+                .copied()
+                .chain(server_union.iter().copied())
+                .collect()
+        });
+        targets.retain(|target| *target != source && valid_broadcast_target(&net, *target));
+        targets.sort_unstable();
+        targets.dedup();
+        if targets.is_empty() {
+            return Ok(());
+        }
+
+        let mut direct = HashMap::new();
+        if let Some(p2p) = &self.p2p_outbound {
+            for target in &targets {
+                if Some(*target) == ingress_peer || *target == source {
+                    continue;
+                }
+                if let Some(route) = p2p.best_direct_route(*target) {
+                    direct.insert(*target, route);
+                }
+            }
+        }
+
+        let target_set = targets.iter().copied().collect::<HashSet<_>>();
+        let full_server_coverage =
+            !exact_scope && !target_set.is_empty() && target_set.is_subset(&server_union);
+        if full_server_coverage {
+            return self
+                .distribute_with_full_server_coverage(net, packet, targets, direct, ingress_peer)
+                .await;
+        }
+
+        self.distribute_partial(
+            net,
+            packet,
+            targets,
+            direct,
+            paths,
+            server_union,
+            HashSet::new(),
+        )
+        .await
+    }
+
+    async fn distribute_with_full_server_coverage(
+        &self,
+        _net: NetworkAddr,
+        packet: NetPacket<Bytes>,
+        targets: Vec<Ipv4Addr>,
+        direct: HashMap<Ipv4Addr, Route>,
+        ingress_peer: Option<Ipv4Addr>,
+    ) -> anyhow::Result<()> {
+        let mut sent_direct = Vec::new();
+        if let Some(p2p) = &self.p2p_outbound {
+            let mut direct = direct.into_iter().collect::<Vec<_>>();
+            direct.sort_by(|left, right| {
+                left.1
+                    .loss_rate()
+                    .cmp(&right.1.loss_rate())
+                    .then_with(|| left.1.rtt().cmp(&right.1.rtt()))
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+            for (target, route) in direct.into_iter().take(MAX_SELECTIVE_BROADCAST_IPS) {
+                if p2p
+                    .send_raw_to(packet.clone(), &route.route_key())
+                    .await
+                    .is_ok()
+                {
+                    sent_direct.push(target);
+                }
+            }
+        }
+        if sent_direct.len() == targets.len() {
+            return Ok(());
+        }
+        let failed = self
+            .server_outbound
+            .send_raw_broadcast(Some(sent_direct.clone()), packet.clone())
+            .await;
+        if !failed.is_empty() {
+            let paths = self.broadcast_paths(ingress_peer, Ipv4Addr::from(packet.src_id()));
+            self.send_p2p_tasks(_net.ip, packet, failed, &paths, &HashSet::new())
+                .await;
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn distribute_partial(
+        &self,
+        net: NetworkAddr,
+        packet: NetPacket<Bytes>,
+        targets: Vec<Ipv4Addr>,
+        direct: HashMap<Ipv4Addr, Route>,
+        paths: HashMap<Ipv4Addr, Vec<BroadcastPath>>,
+        server_union: HashSet<Ipv4Addr>,
+        banned_owners: HashSet<Ipv4Addr>,
+    ) -> anyhow::Result<()> {
+        let direct_targets = direct.keys().copied().collect::<HashSet<_>>();
+        let mut server_targets = Vec::new();
+        let mut p2p_targets = Vec::new();
+        for target in targets {
+            if direct_targets.contains(&target) {
+                continue;
+            }
+            if server_union.contains(&target) {
+                server_targets.push(target);
+            } else {
+                p2p_targets.push(target);
+            }
+        }
+        server_targets.sort_by_key(|target| broadcast_target_rank(*target, &paths));
+
+        let mut tasks = plan_p2p_tasks(&p2p_targets, &paths, &banned_owners);
+        for task in &mut tasks {
+            if direct_targets.contains(&task.owner) && !task.targets.contains(&task.owner) {
+                // The relay itself is a one-hop target and therefore outranks
+                // every relayed destination when the task is at capacity.
+                task.targets.insert(0, task.owner);
+                task.targets.truncate(MAX_SELECTIVE_BROADCAST_IPS);
+            }
+        }
+        let relay_owners = tasks.iter().map(|task| task.owner).collect::<HashSet<_>>();
+        let mut sent = 0usize;
+        let mut retry_targets = Vec::new();
+        let mut retry_banned_owners = banned_owners.clone();
+        let mut retry_server_allowed = HashSet::new();
+
+        if let Some(p2p) = &self.p2p_outbound {
+            for (target, route) in &direct {
+                if relay_owners.contains(target) {
+                    continue;
+                }
+                match p2p.send_raw_to(packet.clone(), &route.route_key()).await {
+                    Ok(()) => sent += 1,
+                    Err(_) => {
+                        retry_targets.push(*target);
+                        retry_banned_owners.insert(*target);
+                        if server_union.contains(target) {
+                            retry_server_allowed.insert(*target);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !server_targets.is_empty() {
+            let failed = self
+                .server_outbound
+                .send_targeted_broadcast(&server_targets, packet.clone())
+                .await;
+            if failed.len() < server_targets.len() {
+                sent += 1;
+            }
+            retry_targets.extend(failed);
+        }
+
+        if let Some(p2p) = &self.p2p_outbound {
+            for task in tasks {
+                match self.send_p2p_task(p2p, net.ip, packet.clone(), &task).await {
+                    Ok(()) => sent += 1,
+                    Err(_) => {
+                        let failed_targets = task.targets;
+                        let mut banned = banned_owners.clone();
+                        banned.insert(task.owner);
+                        let retry_sent = self
+                            .send_p2p_tasks(
+                                net.ip,
+                                packet.clone(),
+                                failed_targets.clone(),
+                                &paths,
+                                &banned,
+                            )
+                            .await;
+                        sent += usize::from(!retry_sent.is_empty());
+                        let server_fallback = failed_targets
+                            .into_iter()
+                            .filter(|target| {
+                                !retry_sent.contains(target) && server_union.contains(target)
+                            })
+                            .collect::<Vec<_>>();
+                        if !server_fallback.is_empty() {
+                            let failed = self
+                                .server_outbound
+                                .send_targeted_broadcast(&server_fallback, packet.clone())
+                                .await;
+                            if failed.len() < server_fallback.len() {
+                                sent += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // One synchronous retry for direct/server failures: use an alternate
+        // P2P owner first, then an exact server task for what P2P cannot cover.
+        if !retry_targets.is_empty() {
+            let p2p_sent = self
+                .send_p2p_tasks(
+                    net.ip,
+                    packet.clone(),
+                    retry_targets,
+                    &paths,
+                    &retry_banned_owners,
+                )
+                .await;
+            if !p2p_sent.is_empty() {
+                sent += 1;
+            }
+            let server_retry = retry_server_allowed
+                .difference(&p2p_sent)
+                .copied()
+                .collect::<Vec<_>>();
+            if !server_retry.is_empty() {
+                let failed = self
+                    .server_outbound
+                    .send_targeted_broadcast(&server_retry, packet)
+                    .await;
+                if failed.len() < server_retry.len() {
+                    sent += 1;
+                }
+            }
+        }
+
+        // Having no currently usable target is a normal broadcast outcome.
+        let _ = sent;
+        Ok(())
+    }
+
+    fn broadcast_paths(
+        &self,
+        ingress_peer: Option<Ipv4Addr>,
+        source: Ipv4Addr,
+    ) -> HashMap<Ipv4Addr, Vec<BroadcastPath>> {
+        self.p2p_outbound
+            .as_ref()
+            .map(P2pOutbound::broadcast_routes)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(target, routes)| {
+                let routes = routes
+                    .into_iter()
+                    .filter(|(owner, _)| *owner != source && Some(*owner) != ingress_peer)
+                    .map(|(owner, route)| BroadcastPath { owner, route })
+                    .collect::<Vec<_>>();
+                (!routes.is_empty()).then_some((target, routes))
+            })
+            .collect()
+    }
+
+    async fn send_p2p_tasks(
+        &self,
+        local_ip: Ipv4Addr,
+        packet: NetPacket<Bytes>,
+        targets: Vec<Ipv4Addr>,
+        paths: &HashMap<Ipv4Addr, Vec<BroadcastPath>>,
+        banned_owners: &HashSet<Ipv4Addr>,
+    ) -> HashSet<Ipv4Addr> {
+        let Some(p2p) = &self.p2p_outbound else {
+            return HashSet::new();
+        };
+        let mut sent = HashSet::new();
+        for task in plan_p2p_tasks(&targets, paths, banned_owners) {
+            if self
+                .send_p2p_task(p2p, local_ip, packet.clone(), &task)
+                .await
+                .is_ok()
+            {
+                sent.extend(task.targets);
+            }
+        }
+        sent
+    }
+
+    async fn send_p2p_task(
+        &self,
+        p2p: &P2pOutbound,
+        local_ip: Ipv4Addr,
+        inner: NetPacket<Bytes>,
+        task: &BroadcastP2pTask,
+    ) -> anyhow::Result<()> {
+        let payload =
+            SelectiveBroadcast::new(&task.targets, inner.source_buf().to_vec()).encode_bytes_mut();
+        let mut outer = NetPacket::new(TransmissionBytes::zeroed_size(
+            HEAD_LENGTH + payload.len(),
+            p2p.encrypt_reserve(),
+        ))?;
+        outer.set_msg_type(MsgType::TargetBroadcast);
+        outer.set_ttl(1);
+        outer.set_src_id(local_ip.into());
+        outer.set_dest_id(task.owner.into());
+        outer.payload_mut().copy_from_slice(&payload);
+        p2p.send_to(outer, &task.route.route_key()).await
+    }
+
     /// 发送加密后的数据包
     pub async fn send_encrypted_packet(
         &self,
@@ -267,9 +670,188 @@ impl BasicOutbound {
     }
 }
 
+fn prune_broadcast_seen(seen: &mut HashMap<BroadcastMessageKey, BroadcastSeenEntry>, now: Instant) {
+    seen.retain(|_, entry| {
+        entry
+            .updated
+            .is_some_and(|updated| now.duration_since(updated) < BROADCAST_DEDUP_TTL)
+    });
+    while seen.len() >= BROADCAST_DEDUP_CAPACITY {
+        let Some(oldest) = seen
+            .iter()
+            .min_by_key(|(_, entry)| entry.updated)
+            .map(|(key, _)| *key)
+        else {
+            break;
+        };
+        seen.remove(&oldest);
+    }
+}
+
+fn broadcast_seen_entry(
+    seen: &mut HashMap<BroadcastMessageKey, BroadcastSeenEntry>,
+    key: BroadcastMessageKey,
+    now: Instant,
+) -> &mut BroadcastSeenEntry {
+    seen.entry(key).or_insert_with(|| BroadcastSeenEntry {
+        updated: Some(now),
+        ..BroadcastSeenEntry::default()
+    })
+}
+
+fn valid_broadcast_ip(net: &NetworkAddr, ip: Ipv4Addr) -> bool {
+    !ip.is_unspecified()
+        && !ip.is_broadcast()
+        && !ip.is_multicast()
+        && ip != net.network().network()
+        && ip != net.broadcast
+        && net.network().contains(&ip)
+}
+
+fn valid_broadcast_target(net: &NetworkAddr, ip: Ipv4Addr) -> bool {
+    ip != net.ip && valid_broadcast_ip(net, ip)
+}
+
+fn path_quality_cmp(left: &BroadcastPath, right: &BroadcastPath) -> std::cmp::Ordering {
+    left.route
+        .score()
+        .cmp(&right.route.score())
+        .then_with(|| right.route.loss_rate().cmp(&left.route.loss_rate()))
+        .then_with(|| right.route.rtt().cmp(&left.route.rtt()))
+}
+
+fn broadcast_target_rank(
+    target: Ipv4Addr,
+    paths: &HashMap<Ipv4Addr, Vec<BroadcastPath>>,
+) -> (u8, u16, u32, Ipv4Addr) {
+    paths
+        .get(&target)
+        .and_then(|candidates| {
+            candidates
+                .iter()
+                .map(|path| {
+                    (
+                        path.route.metric(),
+                        path.route.loss_rate(),
+                        path.route.rtt(),
+                        target,
+                    )
+                })
+                .min()
+        })
+        .unwrap_or((u8::MAX, u16::MAX, u32::MAX, target))
+}
+
+fn plan_p2p_tasks(
+    targets: &[Ipv4Addr],
+    paths: &HashMap<Ipv4Addr, Vec<BroadcastPath>>,
+    banned_owners: &HashSet<Ipv4Addr>,
+) -> Vec<BroadcastP2pTask> {
+    let mut candidates = HashMap::<Ipv4Addr, Vec<BroadcastPath>>::new();
+    for target in targets {
+        let Some(target_paths) = paths.get(target) else {
+            continue;
+        };
+        let Some(min_metric) = target_paths
+            .iter()
+            .filter(|path| !banned_owners.contains(&path.owner))
+            .map(|path| path.route.metric())
+            .min()
+        else {
+            continue;
+        };
+        let mut best_by_owner = HashMap::<Ipv4Addr, BroadcastPath>::new();
+        for path in target_paths.iter().copied().filter(|path| {
+            path.route.metric() == min_metric && !banned_owners.contains(&path.owner)
+        }) {
+            best_by_owner
+                .entry(path.owner)
+                .and_modify(|current| {
+                    if path_quality_cmp(&path, current).is_gt() {
+                        *current = path;
+                    }
+                })
+                .or_insert(path);
+        }
+        if !best_by_owner.is_empty() {
+            candidates.insert(*target, best_by_owner.into_values().collect());
+        }
+    }
+
+    let mut remaining = candidates.keys().copied().collect::<HashSet<_>>();
+    let mut tasks = Vec::new();
+    while !remaining.is_empty() {
+        let mut owner_stats = HashMap::<Ipv4Addr, (usize, u64, u64)>::new();
+        for target in &remaining {
+            for path in &candidates[target] {
+                let stat = owner_stats.entry(path.owner).or_default();
+                stat.0 += 1;
+                stat.1 += u64::from(path.route.score());
+                stat.2 += u64::from(path.route.metric());
+            }
+        }
+        let Some((owner, _)) = owner_stats.into_iter().max_by(|left, right| {
+            left.1
+                .0
+                .cmp(&right.1.0)
+                .then_with(|| left.1.1.cmp(&right.1.1))
+                .then_with(|| right.1.2.cmp(&left.1.2))
+                .then_with(|| right.0.cmp(&left.0))
+        }) else {
+            break;
+        };
+
+        let mut covered = remaining
+            .iter()
+            .filter_map(|target| {
+                candidates[target]
+                    .iter()
+                    .find(|path| path.owner == owner)
+                    .copied()
+                    .map(|path| (*target, path))
+            })
+            .collect::<Vec<_>>();
+        covered.sort_by(|left, right| {
+            left.1
+                .route
+                .metric()
+                .cmp(&right.1.route.metric())
+                .then_with(|| left.1.route.loss_rate().cmp(&right.1.route.loss_rate()))
+                .then_with(|| left.1.route.rtt().cmp(&right.1.route.rtt()))
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        // A single owner gets at most one task. Targets beyond the protocol
+        // limit are intentionally dropped, not split or returned to flooding.
+        let route = covered
+            .iter()
+            .map(|(_, path)| *path)
+            .max_by(path_quality_cmp)
+            .expect("selected broadcast owner must cover at least one target")
+            .route;
+        for (target, _) in &covered {
+            remaining.remove(target);
+        }
+        let target_list = covered
+            .into_iter()
+            .take(MAX_SELECTIVE_BROADCAST_IPS)
+            .map(|(target, _)| target)
+            .collect::<Vec<_>>();
+        tasks.push(BroadcastP2pTask {
+            owner,
+            route,
+            targets: target_list,
+        });
+    }
+    tasks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route(metric: u8, rtt: u32, loss: u16) -> Route {
+        Route::from_with_loss(RouteKey::default(), metric, rtt, loss)
+    }
 
     #[test]
     fn configured_gateway_turn_forces_server_and_peer_turn_stays_p2p() {
@@ -318,6 +900,88 @@ mod tests {
             None
         );
         assert_eq!(relay_msg_type_for(Some(ClientType::Vnt), true, true), None);
+    }
+
+    #[test]
+    fn p2p_broadcast_planner_uses_only_shortest_paths_and_greedy_owner() {
+        let a = Ipv4Addr::new(10, 0, 0, 2);
+        let b = Ipv4Addr::new(10, 0, 0, 3);
+        let x = Ipv4Addr::new(10, 0, 0, 10);
+        let y = Ipv4Addr::new(10, 0, 0, 11);
+        let z = Ipv4Addr::new(10, 0, 0, 12);
+        let paths = HashMap::from([
+            (
+                x,
+                vec![
+                    BroadcastPath {
+                        owner: a,
+                        route: route(2, 20, 0),
+                    },
+                    BroadcastPath {
+                        owner: b,
+                        route: route(3, 1, 0),
+                    },
+                ],
+            ),
+            (
+                y,
+                vec![BroadcastPath {
+                    owner: a,
+                    route: route(2, 30, 0),
+                }],
+            ),
+            (
+                z,
+                vec![BroadcastPath {
+                    owner: b,
+                    route: route(2, 10, 0),
+                }],
+            ),
+        ]);
+        let tasks = plan_p2p_tasks(&[x, y, z], &paths, &HashSet::new());
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].owner, a);
+        assert_eq!(tasks[0].targets, vec![x, y]);
+        assert_eq!(tasks[1].owner, b);
+        assert_eq!(tasks[1].targets, vec![z]);
+    }
+
+    #[test]
+    fn p2p_broadcast_task_is_not_split_beyond_255_targets() {
+        let owner = Ipv4Addr::new(10, 0, 0, 2);
+        let targets = (1..=300)
+            .map(|value| Ipv4Addr::from(0x0a00_1000u32 + value))
+            .collect::<Vec<_>>();
+        let paths = targets
+            .iter()
+            .copied()
+            .map(|target| {
+                (
+                    target,
+                    vec![BroadcastPath {
+                        owner,
+                        route: route(2, 20, 0),
+                    }],
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let tasks = plan_p2p_tasks(&targets, &paths, &HashSet::new());
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].targets.len(), 255);
+    }
+
+    #[test]
+    fn target_aware_state_accepts_disjoint_shards_and_one_delivery() {
+        let now = Instant::now();
+        let source = Ipv4Addr::new(10, 0, 0, 1);
+        let mut seen = HashMap::new();
+        let entry = broadcast_seen_entry(&mut seen, (source, 7), now);
+        assert!(entry.targets.insert(Ipv4Addr::new(10, 0, 0, 2)));
+        assert!(!entry.targets.insert(Ipv4Addr::new(10, 0, 0, 2)));
+        assert!(entry.targets.insert(Ipv4Addr::new(10, 0, 0, 3)));
+        assert!(!entry.delivered);
+        entry.delivered = true;
+        assert!(entry.delivered);
     }
 }
 
@@ -668,17 +1332,8 @@ impl HybridOutbound {
         self.basic_outbound.encrypt_in_place(&mut packet)?;
         let packet_bytes = packet.into_bytes();
         self.basic_outbound
-            .graph_first_seen(MsgType::Broadcast, net.ip, packet_bytes.seq());
-        let p2p_sent = self.basic_outbound.flood_direct_p2p(&packet_bytes, None);
-        match self
-            .basic_outbound
-            .send_raw_broadcast(None, packet_bytes)
+            .distribute_broadcast(net, packet_bytes, None, None)
             .await
-        {
-            Ok(()) => Ok(()),
-            Err(_) if p2p_sent > 0 => Ok(()),
-            Err(error) => Err(error),
-        }
     }
 
     pub async fn ethernet_broadcast_outbound(
@@ -699,17 +1354,8 @@ impl HybridOutbound {
         self.basic_outbound.encrypt_in_place(&mut packet)?;
         let packet_bytes = packet.into_bytes();
         self.basic_outbound
-            .graph_first_seen(MsgType::Broadcast, net.ip, packet_bytes.seq());
-        let p2p_sent = self.basic_outbound.flood_direct_p2p(&packet_bytes, None);
-        match self
-            .basic_outbound
-            .send_raw_broadcast(None, packet_bytes)
+            .distribute_broadcast(net, packet_bytes, None, None)
             .await
-        {
-            Ok(()) => Ok(()),
-            Err(_) if p2p_sent > 0 => Ok(()),
-            Err(error) => Err(error),
-        }
     }
     pub fn has_route(&self, dest: &Ipv4Addr) -> bool {
         self.basic_outbound.exists_route(dest)

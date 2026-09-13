@@ -125,6 +125,14 @@ impl P2pOutbound {
         self.route_table.direct_candidate(destination, exclude)
     }
 
+    pub fn broadcast_routes(&self) -> Vec<(Ipv4Addr, Vec<(Ipv4Addr, Route)>)> {
+        self.route_table.broadcast_routes()
+    }
+
+    pub fn best_direct_route(&self, peer: Ipv4Addr) -> Option<Route> {
+        self.route_table.best_direct_route(peer)
+    }
+
     // pub async fn send_to_id(
     //     &self,
     //     buf: NetPacket<TransmissionBytes>,
