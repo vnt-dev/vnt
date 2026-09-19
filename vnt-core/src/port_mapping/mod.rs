@@ -17,7 +17,7 @@ pub(crate) async fn port_mapping_start(
     udp_port_mapping::start(task_group, &list, quic_tunnel_client).await?;
     Ok(())
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PortMapping {
     pub protocol: IpNextHeaderProtocol,
     pub src_addr: SocketAddr,

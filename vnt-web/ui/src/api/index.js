@@ -93,3 +93,18 @@ export const deleteConfig = (fileName) =>
   request(`/api/config?file_name=${encodeURIComponent(fileName)}`, {
     method: "DELETE",
   });
+
+export const previewSubscription = (subscription) =>
+  request("/api/subscription/preview", {
+    method: "POST", headers: jsonHeaders, body: JSON.stringify({ subscription: subscription }),
+  });
+
+export const getSubscriptionStatus = (fileName) =>
+  request(`/api/subscription/status?file_name=${encodeURIComponent(fileName)}`);
+
+export const clearSubscriptionOverrides = (fileName, fields = null) =>
+  request("/api/subscription/overrides/clear", {
+    method: "POST", headers: jsonHeaders, body: JSON.stringify({ file_name: fileName, fields }),
+  });
+
+export const detachSubscription = (fileName) => postAction("/api/subscription/detach", fileName);

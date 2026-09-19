@@ -4,7 +4,7 @@ import AppModal from "../components/AppModal.vue";
 import AppSelect from "../components/AppSelect.vue";
 import ConfigHelp from "../components/ConfigHelp.vue";
 import { useUiStore } from "../stores/ui";
-import { getConfig, saveConfig } from "../api";
+import { getConfig, previewSubscription, saveConfig } from "../api";
 import { emptyFormData, parseTomlToForm, formToToml, NEW_CONFIG_TEMPLATE } from "../utils/toml";
 import { configHelp } from "../utils/configHelp";
 
@@ -21,12 +21,14 @@ const ui = useUiStore();
 const editorContent = ref("");
 const editorFileName = ref("");
 const editorMode = ref("new"); // 'new' 或 'edit'
-const editMode = ref("form"); // 'form' 或 'toml'
+const editMode = ref("form"); // 'form'、'subscription' 或 'toml'
 const originalToml = ref(""); // 保存原始TOML内容(包含用户注释)
 const hasTomlChanges = ref(false);
 const hasFormChanges = ref(false);
 const isParsingToml = ref(false);
 const formData = ref(emptyFormData());
+const subscriptionPreview = ref(null);
+const subscriptionTesting = ref(false);
 const certificateModeOptions = [
   { value: "skip", label: "跳过验证(默认)" },
   { value: "standard", label: "系统证书验证" },
@@ -85,6 +87,8 @@ watch(
     editMode.value = "form"; // 默认表单模式
     hasTomlChanges.value = false;
     hasFormChanges.value = false;
+    subscriptionPreview.value = null;
+    subscriptionTesting.value = false;
 
     if (props.fileName) {
       try {
@@ -111,12 +115,13 @@ watch(
   },
 );
 
-// 切换到表单模式
-const switchToFormMode = () => {
+// 表单和订阅页签共用同一份结构化配置。从 TOML 模式切回时先解析，
+// 避免订阅页签修改的是旧数据。
+const switchToStructuredMode = (mode) => {
   if (editMode.value === "toml") {
     try {
       const parsed = parseTomlToForm(editorContent.value);
-      editMode.value = "form";
+      editMode.value = mode;
       isParsingToml.value = true;
       formData.value = parsed;
       nextTick(() => {
@@ -126,13 +131,16 @@ const switchToFormMode = () => {
       ui.toast.error("配置解析失败: " + e.message);
     }
   } else {
-    editMode.value = "form";
+    editMode.value = mode;
   }
 };
 
+const switchToFormMode = () => switchToStructuredMode("form");
+const switchToSubscriptionMode = () => switchToStructuredMode("subscription");
+
 // 切换到TOML模式
 const switchToTomlMode = () => {
-  if (editMode.value === "form") {
+  if (editMode.value !== "toml") {
     // 如果表单被修改过,生成新的TOML
     if (hasFormChanges.value) {
       editorContent.value = formToToml(formData.value);
@@ -158,29 +166,55 @@ watch(editorContent, (newVal, oldVal) => {
 watch(
   formData,
   () => {
-    if (editMode.value === "form" && props.show && !isParsingToml.value) {
+    if (editMode.value !== "toml" && props.show && !isParsingToml.value) {
       hasFormChanges.value = true;
     }
   },
   { deep: true },
 );
 
+watch(
+  () => formData.value.subscription,
+  (value, previous) => {
+    if (value !== previous) subscriptionPreview.value = null;
+  },
+);
+
+const testSubscription = async () => {
+  const subscription = formData.value.subscription.trim();
+  if (!subscription) {
+    ui.toast.error("请先填写订阅链接");
+    return;
+  }
+  subscriptionTesting.value = true;
+  subscriptionPreview.value = null;
+  try {
+    subscriptionPreview.value = await previewSubscription(subscription);
+    ui.toast.success("订阅链接测试成功");
+  } catch (error) {
+    ui.toast.error("订阅链接测试失败: " + error.message);
+  } finally {
+    subscriptionTesting.value = false;
+  }
+};
+
 const handleSave = async () => {
   try {
     // 表单模式先转换为TOML
     let configContent = editorContent.value;
-    if (editMode.value === "form") {
+    if (editMode.value !== "toml") {
       // 验证必填项
-      if (!formData.value.network_code.trim()) {
+      const hasSubscription = Boolean(formData.value.subscription.trim());
+      if (!hasSubscription && !formData.value.network_code.trim()) {
         ui.toast.error("请填写网络编号");
         return;
       }
       const servers = formData.value.server.filter((s) => s.trim());
-      if (servers.length === 0 && !formData.value.ip.trim()) {
+      if (!hasSubscription && servers.length === 0 && !formData.value.ip.trim()) {
         ui.toast.error("未配置服务器时必须填写虚拟 IP/CIDR");
         return;
       }
-      if (servers.length > 1 && !formData.value.ip.trim()) {
+      if (!hasSubscription && servers.length > 1 && !formData.value.ip.trim()) {
         ui.toast.error("配置多个服务器时必须填写虚拟 IP");
         return;
       }
@@ -238,6 +272,21 @@ const sectionChevronClass = (expanded) =>
               />
             </svg>
             表单模式
+          </button>
+          <button
+            @click="switchToSubscriptionMode"
+            :class="editMode === 'subscription' ? 'bg-white text-slate-900 shadow-sm dark:bg-indigo-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'"
+            class="px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center"
+          >
+            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1.1-1.1m3.9 2.756a4 4 0 010-5.656l2-2a4 4 0 015.656 5.656l-1.1 1.1"
+              />
+            </svg>
+            订阅配置
           </button>
           <button
             @click="switchToTomlMode"
@@ -533,7 +582,7 @@ const sectionChevronClass = (expanded) =>
                       <template v-else>构建虚拟IP网络</template>
                     </div>
                   </div>
-                  <AppSelect v-model="formData.device_mode" :options="deviceModeOptions" class="mt-2" aria-label="虚拟网卡模式" />
+                  <AppSelect v-model="formData.device_mode" :options="deviceModeOptions" class="mt-2" aria-label="虚拟网卡模式" @update:model-value="formData.device_mode_explicit = true" />
                 </div>
               </div>
             </div>
@@ -988,6 +1037,82 @@ const sectionChevronClass = (expanded) =>
         </div>
       </div>
 
+      <!-- 订阅配置 -->
+      <div v-show="editMode === 'subscription'" class="h-full overflow-y-auto scrollbar-hide p-6">
+        <div class="mx-auto max-w-4xl">
+          <div class="card">
+            <div class="mb-5 flex items-start gap-3">
+              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1.1-1.1m3.9 2.756a4 4 0 010-5.656l2-2a4 4 0 015.656 5.656l-1.1 1.1" />
+                </svg>
+              </div>
+              <div>
+                <h4 class="font-bold text-slate-900 dark:text-white">订阅服务端配置</h4>
+                <p class="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                  填入 VNTS 提供的订阅链接，启动时获取最新配置，并在连接通过验证后接收服务端实时更新。
+                </p>
+              </div>
+            </div>
+
+            <div class="mb-5">
+              <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                配置名称 <ConfigHelp :help="configHelp.config_name" />
+              </label>
+              <input v-model="formData.config_name" type="text" placeholder="例如: 我的VPN配置" class="input" />
+            </div>
+
+            <label class="mb-2 flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+              订阅链接 <ConfigHelp :help="configHelp.subscription" />
+            </label>
+            <textarea
+              v-model.trim="formData.subscription"
+              rows="5"
+              class="input min-h-32 resize-y font-mono text-xs leading-5"
+              placeholder="可选：vnt2://join/1/…"
+              spellcheck="false"
+            ></textarea>
+            <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+              本地表单或 TOML 中明确填写的字段优先于订阅值；清空订阅链接并保存即可停止订阅。
+            </p>
+
+            <div class="mt-4 flex justify-end">
+              <button
+                type="button"
+                class="btn-secondary"
+                :disabled="subscriptionTesting || !formData.subscription.trim()"
+                @click="testSubscription"
+              >
+                {{ subscriptionTesting ? "测试中…" : "测试" }}
+              </button>
+            </div>
+
+            <div v-if="subscriptionPreview" class="mt-6 space-y-3 border-t border-slate-200 pt-5 dark:border-slate-700">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h5 class="font-semibold text-slate-900 dark:text-white">服务端配置</h5>
+                <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                  测试成功 · revision {{ subscriptionPreview.revision }}
+                </span>
+              </div>
+              <dl class="grid gap-2 rounded-lg bg-slate-50 p-3 text-xs sm:grid-cols-2 dark:bg-slate-800/60">
+                <div class="min-w-0"><dt class="text-slate-400">网络编号</dt><dd class="mt-0.5 break-all font-mono text-slate-700 dark:text-slate-200">{{ subscriptionPreview.network_code }}</dd></div>
+                <div class="min-w-0"><dt class="text-slate-400">设备 ID</dt><dd class="mt-0.5 break-all font-mono text-slate-700 dark:text-slate-200">{{ subscriptionPreview.device_id }}</dd></div>
+                <div class="min-w-0"><dt class="text-slate-400">设备名称</dt><dd class="mt-0.5 break-all font-mono text-slate-700 dark:text-slate-200">{{ subscriptionPreview.device_name || "-" }}</dd></div>
+                <div class="min-w-0"><dt class="text-slate-400">虚拟 IP</dt><dd class="mt-0.5 break-all font-mono text-slate-700 dark:text-slate-200">{{ subscriptionPreview.ip || "-" }}</dd></div>
+              </dl>
+              <textarea
+                :value="subscriptionPreview.config"
+                rows="14"
+                class="input w-full resize-y font-mono text-xs leading-5"
+                aria-label="服务端配置预览"
+                readonly
+                spellcheck="false"
+              ></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- TOML模式 -->
       <div v-show="editMode === 'toml'" class="h-full">
         <textarea
@@ -1001,7 +1126,7 @@ const sectionChevronClass = (expanded) =>
 
     <template #footer>
       <div class="flex-1 text-left text-xs text-slate-500">
-        <span v-if="editMode === 'form'" class="inline-flex items-center gap-1.5">
+        <span v-if="editMode !== 'toml'" class="inline-flex items-center gap-1.5">
           <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <circle cx="10" cy="10" r="7.25" stroke="currentColor" stroke-width="1.5" />
             <path d="M10 9.25v4.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />

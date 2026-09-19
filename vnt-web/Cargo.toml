@@ -24,3 +24,4 @@ parking_lot.workspace = true
 time = { workspace = true, features = ["local-offset", "formatting", "macros"] }
 tokio-util.workspace = true
 rand = "0.10"
+sha2 = "0.11"

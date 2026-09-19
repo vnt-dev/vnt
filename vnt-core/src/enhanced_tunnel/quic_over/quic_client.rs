@@ -6,6 +6,7 @@ use crate::protocol::client_message::{
 };
 use crate::utils::task_control::TaskGroup;
 use anyhow::{Context, bail};
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use futures::SinkExt;
 use parking_lot::Mutex;
@@ -26,6 +27,12 @@ use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 
 #[derive(Clone)]
 pub struct QuicTunnelClient {
+    inner: Arc<ArcSwap<QuicTunnelClientInner>>,
+}
+
+/// Stable facade retained by port-mapping workers while an MTU reload swaps
+/// the endpoint and its connection cache.
+struct QuicTunnelClientInner {
     app_state: AppState,
     endpoint: Endpoint,
     connection_map: Arc<Mutex<HashMap<Ipv4Addr, Arc<OnceCell<Connection>>>>>,
@@ -39,14 +46,31 @@ impl QuicTunnelClient {
         external_route: SubnetExternalRoute,
     ) -> QuicTunnelClient {
         Self {
-            app_state,
-            endpoint,
-            connection_map: Arc::new(Default::default()),
-            external_route,
+            inner: Arc::new(ArcSwap::from_pointee(QuicTunnelClientInner {
+                app_state,
+                endpoint,
+                connection_map: Arc::new(Default::default()),
+                external_route,
+            })),
         }
     }
 
-    pub async fn open_bi(&self, mut dest: Ipv4Addr) -> anyhow::Result<(SendStream, RecvStream)> {
+    pub(crate) fn replace_from(&self, prepared: &Self) {
+        self.inner.store(prepared.inner.load_full());
+    }
+
+    pub async fn open_bi(&self, dest: Ipv4Addr) -> anyhow::Result<(SendStream, RecvStream)> {
+        let inner = self.inner.load();
+        inner.open_bi(dest).await
+    }
+    pub async fn open_uni(&self, dest: Ipv4Addr) -> anyhow::Result<SendStream> {
+        let inner = self.inner.load();
+        inner.open_uni(dest).await
+    }
+}
+
+impl QuicTunnelClientInner {
+    async fn open_bi(&self, mut dest: Ipv4Addr) -> anyhow::Result<(SendStream, RecvStream)> {
         let Some(net) = self.app_state.get_network() else {
             bail!("no network found");
         };
@@ -94,7 +118,7 @@ impl QuicTunnelClient {
             };
         }
     }
-    pub async fn open_uni(&self, mut dest: Ipv4Addr) -> anyhow::Result<SendStream> {
+    async fn open_uni(&self, mut dest: Ipv4Addr) -> anyhow::Result<SendStream> {
         let Some(net) = self.app_state.get_network() else {
             bail!("no network found");
         };

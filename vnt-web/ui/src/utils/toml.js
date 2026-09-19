@@ -2,6 +2,7 @@
 
 export const emptyFormData = () => ({
   config_name: "",
+  subscription: "",
   network_code: "",
   server: [""],
   peer_address: [],
@@ -22,6 +23,7 @@ export const emptyFormData = () => ({
   auto_sync_subnet: false,
   no_nat: false,
   device_mode: "tun",
+  device_mode_explicit: false,
   port_mapping: [],
   allow_mapping: false,
   device_name: "",
@@ -47,7 +49,10 @@ export const parseTomlToForm = (toml) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
-    if (trimmed.includes("config_name")) {
+    if (trimmed.startsWith("subscription")) {
+      const match = trimmed.match(/subscription\s*=\s*"([^"]*)"/);
+      if (match) data.subscription = match[1];
+    } else if (trimmed.includes("config_name")) {
       const match = trimmed.match(/config_name\s*=\s*"([^"]*)"/);
       if (match) data.config_name = match[1];
     } else if (trimmed.includes("network_code")) {
@@ -127,6 +132,7 @@ export const parseTomlToForm = (toml) => {
         throw new Error('device_mode 必须是 "no"、"tun" 或 "tap"');
       }
       data.device_mode = match[1];
+      data.device_mode_explicit = true;
     } else if (trimmed.startsWith("port_mapping")) {
       const match = trimmed.match(/port_mapping\s*=\s*\[(.*)\]/);
       if (match) {
@@ -199,13 +205,19 @@ export const parseTomlToForm = (toml) => {
 export const formToToml = (formData) => {
   let toml = "";
 
+  if (formData.subscription) {
+    toml += `# 服务端配置源；本文件中明确填写的字段优先于链接下发值\nsubscription = "${formData.subscription}"\n`;
+  }
+
   if (formData.config_name) {
     toml += `# 配置名称\nconfig_name = "${formData.config_name}"\n`;
   }
 
   toml += "\n# --- 网络配置 ---\n";
-  toml += "# 网络编号，相同网络编号的会组在同一个虚拟网\n";
-  toml += `network_code = "${formData.network_code}"\n\n`;
+  if (formData.network_code.trim()) {
+    toml += "# 网络编号，相同网络编号的会组在同一个虚拟网\n";
+    toml += `network_code = "${formData.network_code}"\n\n`;
+  }
 
   const servers = formData.server.filter((s) => s.trim());
   if (servers.length > 0) {
@@ -313,7 +325,9 @@ export const formToToml = (formData) => {
   }
 
   toml += "\n# 虚拟网卡模式：no（无网卡）、tun（三层网卡）、tap（二层网卡）\n";
-  toml += `device_mode = "${formData.device_mode || "tun"}"\n`;
+  if (formData.device_mode_explicit) {
+    toml += `device_mode = "${formData.device_mode || "tun"}"\n`;
+  }
 
   const portMappings = formData.port_mapping.filter((s) => s.trim());
   if (portMappings.length > 0) {

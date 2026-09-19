@@ -10,13 +10,23 @@ use crate::protocol::transmission::TransmissionBytes;
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tunnel_core::outbound::HybridOutbound;
 use anyhow::{Context, bail};
+use arc_swap::ArcSwap;
 use pnet_packet::arp::ArpOperations;
 use pnet_packet::ethernet::EtherTypes;
 use pnet_packet::ipv4::Ipv4Packet;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(crate) struct EnhancedInbound {
+    inner: Arc<ArcSwap<EnhancedInboundInner>>,
+}
+
+/// The MTU-sensitive half of the enhanced data plane.  `EnhancedInbound`
+/// itself is deliberately a stable dispatcher: server and P2P handlers keep
+/// it for the lifetime of the instance while reconfiguration swaps this inner
+/// object as one unit.
+struct EnhancedInboundInner {
     tun_data_inbound: EnhancedTunInbound,
     quic_inbound: EnhancedQuicInbound,
     internal_nat_inbound: Option<InternalNatInbound>,
@@ -42,18 +52,27 @@ impl EnhancedInbound {
         mac_table: MacTable,
     ) -> Self {
         Self {
-            tun_data_inbound,
-            quic_inbound,
-            internal_nat_inbound,
-            traffic_stats,
-            device_mode,
-            hybrid_outbound,
-            subnet_mapping,
-            subnet_packet_mapper,
-            mac_table,
+            inner: Arc::new(ArcSwap::from_pointee(EnhancedInboundInner {
+                tun_data_inbound,
+                quic_inbound,
+                internal_nat_inbound,
+                traffic_stats,
+                device_mode,
+                hybrid_outbound,
+                subnet_mapping,
+                subnet_packet_mapper,
+                mac_table,
+            })),
         }
     }
-    pub async fn inbound(
+
+    pub(crate) fn replace_from(&self, prepared: &Self) {
+        self.inner.store(prepared.inner.load_full());
+    }
+}
+
+impl EnhancedInboundInner {
+    async fn inbound(
         &self,
         network_addr: &NetworkAddr,
         msg_type: MsgType,
@@ -151,7 +170,9 @@ impl EnhancedInbound {
         src: Ipv4Addr,
         ethernet: bool,
     ) -> anyhow::Result<()> {
-        if let Some(internal_nat_inbound) = self.internal_nat_inbound.as_ref() {
+        if !self.hybrid_outbound.no_nat()
+            && let Some(internal_nat_inbound) = self.internal_nat_inbound.as_ref()
+        {
             let ip_data = if ethernet {
                 let Some(frame) = parse_frame(buf.as_ref()) else {
                     return Ok(());
@@ -179,5 +200,20 @@ impl EnhancedInbound {
             .inbound(buf, network_addr, src, ethernet)
             .await?;
         Ok(())
+    }
+}
+
+impl EnhancedInbound {
+    pub async fn inbound(
+        &self,
+        network_addr: &NetworkAddr,
+        msg_type: MsgType,
+        src: Ipv4Addr,
+        packet: NetPacket<TransmissionBytes>,
+    ) -> anyhow::Result<()> {
+        // Do not clone the data-plane Arc for every packet.  The ArcSwap
+        // guard pins one complete revision for this asynchronous delivery.
+        let inner = self.inner.load();
+        inner.inbound(network_addr, msg_type, src, packet).await
     }
 }

@@ -106,8 +106,6 @@ pub enum MsgType {
     RpcReq = 14,
     RpcRes = 15,
 
-    UpdateIp = 16,
-
     Quic = 17,
     DirectConnectReq = 20,
     DirectConnectRes = 21,
@@ -119,6 +117,8 @@ pub enum MsgType {
     WireGuardRelay = 26,
     NodeAnnouncement = 29,
     DestinationUnreachable = 30,
+    SubscriptionConfigPush = 31,
+    SubscriptionConfigAck = 32,
 }
 impl From<MsgType> for u8 {
     fn from(val: MsgType) -> Self {
@@ -151,8 +151,6 @@ impl TryFrom<u8> for MsgType {
             14 => MsgType::RpcReq,
             15 => MsgType::RpcRes,
 
-            16 => MsgType::UpdateIp,
-
             17 => MsgType::Quic,
             20 => MsgType::DirectConnectReq,
             21 => MsgType::DirectConnectRes,
@@ -163,6 +161,8 @@ impl TryFrom<u8> for MsgType {
             26 => MsgType::WireGuardRelay,
             29 => MsgType::NodeAnnouncement,
             30 => MsgType::DestinationUnreachable,
+            31 => MsgType::SubscriptionConfigPush,
+            32 => MsgType::SubscriptionConfigAck,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -358,7 +358,6 @@ mod tests {
             MsgType::PushClientIps,
             MsgType::RpcReq,
             MsgType::RpcRes,
-            MsgType::UpdateIp,
             MsgType::Quic,
             MsgType::DirectConnectReq,
             MsgType::DirectConnectRes,
@@ -369,6 +368,8 @@ mod tests {
             MsgType::WireGuardRelay,
             MsgType::NodeAnnouncement,
             MsgType::DestinationUnreachable,
+            MsgType::SubscriptionConfigPush,
+            MsgType::SubscriptionConfigAck,
         ];
         for msg_type in all {
             let byte = u8::from(msg_type);
@@ -384,7 +385,7 @@ mod tests {
         assert!(MsgType::try_from(19u8).is_err());
         assert!(MsgType::try_from(27u8).is_err());
         assert!(MsgType::try_from(28u8).is_err());
-        assert!(MsgType::try_from(31u8).is_err());
+        assert!(MsgType::try_from(33u8).is_err());
     }
 
     #[test]

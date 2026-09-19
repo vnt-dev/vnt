@@ -1,4 +1,5 @@
 use anyhow::{Context, bail};
+use arc_swap::ArcSwap;
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashSet;
@@ -67,23 +68,29 @@ impl<'de> Deserialize<'de> for SubnetMapping {
 
 #[derive(Clone, Default)]
 pub struct SubnetMappingTable {
-    rules: Arc<Vec<SubnetMapping>>,
+    rules: Arc<ArcSwap<Vec<SubnetMapping>>>,
 }
 
 impl SubnetMappingTable {
     pub fn new(mut rules: Vec<SubnetMapping>) -> Self {
         rules.sort_by_key(|rule| std::cmp::Reverse(rule.mapped.prefix_len()));
         Self {
-            rules: Arc::new(rules),
+            rules: Arc::new(ArcSwap::from_pointee(rules)),
         }
     }
 
+    pub(crate) fn replace(&self, mut rules: Vec<SubnetMapping>) {
+        rules.sort_by_key(|rule| std::cmp::Reverse(rule.mapped.prefix_len()));
+        self.rules.store(Arc::new(rules));
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.rules.is_empty()
+        self.rules.load().is_empty()
     }
 
     pub fn forward(&self, mapped: Ipv4Addr) -> Option<Ipv4Addr> {
         self.rules
+            .load()
             .iter()
             .find(|rule| rule.mapped.contains(&mapped))
             .map(|rule| translate(mapped, rule.mapped, rule.actual))
@@ -91,14 +98,15 @@ impl SubnetMappingTable {
 
     pub fn reverse(&self, actual: Ipv4Addr) -> Option<Ipv4Addr> {
         self.rules
+            .load()
             .iter()
             .filter(|rule| rule.actual.contains(&actual))
             .max_by_key(|rule| rule.actual.prefix_len())
             .map(|rule| translate(actual, rule.actual, rule.mapped))
     }
 
-    pub fn rules(&self) -> &[SubnetMapping] {
-        &self.rules
+    pub fn rules(&self) -> arc_swap::Guard<Arc<Vec<SubnetMapping>>> {
+        self.rules.load()
     }
 }
 
@@ -290,7 +298,7 @@ fn validate_output_coverage(rules: &[SubnetMapping], outputs: &[Ipv4Net]) -> any
 
 fn validate_inverse(table: &SubnetMappingTable, forward: bool) -> anyhow::Result<()> {
     let mut boundaries = Vec::<u64>::new();
-    for rule in table.rules() {
+    for rule in table.rules().iter() {
         let net = if forward { rule.mapped } else { rule.actual };
         boundaries.push(u32::from(net.network()) as u64);
         boundaries.push(u32::from(net.broadcast()) as u64 + 1);
@@ -314,7 +322,7 @@ fn validate_inverse(table: &SubnetMappingTable, forward: bool) -> anyhow::Result
         let translated_start = (outer[0] as i64 + delta) as u64;
         let translated_end = (outer[1] as i64 + delta) as u64;
         let mut inner_boundaries = vec![outer[0], outer[1]];
-        for rule in table.rules() {
+        for rule in table.rules().iter() {
             let net = if forward { rule.actual } else { rule.mapped };
             for boundary in [
                 u32::from(net.network()) as u64,

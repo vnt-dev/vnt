@@ -7,17 +7,15 @@ mod lz4_compression;
 
 #[derive(Clone)]
 pub(crate) struct PacketCompression {
-    compression: Option<LZ4Compression>,
+    compression: LZ4Compression,
+    enabled: bool,
 }
 
 impl PacketCompression {
     pub(crate) fn new(enabled: bool) -> Self {
         Self {
-            compression: if enabled {
-                Some(LZ4Compression::new())
-            } else {
-                None
-            },
+            compression: LZ4Compression::new(),
+            enabled,
         }
     }
 
@@ -26,8 +24,8 @@ impl PacketCompression {
         pkt: NetPacket<TransmissionBytes>,
         reserve: usize,
     ) -> io::Result<NetPacket<TransmissionBytes>> {
-        if let Some(compression) = self.compression.as_ref() {
-            return compression.compress(pkt, reserve);
+        if self.enabled {
+            return self.compression.compress(pkt, reserve);
         }
 
         Ok(pkt)
@@ -37,9 +35,9 @@ impl PacketCompression {
         &self,
         pkt: NetPacket<TransmissionBytes>,
     ) -> io::Result<NetPacket<TransmissionBytes>> {
-        if let Some(compression) = self.compression.as_ref() {
-            return compression.decompress(pkt);
-        }
-        Ok(pkt)
+        // Decoding is capability based, not configuration based: a peer may
+        // still have compressed packets in flight when compression is turned
+        // off locally.
+        self.compression.decompress(pkt)
     }
 }

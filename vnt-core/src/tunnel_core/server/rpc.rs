@@ -1,3 +1,4 @@
+use crate::protocol::control_message::SubscriptionConfigAck;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::rpc_message::rpc_message_request::RpcReqPayload;
 use crate::protocol::rpc_message::rpc_message_response::RpcResPayload;
@@ -7,10 +8,12 @@ use crate::protocol::rpc_message::{
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use anyhow::bail;
+use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 use prost::Message;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::Sender;
@@ -18,7 +21,12 @@ use tokio::sync::oneshot::Sender;
 #[derive(Clone)]
 pub struct ServerRPC {
     tunnel_to_server: ServerOutbound,
+    state: Arc<ArcSwap<ServerRpcState>>,
+}
+
+struct ServerRpcState {
     rpc_notifier: HashMap<u32, RpcNotifier>,
+    subscription_verified: HashMap<u32, Arc<AtomicBool>>,
 }
 #[derive(Clone)]
 pub(crate) struct RpcNotifier {
@@ -96,21 +104,96 @@ impl ServerRPC {
     pub(crate) fn new(
         tunnel_to_server: ServerOutbound,
         rpc_notifier: HashMap<u32, RpcNotifier>,
+        subscription_verified: HashMap<u32, Arc<AtomicBool>>,
     ) -> Self {
         Self {
             tunnel_to_server,
-            rpc_notifier,
+            state: Arc::new(ArcSwap::from_pointee(ServerRpcState {
+                rpc_notifier,
+                subscription_verified,
+            })),
         }
+    }
+
+    pub(crate) fn replace_from(&self, prepared: &ServerRPC) {
+        self.state.store(prepared.state.load_full());
+    }
+
+    pub async fn acknowledge_subscription_config(
+        &self,
+        ack: SubscriptionConfigAck,
+    ) -> anyhow::Result<usize> {
+        let payload = ack.encode();
+        let mut packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH + payload.len()))?;
+        packet.set_msg_type(MsgType::SubscriptionConfigAck);
+        packet.set_gateway_flag(true);
+        packet.set_ttl(1);
+        packet.set_payload(&payload)?;
+        let bytes = packet.into_buffer().into_bytes().freeze();
+        let mut sent = 0;
+        let state = self.state.load_full();
+        let mut seen_instances = HashSet::new();
+        for (&server_id, verified) in &state.subscription_verified {
+            if !verified.load(Ordering::Acquire) {
+                continue;
+            }
+            let instance_id = self.tunnel_to_server.server_instance_id(server_id);
+            if instance_id
+                .as_ref()
+                .is_some_and(|instance_id| seen_instances.contains(instance_id))
+            {
+                continue;
+            }
+            match self
+                .tunnel_to_server
+                .send_gateway_to_server(server_id, bytes.clone(), Duration::from_secs(5))
+                .await
+            {
+                Ok(true) => {
+                    sent += 1;
+                    if let Some(instance_id) = instance_id {
+                        seen_instances.insert(instance_id);
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    log::warn!("subscription acknowledgement send failed: {error}");
+                }
+            }
+        }
+        Ok(sent)
+    }
+
+    pub fn has_verified_config_server(&self) -> bool {
+        self.state
+            .load()
+            .subscription_verified
+            .iter()
+            .any(|(&server_id, verified)| {
+                verified.load(Ordering::Acquire)
+                    && self.tunnel_to_server.is_server_connected(server_id)
+            })
     }
 
     pub async fn client_list(&self) -> anyhow::Result<ClientListResponse> {
         let mut map: HashMap<String, ClientInfo> = HashMap::new();
-        for server_id in self.tunnel_to_server.server_id_list() {
-            if !self.tunnel_to_server.is_server_connected(*server_id) {
+        let mut seen_instances = HashSet::new();
+        for server_id in self.tunnel_to_server.server_id_list().iter().copied() {
+            if !self.tunnel_to_server.is_server_connected(server_id) {
                 continue;
             }
-            match self.client_list_target(*server_id).await {
+            let instance_id = self.tunnel_to_server.server_instance_id(server_id);
+            if instance_id
+                .as_ref()
+                .is_some_and(|instance_id| seen_instances.contains(instance_id))
+            {
+                continue;
+            }
+            match self.client_list_target(server_id).await {
                 Ok(rs) => {
+                    if let Some(instance_id) = instance_id {
+                        seen_instances.insert(instance_id);
+                    }
                     for client in rs.list {
                         map.entry(client.id.clone()).or_insert(client);
                     }
@@ -126,7 +209,8 @@ impl ServerRPC {
         })
     }
     pub async fn client_list_target(&self, server_id: u32) -> anyhow::Result<ClientListResponse> {
-        let Some(rpc_notifier) = self.rpc_notifier.get(&server_id) else {
+        let state = self.state.load_full();
+        let Some(rpc_notifier) = state.rpc_notifier.get(&server_id) else {
             bail!("no RPC notifier");
         };
         let waiter = rpc_notifier.create_request_and_waiter();

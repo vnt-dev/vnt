@@ -21,6 +21,7 @@ anyhow.workspace = true
 toml.workspace = true
 hostname.workspace = true
 ipnet.workspace = true
+sha2 = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 windows-service.workspace = true
@@ -65,6 +66,7 @@ hostname = "0.4"
 ipnet = { version = "2.11", features = ["serde"] }
 route_manager = "0.2"
 parking_lot = "0.12"
+arc-swap = "1.7"
 prost = "0.14"
 windows-service = "0.8.1"
 

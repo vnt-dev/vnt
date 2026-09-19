@@ -9,6 +9,7 @@ use prost::Message;
 use ring::digest::{SHA256, digest};
 use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 use crate::protocol::ProtoToBytesMut;
@@ -47,12 +48,53 @@ pub struct LocalNodeIdentity {
     pub advertised_subnets: Vec<Ipv4Net>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeIdentityTemplate {
     pub name: String,
     pub version: String,
     pub network_code: String,
     pub advertised_subnets: Vec<Ipv4Net>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SharedNodeIdentity {
+    value: Arc<parking_lot::RwLock<NodeIdentityTemplate>>,
+    changed: Arc<tokio::sync::Notify>,
+}
+
+impl SharedNodeIdentity {
+    pub fn new(value: NodeIdentityTemplate) -> Self {
+        Self {
+            value: Arc::new(parking_lot::RwLock::new(value)),
+            changed: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    pub fn get(&self) -> NodeIdentityTemplate {
+        self.value.read().clone()
+    }
+
+    pub fn network_code(&self) -> String {
+        self.value.read().network_code.clone()
+    }
+
+    pub fn set(&self, value: NodeIdentityTemplate) {
+        if *self.value.read() == value {
+            return;
+        }
+        *self.value.write() = value;
+        // A permit is retained if the announcement task is currently sending,
+        // avoiding a lost wake-up and a full periodic interval of stale data.
+        self.changed.notify_one();
+    }
+
+    pub async fn changed(&self) {
+        self.changed.notified().await;
+    }
+
+    pub fn notify_changed(&self) {
+        self.changed.notify_one();
+    }
 }
 
 impl NodeIdentityTemplate {

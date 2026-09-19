@@ -1,7 +1,5 @@
 use anyhow::Context;
 use jni::JNIEnv;
-#[cfg(target_os = "android")]
-use jni::objects::JValue;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, jstring};
 use parking_lot::Mutex;
@@ -14,8 +12,12 @@ use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
 use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule, VirtualIp};
 use vnt_core::core::{NetworkManager, RegisterResponse};
+use vnt_core::managed_config::Subscription;
 use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::port_mapping::PortMapping;
+use vnt_core::protocol::control_message::{
+    SubscriptionConfigAck, SubscriptionConfigApplyStatus, SubscriptionConfigEnvelope,
+};
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
 use vnt_core::utils::task_control::{TaskGroupGuard, TaskGroupManager};
@@ -82,11 +84,6 @@ fn encryption_state(local_key: Option<&str>, peer_key: Option<&str>) -> i32 {
     }
 }
 
-#[allow(dead_code)]
-fn subnet_routes_json(routes: Vec<NetInput>) -> anyhow::Result<String> {
-    Ok(serde_json::to_string(&routes)?)
-}
-
 /// JNI 导出函数的 panic 防护：panic 时向 JVM 抛出异常并返回默认值
 macro_rules! jni_guard {
     ($env:ident, $default_ret:expr, { $($body:tt)* }) => {{
@@ -142,7 +139,6 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     config_json: JString<'local>,
-    ip_update_listener: JObject<'local>,
 ) -> jlong {
     jni_guard!(env, -1, {
         let result: anyhow::Result<i64> = (|| {
@@ -166,56 +162,6 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
             let network_manager = runtime.block_on(async {
                 NetworkManager::create_network(Box::new(config), task_group).await
             })?;
-
-            #[cfg(target_os = "android")]
-            if !ip_update_listener.is_null() {
-                let java_vm = Arc::new(env.get_java_vm()?);
-                let listener = env.new_global_ref(&ip_update_listener)?;
-                let ip_java_vm = java_vm.clone();
-                network_manager.set_android_ip_update_callback(Arc::new(move |request| {
-                    let mut env = ip_java_vm.attach_current_thread()?;
-                    let ip = env.new_string(request.ip.to_string())?;
-                    let call_result = env.call_method(
-                        listener.as_obj(),
-                        "onIpUpdate",
-                        "(JLjava/lang/String;I)V",
-                        &[
-                            JValue::Long(request.request_id as i64),
-                            JValue::Object(&ip),
-                            JValue::Int(request.prefix_len as i32),
-                        ],
-                    );
-                    if env.exception_check()? {
-                        env.exception_describe()?;
-                        env.exception_clear()?;
-                        anyhow::bail!("Android IP 更新监听器抛出异常");
-                    }
-                    call_result?;
-                    Ok(())
-                }));
-
-                let listener = env.new_global_ref(&ip_update_listener)?;
-                network_manager.set_android_subnet_route_callback(Arc::new(move |routes| {
-                    let mut env = java_vm.attach_current_thread()?;
-                    let routes = env.new_string(subnet_routes_json(routes)?)?;
-                    let call_result = env.call_method(
-                        listener.as_obj(),
-                        "onSubnetRoutesChanged",
-                        "(Ljava/lang/String;)V",
-                        &[JValue::Object(&routes)],
-                    );
-                    if env.exception_check()? {
-                        env.exception_describe()?;
-                        env.exception_clear()?;
-                        anyhow::bail!("Android 子网路由监听器抛出异常");
-                    }
-                    call_result?;
-                    Ok(())
-                }));
-            }
-
-            #[cfg(not(target_os = "android"))]
-            let _ = ip_update_listener;
 
             // 分配ID
             let id = state.next_id;
@@ -1089,6 +1035,346 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetTrafficInfo<'local>(
 
 // ==================== 辅助函数 ====================
 
+/// 解析订阅链接并通过 VNTS TLS 控制连接取得最新配置。返回 JSON，凭据不会
+/// 出现在返回值或日志中；Java 层保留原订阅链接并在创建实例时传回。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntManager_nativeFetchSubscriptionConfig<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    subscription: JString<'local>,
+) -> jstring {
+    jni_guard!(env, std::ptr::null_mut(), {
+        let result: anyhow::Result<String> = (|| {
+            let link_value: String = env.get_string(&subscription)?.into();
+            let link = Subscription::parse(&link_value)?;
+            let runtime = GLOBAL_STATE
+                .lock()
+                .as_ref()
+                .context("VNT not initialized")?
+                .runtime
+                .clone();
+            let envelope = runtime.block_on(link.fetch())?;
+            let mut config: toml::Value = toml::from_str(&envelope.toml)?;
+            let config_table = config
+                .as_table_mut()
+                .context("subscription config root must be a TOML table")?;
+            config_table.insert(
+                "ip".to_string(),
+                toml::Value::String(format!(
+                    "{}/{}",
+                    envelope.managed_ip, envelope.managed_prefix_len
+                )),
+            );
+            config_table.insert(
+                "device_name".to_string(),
+                toml::Value::String(envelope.managed_device_name.clone()),
+            );
+            Ok(serde_json::json!({
+                "revision": envelope.revision,
+                "config": config,
+                "server": link.server,
+                "certMode": link.cert_mode,
+                "networkCode": link.network_code,
+                "deviceId": link.device_id,
+                "managedIp": envelope.managed_ip,
+                "managedPrefixLen": envelope.managed_prefix_len,
+                "managedDeviceName": envelope.managed_device_name,
+            })
+            .to_string())
+        })();
+        match result {
+            Ok(value) => match env.new_string(value) {
+                Ok(value) => value.into_raw(),
+                Err(error) => {
+                    let _ = env.throw(format!("Failed to allocate result: {error}"));
+                    std::ptr::null_mut()
+                }
+            },
+            Err(error) => {
+                let _ = env.throw(format!("Failed to fetch subscription config: {error:#}"));
+                std::ptr::null_mut()
+            }
+        }
+    })
+}
+
+fn subscription_update_json(value: SubscriptionConfigEnvelope) -> anyhow::Result<String> {
+    let mut config = toml::from_str::<toml::Value>(&value.toml)?;
+    let config_table = config
+        .as_table_mut()
+        .context("subscription config root must be a TOML table")?;
+    config_table.insert(
+        "ip".to_string(),
+        toml::Value::String(format!("{}/{}", value.managed_ip, value.managed_prefix_len)),
+    );
+    config_table.insert(
+        "device_name".to_string(),
+        toml::Value::String(value.managed_device_name.clone()),
+    );
+    Ok(serde_json::json!({
+        "revision": value.revision,
+        "configToml": value.toml,
+        "config": config,
+        "sourceServerId": value.source_server_id,
+        "contentSha256": hex::encode(value.content_sha256),
+        "managedIp": value.managed_ip,
+        "managedPrefixLen": value.managed_prefix_len,
+        "managedDeviceName": value.managed_device_name,
+        "serverVerified": true,
+    })
+    .to_string())
+}
+
+fn subscription_update_result<'local>(
+    env: &mut JNIEnv<'local>,
+    result: anyhow::Result<Option<String>>,
+) -> jstring {
+    match result {
+        Ok(Some(value)) => env
+            .new_string(value)
+            .map(|value| value.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Ok(None) => std::ptr::null_mut(),
+        Err(error) => {
+            let _ = env.throw(format!("Failed to read subscription update: {error:#}"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntApi_nativeTakeSubscriptionConfigUpdate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    jni_guard!(env, std::ptr::null_mut(), {
+        let result: anyhow::Result<Option<String>> = (|| {
+            let state = GLOBAL_STATE.lock();
+            let api = state
+                .as_ref()
+                .context("VNT not initialized")?
+                .vnt_apis
+                .get(&handle)
+                .context("Invalid API handle")?;
+            let update = api
+                .take_subscription_config_updates()
+                .into_iter()
+                .max_by_key(|value| value.revision);
+            update.map(subscription_update_json).transpose()
+        })();
+        subscription_update_result(&mut env, result)
+    })
+}
+
+/// Blocks until a verified managed configuration arrives or the instance stops.
+/// The global JNI registry lock is deliberately released before awaiting.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntApi_nativeWaitSubscriptionConfigUpdate<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+) -> jstring {
+    jni_guard!(env, std::ptr::null_mut(), {
+        let result: anyhow::Result<Option<String>> = (|| {
+            let (api, runtime) = {
+                let state = GLOBAL_STATE.lock();
+                let state = state.as_ref().context("VNT not initialized")?;
+                (
+                    state
+                        .vnt_apis
+                        .get(&handle)
+                        .context("Invalid API handle")?
+                        .clone(),
+                    state.runtime.clone(),
+                )
+            };
+            let update = runtime
+                .block_on(api.next_subscription_config_updates())
+                .and_then(|updates| updates.into_iter().max_by_key(|value| value.revision));
+            update.map(subscription_update_json).transpose()
+        })();
+        subscription_update_result(&mut env, result)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntApi_nativeMarkSubscriptionAppliedLocally(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    revision: jlong,
+) -> jboolean {
+    jni_guard!(env, 0, {
+        let result: anyhow::Result<()> = (|| {
+            let api = {
+                let state = GLOBAL_STATE.lock();
+                state
+                    .as_ref()
+                    .context("VNT not initialized")?
+                    .vnt_apis
+                    .get(&handle)
+                    .context("Invalid API handle")?
+                    .clone()
+            };
+            api.mark_subscription_applied_locally(revision.try_into().context("invalid revision")?)
+        })();
+        match result {
+            Ok(()) => 1,
+            Err(error) => {
+                let _ = env.throw(format!(
+                    "Failed to mark subscription revision as applied: {error:#}"
+                ));
+                0
+            }
+        }
+    })
+}
+
+/// Applies a complete candidate through the same runtime controller used by
+/// CLI/Web managed updates. Identity is always restored from the running
+/// instance before validation and diffing.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntApi_nativeReconfigure<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    config_json: JString<'local>,
+) -> jstring {
+    jni_guard!(env, std::ptr::null_mut(), {
+        let result: anyhow::Result<String> = (|| {
+            let json: String = env.get_string(&config_json)?.into();
+            let mut candidate = parse_config_from_json(&json)?;
+            let (api, runtime) = {
+                let state = GLOBAL_STATE.lock();
+                let state = state.as_ref().context("VNT not initialized")?;
+                (
+                    state
+                        .vnt_apis
+                        .get(&handle)
+                        .context("Invalid API handle")?
+                        .clone(),
+                    state.runtime.clone(),
+                )
+            };
+            let current = api
+                .get_config()
+                .context("Network instance is not running")?;
+            candidate.network_code = current.network_code.clone();
+            candidate.device_id = current.device_id.clone();
+            candidate.managed = current.managed.clone();
+            Ok(
+                match runtime.block_on(api.reconfigure(Box::new(candidate))) {
+                    Ok(report) => serde_json::json!({ "ok": true, "report": report }).to_string(),
+                    Err(error) => serde_json::json!({ "ok": false, "error": error }).to_string(),
+                },
+            )
+        })();
+        match result {
+            Ok(value) => env
+                .new_string(value)
+                .map(|value| value.into_raw())
+                .unwrap_or(std::ptr::null_mut()),
+            Err(error) => {
+                let _ = env.throw(format!("Failed to reconfigure VNT: {error:#}"));
+                std::ptr::null_mut()
+            }
+        }
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct SubscriptionAckJson {
+    revision: u64,
+    status: String,
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    overridden_fields: Vec<String>,
+    #[serde(default)]
+    apply_mode: String,
+    #[serde(default)]
+    changed_fields: Vec<String>,
+    #[serde(default)]
+    effective_device_name: String,
+    effective_ip: Option<std::net::Ipv4Addr>,
+    #[serde(default)]
+    effective_prefix_len: u32,
+    #[serde(default)]
+    effective_output: Vec<ipnet::Ipv4Net>,
+    #[serde(default)]
+    allow_ikev2: bool,
+    #[serde(default)]
+    allow_wireguard: bool,
+    #[serde(default)]
+    allow_mapping: bool,
+    #[serde(default)]
+    effective_config_sha256: String,
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntApi_nativeAckSubscriptionConfig<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    ack_json: JString<'local>,
+) -> jboolean {
+    jni_guard!(env, 0, {
+        let result: anyhow::Result<()> = (|| {
+            let json: String = env.get_string(&ack_json)?.into();
+            let ack: SubscriptionAckJson = serde_json::from_str(&json)?;
+            let status = match ack.status.to_ascii_lowercase().as_str() {
+                "staged" => SubscriptionConfigApplyStatus::SubscriptionConfigStaged,
+                "applied" => SubscriptionConfigApplyStatus::SubscriptionConfigApplied,
+                "error" => SubscriptionConfigApplyStatus::SubscriptionConfigError,
+                "superseded" => SubscriptionConfigApplyStatus::SubscriptionConfigSuperseded,
+                _ => anyhow::bail!("status must be staged, applied, superseded, or error"),
+            };
+            let (api, runtime) = {
+                let state = GLOBAL_STATE.lock();
+                let state = state.as_ref().context("VNT not initialized")?;
+                (
+                    state
+                        .vnt_apis
+                        .get(&handle)
+                        .context("Invalid API handle")?
+                        .clone(),
+                    state.runtime.clone(),
+                )
+            };
+            let mut protocol_ack =
+                SubscriptionConfigAck::new(ack.revision, status, ack.error, ack.overridden_fields);
+            protocol_ack.apply_mode = ack.apply_mode;
+            protocol_ack.changed_fields = ack.changed_fields;
+            protocol_ack.effective_device_name = ack.effective_device_name;
+            protocol_ack.effective_ip = ack.effective_ip.unwrap_or(std::net::Ipv4Addr::UNSPECIFIED);
+            protocol_ack.effective_prefix_len = ack.effective_prefix_len;
+            protocol_ack.effective_output = ack.effective_output;
+            protocol_ack.allow_ikev2 = ack.allow_ikev2;
+            protocol_ack.allow_wireguard = ack.allow_wireguard;
+            protocol_ack.allow_mapping = ack.allow_mapping;
+            if !ack.effective_config_sha256.is_empty() {
+                protocol_ack.effective_config_sha256 =
+                    hex::decode(&ack.effective_config_sha256).context("invalid config SHA-256")?;
+                if protocol_ack.effective_config_sha256.len() != 32 {
+                    anyhow::bail!("config SHA-256 must be 32 bytes");
+                }
+            }
+            runtime.block_on(api.acknowledge_subscription_config(protocol_ack))?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => 1,
+            Err(error) => {
+                let _ = env.throw(format!(
+                    "Failed to acknowledge subscription config: {error:#}"
+                ));
+                0
+            }
+        }
+    })
+}
+
 /// 从JSON字符串解析配置
 fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
     #[derive(serde::Deserialize)]
@@ -1101,6 +1387,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         turn: Vec<String>,
         #[serde(default)]
         punch_model: Vec<String>,
+        #[serde(default)]
         network_code: String,
         #[serde(default)]
         device_id: Option<String>,
@@ -1140,7 +1427,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         auto_sync_subnet: bool,
         #[serde(default)]
         no_nat: bool,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_device_mode")]
         device_mode: DeviceMode,
         #[serde(default)]
         mtu: Option<u16>,
@@ -1158,9 +1445,27 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         tunnel_port: Option<u16>,
         #[serde(default)]
         event_script: Option<String>,
+        #[serde(default)]
+        subscription: Option<String>,
+        #[serde(default)]
+        subscription_revision: u64,
+        #[serde(default)]
+        subscription_instance_id: Option<String>,
     }
 
     let cfg: ConfigJson = serde_json::from_str(json_str)?;
+    let mut subscription = cfg
+        .subscription
+        .as_deref()
+        .map(Subscription::parse)
+        .transpose()?;
+    if let (Some(link), Some(instance_id)) =
+        (&mut subscription, cfg.subscription_instance_id.as_deref())
+    {
+        let instance_id = hex::decode(instance_id)
+            .context("subscription_instance_id 必须是 64 位十六进制字符串")?;
+        link.set_instance_id(instance_id)?;
+    }
 
     let server_addrs: Vec<ProtocolAddress> = cfg
         .server
@@ -1244,7 +1549,7 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         }
     }
 
-    Ok(Config {
+    let mut config = Config {
         server_addr: server_addrs,
         peer_address,
         turn,
@@ -1278,146 +1583,76 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
         tunnel_addr: cfg.tunnel_addr,
         tunnel_port: cfg.tunnel_port,
         event_script: cfg.event_script,
-    })
+        managed: None,
+    };
+    if let Some(link) = subscription {
+        // A managed instance is identified exclusively by its subscription
+        // link. Ignore any identity supplied by the local JSON/TOML merge.
+        config.network_code.clone_from(&link.network_code);
+        config.device_id.clone_from(&link.device_id);
+        config.managed = Some(link.registration(cfg.subscription_revision));
+    }
+    Ok(config)
 }
 
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_vnt_VntNetwork_nativePrepareIpUpdate<'local>(
-    mut env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    handle: jlong,
-    request_id: jlong,
-    ip: JString<'local>,
-) -> jboolean {
+fn deserialize_device_mode<'de, D>(deserializer: D) -> Result<DeviceMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
     #[cfg(target_os = "android")]
     {
-        jni_guard!(env, 0, {
-            let result: anyhow::Result<()> = (|| {
-                let (manager, runtime) = {
-                    let state = GLOBAL_STATE.lock();
-                    let state = state.as_ref().context("VNT not initialized")?;
-                    (
-                        state
-                            .network_managers
-                            .get(&handle)
-                            .context("Invalid handle")?
-                            .clone(),
-                        state.runtime.clone(),
-                    )
-                };
-                let ip: Ipv4Addr = String::from(env.get_string(&ip)?).parse()?;
-                let manager = manager.lock();
-                let manager = manager
-                    .as_ref()
-                    .context("Network manager already destroyed")?;
-                runtime.block_on(manager.prepare_android_ip_update(request_id as u64, ip))
-            })();
-            match result {
-                Ok(()) => 1,
-                Err(error) => {
-                    let _ = env.throw(format!("Failed to prepare IP update: {error:#}"));
-                    0
-                }
-            }
+        // Android VPN supports only a TUN or no-device runtime.  Treat every
+        // legacy/desktop-specific value (including tap) as TUN instead of
+        // rejecting an otherwise valid profile.
+        Ok(if value.trim().eq_ignore_ascii_case("no") {
+            DeviceMode::No
+        } else {
+            DeviceMode::Tun
         })
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (handle, request_id, ip);
-        let _ = env.throw("Android IP update is not supported on this platform");
-        0
+        value.parse().map_err(serde::de::Error::custom)
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_vnt_VntNetwork_nativeCompleteIpUpdate<'local>(
+pub extern "system" fn Java_com_vnt_VntNetwork_nativeWaitTunRebuild<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     handle: jlong,
-    request_id: jlong,
-    ip: JString<'local>,
-    tun_fd: jint,
-) -> jboolean {
+) -> jstring {
     #[cfg(target_os = "android")]
     {
-        jni_guard!(env, 0, {
-            // Ownership transfers at the JNI boundary, including every failure path.
-            let tun_fd = if tun_fd < 0 {
-                None
-            } else {
-                // SAFETY: Java passes a detached ParcelFileDescriptor exactly once.
-                Some(unsafe { OwnedFd::from_raw_fd(tun_fd) })
-            };
-            let result: anyhow::Result<()> = (|| {
-                let (manager, runtime) = {
+        jni_guard!(env, std::ptr::null_mut(), {
+            let result: anyhow::Result<String> = (|| {
+                let (coordinator, runtime) = {
                     let state = GLOBAL_STATE.lock();
                     let state = state.as_ref().context("VNT not initialized")?;
-                    (
-                        state
-                            .network_managers
-                            .get(&handle)
-                            .context("Invalid handle")?
-                            .clone(),
-                        state.runtime.clone(),
-                    )
+                    let manager = state
+                        .network_managers
+                        .get(&handle)
+                        .context("Invalid handle")?
+                        .clone();
+                    let manager = manager.lock();
+                    let manager = manager
+                        .as_ref()
+                        .context("Network manager already destroyed")?;
+                    (manager.tun_rebuild_coordinator(), state.runtime.clone())
                 };
-                let ip: Ipv4Addr = String::from(env.get_string(&ip)?).parse()?;
-                let manager = manager.lock();
-                let manager = manager
-                    .as_ref()
-                    .context("Network manager already destroyed")?;
-                runtime.block_on(manager.complete_android_ip_update(request_id as u64, ip, tun_fd))
+                Ok(serde_json::to_string(
+                    &runtime.block_on(coordinator.wait_next())?,
+                )?)
             })();
             match result {
-                Ok(()) => 1,
+                Ok(request) => env
+                    .new_string(request)
+                    .map(|value| value.into_raw())
+                    .unwrap_or_default(),
                 Err(error) => {
-                    let _ = env.throw(format!("Failed to complete IP update: {error:#}"));
-                    0
-                }
-            }
-        })
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (handle, request_id, ip, tun_fd);
-        let _ = env.throw("Android IP update is not supported on this platform");
-        0
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_vnt_VntNetwork_nativePrepareRouteUpdate(
-    mut env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-) -> jboolean {
-    #[cfg(target_os = "android")]
-    {
-        jni_guard!(env, 0, {
-            let result: anyhow::Result<()> = (|| {
-                let (manager, runtime) = {
-                    let state = GLOBAL_STATE.lock();
-                    let state = state.as_ref().context("VNT not initialized")?;
-                    (
-                        state
-                            .network_managers
-                            .get(&handle)
-                            .context("Invalid handle")?
-                            .clone(),
-                        state.runtime.clone(),
-                    )
-                };
-                let manager = manager.lock();
-                let manager = manager
-                    .as_ref()
-                    .context("Network manager already destroyed")?;
-                runtime.block_on(manager.prepare_android_route_update())
-            })();
-            match result {
-                Ok(()) => 1,
-                Err(error) => {
-                    let _ = env.throw(format!("Failed to prepare route update: {error:#}"));
-                    0
+                    let _ = env.throw(format!("Failed to wait for TUN rebuild: {error:#}"));
+                    std::ptr::null_mut()
                 }
             }
         })
@@ -1425,27 +1660,27 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativePrepareRouteUpdate(
     #[cfg(not(target_os = "android"))]
     {
         let _ = handle;
-        let _ = env.throw("Android route update is not supported on this platform");
-        0
+        let _ = env.throw("Android TUN rebuild is not supported on this platform");
+        std::ptr::null_mut()
     }
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_vnt_VntNetwork_nativeCompleteRouteUpdate(
+pub extern "system" fn Java_com_vnt_VntNetwork_nativeReplaceTun(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
+    request_id: jlong,
     tun_fd: jint,
 ) -> jboolean {
     #[cfg(target_os = "android")]
     {
         jni_guard!(env, 0, {
             if tun_fd < 0 {
-                let _ = env.throw("Android route update requires a TUN fd");
+                let _ = env.throw("TUN replacement requires a detached fd");
                 return 0;
             }
-            // Ownership transfers at the JNI boundary, including every failure path.
-            // SAFETY: Java passes a detached ParcelFileDescriptor exactly once.
+            // SAFETY: Java transfers a detached ParcelFileDescriptor exactly once.
             let tun_fd = unsafe { OwnedFd::from_raw_fd(tun_fd) };
             let result: anyhow::Result<()> = (|| {
                 let (manager, runtime) = {
@@ -1464,12 +1699,12 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeCompleteRouteUpdate(
                 let manager = manager
                     .as_ref()
                     .context("Network manager already destroyed")?;
-                runtime.block_on(manager.complete_android_route_update(tun_fd))
+                runtime.block_on(manager.replace_tun_task(request_id as u64, tun_fd))
             })();
             match result {
                 Ok(()) => 1,
                 Err(error) => {
-                    let _ = env.throw(format!("Failed to complete route update: {error:#}"));
+                    let _ = env.throw(format!("Failed to replace TUN: {error:#}"));
                     0
                 }
             }
@@ -1477,8 +1712,56 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeCompleteRouteUpdate(
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (handle, tun_fd);
-        let _ = env.throw("Android route update is not supported on this platform");
+        let _ = (handle, request_id, tun_fd);
+        let _ = env.throw("Android TUN rebuild is not supported on this platform");
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_vnt_VntNetwork_nativeRejectTunRebuild<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    request_id: jlong,
+    reason: JString<'local>,
+) -> jboolean {
+    #[cfg(target_os = "android")]
+    {
+        jni_guard!(env, 0, {
+            let result: anyhow::Result<()> = (|| {
+                let (manager, runtime) = {
+                    let state = GLOBAL_STATE.lock();
+                    let state = state.as_ref().context("VNT not initialized")?;
+                    (
+                        state
+                            .network_managers
+                            .get(&handle)
+                            .context("Invalid handle")?
+                            .clone(),
+                        state.runtime.clone(),
+                    )
+                };
+                let reason: String = env.get_string(&reason)?.into();
+                let manager = manager.lock();
+                let manager = manager
+                    .as_ref()
+                    .context("Network manager already destroyed")?;
+                runtime.block_on(manager.reject_tun_rebuild(request_id as u64, reason))
+            })();
+            match result {
+                Ok(()) => 1,
+                Err(error) => {
+                    let _ = env.throw(format!("Failed to reject TUN rebuild: {error:#}"));
+                    0
+                }
+            }
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (handle, request_id, reason);
+        let _ = env.throw("Android TUN rebuild is not supported on this platform");
         0
     }
 }
@@ -1486,6 +1769,26 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeCompleteRouteUpdate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SUBSCRIPTION: &str = "vnt2://join/1/eyJ2IjoxLCJzZXJ2ZXIiOiJ0Y3A6Ly8xMjcuMC4wLjE6Mjk4NzIiLCJjZXJ0X21vZGUiOiJzdGFuZGFyZCIsIm5ldHdvcmtfY29kZSI6Im1hbmFnZWQtbmV0IiwiZGV2aWNlX2lkIjoibWFuYWdlZC1kZXYiLCJjcmVkZW50aWFsX2tleSI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEifQ";
+
+    #[test]
+    fn subscription_identity_overrides_json_values() {
+        let config = parse_config_from_json(&format!(
+            r#"{{
+                "server":["tcp://127.0.0.1:29872"],
+                "network_code":"json-net",
+                "device_id":"json-dev",
+                "subscription":"{SUBSCRIPTION}"
+            }}"#
+        ))
+        .unwrap();
+        assert_eq!(config.network_code, "managed-net");
+        assert_eq!(config.device_id, "managed-dev");
+        let managed = config.managed.unwrap();
+        assert_eq!(managed.network_code, "managed-net");
+        assert_eq!(managed.device_id, "managed-dev");
+    }
 
     #[test]
     fn catch_jni_panic_returns_value_unchanged() {
@@ -1513,18 +1816,6 @@ mod tests {
         assert_eq!(encryption_state(Some("local"), None), 3);
         assert_eq!(encryption_state(None, Some("peer")), 4);
         assert_eq!(encryption_state(Some("local"), Some("peer")), 5);
-    }
-
-    #[test]
-    fn serializes_subnet_routes_for_android() {
-        let routes = vec![
-            "192.168.0.0/24,10.26.0.2".parse().unwrap(),
-            "172.16.0.0/16,10.26.0.3".parse().unwrap(),
-        ];
-        assert_eq!(
-            subnet_routes_json(routes).unwrap(),
-            r#"["192.168.0.0/24,10.26.0.2","172.16.0.0/16,10.26.0.3"]"#
-        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use ipnet::Ipv4Net;
 use parking_lot::Mutex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -179,20 +180,25 @@ fn ipv4_nets_overlap(left: Ipv4Net, right: Ipv4Net) -> bool {
 
 #[derive(Clone)]
 pub struct AllowSubnetExternalRoute {
-    route_table: Arc<Vec<Ipv4Net>>,
+    route_table: Arc<ArcSwap<Vec<Ipv4Net>>>,
 }
 impl AllowSubnetExternalRoute {
     pub fn new(mut route_table: Vec<Ipv4Net>) -> Self {
         route_table.sort_by_key(|r| r.prefix_len());
         Self {
-            route_table: Arc::new(route_table),
+            route_table: Arc::new(ArcSwap::from_pointee(route_table)),
         }
     }
+    pub(crate) fn replace(&self, mut route_table: Vec<Ipv4Net>) {
+        route_table.sort_by_key(|route| route.prefix_len());
+        self.route_table.store(Arc::new(route_table));
+    }
     pub fn allow(&self, ip: &Ipv4Addr) -> bool {
-        if self.route_table.is_empty() {
+        let route_table = self.route_table.load();
+        if route_table.is_empty() {
             return false;
         }
-        for net in self.route_table.iter() {
+        for net in route_table.iter() {
             if net.contains(ip) {
                 return true;
             }

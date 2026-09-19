@@ -4,6 +4,7 @@ use crate::nat::SubnetExternalRoute;
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
     ClientSimpleInfo, ClientSimpleInfoList, ClientType, SubnetSyncResponse,
+    SubscriptionConfigEnvelope,
 };
 use crate::tunnel_core::p2p::node_info::NodeInfoMap;
 use crate::tunnel_core::p2p::route_table::RouteTable;
@@ -13,9 +14,11 @@ use parking_lot::{Mutex, RwLock};
 use rustp2p_core::nat::NatInfo;
 use rustp2p_core::route_table::RouteKey;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Default)]
 struct PingStats {
     sent: u64,
@@ -305,6 +308,10 @@ pub(crate) struct AppState {
     pub(crate) packet_loss_stats: PacketLossStats,
     pub(crate) traffic_stats: TrafficStats,
     p2p_listen_addrs: Arc<Mutex<Vec<TunnelListenAddr>>>,
+    pub(crate) managed_config_updates: Arc<Mutex<VecDeque<SubscriptionConfigEnvelope>>>,
+    managed_config_hashes: Arc<Mutex<HashMap<u64, Vec<u8>>>>,
+    managed_config_notify: Arc<tokio::sync::Notify>,
+    managed_config_closed: Arc<AtomicBool>,
 }
 
 /// A local P2P transport listener that was successfully bound at startup.
@@ -448,6 +455,8 @@ pub struct ServerNodeInfo {
     pub last_connected_time: Option<i64>,
     pub disconnected_time: Option<i64>,
     pub server_version: Option<String>,
+    pub server_instance_id: Vec<u8>,
+    pub multi_link_supported: bool,
     pub subnet_sync_supported: bool,
     pub subnet_snapshot_hash: Vec<u8>,
     pub subnet_nodes: HashMap<Ipv4Addr, Vec<Ipv4Net>>,
@@ -490,10 +499,9 @@ impl ServerInfoCollection {
             server_node_map_guard.insert(server_id, server_node);
         }
     }
-    pub fn find_connected_server(&self, server_ids: &[u32]) -> Option<u32> {
+    pub fn connected_servers_by_latency(&self, server_ids: &[u32]) -> Vec<u32> {
         let map = self.server_node_map.read();
-
-        server_ids
+        let mut servers = server_ids
             .iter()
             .filter_map(|id| {
                 let server = map.get(id)?;
@@ -506,13 +514,18 @@ impl ServerInfoCollection {
 
                 Some((*id, rtt))
             })
-            .min_by_key(|(_, rtt)| *rtt)
-            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        servers.sort_unstable_by_key(|(id, rtt)| (*rtt, *id));
+        servers.into_iter().map(|(id, _)| id).collect()
     }
     pub fn find_ip_to_server(&self, server_ids: &[u32], ip: &Ipv4Addr) -> Option<u32> {
+        self.servers_for_ip_by_latency(server_ids, ip)
+            .into_iter()
+            .next()
+    }
+    pub fn servers_for_ip_by_latency(&self, server_ids: &[u32], ip: &Ipv4Addr) -> Vec<u32> {
         let map = self.server_node_map.read();
-
-        server_ids
+        let mut servers = server_ids
             .iter()
             .filter_map(|id| {
                 let server = map.get(id)?;
@@ -530,8 +543,9 @@ impl ServerInfoCollection {
 
                 Some((*id, rtt))
             })
-            .min_by_key(|(_, rtt)| *rtt)
-            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        servers.sort_unstable_by_key(|(id, rtt)| (*rtt, *id));
+        servers.into_iter().map(|(id, _)| id).collect()
     }
     pub fn client_online_ips(&self) -> Vec<Ipv4Addr> {
         self.client_simple_list
@@ -735,6 +749,19 @@ impl ServerInfoCollection {
             v.server_version = Some(version);
         }
     }
+    pub fn set_server_identity(&self, server_id: u32, instance_id: Vec<u8>, supported: bool) {
+        if let Some(v) = self.server_node_map.write().get_mut(&server_id) {
+            v.server_instance_id = instance_id;
+            v.multi_link_supported = supported;
+        }
+    }
+    pub fn server_instance_id(&self, server_id: u32) -> Option<Vec<u8>> {
+        self.server_node_map
+            .read()
+            .get(&server_id)
+            .filter(|server| server.multi_link_supported && !server.server_instance_id.is_empty())
+            .map(|server| server.server_instance_id.clone())
+    }
     pub fn get_server_rtt(&self, ip: &Ipv4Addr) -> Option<u32> {
         let server_node_map_guard = self.server_node_map.read();
         for server_node in server_node_map_guard.values() {
@@ -766,6 +793,8 @@ impl ServerInfoCollection {
             server_node.client_map.clear();
             server_node.last_connected_time = None;
             server_node.disconnected_time = None;
+            server_node.server_instance_id.clear();
+            server_node.multi_link_supported = false;
             server_node.subnet_sync_supported = false;
             server_node.subnet_snapshot_hash.clear();
             server_node.subnet_nodes.clear();
@@ -814,6 +843,27 @@ fn merged_client_simple_map(
 
 fn ipv4_nets_overlap(left: Ipv4Net, right: Ipv4Net) -> bool {
     left.contains(&right.network()) || right.contains(&left.network())
+}
+
+#[cfg(test)]
+mod server_identity_tests {
+    use super::ServerInfoCollection;
+    use crate::tunnel_core::server::transport::config::ProtocolAddress;
+
+    #[test]
+    fn grouping_requires_both_instance_id_and_multi_link_capability() {
+        let servers = ServerInfoCollection::default();
+        servers.update_server(vec![(0, ProtocolAddress::default())]);
+
+        servers.set_server_identity(0, vec![7; 32], false);
+        assert_eq!(servers.server_instance_id(0), None);
+
+        servers.set_server_identity(0, vec![7; 32], true);
+        assert_eq!(servers.server_instance_id(0), Some(vec![7; 32]));
+
+        servers.clear();
+        assert_eq!(servers.server_instance_id(0), None);
+    }
 }
 
 #[cfg(test)]
@@ -1101,6 +1151,8 @@ impl NetworkAddr {
 
 impl AppState {
     pub fn stop_network(&self) {
+        self.managed_config_closed.store(true, Ordering::Release);
+        self.managed_config_notify.notify_waiters();
         self.network.clear();
         self.server_info_collection.clear();
         self.peer_map.clear();
@@ -1148,26 +1200,112 @@ impl AppState {
     pub fn p2p_listen_addrs(&self) -> Vec<TunnelListenAddr> {
         self.p2p_listen_addrs.lock().clone()
     }
-    pub(crate) fn udp_stun(&self) -> Vec<String> {
-        self.config
-            .lock()
-            .as_ref()
-            .map(|v| v.udp_stun.clone())
-            .unwrap_or_default()
+    pub(crate) fn push_subscription_config(&self, config: SubscriptionConfigEnvelope) {
+        let mut hasher = Sha256::new();
+        hasher.update(config.toml.as_bytes());
+        hasher.update(config.managed_ip.octets());
+        hasher.update([config.managed_prefix_len]);
+        hasher.update(config.managed_device_name.as_bytes());
+        let actual_hash = hasher.finalize();
+        if config.content_sha256.as_slice() != actual_hash.as_slice() {
+            log::error!(
+                "拒绝来自 {} 的订阅配置 revision {}：内容哈希不匹配",
+                config.source_server_id,
+                config.revision
+            );
+            return;
+        }
+        {
+            let mut hashes = self.managed_config_hashes.lock();
+            if let Some(existing) = hashes.get(&config.revision)
+                && existing != &config.content_sha256
+            {
+                log::error!(
+                    "订阅配置协议错误：revision {} 出现不同内容哈希（来源 {}）",
+                    config.revision,
+                    config.source_server_id
+                );
+                return;
+            }
+            hashes.insert(config.revision, config.content_sha256.clone());
+            if hashes.len() > 32
+                && let Some(oldest) = hashes.keys().copied().min()
+            {
+                hashes.remove(&oldest);
+            }
+        }
+        let mut queue = self.managed_config_updates.lock();
+        // Re-delivery of an identical revision is required after a reconnect
+        // when the host reported an ERROR and has not advanced its locally
+        // applied revision.  Only coalesce a copy that is still pending.
+        if queue
+            .iter()
+            .any(|pending| pending.revision == config.revision)
+        {
+            return;
+        }
+        if queue.len() >= 8 {
+            queue.pop_front();
+        }
+        queue.push_back(config);
+        drop(queue);
+        self.managed_config_notify.notify_one();
     }
-    pub(crate) fn tcp_stun(&self) -> Vec<String> {
-        self.config
-            .lock()
-            .as_ref()
-            .map(|v| v.tcp_stun.clone())
-            .unwrap_or_default()
+    pub fn take_subscription_config_updates(&self) -> Vec<SubscriptionConfigEnvelope> {
+        self.managed_config_updates.lock().drain(..).collect()
+    }
+    pub async fn next_subscription_config_updates(
+        &self,
+    ) -> Option<Vec<SubscriptionConfigEnvelope>> {
+        loop {
+            let notified = self.managed_config_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let updates = self.take_subscription_config_updates();
+            if !updates.is_empty() {
+                return Some(updates);
+            }
+            if self.managed_config_closed.load(Ordering::Acquire) {
+                return None;
+            }
+            notified.await;
+        }
     }
 }
 
 #[cfg(test)]
 mod optional_gateway_tests {
-    use super::{NetworkAddr, SharedNetworkAddr};
+    use super::{AppState, NetworkAddr, SharedNetworkAddr};
+    use crate::protocol::control_message::{SubscriptionConfigEnvelope, SubscriptionServerProof};
+    use sha2::{Digest, Sha256};
     use std::net::Ipv4Addr;
+
+    fn config(revision: u64, toml: &str) -> SubscriptionConfigEnvelope {
+        let managed_ip = Ipv4Addr::new(10, 26, 0, 2);
+        let managed_prefix_len = 24;
+        let managed_device_name = "android".to_string();
+        let mut hasher = Sha256::new();
+        hasher.update(toml.as_bytes());
+        hasher.update(managed_ip.octets());
+        hasher.update([managed_prefix_len]);
+        hasher.update(managed_device_name.as_bytes());
+        SubscriptionConfigEnvelope {
+            revision,
+            toml: toml.to_string(),
+            managed_ip,
+            managed_prefix_len,
+            managed_device_name,
+            server_proof: SubscriptionServerProof {
+                server_nonce: vec![],
+                server_proof: vec![],
+                target_revision: revision,
+            },
+            network_code: "network".to_string(),
+            device_id: "device".to_string(),
+            source_server_id: "server".to_string(),
+            content_sha256: hasher.finalize().to_vec(),
+        }
+    }
 
     #[test]
     fn first_matching_server_supplies_gateway_and_later_servers_must_match() {
@@ -1187,6 +1325,26 @@ mod optional_gateway_tests {
             "10.26.0.254".parse().unwrap()
         ));
         assert!(!shared.reconcile_server("10.26.0.2".parse().unwrap(), 16, gateway));
+    }
+
+    #[test]
+    fn identical_unapplied_revision_can_be_redelivered_after_drain() {
+        let state = AppState::default();
+        let update = config(7, "server = []");
+        state.push_subscription_config(update.clone());
+        assert_eq!(state.take_subscription_config_updates().len(), 1);
+
+        state.push_subscription_config(update);
+        assert_eq!(state.take_subscription_config_updates().len(), 1);
+    }
+
+    #[test]
+    fn identical_pending_revision_is_coalesced() {
+        let state = AppState::default();
+        let update = config(7, "server = []");
+        state.push_subscription_config(update.clone());
+        state.push_subscription_config(update);
+        assert_eq!(state.take_subscription_config_updates().len(), 1);
     }
 }
 impl AppState {

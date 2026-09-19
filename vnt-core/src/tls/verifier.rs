@@ -131,7 +131,7 @@ pub fn load_root_cert() -> anyhow::Result<rustls::RootCertStore> {
     Ok(root_cert_store)
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub enum CertValidationMode {
     #[default]
     InsecureSkipVerification,

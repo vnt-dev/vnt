@@ -1,6 +1,7 @@
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
 import com.vnt.*;
+import org.json.JSONArray;
 
 /**
  * Android VPN服务示例
@@ -14,7 +15,16 @@ import com.vnt.*;
 public class AndroidVpnExample extends VpnService {
 
     private VntNetwork network;
-    private ParcelFileDescriptor vpnInterface;
+
+    /*
+     * Subscription setup flow:
+     * 1. VntManager.fetchSubscriptionConfig(subscription) and show the returned config in UI.
+     * 2. Persist the user's field overrides plus subscription in app-private storage.
+     * 3. Create VntConfig with subscription/subscription_revision and persist one
+     *    subscription_instance_id for the whole VPN task lifecycle.
+     * 4. A Java-owned listener blocks on Rust TUN rebuild events. It rebuilds
+     *    one VPN and transfers its detached fd back to the existing network.
+     */
 
     @Override
     public int onStartCommand(android.content.Intent intent, int flags, int startId) {
@@ -55,24 +65,18 @@ public class AndroidVpnExample extends VpnService {
         System.out.println("Registration successful: " + result);
 
         // 5. 使用注册返回的IP和掩码，建立Android VPN接口
-        VpnService.Builder builder = new Builder();
-        builder.setMtu(1380);
-        builder.addAddress(result.getIp(), result.getPrefixLen());
-        builder.addRoute("0.0.0.0", 0); // 全局路由
-        builder.setSession("VNT VPN");
-
-        // 建立VPN接口，获取文件描述符
-        vpnInterface = builder.establish();
-        if (vpnInterface == null) {
+        ParcelFileDescriptor initialVpn = establishVpn(result.getIp(), result.getPrefixLen(), 1380, null);
+        if (initialVpn == null) {
             throw new VntException("Failed to establish VPN interface");
         }
 
-        int tunFd = vpnInterface.getFd();
+        int tunFd = initialVpn.detachFd();
         System.out.println("VPN interface established, fd: " + tunFd);
 
         // 6. 将tunFd传给VNT，启动数据转发
         network.startTun(tunFd);
         System.out.println("VNT started successfully!");
+        network.listenTunRebuild(this::replaceVpnForRequest);
 
         // 7. 获取API用于查询状态
         VntApi api = network.getApi();
@@ -86,6 +90,56 @@ public class AndroidVpnExample extends VpnService {
         System.out.println("NAT info: " + natInfo);
     }
 
+    private ParcelFileDescriptor establishVpn(String ip, int prefixLen, int mtu, JSONArray routes) {
+        return establishVpn(ip, prefixLen, mtu, routes, null);
+    }
+
+    private ParcelFileDescriptor establishVpn(String ip, int prefixLen, int mtu, JSONArray routes, String sessionName) {
+        VpnService.Builder builder = new Builder();
+        builder.setMtu(mtu);
+        builder.addAddress(ip, prefixLen);
+        builder.addRoute("0.0.0.0", 0);
+        if (routes != null) {
+            for (int index = 0; index < routes.length(); index++) {
+                String route = routes.optString(index, "");
+                String cidr = route.split(",", 2)[0];
+                String[] parts = cidr.split("/", 2);
+                if (parts.length == 2) {
+                    try {
+                        builder.addRoute(parts[0], Integer.parseInt(parts[1]));
+                    } catch (RuntimeException ignored) {
+                        // Rust validates routes; malformed host data is skipped defensively.
+                    }
+                }
+            }
+        }
+        builder.setSession(sessionName == null || sessionName.isEmpty() ? "VNT VPN" : sessionName);
+        return builder.establish();
+    }
+
+    /** Runs on the Java-owned pull listener thread, never from Rust into Java. */
+    private void replaceVpnForRequest(TunRebuildRequest request) throws Exception {
+        ParcelFileDescriptor replacement;
+        try {
+            replacement = establishVpn(
+                    request.getIp(), request.getPrefixLen(), request.getMtu(), request.getRoutes(), request.getSessionName());
+        } catch (Exception error) {
+            network.rejectTunRebuild(request.getRequestId(), error.toString());
+            return;
+        }
+        if (replacement == null) {
+            network.rejectTunRebuild(request.getRequestId(), "VpnService.Builder.establish returned null");
+            return;
+        }
+        int fd = replacement.detachFd();
+        try {
+            network.replaceTun(request.getRequestId(), fd);
+        } catch (Exception error) {
+            // Rust owns a detached fd even on failure and closes it itself.
+            throw error;
+        }
+    }
+
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -95,16 +149,6 @@ public class AndroidVpnExample extends VpnService {
             network.stop();
             network = null;
         }
-
-        if (vpnInterface != null) {
-            try {
-                vpnInterface.close();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            vpnInterface = null;
-        }
-
         VntManager.destroy();
     }
 

@@ -1,6 +1,7 @@
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::Future;
+use std::future::pending;
 use std::sync::{Arc, Weak};
 use tokio::sync::Notify;
 use tokio::task::{Id, JoinHandle};
@@ -207,6 +208,27 @@ impl TaskGroup {
         }
     }
 
+    /// Creates an independently stoppable task scope whose lifetime is still
+    /// bounded by this group. Stopping the child never stops the parent;
+    /// stopping the parent aborts the link task and synchronously marks every
+    /// child task for cancellation through the drop guard.
+    pub(crate) fn child_scope(&self) -> TaskGroup {
+        struct StopChildOnDrop(TaskGroup);
+        impl Drop for StopChildOnDrop {
+            fn drop(&mut self) {
+                self.0.stop();
+            }
+        }
+
+        let child = TaskGroup::new();
+        let stop_child = StopChildOnDrop(child.clone());
+        self.spawn(async move {
+            let _stop_child = stop_child;
+            pending::<()>().await;
+        });
+        child
+    }
+
     /// 启动可重建的子任务。该任务结束时不会仅因任务组暂时为空而把组永久关闭；
     /// 任务若非预期退出，应在任务体内显式调用 `TaskGroup::stop`。
     pub fn spawn_restartable<F>(&self, f: F) -> SubTask
@@ -282,6 +304,7 @@ impl SubTask {
 #[derive(Clone, Default)]
 pub struct TaskGroupManager {
     task_group: Arc<Mutex<Option<TaskGroup>>>,
+    stopped_notify: Arc<Notify>,
 }
 
 impl TaskGroupManager {
@@ -307,6 +330,7 @@ impl TaskGroupManager {
         guard.replace(task_group.clone());
         let stop_guard = TaskGroupGuard {
             task_group: self.task_group.clone(),
+            stopped_notify: self.stopped_notify.clone(),
         };
         Ok((task_group, stop_guard))
     }
@@ -317,15 +341,37 @@ impl TaskGroupManager {
             task_group.stop();
         }
     }
+
+    /// Stop the active generation and wait until its owner has released the
+    /// guard. This is the event-driven boundary required before creating a new
+    /// generation; callers must not poll `is_stopped`.
+    pub async fn stop_and_wait(&self) {
+        let group = self.task_group.lock().clone();
+        if let Some(group) = group {
+            group.stop();
+            group.wait_all_stopped().await;
+        }
+        loop {
+            let notified = self.stopped_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.task_group.lock().is_none() {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 pub struct TaskGroupGuard {
     task_group: Arc<Mutex<Option<TaskGroup>>>,
+    stopped_notify: Arc<Notify>,
 }
 impl Drop for TaskGroupGuard {
     fn drop(&mut self) {
         if let Some(task_group) = self.task_group.lock().take() {
             task_group.stop();
         }
+        self.stopped_notify.notify_waiters();
     }
 }
 
@@ -450,5 +496,33 @@ mod tests {
             .await
             .expect("stopping a suspended group must wake its waiter")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn child_scope_is_independent_but_stops_with_parent() {
+        let manager = TaskGroupManager::new();
+        let (parent, _guard) = manager.create_task().unwrap();
+        let first_child = parent.child_scope();
+        let task = first_child.spawn(pending::<()>());
+        first_child.stop();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            first_child.wait_all_stopped(),
+        )
+        .await
+        .unwrap();
+        assert!(!task.is_running());
+        assert!(!parent.is_stopped());
+
+        let second_child = parent.child_scope();
+        let task = second_child.spawn(pending::<()>());
+        parent.stop();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            second_child.wait_all_stopped(),
+        )
+        .await
+        .unwrap();
+        assert!(!task.is_running());
     }
 }

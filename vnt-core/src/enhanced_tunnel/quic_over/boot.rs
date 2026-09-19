@@ -11,6 +11,9 @@ use crate::enhanced_tunnel::quic_over::{quic_client, quic_server};
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
 use crate::port_mapping::PortMapping;
+use crate::runtime_config::{
+    PortMappingComponentController, RuntimeConfigController, RuntimePolicyStore,
+};
 use crate::tls;
 use crate::tun::TunDataInbound;
 use crate::tunnel_core::outbound::HybridOutbound;
@@ -30,7 +33,6 @@ use tcp_ip::{IpStackConfig, IpStackRecv};
 pub(crate) struct QuicTunnelConfig {
     pub mtu: u16,
     pub password: String,
-    pub open_quic_client: bool,
     pub port_mapping: Vec<PortMapping>,
 }
 
@@ -40,6 +42,8 @@ pub(crate) struct QuicTunnelComponents {
     pub subnet_mapping: SubnetMappingTable,
     pub internal_nat_manager: Option<InternalNatInbound>,
     pub port_mapping_manager: PortMappingManager,
+    pub policy: RuntimePolicyStore,
+    pub runtime_config: RuntimeConfigController,
 }
 
 pub(crate) async fn quic_tunnel_start(
@@ -48,7 +52,13 @@ pub(crate) async fn quic_tunnel_start(
     tun_data_sender: Option<TunDataInbound>,
     config: QuicTunnelConfig,
     components: QuicTunnelComponents,
-) -> anyhow::Result<(EnhancedQuicInbound, Option<EnhancedQuicOutbound>)> {
+    initialize_port_mappings: bool,
+    port_mapping_root: Option<TaskGroup>,
+) -> anyhow::Result<(
+    EnhancedQuicInbound,
+    Option<EnhancedQuicOutbound>,
+    QuicTunnelClient,
+)> {
     let ip_stack_config = IpStackConfig::builder().mtu(config.mtu).build();
     let (ip_stack, ip_socket, quic_outbound) = if let Some(tun_data_sender) = tun_data_sender {
         let (ip_stack, ip_stack_send, ip_stack_recv) = tcp_ip::ip_stack(ip_stack_config)?;
@@ -60,7 +70,7 @@ pub(crate) async fn quic_tunnel_start(
             tun_data_sender,
         ));
         let quic_outbound =
-            EnhancedQuicOutbound::new(config.open_quic_client, ip_stack_send, ip_stack.clone());
+            EnhancedQuicOutbound::new(components.policy.clone(), ip_stack_send, ip_stack.clone());
 
         (Some(ip_stack), Some(ip_socket), Some(quic_outbound))
     } else {
@@ -83,34 +93,51 @@ pub(crate) async fn quic_tunnel_start(
         components.subnet_mapping.clone(),
     )
     .await;
-    if config.open_quic_client {
-        let quic_client =
-            QuicTunnelClient::new(app_state.clone(), endpoint, components.external_route);
-
-        // 客户端使用指纹验证
-        if let (Some(ip_stack), Some(ip_socket)) = (ip_stack, ip_socket) {
-            quic_client::create_client(
+    let quic_client = QuicTunnelClient::new(app_state.clone(), endpoint, components.external_route);
+    // Keep the enhanced client workers resident. The outbound policy decides
+    // whether new traffic enters the stack, which makes RTX reversible while
+    // still allowing replies for connections already in flight.
+    if let (Some(ip_stack), Some(ip_socket)) = (ip_stack, ip_socket) {
+        quic_client::create_client(
+            quic_client.clone(),
+            task_group.clone(),
+            ip_stack.clone(),
+            ip_socket,
+        )
+        .await;
+    }
+    if initialize_port_mappings {
+        let port_mapping_root = port_mapping_root
+            .context("port mapping root task group is required during initialization")?;
+        let mut active_mappings: Vec<(PortMapping, TaskGroup)> = Vec::new();
+        for mapping in &config.port_mapping {
+            let scope = port_mapping_root.child_scope();
+            if let Err(error) = crate::port_mapping::port_mapping_start(
+                &scope,
+                vec![mapping.clone()],
                 quic_client.clone(),
-                task_group.clone(),
-                ip_stack.clone(),
-                ip_socket,
             )
-            .await;
+            .await
+            {
+                scope.stop();
+                for (_, prepared_scope) in active_mappings {
+                    prepared_scope.stop();
+                }
+                return Err(error);
+            }
+            active_mappings.push((mapping.clone(), scope));
         }
-        if !config.port_mapping.is_empty() {
-            crate::port_mapping::port_mapping_start(&task_group, config.port_mapping, quic_client)
-                .await?;
-        }
-    } else if !config.port_mapping.is_empty() {
-        let quic_client =
-            QuicTunnelClient::new(app_state.clone(), endpoint, components.external_route);
-
-        crate::port_mapping::port_mapping_start(&task_group, config.port_mapping, quic_client)
-            .await?;
+        components
+            .runtime_config
+            .attach_port_mapping_components(PortMappingComponentController {
+                root_task_group: port_mapping_root,
+                active: Arc::new(tokio::sync::Mutex::new(active_mappings)),
+                quic_client: quic_client.clone(),
+            });
     }
 
     let quic_inbound = EnhancedQuicInbound::new(inbound);
-    Ok((quic_inbound, quic_outbound))
+    Ok((quic_inbound, quic_outbound, quic_client))
 }
 async fn create_quic_endpoint(
     password: String,

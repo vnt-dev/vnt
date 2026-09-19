@@ -1,5 +1,7 @@
 use crate::context::config::DeviceMode;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
+#[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+use crate::nat::NetInput;
 use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::utils::task_control::{SubTask, TaskGroup};
@@ -20,13 +22,51 @@ use tun_rs::{DeviceBuilder, Layer};
 pub struct DeviceIOManager {
     task_group: TaskGroup,
     device: DeviceMutex,
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    system_routes: Arc<tokio::sync::Mutex<Option<SystemRouteBinding>>>,
 }
 type DeviceMutex = Arc<tokio::sync::Mutex<DeviceState>>;
 #[derive(Default)]
 struct DeviceState {
     runtime: Option<DeviceRuntime>,
     network: Option<(Ipv4Addr, u8)>,
+    mtu: Option<u16>,
+    tun_name: Option<String>,
 }
+
+#[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+struct SystemRouteBinding {
+    desired: tokio::sync::watch::Receiver<Vec<NetInput>>,
+    scope: TaskGroup,
+}
+
+/// Result of changing virtual-device properties without replacing the VNT
+/// instance.  A rebuilt device needs its system route watcher rebound because
+/// its interface index may have changed.
+#[cfg(not(target_os = "android"))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum DeviceReconfigureAction {
+    Live,
+    Rebuilt,
+}
+
+#[cfg(not(target_os = "android"))]
+#[derive(Debug)]
+pub struct DeviceNetworkUpdateError {
+    pub rollback_failed: bool,
+    message: String,
+}
+
+#[cfg(not(target_os = "android"))]
+impl std::fmt::Display for DeviceNetworkUpdateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+impl std::error::Error for DeviceNetworkUpdateError {}
+
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 struct DeviceRuntime {
     task: Option<DeviceTask>,
@@ -42,7 +82,7 @@ struct DeviceTask {
     outbound_task: SubTask,
     intentional_stop: Arc<AtomicBool>,
 }
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DeviceConfig {
     pub device_mode: DeviceMode,
     pub tun_name: Option<String>,
@@ -93,6 +133,8 @@ impl DeviceIOManager {
         Self {
             task_group,
             device: Arc::new(Default::default()),
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+            system_routes: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -111,6 +153,8 @@ impl DeviceIOManager {
         // 先执行可能失败的 TUN/TAP 设备创建，成功后才消费 receiver/outbound，
         // 保证失败时调用方状态完整、可以重试
         let device_mode = device_config.device_mode;
+        let mtu = device_config.mtu;
+        let tun_name = device_config.tun_name.clone();
         let device = Arc::new(create_device(device_config)?);
         let Some(receiver_value) = receiver.take() else {
             bail!("device task already started");
@@ -128,13 +172,84 @@ impl DeviceIOManager {
             enhanced_outbound.clone(),
             device_mode,
         );
-        self.device.lock().await.runtime = Some(DeviceRuntime {
+        let mut state = self.device.lock().await;
+        state.runtime = Some(DeviceRuntime {
             task: Some(task),
             receiver,
             enhanced_outbound,
             device_mode,
         });
+        state.mtu = mtu;
+        state.tun_name = tun_name;
         Ok(())
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    pub async fn start_system_routes(
+        &self,
+        desired: tokio::sync::watch::Receiver<Vec<NetInput>>,
+    ) -> anyhow::Result<()> {
+        let if_index = self.device_if_index().await?;
+        let prepared = match crate::system_subnet_routes::prepare(if_index) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                // Keep initial device startup best-effort as it was before
+                // route scopes became replaceable. Existing device traffic is
+                // still usable when platform route management is unavailable.
+                log::error!("create subnet route manager failed: {error:?}");
+                return Ok(());
+            }
+        };
+        let mut routes = self.system_routes.lock().await;
+        if routes.is_some() {
+            return Ok(());
+        }
+        let scope = self.task_group.child_scope();
+        crate::system_subnet_routes::start(&scope, desired.clone(), prepared);
+        *routes = Some(SystemRouteBinding { desired, scope });
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    async fn prepare_system_route_rebind(
+        &self,
+        if_index: u32,
+    ) -> anyhow::Result<
+        Option<(
+            tokio::sync::watch::Receiver<Vec<NetInput>>,
+            crate::system_subnet_routes::SystemRouteReconciler,
+        )>,
+    > {
+        let routes = self.system_routes.lock().await;
+        let Some(current) = routes.as_ref() else {
+            return Ok(None);
+        };
+        Ok(Some((
+            current.desired.clone(),
+            crate::system_subnet_routes::prepare(if_index)?,
+        )))
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    async fn commit_system_route_rebind(
+        &self,
+        prepared: Option<(
+            tokio::sync::watch::Receiver<Vec<NetInput>>,
+            crate::system_subnet_routes::SystemRouteReconciler,
+        )>,
+    ) {
+        let Some((desired, prepared)) = prepared else {
+            return;
+        };
+        let old = self.system_routes.lock().await.take();
+        let Some(old) = old else {
+            return;
+        };
+        old.scope.stop();
+        old.scope.wait_all_stopped().await;
+        let scope = self.task_group.child_scope();
+        crate::system_subnet_routes::start(&scope, desired.clone(), prepared);
+        *self.system_routes.lock().await = Some(SystemRouteBinding { desired, scope });
     }
     #[cfg(not(target_os = "android"))]
     pub async fn device_if_index(&self) -> anyhow::Result<u32> {
@@ -172,26 +287,248 @@ impl DeviceIOManager {
         Ok(())
     }
 
-    #[cfg(target_os = "android")]
-    pub async fn suspend_android(&self) -> anyhow::Result<()> {
-        let mut task = {
-            let mut guard = self.device.lock().await;
-            let runtime = guard.runtime.as_mut().context("虚拟网卡尚未启动")?;
-            runtime.task.take().context("虚拟网卡已经暂停")?
-        };
-        task.stop_intentionally().await;
-        // task 在这里释放最后一个由管理器持有的设备引用；读写任务已停止，
-        // 因而旧 Android VPN fd 会在创建新 VPN 前关闭。
-        drop(task);
+    /// Applies address and MTU while holding the same device lock. If changing
+    /// MTU fails after the address has changed, the method restores the old
+    /// address before returning an error.
+    #[cfg(not(target_os = "android"))]
+    pub async fn set_network_and_mtu(
+        &self,
+        ip: Ipv4Addr,
+        prefix_len: u8,
+        mtu: u16,
+    ) -> anyhow::Result<()> {
+        let mut guard = self.device.lock().await;
+        let task = guard
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.task.as_ref())
+            .context("虚拟网卡尚未启动")?;
+        let (old_ip, old_prefix_len) = guard.network.context("虚拟网卡 IP 尚未设置")?;
+        let old_mtu = guard.mtu.context("虚拟网卡 MTU 尚未设置")?;
+        let network_changed = old_ip != ip || old_prefix_len != prefix_len;
+        if network_changed && let Err(error) = task.device.set_network_address(ip, prefix_len, None)
+        {
+            let rollback_error = task
+                .device
+                .set_network_address(old_ip, old_prefix_len, None);
+            return Err(DeviceNetworkUpdateError {
+                rollback_failed: rollback_error.is_err(),
+                message: match rollback_error {
+                    Ok(()) => format!("设置 IP 失败: {error}"),
+                    Err(rollback_error) => {
+                        format!("设置 IP 失败: {error}; 恢复旧 IP 失败: {rollback_error}")
+                    }
+                },
+            }
+            .into());
+        }
+        if old_mtu != mtu
+            && let Err(error) = task.device.set_mtu(mtu)
+        {
+            // A platform error can be returned after applying part of the
+            // change. Restore both values before reporting failure.
+            let mtu_rollback = task.device.set_mtu(old_mtu);
+            let network_rollback = if network_changed {
+                task.device
+                    .set_network_address(old_ip, old_prefix_len, None)
+            } else {
+                Ok(())
+            };
+            return Err(DeviceNetworkUpdateError {
+                rollback_failed: mtu_rollback.is_err() || network_rollback.is_err(),
+                message: format!(
+                    "设置 MTU 失败: {error}; 恢复旧 MTU: {}; 恢复旧 IP: {}",
+                    mtu_rollback.as_ref().map(|_| "成功").unwrap_or("失败"),
+                    network_rollback.as_ref().map(|_| "成功").unwrap_or("失败"),
+                ),
+            }
+            .into());
+        }
+        guard.network = Some((ip, prefix_len));
+        guard.mtu = Some(mtu);
         Ok(())
     }
 
+    /// Applies a managed name, address and MTU as one device transaction.
+    /// On platforms with an online rename primitive, a concrete target name is
+    /// changed in place.  Clearing a name deliberately rebuilds the device so
+    /// the OS can select its default name again.
+    #[cfg(not(target_os = "android"))]
+    pub async fn reconfigure_managed(
+        &self,
+        config: DeviceConfig,
+        ip: Ipv4Addr,
+        prefix_len: u8,
+    ) -> anyhow::Result<DeviceReconfigureAction> {
+        let target_name = config.tun_name.clone();
+        let can_rename_in_place = cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) && target_name.is_some();
+
+        if can_rename_in_place {
+            let mut guard = self.device.lock().await;
+            let state = &mut *guard;
+            let runtime = state.runtime.as_ref().context("虚拟网卡尚未启动")?;
+            let task = runtime.task.as_ref().context("虚拟网卡已经暂停")?;
+            let old_name = task.device.name().context("读取当前网卡名称失败")?;
+            let old_config_name = state.tun_name.clone();
+            let (old_ip, old_prefix_len) = state.network.context("虚拟网卡 IP 尚未设置")?;
+            let old_mtu = state.mtu.context("虚拟网卡 MTU 尚未设置")?;
+            let network_changed = old_ip != ip || old_prefix_len != prefix_len;
+            let mtu_changed = old_mtu != config.mtu.context("缺少目标 MTU")?;
+            let target_name = target_name.expect("checked above");
+
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+            if old_config_name != Some(target_name.clone())
+                && let Err(error) = task.device.set_name(&target_name)
+            {
+                let rollback = task.device.set_name(&old_name);
+                return Err(DeviceNetworkUpdateError {
+                    rollback_failed: rollback.is_err(),
+                    message: format!(
+                        "修改网卡名称失败: {error}; 恢复旧名称: {}",
+                        rollback.as_ref().map(|_| "成功").unwrap_or("失败")
+                    ),
+                }
+                .into());
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "freebsd")))]
+            unreachable!("in-place rename is only enabled on supported targets");
+
+            if network_changed
+                && let Err(error) = task.device.set_network_address(ip, prefix_len, None)
+            {
+                let name_rollback = task.device.set_name(&old_name);
+                return Err(DeviceNetworkUpdateError {
+                    rollback_failed: name_rollback.is_err(),
+                    message: format!(
+                        "设置 IP 失败: {error}; 恢复网卡名称: {}",
+                        name_rollback.as_ref().map(|_| "成功").unwrap_or("失败")
+                    ),
+                }
+                .into());
+            }
+            if mtu_changed && let Err(error) = task.device.set_mtu(config.mtu.unwrap()) {
+                let mtu_rollback = task.device.set_mtu(old_mtu);
+                let network_rollback = if network_changed {
+                    task.device
+                        .set_network_address(old_ip, old_prefix_len, None)
+                } else {
+                    Ok(())
+                };
+                let name_rollback = task.device.set_name(&old_name);
+                return Err(DeviceNetworkUpdateError {
+                    rollback_failed: mtu_rollback.is_err()
+                        || network_rollback.is_err()
+                        || name_rollback.is_err(),
+                    message: format!("设置 MTU 失败: {error}"),
+                }
+                .into());
+            }
+            state.network = Some((ip, prefix_len));
+            state.mtu = config.mtu;
+            state.tun_name = Some(target_name);
+            return Ok(DeviceReconfigureAction::Live);
+        }
+
+        // A replacement device can be fully created and addressed before the
+        // stable inbound channel is switched away from the old device.
+        let replacement_device = Arc::new(create_device(config.clone())?);
+        replacement_device
+            .set_network_address(ip, prefix_len, None)
+            .context("设置新虚拟网卡 IP 失败")?;
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+        let prepared_routes = self
+            .prepare_system_route_rebind(replacement_device.if_index()?)
+            .await?;
+        let (mut old_task, receiver, enhanced_outbound, device_mode) = {
+            let mut state = self.device.lock().await;
+            let runtime = state.runtime.as_mut().context("虚拟网卡尚未启动")?;
+            (
+                runtime.task.take().context("虚拟网卡已经暂停")?,
+                runtime.receiver.clone(),
+                runtime.enhanced_outbound.clone(),
+                runtime.device_mode,
+            )
+        };
+        old_task.stop_intentionally().await;
+        let replacement = create(
+            &self.task_group,
+            replacement_device,
+            receiver.clone(),
+            enhanced_outbound.clone(),
+            device_mode,
+        );
+        if replacement.inbound_task.is_running() && replacement.outbound_task.is_running() {
+            let mut state = self.device.lock().await;
+            let runtime = state.runtime.as_mut().context("虚拟网卡尚未启动")?;
+            if runtime.task.is_some() {
+                drop(state);
+                replacement.inbound_task.stop().await;
+                replacement.outbound_task.stop().await;
+                return Err(anyhow::anyhow!("虚拟网卡任务已被并发替换"));
+            }
+            runtime.task = Some(replacement);
+            state.network = Some((ip, prefix_len));
+            state.mtu = config.mtu;
+            state.tun_name = target_name;
+            drop(state);
+            #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+            self.commit_system_route_rebind(prepared_routes).await;
+            // Route cleanup must run while the old interface is still held,
+            // otherwise platforms that delete routes with their interface can
+            // leave stale entries behind.
+            drop(old_task);
+            return Ok(DeviceReconfigureAction::Rebuilt);
+        }
+
+        replacement.inbound_task.stop().await;
+        replacement.outbound_task.stop().await;
+        let restored = create(
+            &self.task_group,
+            old_task.device.clone(),
+            receiver,
+            enhanced_outbound,
+            device_mode,
+        );
+        let mut state = self.device.lock().await;
+        let runtime = state.runtime.as_mut().context("虚拟网卡尚未启动")?;
+        if !restored.inbound_task.is_running() || !restored.outbound_task.is_running() {
+            return Err(DeviceNetworkUpdateError {
+                rollback_failed: true,
+                message: "新的虚拟网卡任务启动失败，且旧虚拟网卡任务恢复失败".to_string(),
+            }
+            .into());
+        }
+        runtime.task = Some(restored);
+        Err(DeviceNetworkUpdateError {
+            rollback_failed: false,
+            message: "无法启动新的虚拟网卡任务，已恢复旧任务".to_string(),
+        }
+        .into())
+    }
+
     #[cfg(target_os = "android")]
-    pub async fn resume_android(
+    pub async fn current_mtu(&self) -> anyhow::Result<u16> {
+        self.device
+            .lock()
+            .await
+            .mtu
+            .context("虚拟网卡 MTU 尚未设置")
+    }
+
+    /// Replaces the running TUN task with an fd supplied by the host. The new
+    /// device is validated before the old task is stopped; if the task group
+    /// races with shutdown, the old device is recreated from its retained Arc.
+    #[cfg(unix)]
+    pub async fn replace_task_fd(
         &self,
         tun_fd: std::os::fd::OwnedFd,
         ip: Ipv4Addr,
         prefix_len: u8,
+        mtu: u16,
     ) -> anyhow::Result<()> {
         use std::os::fd::IntoRawFd;
 
@@ -199,26 +536,80 @@ impl DeviceIOManager {
             bail!("网络任务已经停止");
         }
         let raw_fd = tun_fd.into_raw_fd();
-        // SAFETY: JNI transfers an owned VpnService TUN fd. tun-rs takes ownership.
-        let device = Arc::new(unsafe { AsyncDevice::from_fd(raw_fd) }?);
-        let mut guard = self.device.lock().await;
-        let runtime = guard.runtime.as_mut().context("虚拟网卡尚未启动")?;
-        if runtime.task.is_some() {
-            bail!("虚拟网卡尚未暂停");
-        }
-        let task = create(
+        // SAFETY: the caller transferred exclusive ownership of a valid TUN
+        // fd. AsyncDevice owns it after this point.
+        let replacement_device = Arc::new(unsafe { AsyncDevice::from_fd(raw_fd) }?);
+        let (mut old_task, receiver, enhanced_outbound, device_mode) = {
+            let mut state = self.device.lock().await;
+            let runtime = state.runtime.as_mut().context("虚拟网卡尚未启动")?;
+            (
+                runtime.task.take().context("虚拟网卡已经暂停")?,
+                runtime.receiver.clone(),
+                runtime.enhanced_outbound.clone(),
+                runtime.device_mode,
+            )
+        };
+        old_task.stop_intentionally().await;
+
+        let replacement = create(
             &self.task_group,
-            device,
-            runtime.receiver.clone(),
-            runtime.enhanced_outbound.clone(),
-            runtime.device_mode,
+            replacement_device,
+            receiver.clone(),
+            enhanced_outbound.clone(),
+            device_mode,
         );
-        if !task.inbound_task.is_running() || !task.outbound_task.is_running() {
-            bail!("无法启动新虚拟网卡任务");
+        if replacement.inbound_task.is_running() && replacement.outbound_task.is_running() {
+            let already_replaced = {
+                let state = self.device.lock().await;
+                state
+                    .runtime
+                    .as_ref()
+                    .context("虚拟网卡尚未启动")?
+                    .task
+                    .is_some()
+            };
+            if already_replaced {
+                // Do not await while holding DeviceState: a concurrent stop
+                // needs the same mutex to finish its cleanup.
+                replacement.inbound_task.stop().await;
+                replacement.outbound_task.stop().await;
+                return Err(anyhow::anyhow!("虚拟网卡任务已被并发替换"));
+            }
+            let mut state = self.device.lock().await;
+            let runtime = state.runtime.as_mut().context("虚拟网卡尚未启动")?;
+            // The state can only change while the lock was released above.
+            if runtime.task.is_some() {
+                drop(state);
+                replacement.inbound_task.stop().await;
+                replacement.outbound_task.stop().await;
+                return Err(anyhow::anyhow!("虚拟网卡任务已被并发替换"));
+            }
+            runtime.task = Some(replacement);
+            state.network = Some((ip, prefix_len));
+            state.mtu = Some(mtu);
+            // Dropping the old task after the new one is live closes its fd.
+            drop(old_task);
+            return Ok(());
         }
-        runtime.task = Some(task);
-        guard.network = Some((ip, prefix_len));
-        Ok(())
+
+        replacement.inbound_task.stop().await;
+        replacement.outbound_task.stop().await;
+        let restored = create(
+            &self.task_group,
+            old_task.device.clone(),
+            receiver,
+            enhanced_outbound,
+            device_mode,
+        );
+        let mut state = self.device.lock().await;
+        let runtime = state.runtime.as_mut().context("虚拟网卡尚未启动")?;
+        if !restored.inbound_task.is_running() || !restored.outbound_task.is_running() {
+            return Err(anyhow::anyhow!(
+                "新的虚拟网卡任务启动失败，且旧虚拟网卡任务恢复失败"
+            ));
+        }
+        runtime.task = Some(restored);
+        bail!("无法启动新的虚拟网卡任务，已恢复旧任务")
     }
 }
 

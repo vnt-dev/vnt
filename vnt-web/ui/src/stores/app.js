@@ -145,9 +145,9 @@ export const useAppStore = defineStore("app", () => {
     }
     if (loadingMap.value[fileName]) return;
     loadingMap.value[fileName] = true;
+    startLog.openStartLog(fileName);
     try {
       await startVntApi(fileName);
-      startLog.openStartLog(fileName);
       fetchInstances();
     } catch (e) {
       ui.toast.error("启动失败: " + e.message);
@@ -181,9 +181,9 @@ export const useAppStore = defineStore("app", () => {
   const restartVnt = async (fileName) => {
     if (!fileName || loadingMap.value[fileName]) return;
     loadingMap.value[fileName] = true;
+    startLog.openStartLog(fileName);
     try {
       await restartVntApi(fileName);
-      startLog.openStartLog(fileName);
       fetchInstances();
     } catch (e) {
       ui.toast.error("重启失败: " + e.message);

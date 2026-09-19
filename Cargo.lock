@@ -6382,6 +6382,8 @@ name = "vnt-core"
 version = "2.0.9"
 dependencies = [
  "anyhow",
+ "arc-swap",
+ "base64 0.22.1",
  "bytes",
  "criterion",
  "dns-parser",
@@ -6410,6 +6412,7 @@ dependencies = [
  "rustls-native-certs",
  "rustp2p-core",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "socket2",
  "subtle",
@@ -6419,6 +6422,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "tokio-util",
+ "toml 0.9.12+spec-1.1.0",
  "tun-rs",
  "tungstenite",
  "uuid",
@@ -6475,6 +6479,7 @@ name = "vnt-jni"
 version = "2.0.9"
 dependencies = [
  "anyhow",
+ "hex",
  "hostname",
  "ipnet",
  "jni 0.21.1",
@@ -6484,6 +6489,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "toml 0.9.12+spec-1.1.0",
  "vnt-core",
 ]
 
@@ -6502,6 +6508,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "time",
  "tokio",
  "tokio-util",
@@ -6522,6 +6529,7 @@ dependencies = [
  "log",
  "log4rs",
  "serde",
+ "sha2 0.11.0",
  "tokio",
  "tokio-util",
  "toml 0.9.12+spec-1.1.0",

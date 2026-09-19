@@ -1,12 +1,14 @@
-use crate::context::config::{PeerAddress, TurnRule};
+use crate::context::config::PeerAddress;
 use crate::context::nat::MyNatInfo;
 use crate::context::{AppState, PacketLossStats, SharedNetworkAddr, TunnelListenAddr};
 use crate::crypto::PacketCrypto;
 use crate::protocol::client_message::{
     MAX_ANNOUNCED_DIRECT_PEERS, NodeAnnouncement, NodeIdentityTemplate, PeerHandshake,
+    SharedNodeIdentity,
 };
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::inbound::P2pInboundHandler;
 use crate::tunnel_core::p2p::node_info::NodeInfoMap;
@@ -22,6 +24,7 @@ use rand::seq::SliceRandom;
 use rustp2p_core::endpoint::{Config as TunnelConfig, LengthPrefixedInitCodec, TunnelIncoming};
 use rustp2p_core::punch::Puncher;
 use rustp2p_core::socket::LocalInterface;
+use std::collections::HashMap;
 #[cfg(test)]
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -34,11 +37,9 @@ pub(crate) struct P2pInitConfig {
     pub tunnel_addr: Vec<SocketAddr>,
     pub tunnel_port: Option<u16>,
     pub automatic_punch: bool,
-    pub auto_sync_subnet: bool,
-    pub peer_address: Vec<PeerAddress>,
-    pub turn: Arc<Vec<TurnRule>>,
+    pub policy: RuntimePolicyStore,
     pub default_interface: Option<LocalInterface>,
-    pub identity: NodeIdentityTemplate,
+    pub identity: SharedNodeIdentity,
 }
 
 pub async fn init_tunnel(
@@ -105,17 +106,20 @@ pub async fn init_tunnel(
     if config.automatic_punch {
         let nat_app_state = app_state.clone();
         let nat_puncher = puncher.clone();
+        let nat_policy = config.policy.clone();
         task_group.spawn(async move {
-            my_nat_info(nat_app_state, nat_puncher).await;
+            my_nat_info(nat_app_state, nat_puncher, nat_policy).await;
         });
         task_group.spawn(query_udp_public_addr_loop(
             app_state.clone(),
             puncher.clone(),
+            config.policy.clone(),
         ));
         task_group.spawn(query_tcp_public_addr_loop(
             app_state.clone(),
             local_tcp_port,
             config.default_interface.clone(),
+            config.policy.clone(),
         ));
     }
 
@@ -124,7 +128,7 @@ pub async fn init_tunnel(
         app_state.node_info_map.clone(),
         app_state.packet_loss_stats.clone(),
         app_state.subnet_route.clone(),
-        config.auto_sync_subnet,
+        config.policy.clone(),
     ));
     if config.automatic_punch {
         let app_state_for_punch = app_state.clone();
@@ -133,7 +137,7 @@ pub async fn init_tunnel(
             server_info: app_state.server_info_collection.clone(),
             punch_backoff: app_state.punch_backoff.clone(),
             punch_info_getter: Arc::new(move |target| app_state_for_punch.get_punch_info(target)),
-            turn: config.turn.clone(),
+            policy: config.policy.clone(),
             node_info_map: app_state.node_info_map.clone(),
         };
         task_group.spawn(punch_task(tunnel_to_server, route_table.clone(), punch_ctx));
@@ -144,17 +148,16 @@ pub async fn init_tunnel(
         route_table.clone(),
         socket_manager.clone(),
     ));
-    // peer_address 支持域名与动态地址；均在探测任务内解析，避免启动时阻塞。
-    for peer in &config.peer_address {
-        task_group.spawn(direct_peer_probe_task(
-            app_state.network.clone(),
-            route_table.clone(),
-            socket_manager.clone(),
-            peer.clone(),
-            config.default_interface.clone(),
-            config.identity.clone(),
-        ));
-    }
+    // One manager reads the current immutable policy each round, so replacing
+    // peer_address does not leave one long-lived task per stale entry.
+    task_group.spawn(direct_peer_probe_task(
+        app_state.network.clone(),
+        route_table.clone(),
+        socket_manager.clone(),
+        config.policy.clone(),
+        config.default_interface.clone(),
+        config.identity.clone(),
+    ));
     let p2p_task = P2pTask {
         task_group,
         nat_info: app_state.nat_info.clone(),
@@ -168,16 +171,17 @@ pub(crate) async fn node_announcement_task(
     network: SharedNetworkAddr,
     outbound: BasicOutbound,
     route_table: RouteTable,
-    identity: NodeIdentityTemplate,
+    identity: SharedNodeIdentity,
 ) {
     loop {
-        tokio::time::sleep(node_announcement_interval(
-            outbound.is_any_server_connected(),
-        ))
-        .await;
+        tokio::select! {
+            _ = tokio::time::sleep(node_announcement_interval(outbound.is_any_server_connected())) => {}
+            _ = identity.changed() => {}
+        }
         let Some(ip) = network.ip() else {
             continue;
         };
+        let identity = identity.get();
         let payload = NodeAnnouncement {
             identity: identity.with_ip(ip),
             direct_peer_ips: sample_direct_peer_ips(route_table.direct_peer_ips()),
@@ -203,8 +207,9 @@ pub(crate) async fn node_announcement_task(
                 }
                 let packet = packet.into_bytes();
                 outbound.graph_first_seen(MsgType::NodeAnnouncement, ip, packet.seq());
+                // Topology discovery is P2P-only. VNTS does not understand or
+                // relay NodeAnnouncement packets.
                 let sent = outbound.flood_direct_p2p(&packet, None);
-                outbound.flood_connected_servers(packet, None).await;
                 log::trace!("node announcement sent to {sent} direct peers");
             }
             Err(error) => log::debug!("failed to build node announcement: {error}"),
@@ -231,31 +236,59 @@ async fn direct_peer_probe_task(
     network: SharedNetworkAddr,
     route_table: RouteTable,
     socket_manager: P2pOutbound,
-    peer: PeerAddress,
+    policy: RuntimePolicyStore,
     default_interface: Option<LocalInterface>,
-    identity: NodeIdentityTemplate,
+    identity: SharedNodeIdentity,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut cached_dynamic_peers = Vec::new();
-    let mut next_dynamic_refresh = Instant::now();
+    let mut policy_changes = policy.subscribe_peer();
+    let mut dynamic_cache: HashMap<PeerAddress, (Instant, Vec<PeerAddress>)> = HashMap::new();
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            changed = policy_changes.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+            }
+        }
         let Some(src_ip) = network.ip() else {
             continue;
         };
-        let peers = if peer.is_dynamic() {
-            if Instant::now() >= next_dynamic_refresh {
-                next_dynamic_refresh = Instant::now() + DYNAMIC_PEER_REFRESH_INTERVAL;
-                match peer.resolve_dynamic(&default_interface).await {
-                    Ok(peers) => cached_dynamic_peers = peers,
-                    Err(error) => log::warn!("failed to refresh dynamic peer {peer}: {error}"),
+        let current_identity = identity.get();
+        let configured_peers = policy.load().peer_address.clone();
+        dynamic_cache.retain(|source, _| configured_peers.contains(source));
+        let mut peers = Vec::new();
+        for peer in configured_peers.iter() {
+            if peer.is_dynamic() {
+                let refresh = dynamic_cache
+                    .get(peer)
+                    .is_none_or(|(deadline, _)| Instant::now() >= *deadline);
+                if refresh {
+                    match peer.resolve_dynamic(&default_interface).await {
+                        Ok(resolved) => {
+                            dynamic_cache.insert(
+                                peer.clone(),
+                                (Instant::now() + DYNAMIC_PEER_REFRESH_INTERVAL, resolved),
+                            );
+                        }
+                        Err(error) => {
+                            log::warn!("failed to refresh dynamic peer {peer}: {error}");
+                            dynamic_cache
+                                .entry(peer.clone())
+                                .or_insert_with(|| (Instant::now(), Vec::new()))
+                                .0 = Instant::now() + DYNAMIC_PEER_REFRESH_INTERVAL;
+                        }
+                    }
                 }
+                if let Some((_, resolved)) = dynamic_cache.get(peer) {
+                    peers.extend(resolved.iter().cloned());
+                }
+            } else {
+                peers.push(peer.clone());
             }
-            cached_dynamic_peers.clone()
-        } else {
-            vec![peer.clone()]
-        };
+        }
 
         let mut attempts = Vec::new();
         for peer in peers {
@@ -272,7 +305,7 @@ async fn direct_peer_probe_task(
                     continue;
                 }
                 let socket_manager = socket_manager.clone();
-                let identity = identity.clone();
+                let identity = current_identity.clone();
                 attempts.push(async move {
                     let packet = match build_direct_peer_probe(
                         src_ip,
@@ -399,7 +432,7 @@ pub async fn route_timeout_task(
     node_info_map: NodeInfoMap,
     packet_loss_stats: PacketLossStats,
     subnet_route: crate::nat::SubnetExternalRoute,
-    auto_sync_subnet: bool,
+    policy: RuntimePolicyStore,
 ) {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
@@ -412,7 +445,7 @@ pub async fn route_timeout_task(
                     node_info_map.remove(ip);
                 }
             }
-            if auto_sync_subnet {
+            if policy.load().auto_sync_subnet {
                 let routes = node_info_map
                     .list()
                     .into_iter()

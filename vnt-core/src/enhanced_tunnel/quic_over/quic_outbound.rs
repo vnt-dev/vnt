@@ -1,4 +1,5 @@
 use crate::context::NetworkAddr;
+use crate::runtime_config::RuntimePolicyStore;
 use pnet_packet::Packet;
 use pnet_packet::ip::IpNextHeaderProtocols;
 use pnet_packet::ipv4::{Ipv4Flags, Ipv4Packet};
@@ -8,15 +9,19 @@ use std::net::SocketAddr;
 use tcp_ip::{IpStack, IpStackSend};
 
 pub struct EnhancedQuicOutbound {
-    open_quic_client: bool,
+    policy: RuntimePolicyStore,
     ip_stack_send: IpStackSend,
     ip_stack: IpStack,
 }
 
 impl EnhancedQuicOutbound {
-    pub fn new(open_quic_client: bool, ip_stack_send: IpStackSend, ip_stack: IpStack) -> Self {
+    pub(crate) fn new(
+        policy: RuntimePolicyStore,
+        ip_stack_send: IpStackSend,
+        ip_stack: IpStack,
+    ) -> Self {
         Self {
-            open_quic_client,
+            policy,
             ip_stack_send,
             ip_stack,
         }
@@ -26,7 +31,7 @@ impl EnhancedQuicOutbound {
             return true;
         };
 
-        if self.open_quic_client {
+        if self.policy.load().rtx {
             // 针对tcp  如果不是从IpStack建立的连接，则不使用IpStack解析
             if ipv4.get_next_level_protocol() == IpNextHeaderProtocols::Tcp {
                 let more_fragments =

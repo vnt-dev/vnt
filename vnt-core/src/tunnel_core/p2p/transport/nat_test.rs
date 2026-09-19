@@ -1,4 +1,5 @@
 use crate::context::AppState;
+use crate::runtime_config::RuntimePolicyStore;
 use rustp2p_core::nat::NatType;
 use rustp2p_core::punch::Puncher;
 use rustp2p_core::socket::LocalInterface;
@@ -9,14 +10,26 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub async fn my_nat_info(app_context: AppState, puncher: Puncher) {
+pub async fn my_nat_info(app_context: AppState, puncher: Puncher, policy: RuntimePolicyStore) {
+    let mut changes = policy.subscribe_stun();
+    let mut punch_changes = policy.subscribe_punch();
     loop {
-        my_nat_info_impl(&app_context, &puncher).await;
-        tokio::time::sleep(Duration::from_secs(60 * 30)).await;
+        if policy.load().no_punch {
+            if punch_changes.changed().await.is_err() {
+                return;
+            }
+            continue;
+        }
+        my_nat_info_impl(&app_context, &puncher, &policy).await;
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(60 * 30)) => {}
+            changed = changes.changed() => if changed.is_err() { return },
+            changed = punch_changes.changed() => if changed.is_err() { return },
+        }
     }
 }
-async fn my_nat_info_impl(app_context: &AppState, puncher: &Puncher) {
-    let mut stun_server = app_context.udp_stun();
+async fn my_nat_info_impl(app_context: &AppState, puncher: &Puncher, policy: &RuntimePolicyStore) {
+    let mut stun_server = policy.load().udp_stun.as_ref().clone();
     if stun_server.is_empty() {
         stun_server = default_udp_stun();
     }
@@ -44,24 +57,40 @@ async fn my_nat_info_impl(app_context: &AppState, puncher: &Puncher) {
     }
 }
 
-pub async fn query_udp_public_addr_loop(app_context: AppState, puncher: Puncher) {
-    let mut udp_stun_servers = app_context.udp_stun();
-    if udp_stun_servers.is_empty() {
-        udp_stun_servers = default_udp_stun();
-    }
-    let udp_len = udp_stun_servers.len();
+pub async fn query_udp_public_addr_loop(
+    app_context: AppState,
+    puncher: Puncher,
+    policy: RuntimePolicyStore,
+) {
     let mut udp_count = 0;
     let stun_request = rustp2p_core::stun::send_stun_request();
+    let mut changes = policy.subscribe_stun();
+    let mut punch_changes = policy.subscribe_punch();
     loop {
+        if policy.load().no_punch {
+            if punch_changes.changed().await.is_err() {
+                return;
+            }
+            continue;
+        }
         if app_context
             .get_nat_info()
             .is_some_and(|info| info.nat_type == NatType::Symmetric)
         {
             // NAT type can change while the task is alive. Keep polling so
             // UDP public-port discovery resumes after returning to Cone NAT.
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            wait_or_policy_change(Duration::from_secs(60), &mut changes, &mut punch_changes).await;
             continue;
         }
+        let configured = policy.load().udp_stun.clone();
+        let defaults;
+        let udp_stun_servers = if configured.is_empty() {
+            defaults = default_udp_stun();
+            defaults.as_slice()
+        } else {
+            configured.as_slice()
+        };
+        let udp_len = udp_stun_servers.len();
         let stun = &udp_stun_servers[udp_count % udp_len];
         udp_count += 1;
         match tokio::net::lookup_host(stun.as_str()).await {
@@ -81,9 +110,9 @@ pub async fn query_udp_public_addr_loop(app_context: AppState, puncher: Puncher)
             .map(|v| v.public_udp_ports.contains(&0))
             .unwrap_or(true);
         if not_port {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            wait_or_policy_change(Duration::from_secs(2), &mut changes, &mut punch_changes).await;
         } else {
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            wait_or_policy_change(Duration::from_secs(60), &mut changes, &mut punch_changes).await;
         }
     }
 }
@@ -92,6 +121,7 @@ pub(crate) async fn query_tcp_public_addr_loop(
     app_context: AppState,
     local_tcp_port: u16,
     default_interface: Option<LocalInterface>,
+    policy: RuntimePolicyStore,
 ) {
     use rand::RngExt;
 
@@ -101,9 +131,17 @@ pub(crate) async fn query_tcp_public_addr_loop(
     }
 
     let stun_request = rustp2p_core::stun::send_stun_request();
+    let mut changes = policy.subscribe_stun();
+    let mut punch_changes = policy.subscribe_punch();
     loop {
+        if policy.load().no_punch {
+            if punch_changes.changed().await.is_err() {
+                return;
+            }
+            continue;
+        }
         let tcp_stun_servers = {
-            let servers = app_context.tcp_stun();
+            let servers = policy.load().tcp_stun.as_ref().clone();
             if servers.is_empty() {
                 default_tcp_stun()
             } else {
@@ -113,7 +151,7 @@ pub(crate) async fn query_tcp_public_addr_loop(
         let target_count = tcp_stun_servers.len().min(2);
         if target_count == 0 {
             log::warn!("TCP STUN server list is empty");
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            wait_or_policy_change(Duration::from_secs(30), &mut changes, &mut punch_changes).await;
             continue;
         }
         let Some(local_ipv4) = app_context
@@ -122,7 +160,7 @@ pub(crate) async fn query_tcp_public_addr_loop(
             .filter(|ip| !ip.is_unspecified())
         else {
             log::debug!("local IPv4 is not available for TCP STUN port reuse");
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            wait_or_policy_change(Duration::from_secs(30), &mut changes, &mut punch_changes).await;
             continue;
         };
         let candidates = resolve_tcp_stun_candidates(&tcp_stun_servers, target_count).await;
@@ -130,7 +168,7 @@ pub(crate) async fn query_tcp_public_addr_loop(
             log::warn!(
                 "TCP public address detection requires {target_count} reachable STUN server(s)"
             );
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            wait_or_policy_change(Duration::from_secs(30), &mut changes, &mut punch_changes).await;
             continue;
         }
 
@@ -153,7 +191,7 @@ pub(crate) async fn query_tcp_public_addr_loop(
             }
         }
         if connections.len() != target_count {
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            wait_or_policy_change(Duration::from_secs(30), &mut changes, &mut punch_changes).await;
             continue;
         }
 
@@ -170,14 +208,29 @@ pub(crate) async fn query_tcp_public_addr_loop(
             app_context
                 .nat_info
                 .update_tcp_public_addr(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into());
-            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+            wait_or_policy_change(
+                Duration::from_secs(5 * 60),
+                &mut changes,
+                &mut punch_changes,
+            )
+            .await;
             continue;
         };
         app_context.nat_info.update_tcp_public_addr(public_addr);
 
         loop {
             let sleep_secs = rand::rng().random_range(10u64..=15);
-            tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(sleep_secs)) => {}
+                changed = changes.changed() => {
+                    if changed.is_err() { return; }
+                    break;
+                }
+                changed = punch_changes.changed() => {
+                    if changed.is_err() { return; }
+                    break;
+                }
+            }
             if !keep_tcp_stun_connections_alive(&mut connections, &stun_request).await {
                 break;
             }
@@ -186,6 +239,18 @@ pub(crate) async fn query_tcp_public_addr_loop(
             // STUN connection set is still healthy.
             app_context.nat_info.update_tcp_public_addr(public_addr);
         }
+    }
+}
+
+async fn wait_or_policy_change(
+    duration: Duration,
+    changes: &mut tokio::sync::watch::Receiver<u64>,
+    punch_changes: &mut tokio::sync::watch::Receiver<u64>,
+) {
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => {}
+        _ = changes.changed() => {}
+        _ = punch_changes.changed() => {}
     }
 }
 

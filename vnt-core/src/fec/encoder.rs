@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 use tokio::sync::mpsc;
 
 mod fec_proto {
@@ -32,6 +33,7 @@ pub struct FecEncoder {
     batch_states: Arc<Mutex<HashMap<Ipv4Addr, DestBatchState>>>,
     batch_tx: mpsc::Sender<(Ipv4Addr, Ipv4Addr, u64, Vec<TransmissionBytes>)>,
     fec_auth_reserve: usize,
+    deadline_notify: Arc<Notify>,
 }
 
 struct DestBatchState {
@@ -49,10 +51,12 @@ impl FecEncoder {
     ) -> Self {
         let (batch_tx, batch_rx) = mpsc::channel(BATCH_CHANNEL_SIZE);
         let batch_states = Arc::new(Mutex::new(HashMap::new()));
+        let deadline_notify = Arc::new(Notify::new());
         let encoder = Self {
             batch_states: batch_states.clone(),
             batch_tx,
             fec_auth_reserve: basic_outbound.fec_auth_reserve(),
+            deadline_notify: deadline_notify.clone(),
         };
 
         task_group.spawn(fec_encoder_worker(
@@ -60,6 +64,7 @@ impl FecEncoder {
             basic_outbound,
             batch_states,
             network,
+            deadline_notify,
         ));
 
         encoder
@@ -124,6 +129,7 @@ impl FecEncoder {
 
             (group_id, packet_index)
         };
+        self.deadline_notify.notify_one();
 
         let fec_packet = FecPacket {
             group_id,
@@ -145,6 +151,11 @@ impl FecEncoder {
 
         Ok(outer_packet)
     }
+
+    pub(crate) fn clear_pending(&self) {
+        self.batch_states.lock().clear();
+        self.deadline_notify.notify_one();
+    }
 }
 
 /// 后台worker，处理满批次和超时批次
@@ -153,40 +164,71 @@ async fn fec_encoder_worker(
     basic_outbound: BasicOutbound,
     batch_states: Arc<Mutex<HashMap<Ipv4Addr, DestBatchState>>>,
     network: SharedNetworkAddr,
+    deadline_notify: Arc<Notify>,
 ) {
-    let mut timer = tokio::time::interval(Duration::from_millis(5));
-
     loop {
-        tokio::select! {
-            Some((src,dest, group_id, mut items)) = batch_rx.recv() => {
-                if let Err(e) = encode_and_send_parity(&network, src, dest, group_id, &mut items, &basic_outbound).await {
-                    log::warn!("encode_and_send_parity error for {} group {}: {:?}", dest, group_id, e);
-                }
-            }
-
-            _ = timer.tick() => {
-                let now = Instant::now();
-
-                let timeout_batches = {
-                    let mut states = batch_states.lock();
-                    let mut batches = Vec::new();
-                    for (dest, state) in states.iter_mut() {
-                        if !state.current_batch.is_empty() && now >= state.deadline {
-                            let items = std::mem::take(&mut state.current_batch);
-                            let group_id = state.group_id;
-                            state.group_id = state.group_id.wrapping_add(1);
-                            batches.push((state.src_ip,*dest, group_id, items));
-                        }
-                    }
-                    batches
-                };
-
-                for (src,dest, group_id, mut items) in timeout_batches {
+        let next_deadline = batch_states
+            .lock()
+            .values()
+            .filter(|state| !state.current_batch.is_empty())
+            .map(|state| state.deadline)
+            .min();
+        if let Some(deadline) = next_deadline {
+            tokio::select! {
+                Some((src,dest, group_id, mut items)) = batch_rx.recv() => {
                     if let Err(e) = encode_and_send_parity(&network, src, dest, group_id, &mut items, &basic_outbound).await {
-                        log::warn!("encode_and_send_parity timeout error for {} group {}: {:?}", dest, group_id, e);
+                        log::warn!("encode_and_send_parity error for {} group {}: {:?}", dest, group_id, e);
                     }
                 }
+                _ = tokio::time::sleep_until(deadline.into()) => {
+                    flush_expired_batches(&network, &basic_outbound, &batch_states).await;
+                }
+                _ = deadline_notify.notified() => {}
+                else => break,
             }
+        } else {
+            tokio::select! {
+                Some((src,dest, group_id, mut items)) = batch_rx.recv() => {
+                    if let Err(e) = encode_and_send_parity(&network, src, dest, group_id, &mut items, &basic_outbound).await {
+                        log::warn!("encode_and_send_parity error for {} group {}: {:?}", dest, group_id, e);
+                    }
+                }
+                _ = deadline_notify.notified() => {}
+                else => break,
+            }
+        }
+    }
+}
+
+async fn flush_expired_batches(
+    network: &SharedNetworkAddr,
+    basic_outbound: &BasicOutbound,
+    batch_states: &Arc<Mutex<HashMap<Ipv4Addr, DestBatchState>>>,
+) {
+    let now = Instant::now();
+    let timeout_batches = {
+        let mut states = batch_states.lock();
+        let mut batches = Vec::new();
+        for (dest, state) in states.iter_mut() {
+            if !state.current_batch.is_empty() && now >= state.deadline {
+                let items = std::mem::take(&mut state.current_batch);
+                let group_id = state.group_id;
+                state.group_id = state.group_id.wrapping_add(1);
+                batches.push((state.src_ip, *dest, group_id, items));
+            }
+        }
+        batches
+    };
+    for (src, dest, group_id, mut items) in timeout_batches {
+        if let Err(e) =
+            encode_and_send_parity(network, src, dest, group_id, &mut items, basic_outbound).await
+        {
+            log::warn!(
+                "encode_and_send_parity timeout error for {} group {}: {:?}",
+                dest,
+                group_id,
+                e
+            );
         }
     }
 }
@@ -283,6 +325,7 @@ mod tests {
             batch_states: Arc::new(Mutex::new(HashMap::new())),
             batch_tx,
             fec_auth_reserve: 0,
+            deadline_notify: Arc::new(Notify::new()),
         };
 
         let buffer = TransmissionBytes::zeroed(HEAD_LENGTH + 5);
@@ -322,6 +365,7 @@ mod tests {
             batch_states: Arc::new(Mutex::new(HashMap::new())),
             batch_tx,
             fec_auth_reserve: 0,
+            deadline_notify: Arc::new(Notify::new()),
         };
         let mut packet = NetPacket::new(TransmissionBytes::zeroed(u16::MAX as usize + 1)).unwrap();
         packet.set_src_id(0x0A00_0001);
@@ -341,6 +385,7 @@ mod tests {
             batch_states: Arc::new(Mutex::new(HashMap::new())),
             batch_tx,
             fec_auth_reserve: 0,
+            deadline_notify: Arc::new(Notify::new()),
         };
         let crypto = PacketCrypto::new_from_str(Some("fec-encrypted-inner")).unwrap();
         let plaintext = [9, 8, 7, 6, 5];
@@ -375,6 +420,7 @@ mod tests {
             batch_states: batch_states.clone(),
             batch_tx,
             fec_auth_reserve: 0,
+            deadline_notify: Arc::new(Notify::new()),
         };
         let src = Ipv4Addr::new(10, 0, 0, 1);
         let dest = Ipv4Addr::new(10, 0, 0, 2);

@@ -4,6 +4,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.security.SecureRandom;
 
 /**
  * VNT网络配置
@@ -42,6 +43,9 @@ public class VntConfig {
     private final List<String> portMapping;
     private final List<String> udpStun;
     private final List<String> tcpStun;
+    private final String subscription;
+    private final long subscriptionRevision;
+    private final String subscriptionInstanceId;
 
     private VntConfig(Builder builder) {
         this.servers = builder.servers;
@@ -74,6 +78,9 @@ public class VntConfig {
         this.portMapping = builder.portMapping;
         this.udpStun = builder.udpStun;
         this.tcpStun = builder.tcpStun;
+        this.subscription = builder.subscription;
+        this.subscriptionRevision = builder.subscriptionRevision;
+        this.subscriptionInstanceId = builder.subscriptionInstanceId;
     }
 
     /**
@@ -120,6 +127,11 @@ public class VntConfig {
         if (ip != null) json.put("ip", ip);
         if (certMode != null) json.put("cert_mode", certMode);
         if (mtu != null) json.put("mtu", mtu);
+        if (subscription != null) {
+            json.put("subscription", subscription);
+            json.put("subscription_revision", subscriptionRevision);
+            json.put("subscription_instance_id", subscriptionInstanceId);
+        }
 
         // 布尔值
         json.put("no_punch", noPunch);
@@ -203,6 +215,33 @@ public class VntConfig {
         private List<String> portMapping = new ArrayList<>();
         private List<String> udpStun = new ArrayList<>();
         private List<String> tcpStun = new ArrayList<>();
+        private String subscription;
+        private long subscriptionRevision;
+        private String subscriptionInstanceId;
+
+        /** Enables authenticated server management for this instance. */
+        public Builder setSubscription(String subscription, long appliedRevision) {
+            return setSubscription(subscription, appliedRevision, randomInstanceId());
+        }
+
+        /**
+         * Enables subscription synchronization with a task-stable instance ID.
+         * Persist and reuse instanceId while rebuilding the same Android VPN task.
+         */
+        public Builder setSubscription(String subscription, long appliedRevision, String instanceId) {
+            this.subscription = subscription;
+            this.subscriptionRevision = appliedRevision;
+            this.subscriptionInstanceId = instanceId;
+            return this;
+        }
+
+        private static String randomInstanceId() {
+            byte[] value = new byte[32];
+            new SecureRandom().nextBytes(value);
+            StringBuilder result = new StringBuilder(64);
+            for (byte item : value) result.append(String.format("%02x", item & 0xff));
+            return result.toString();
+        }
 
         /**
          * 添加服务器地址（必填）

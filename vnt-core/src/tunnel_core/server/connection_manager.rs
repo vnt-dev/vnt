@@ -1,16 +1,16 @@
-use crate::compression::PacketCompression;
-use crate::context::config::{Config, PunchRule, TurnRule};
+use crate::context::config::Config;
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{AppState, NetworkRoute, PeerInfoMap, ServerInfoCollection};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
-use crate::nat::AllowSubnetExternalRoute;
+use crate::protocol::client_message::SharedNodeIdentity;
 use crate::protocol::control_message::{RegistrationMode, RequestMessage, ResponseMessage};
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
-use crate::tunnel_core::server::inbound::{IpUpdateContext, ServerTurnInboundHandler};
+use crate::tunnel_core::server::inbound::ServerTurnInboundHandler;
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::tunnel_core::server::rpc::{RpcNotifier, ServerRPC};
 use crate::tunnel_core::server::transport::TransportClient;
@@ -23,6 +23,7 @@ use bytes::Bytes;
 use futures::stream::{FuturesUnordered, Stream, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -32,23 +33,17 @@ fn should_notify_reconnected(already_connected: bool, has_connected_once: bool) 
 
 pub struct InboundHandlerConfig {
     pub network_route: NetworkRoute,
-    pub ip_update: IpUpdateContext,
     pub server_info: ServerInfoCollection,
     pub nat_info: MyNatInfo,
     pub peer_map: PeerInfoMap,
     pub punch_backoff: PunchBackoff,
     pub puncher: NatPuncher,
-    pub punch_model: Arc<Vec<PunchRule>>,
     pub packet_crypto: PacketCrypto,
-    pub packet_compression: PacketCompression,
     pub enhanced_inbound: EnhancedInbound,
     pub fec_decoder: FecDecoder,
-    pub turn: Arc<Vec<TurnRule>>,
-    pub auto_sync_subnet: bool,
-    pub allow_ikev2: bool,
-    pub allow_wireguard: bool,
-    pub relay_subnets: AllowSubnetExternalRoute,
+    pub policy: RuntimePolicyStore,
     pub basic_outbound: BasicOutbound,
+    pub app_state: AppState,
 }
 
 pub struct ServerTurnManager {
@@ -59,12 +54,40 @@ pub struct ServerTurnManager {
     transport_client: TransportClient,
     event_script: EventScript,
     subnet_sync_supported: bool,
+    subscription_verified: Arc<AtomicBool>,
 }
 pub(crate) fn create_server_tunnel(
     app_state: AppState,
     config: &Config,
     packet_crypto: PacketCrypto,
     default_interface: Option<rustp2p_core::socket::LocalInterface>,
+    identity: SharedNodeIdentity,
+    client_instance_id: Arc<Vec<u8>>,
+) -> (
+    Vec<ServerTurnManager>,
+    ServerOutbound,
+    ServerRPC,
+    SharedRegistrationIp,
+) {
+    create_server_tunnel_with_registration_ip(
+        app_state,
+        config,
+        packet_crypto,
+        default_interface,
+        identity,
+        client_instance_id,
+        None,
+    )
+}
+
+pub(crate) fn create_server_tunnel_with_registration_ip(
+    app_state: AppState,
+    config: &Config,
+    packet_crypto: PacketCrypto,
+    default_interface: Option<rustp2p_core::socket::LocalInterface>,
+    identity: SharedNodeIdentity,
+    client_instance_id: Arc<Vec<u8>>,
+    registration_ip: Option<SharedRegistrationIp>,
 ) -> (
     Vec<ServerTurnManager>,
     ServerOutbound,
@@ -73,12 +96,18 @@ pub(crate) fn create_server_tunnel(
 ) {
     let mut rpc_notifier: HashMap<u32, RpcNotifier> = HashMap::new();
     let mut sender_map: HashMap<u32, Sender<(Bytes, Instant)>> = HashMap::new();
+    let mut subscription_verified_map = HashMap::new();
     let mut server_manager_list = Vec::with_capacity(config.server_addr.len());
-    let mut server_addr_list = Vec::with_capacity(config.server_addr.len());
-    let registration_ip = SharedRegistrationIp::new(config.ip.map(|ip| ip.ip()));
-    for (index, server_addr) in config.server_addr.iter().enumerate() {
-        let connect_reg_config =
-            config.to_connect_config(index, default_interface.clone(), registration_ip.clone());
+    let registration_ip =
+        registration_ip.unwrap_or_else(|| SharedRegistrationIp::new(config.ip.map(|ip| ip.ip())));
+    for (index, _server_addr) in config.server_addr.iter().enumerate() {
+        let connect_reg_config = config.to_connect_config(
+            index,
+            default_interface.clone(),
+            registration_ip.clone(),
+            identity.clone(),
+            client_instance_id.clone(),
+        );
 
         let server_id = index as u32;
 
@@ -92,17 +121,20 @@ pub(crate) fn create_server_tunnel(
             notifier.clone(),
             EventScript::new(config.event_script.clone()),
         );
-        server_addr_list.push((server_id, server_addr.clone()));
+        subscription_verified_map.insert(server_id, manager.subscription_verified.clone());
         rpc_notifier.insert(server_id, notifier);
         sender_map.insert(server_id, s);
         server_manager_list.push(manager);
     }
     let server_info_collection = app_state.server_info_collection.clone();
-    server_info_collection.update_server(server_addr_list);
     let tunnel_to_server =
         ServerOutbound::new(Arc::new(sender_map), server_info_collection, packet_crypto);
 
-    let server_rpc = ServerRPC::new(tunnel_to_server.clone(), rpc_notifier);
+    let server_rpc = ServerRPC::new(
+        tunnel_to_server.clone(),
+        rpc_notifier,
+        subscription_verified_map,
+    );
 
     (
         server_manager_list,
@@ -110,6 +142,20 @@ pub(crate) fn create_server_tunnel(
         server_rpc,
         registration_ip,
     )
+}
+
+pub(crate) fn server_addresses(
+    config: &Config,
+) -> Vec<(
+    u32,
+    crate::tunnel_core::server::transport::config::ProtocolAddress,
+)> {
+    config
+        .server_addr
+        .iter()
+        .enumerate()
+        .map(|(index, address)| (index as u32, address.clone()))
+        .collect()
 }
 
 impl ServerTurnManager {
@@ -129,6 +175,7 @@ impl ServerTurnManager {
             notifier,
             event_script,
             subnet_sync_supported: false,
+            subscription_verified: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn disconnect(&mut self) {
@@ -178,6 +225,7 @@ impl ServerTurnManager {
             .connect_timeout(connect_config, Duration::from_secs(10))
             .await?;
         let reg_msg = self.config.reg_msg_request(self.server_id, mode);
+        let subscription_registration = reg_msg.subscription.clone();
         let request_msg = RequestMessage::Reg(reg_msg);
         let encoded = request_msg.encode();
 
@@ -191,6 +239,25 @@ impl ServerTurnManager {
             &response,
             ResponseMessage::Reg(reg) if reg.subnet_sync_supported
         );
+        let subscription_verified = match (
+            self.config.managed.as_ref(),
+            subscription_registration.as_ref(),
+            &response,
+        ) {
+            (Some(managed), Some(registration), ResponseMessage::Reg(reg)) => reg
+                .subscription
+                .as_ref()
+                .is_some_and(|proof| managed.verify_server_proof(registration, proof)),
+            _ => false,
+        };
+        self.subscription_verified
+            .store(subscription_verified, Ordering::Release);
+        if self.config.managed.is_some() && !subscription_verified {
+            log::warn!(
+                "服务器 {} 未通过订阅链接凭据校验；该连接不会应用服务端配置",
+                self.config.server_addr
+            );
+        }
         match &response {
             ResponseMessage::Reg(_) => {}
             ResponseMessage::Error(_e) => {
@@ -200,6 +267,9 @@ impl ServerTurnManager {
                 self.disconnect();
             }
             ResponseMessage::FastReg(_) => {
+                self.disconnect();
+            }
+            ResponseMessage::SubscriptionConfig(_) => {
                 self.disconnect();
             }
         }
@@ -214,7 +284,17 @@ impl ServerTurnManager {
         config: Box<InboundHandlerConfig>,
         initially_connected: bool,
     ) {
-        let data_handler = ServerTurnInboundHandler::new(self.server_id, config);
+        let subscription_identity = self
+            .config
+            .managed
+            .as_ref()
+            .map(|managed| (managed.network_code.clone(), managed.device_id.clone()));
+        let data_handler = ServerTurnInboundHandler::new(
+            self.server_id,
+            config,
+            self.subscription_verified.clone(),
+            subscription_identity,
+        );
         data_handler.set_subnet_sync_supported(self.subnet_sync_supported);
         let Some(mut receiver) = self.receiver.take() else {
             unreachable!()
@@ -238,6 +318,10 @@ impl ServerTurnManager {
                     match &msg {
                         ResponseMessage::Reg(reg) => {
                             data_handler.set_subnet_sync_supported(reg.subnet_sync_supported);
+                            data_handler.set_server_identity(
+                                reg.server_instance_id.clone(),
+                                reg.multi_link_supported,
+                            );
                             let Some(_current_network) = data_handler.network_addr() else {
                                 log::error!("客户端当前虚拟网络状态不存在，5秒后重试");
                                 self.disconnect();
@@ -457,6 +541,10 @@ mod tests {
             gateway: [ip[0], ip[1], ip[2], 1].into(),
             server_version: "test".to_string(),
             subnet_sync_supported: false,
+            subscription_config_supported: false,
+            subscription: None,
+            server_instance_id: vec![2; 32],
+            multi_link_supported: true,
         })
     }
 

@@ -1,5 +1,4 @@
-use crate::compression::PacketCompression;
-use crate::context::config::{DeviceMode, PunchRule, TurnRule, allow_punch, punch_model_for};
+use crate::context::config::{DeviceMode, VirtualIp, allow_punch, punch_model_for};
 use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{
     NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection, SharedNetworkAddr,
@@ -10,22 +9,25 @@ use crate::event_script::EventScript;
 #[cfg(not(target_os = "android"))]
 use crate::event_script::EventScriptType;
 use crate::fec::FecDecoder;
-use crate::nat::AllowSubnetExternalRoute;
+use crate::nat::{AllowSubnetExternalRoute, NetInput};
 use crate::protocol::client_message::PunchInfo;
 use crate::protocol::control_message::{
     ClientSimpleInfoList, FastRegRequestMsg, RequestMessage, ResponseMessage, SubnetSyncResponse,
-    encode_subnet_sync_request,
+    SubscriptionConfigEnvelope, encode_subnet_sync_request,
 };
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::rpc_message::RpcMessageResponse;
 use crate::protocol::transmission::TransmissionBytes;
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tun::DeviceIOManager;
+#[cfg(not(target_os = "android"))]
+use crate::tun::{DeviceConfig, DeviceReconfigureAction};
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::tunnel_core::server::rpc::RpcNotifier;
 use crate::tunnel_core::server::transport::TransportClient;
 use crate::tunnel_core::server::transport::config::SharedRegistrationIp;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 use anyhow::Context;
 use anyhow::bail;
 use bytes::Bytes;
@@ -36,34 +38,217 @@ use prost::Message;
 use rustp2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
-#[cfg(target_os = "android")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AndroidIpUpdateRequest {
+#[cfg(any(target_os = "android", test))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TunRebuildRequest {
     pub request_id: u64,
     pub ip: Ipv4Addr,
     pub prefix_len: u8,
+    pub mtu: u16,
+    /// Android cannot rename the kernel TUN interface. This is the VPN
+    /// session label consumed by Java's VpnService.Builder.
+    pub session_name: Option<String>,
+    pub routes: Vec<NetInput>,
 }
 
-#[cfg(target_os = "android")]
-pub type AndroidIpUpdateCallback =
-    Arc<dyn Fn(AndroidIpUpdateRequest) -> anyhow::Result<()> + Send + Sync + 'static>;
+#[cfg(any(target_os = "android", test))]
+impl serde::Serialize for TunRebuildRequest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
 
-#[cfg(target_os = "android")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AndroidPreparedUpdate {
-    Ip(AndroidIpUpdateRequest),
-    Route,
+        let mut state = serializer.serialize_struct("TunRebuildRequest", 6)?;
+        state.serialize_field("request_id", &self.request_id)?;
+        state.serialize_field("ip", &self.ip)?;
+        state.serialize_field("prefix_len", &self.prefix_len)?;
+        state.serialize_field("mtu", &self.mtu)?;
+        state.serialize_field("session_name", &self.session_name)?;
+        // Keep the JNI payload compact and independent from the internal
+        // route representation. Java receives the stable `cidr,target` form.
+        let routes = self
+            .routes
+            .iter()
+            .map(|route| format!("{},{}", route.net, route.target_ip))
+            .collect::<Vec<_>>();
+        state.serialize_field("routes", &routes)?;
+        state.end()
+    }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
+#[derive(Debug)]
+pub(crate) struct AndroidTunRebuildError {
+    pub restart_required: bool,
+    message: String,
+}
+
+#[cfg(any(target_os = "android", test))]
+impl AndroidTunRebuildError {
+    fn keep_current(message: impl Into<String>) -> Self {
+        Self {
+            restart_required: false,
+            message: message.into(),
+        }
+    }
+}
+
+#[cfg(any(target_os = "android", test))]
+impl std::fmt::Display for AndroidTunRebuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[cfg(any(target_os = "android", test))]
+impl std::error::Error for AndroidTunRebuildError {}
+
+#[cfg(any(target_os = "android", test))]
+struct PendingTunRebuild {
+    request: TunRebuildRequest,
+    delivered: bool,
+    replacing: bool,
+    completion: tokio::sync::oneshot::Sender<Result<(), String>>,
+}
+
+#[cfg(any(target_os = "android", test))]
 #[derive(Default)]
-struct AndroidIpUpdateState {
+struct TunRebuildState {
     next_request_id: u64,
-    pending: Vec<AndroidIpUpdateRequest>,
-    prepared: Option<AndroidPreparedUpdate>,
-    callback: Option<AndroidIpUpdateCallback>,
+    pending: Option<PendingTunRebuild>,
+    closed: bool,
+}
+
+/// Pull-only bridge for Android TUN replacement. It deliberately has no Java
+/// references: Java waits for requests through JNI and later submits an fd.
+#[cfg(any(target_os = "android", test))]
+#[derive(Clone, Default)]
+pub struct TunRebuildCoordinator {
+    state: Arc<parking_lot::Mutex<TunRebuildState>>,
+    changed: Arc<tokio::sync::Notify>,
+}
+
+#[cfg(any(target_os = "android", test))]
+impl TunRebuildCoordinator {
+    pub async fn request(
+        &self,
+        ip: Ipv4Addr,
+        prefix_len: u8,
+        mtu: u16,
+        routes: Vec<NetInput>,
+        session_name: Option<String>,
+    ) -> anyhow::Result<()> {
+        let (request_id, completion) = {
+            let mut state = self.state.lock();
+            if state.closed {
+                anyhow::bail!("TUN 重建协调器已经停止");
+            }
+            if state.pending.is_some() {
+                anyhow::bail!("已有 TUN 重建请求正在处理");
+            }
+            state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
+            let request_id = state.next_request_id;
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            state.pending = Some(PendingTunRebuild {
+                request: TunRebuildRequest {
+                    request_id,
+                    ip,
+                    prefix_len,
+                    mtu,
+                    session_name,
+                    routes,
+                },
+                delivered: false,
+                replacing: false,
+                completion: sender,
+            });
+            (request_id, receiver)
+        };
+        self.changed.notify_waiters();
+        match tokio::time::timeout(Duration::from_secs(30), completion).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(error))) => Err(AndroidTunRebuildError::keep_current(error).into()),
+            Ok(Err(_)) => {
+                Err(AndroidTunRebuildError::keep_current("TUN 重建完成通道已关闭").into())
+            }
+            Err(_) => {
+                self.finish(request_id, Err("等待 Android TUN 重建超时".to_string()))
+                    .await;
+                Err(AndroidTunRebuildError::keep_current("等待 Android TUN 重建超时").into())
+            }
+        }
+    }
+
+    pub async fn wait_next(&self) -> anyhow::Result<TunRebuildRequest> {
+        loop {
+            let notified = self.changed.notified();
+            {
+                let mut state = self.state.lock();
+                if state.closed {
+                    anyhow::bail!("TUN 重建协调器已经停止");
+                }
+                if let Some(pending) = state.pending.as_mut()
+                    && !pending.delivered
+                {
+                    pending.delivered = true;
+                    return Ok(pending.request.clone());
+                }
+            }
+            notified.await;
+        }
+    }
+
+    async fn claim(&self, request_id: u64) -> anyhow::Result<TunRebuildRequest> {
+        let mut state = self.state.lock();
+        let pending = state
+            .pending
+            .as_mut()
+            .filter(|pending| pending.request.request_id == request_id && !pending.replacing)
+            .context("TUN 重建请求不存在、已过期或正在替换")?;
+        pending.replacing = true;
+        Ok(pending.request.clone())
+    }
+
+    pub async fn finish(&self, request_id: u64, result: Result<(), String>) {
+        let completion = {
+            let mut state = self.state.lock();
+            if state
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.request.request_id == request_id)
+            {
+                state.pending.take().map(|pending| pending.completion)
+            } else {
+                None
+            }
+        };
+        if let Some(completion) = completion {
+            let _ = completion.send(result);
+        }
+        self.changed.notify_waiters();
+    }
+
+    pub async fn reject(&self, request_id: u64, reason: String) -> anyhow::Result<()> {
+        self.claim(request_id).await?;
+        self.finish(request_id, Err(reason)).await;
+        Ok(())
+    }
+
+    pub fn close(&self) {
+        let completion = {
+            let mut state = self.state.lock();
+            state.closed = true;
+            state.pending.take().map(|pending| pending.completion)
+        };
+        if let Some(completion) = completion {
+            let _ = completion.send(Err("网络实例已经停止".to_string()));
+        }
+        self.changed.notify_waiters();
+    }
 }
 
 #[derive(Clone)]
@@ -76,9 +261,18 @@ pub(crate) struct IpUpdateContext {
     device_mode: DeviceMode,
     event_script: EventScript,
     server_addrs: Vec<String>,
+    #[cfg(test)]
     fixed_ip: bool,
     #[cfg(target_os = "android")]
-    android: Arc<parking_lot::Mutex<AndroidIpUpdateState>>,
+    tun_rebuild: TunRebuildCoordinator,
+    #[cfg(target_os = "android")]
+    tun_rebuild_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ManagedNetworkApply {
+    Live,
+    ComponentReload,
 }
 
 impl IpUpdateContext {
@@ -91,6 +285,7 @@ impl IpUpdateContext {
         event_script: EventScript,
         server_addrs: Vec<String>,
     ) -> Self {
+        #[cfg(test)]
         let fixed_ip = registration_ip.get().is_some();
         Self {
             network,
@@ -101,9 +296,12 @@ impl IpUpdateContext {
             device_mode,
             event_script,
             server_addrs,
+            #[cfg(test)]
             fixed_ip,
             #[cfg(target_os = "android")]
-            android: Arc::new(parking_lot::Mutex::new(AndroidIpUpdateState::default())),
+            tun_rebuild: TunRebuildCoordinator::default(),
+            #[cfg(target_os = "android")]
+            tun_rebuild_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -126,11 +324,8 @@ impl IpUpdateContext {
         })
     }
 
-    fn parse_update_ip(payload: &[u8]) -> anyhow::Result<Ipv4Addr> {
-        let octets: [u8; 4] = payload
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("UpdateIp payload 必须为 4 字节"))?;
-        Ok(Ipv4Addr::from(octets))
+    pub(crate) fn set_registered_ip(&self, ip: Ipv4Addr) {
+        self.registration_ip.set(ip);
     }
 
     fn fast_reg_packet(ip: Ipv4Addr) -> anyhow::Result<Bytes> {
@@ -158,13 +353,226 @@ impl IpUpdateContext {
         }
     }
 
+    #[cfg(all(test, not(target_os = "android")))]
     pub async fn apply_and_fast_register(&self, new_ip: Ipv4Addr) -> anyhow::Result<bool> {
+        self.apply_ip(new_ip, false).await
+    }
+
+    /// Applies the managed virtual address and the effective MTU as a single
+    /// runtime transaction. This is intentionally separate from `UpdateIp`:
+    /// a server-originated address update must not silently alter the local
+    /// MTU, while a revisioned managed configuration may change both.
+    pub(crate) async fn apply_managed_network(
+        &self,
+        target: VirtualIp,
+        mtu: u16,
+        routes: Vec<NetInput>,
+        tun_name: Option<Option<String>>,
+    ) -> anyhow::Result<ManagedNetworkApply> {
+        #[cfg(not(target_os = "android"))]
+        let _ = &routes;
+        let current = self
+            .network
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("客户端尚未完成网络注册"))?;
+        // Ipv4Net preserves the host address it was constructed with. Compare
+        // canonical network addresses rather than the Ipv4Net values
+        // themselves, otherwise 10.26.0.9/24 and 10.26.0.10/24 appear to be
+        // different networks merely because their host bits differ.
+        if target.prefix_len() != current.prefix_len
+            || target.network().network() != current.network().network()
+        {
+            bail!("受管 IP 的前缀或虚拟网段变化需要重启实例");
+        }
+        #[cfg(not(target_os = "android"))]
+        return self
+            .apply_managed_network_desktop(target.ip(), mtu, tun_name)
+            .await;
+
+        #[cfg(target_os = "android")]
+        return self
+            .apply_managed_android_network(target.ip(), mtu, routes, tun_name)
+            .await;
+    }
+
+    #[cfg(not(target_os = "android"))]
+    async fn apply_managed_network_desktop(
+        &self,
+        new_ip: Ipv4Addr,
+        mtu: u16,
+        tun_name: Option<Option<String>>,
+    ) -> anyhow::Result<ManagedNetworkApply> {
         let _guard = self.update_lock.lock().await;
         let current = self
             .network
             .get()
             .ok_or_else(|| anyhow::anyhow!("客户端尚未完成网络注册"))?;
-        if self.fixed_ip && new_ip != current.ip {
+        let updated = Self::validate_target(current, new_ip)?;
+        let ip_changed = updated.ip != current.ip;
+        let mut action = ManagedNetworkApply::Live;
+        if self.device_mode.has_device() {
+            if let Some(tun_name) = tun_name {
+                let mut config = DeviceConfig::default()
+                    .set_device_mode(self.device_mode)
+                    .set_mtu(mtu);
+                if let Some(tun_name) = tun_name {
+                    config = config.set_tun_name(tun_name);
+                }
+                if self.device_mode == DeviceMode::Tap {
+                    config = config.set_mac_addr(crate::ethernet::mac_from_ip(new_ip).octets());
+                }
+                action = match self
+                    .device_io_manager
+                    .reconfigure_managed(config, new_ip, current.prefix_len)
+                    .await?
+                {
+                    DeviceReconfigureAction::Live => ManagedNetworkApply::Live,
+                    DeviceReconfigureAction::Rebuilt => ManagedNetworkApply::ComponentReload,
+                };
+            } else {
+                self.device_io_manager
+                    .set_network_and_mtu(new_ip, current.prefix_len, mtu)
+                    .await?;
+            }
+        }
+        self.network.set(updated);
+        self.registration_ip.set(new_ip);
+        if ip_changed {
+            self.event_script
+                .notify(
+                    EventScriptType::IpUpdated,
+                    &[
+                        ("old-ip", current.ip.to_string()),
+                        ("new-ip", updated.ip.to_string()),
+                        ("prefix-length", updated.prefix_len.to_string()),
+                        (
+                            "gateway",
+                            updated
+                                .gateway
+                                .map(|gateway| gateway.to_string())
+                                .unwrap_or_else(|| "-".to_string()),
+                        ),
+                        ("broadcast", updated.broadcast.to_string()),
+                        ("server", self.server_addrs.join(",")),
+                    ],
+                )
+                .await;
+            self.send_fast_reg(new_ip).await;
+        }
+        Ok(action)
+    }
+
+    #[cfg(target_os = "android")]
+    async fn apply_managed_android_network(
+        &self,
+        new_ip: Ipv4Addr,
+        mtu: u16,
+        routes: Vec<NetInput>,
+        tun_name: Option<Option<String>>,
+    ) -> anyhow::Result<ManagedNetworkApply> {
+        let current = self
+            .network
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("客户端尚未完成网络注册"))?;
+        Self::validate_target(current, new_ip)?;
+        if !self.device_mode.has_device() {
+            let updated = Self::validate_target(current, new_ip)?;
+            let changed = updated.ip != current.ip;
+            self.network.set(updated);
+            self.registration_ip.set(new_ip);
+            if changed {
+                self.send_fast_reg(new_ip).await;
+            }
+            return Ok(ManagedNetworkApply::Live);
+        }
+
+        // Java pulls this request through JNI. Do not hold update_lock while
+        // waiting, because replace_tun_task acquires it to commit the fd.
+        let _serial = self.tun_rebuild_lock.lock().await;
+        self.tun_rebuild
+            .request(new_ip, current.prefix_len, mtu, routes, tun_name.flatten())
+            .await?;
+        Ok(ManagedNetworkApply::ComponentReload)
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn tun_rebuild_coordinator(&self) -> TunRebuildCoordinator {
+        self.tun_rebuild.clone()
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn replace_android_tun_task(
+        &self,
+        request_id: u64,
+        tun_fd: std::os::fd::OwnedFd,
+    ) -> anyhow::Result<()> {
+        let result = async {
+            let _guard = self.update_lock.lock().await;
+            // Claim only after acquiring the device transaction lock. A
+            // 30-second request timeout can then cancel an fd that is still
+            // waiting behind another device update, before it changes TUN.
+            let request = self.tun_rebuild.claim(request_id).await?;
+            let current = self.network.get().context("客户端尚未完成网络注册")?;
+            let updated = Self::validate_target(current, request.ip)?;
+            self.device_io_manager
+                .replace_task_fd(tun_fd, request.ip, request.prefix_len, request.mtu)
+                .await?;
+            let ip_changed = updated.ip != current.ip;
+            self.network.set(updated);
+            self.registration_ip.set(request.ip);
+            if ip_changed {
+                self.send_fast_reg(request.ip).await;
+            }
+            Ok(())
+        }
+        .await;
+        self.tun_rebuild
+            .finish(
+                request_id,
+                result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|error| format!("{error:#}")),
+            )
+            .await;
+        result
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn reject_android_tun_rebuild(
+        &self,
+        request_id: u64,
+        reason: String,
+    ) -> anyhow::Result<()> {
+        self.tun_rebuild.reject(request_id, reason).await
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn request_android_route_rebuild(&self, routes: Vec<NetInput>) -> anyhow::Result<()> {
+        let _serial = self.tun_rebuild_lock.lock().await;
+        if !self.device_mode.has_device() {
+            return Ok(());
+        }
+        let network = self.network.get().context("客户端尚未完成网络注册")?;
+        let mtu = self.device_io_manager.current_mtu().await?;
+        self.tun_rebuild
+            .request(network.ip, network.prefix_len, mtu, routes, None)
+            .await
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn close_android_tun_rebuild(&self) {
+        self.tun_rebuild.close();
+    }
+
+    #[cfg(all(test, not(target_os = "android")))]
+    async fn apply_ip(&self, new_ip: Ipv4Addr, managed: bool) -> anyhow::Result<bool> {
+        let _guard = self.update_lock.lock().await;
+        let current = self
+            .network
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("客户端尚未完成网络注册"))?;
+        if !managed && self.fixed_ip && new_ip != current.ip {
             bail!("服务器不能修改客户端配置的固定虚拟 IP")
         }
         let updated = Self::validate_target(current, new_ip)?;
@@ -204,181 +612,26 @@ impl IpUpdateContext {
             self.send_fast_reg(new_ip).await;
             Ok(true)
         }
-
-        #[cfg(target_os = "android")]
-        {
-            let _ = updated;
-            if current.ip == new_ip {
-                self.send_fast_reg(new_ip).await;
-                return Ok(true);
-            }
-            let (request, callback) = {
-                let mut state = self.android.lock();
-                let request = if let Some(existing) = state
-                    .pending
-                    .iter()
-                    .find(|request| request.ip == new_ip)
-                    .copied()
-                {
-                    existing
-                } else {
-                    state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
-                    let request = AndroidIpUpdateRequest {
-                        request_id: state.next_request_id,
-                        ip: new_ip,
-                        prefix_len: current.prefix_len,
-                    };
-                    state.pending.push(request);
-                    request
-                };
-                (request, state.callback.clone())
-            };
-            let callback = callback.context("Android IP 更新监听器尚未注册")?;
-            callback(request)?;
-            Ok(false)
-        }
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn set_android_callback(&self, callback: AndroidIpUpdateCallback) {
-        self.android.lock().callback = Some(callback);
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn prepare_android_update(
-        &self,
-        request_id: u64,
-        ip: Ipv4Addr,
-    ) -> anyhow::Result<()> {
-        let _guard = self.update_lock.lock().await;
-        let request = {
-            let state = self.android.lock();
-            if state.prepared.is_some() {
-                bail!("另一个 Android TUN 更新请求正在切换");
-            }
-            state
-                .pending
-                .iter()
-                .find(|request| request.request_id == request_id && request.ip == ip)
-                .copied()
-                .context("IP 更新请求不存在或已经失效")?
-        };
-        Self::validate_target(
-            self.network.get().context("客户端尚未完成网络注册")?,
-            request.ip,
-        )?;
-        if self.device_mode.has_device() {
-            self.device_io_manager.suspend_android().await?;
-        }
-        self.android.lock().prepared = Some(AndroidPreparedUpdate::Ip(request));
-        Ok(())
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn complete_android_update(
-        &self,
-        request_id: u64,
-        ip: Ipv4Addr,
-        tun_fd: Option<std::os::fd::OwnedFd>,
-    ) -> anyhow::Result<()> {
-        let _guard = self.update_lock.lock().await;
-        let request = self
-            .android
-            .lock()
-            .prepared
-            .and_then(|prepared| match prepared {
-                AndroidPreparedUpdate::Ip(request)
-                    if request.request_id == request_id && request.ip == ip =>
-                {
-                    Some(request)
-                }
-                _ => None,
-            })
-            .context("IP 更新请求尚未准备或已经失效")?;
-        let updated = Self::validate_target(
-            self.network.get().context("客户端尚未完成网络注册")?,
-            request.ip,
-        )?;
-        if self.device_mode.has_device() {
-            self.device_io_manager
-                .resume_android(
-                    tun_fd.context("缺少新的 Android VPN fd")?,
-                    ip,
-                    request.prefix_len,
-                )
-                .await?;
-        } else if tun_fd.is_some() {
-            bail!("无 TUN 模式不能传入 VPN fd");
-        }
-        self.network.set(updated);
-        self.registration_ip.set(ip);
-        {
-            let mut state = self.android.lock();
-            state
-                .pending
-                .retain(|pending| pending.request_id > request_id);
-            state.prepared = None;
-        }
-        self.send_fast_reg(ip).await;
-        Ok(())
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn prepare_android_route_update(&self) -> anyhow::Result<()> {
-        let _guard = self.update_lock.lock().await;
-        {
-            let state = self.android.lock();
-            if state.prepared.is_some() {
-                bail!("另一个 Android TUN 更新请求正在切换");
-            }
-        }
-        if !self.device_mode.has_device() {
-            bail!("无 TUN 模式不能更新 Android VPN 路由");
-        }
-        self.network.get().context("客户端尚未完成网络注册")?;
-        self.device_io_manager.suspend_android().await?;
-        self.android.lock().prepared = Some(AndroidPreparedUpdate::Route);
-        Ok(())
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn complete_android_route_update(
-        &self,
-        tun_fd: std::os::fd::OwnedFd,
-    ) -> anyhow::Result<()> {
-        let _guard = self.update_lock.lock().await;
-        if self.android.lock().prepared != Some(AndroidPreparedUpdate::Route) {
-            bail!("路由更新请求尚未准备或已经失效");
-        }
-        let network = self.network.get().context("客户端尚未完成网络注册")?;
-        self.device_io_manager
-            .resume_android(tun_fd, network.ip, network.prefix_len)
-            .await?;
-        self.android.lock().prepared = None;
-        Ok(())
     }
 }
 
 pub(crate) struct ServerTurnInboundHandler {
     server_id: u32,
     network_route: NetworkRoute,
-    ip_update: IpUpdateContext,
     server_info: ServerInfoCollection,
     nat_info: MyNatInfo,
     peer_map: PeerInfoMap,
     punch_backoff: PunchBackoff,
     puncher: NatPuncher,
-    punch_model: Arc<Vec<PunchRule>>,
     packet_crypto: PacketCrypto,
-    packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
-    turn: Arc<Vec<TurnRule>>,
-    auto_sync_subnet: bool,
-    allow_ikev2: bool,
-    allow_wireguard: bool,
-    relay_subnets: AllowSubnetExternalRoute,
+    policy: RuntimePolicyStore,
     basic_outbound: crate::tunnel_core::outbound::BasicOutbound,
+    app_state: crate::context::AppState,
+    subscription_verified: Arc<AtomicBool>,
+    subscription_identity: Option<(String, String)>,
+    last_unverified_push_log: Arc<AtomicI64>,
 }
 
 fn valid_server_relay_ipv4(
@@ -422,28 +675,27 @@ impl ServerTurnInboundHandler {
     pub fn new(
         server_id: u32,
         config: Box<super::connection_manager::InboundHandlerConfig>,
+        subscription_verified: Arc<AtomicBool>,
+        subscription_identity: Option<(String, String)>,
     ) -> Self {
         let config = *config;
         Self {
             server_id,
             network_route: config.network_route,
-            ip_update: config.ip_update,
             server_info: config.server_info,
             nat_info: config.nat_info,
             peer_map: config.peer_map,
             punch_backoff: config.punch_backoff,
             puncher: config.puncher,
-            punch_model: config.punch_model,
             packet_crypto: config.packet_crypto,
-            packet_compression: config.packet_compression,
             enhanced_inbound: config.enhanced_inbound,
             fec_decoder: config.fec_decoder,
-            turn: config.turn,
-            auto_sync_subnet: config.auto_sync_subnet,
-            allow_ikev2: config.allow_ikev2,
-            allow_wireguard: config.allow_wireguard,
-            relay_subnets: config.relay_subnets,
+            policy: config.policy,
             basic_outbound: config.basic_outbound,
+            app_state: config.app_state,
+            subscription_verified,
+            subscription_identity,
+            last_unverified_push_log: Arc::new(AtomicI64::new(0)),
         }
     }
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
@@ -459,7 +711,7 @@ impl ServerTurnInboundHandler {
     fn get_punch_info(&self, target: Ipv4Addr) -> Option<PunchInfo> {
         self.nat_info.get().map(|info| PunchInfo {
             nat_info: self.filter_ip(info),
-            punch_model: punch_model_for(&self.punch_model, &target),
+            punch_model: punch_model_for(&self.policy.load().punch_model, &target),
         })
     }
     fn update_peer_nat_info(&self, ip: Ipv4Addr, nat_info: NatInfo) {
@@ -480,11 +732,12 @@ impl ServerTurnInboundHandler {
         let net_packet = NetPacket::new(data)?;
         let src = net_packet.src_id().into();
         let msg_type = net_packet.msg_type()?;
-        let mut net_packet = self.packet_compression.decompress(net_packet)?;
+        let policy = self.policy.load();
+        let mut net_packet = policy.packet_compression.decompress(net_packet)?;
 
         match msg_type {
             MsgType::Ikev2Relay | MsgType::WireGuardRelay
-                if server_relay_allowed(msg_type, self.allow_ikev2, self.allow_wireguard) =>
+                if server_relay_allowed(msg_type, policy.allow_ikev2, policy.allow_wireguard) =>
             {
                 if !valid_server_relay_ipv4(
                     net_packet.payload(),
@@ -492,7 +745,7 @@ impl ServerTurnInboundHandler {
                     Ipv4Addr::from(net_packet.dest_id()),
                     network_addr.ip,
                     &self.network_route,
-                    &self.relay_subnets,
+                    &policy.relay_subnets,
                 ) {
                     return Ok(());
                 }
@@ -556,13 +809,6 @@ impl ServerTurnInboundHandler {
                 let response = RpcMessageResponse::decode(net_packet.payload())?;
                 rpc_notifier.notify_response(response);
             }
-            MsgType::UpdateIp => {
-                self.ip_update
-                    .apply_and_fast_register(IpUpdateContext::parse_update_ip(
-                        net_packet.payload(),
-                    )?)
-                    .await?;
-            }
             MsgType::FastReg => match ResponseMessage::from_slice(net_packet.payload())? {
                 ResponseMessage::FastReg(response) if response.success => {
                     log::info!("服务端 {} 快速注册成功", self.server_id);
@@ -585,11 +831,40 @@ impl ServerTurnInboundHandler {
                     );
                 }
             },
-            MsgType::SubnetSyncRes if self.auto_sync_subnet => {
+            MsgType::SubnetSyncRes if policy.auto_sync_subnet => {
                 let response = SubnetSyncResponse::from_slice(net_packet.payload())?;
                 self.server_info
                     .update_subnet_snapshot(self.server_id, response);
                 self.refresh_automatic_subnet_routes(network_addr.ip);
+            }
+            MsgType::SubscriptionConfigPush => {
+                if !self.subscription_verified.load(Ordering::Acquire) {
+                    let now = crate::utils::time::now_ts_ms();
+                    let last = self.last_unverified_push_log.load(Ordering::Relaxed);
+                    if now.saturating_sub(last) >= 10_000
+                        && self
+                            .last_unverified_push_log
+                            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok()
+                    {
+                        log::warn!(
+                            "服务器 {} 未通过订阅链接凭据校验，已忽略其下发的配置",
+                            self.server_id
+                        );
+                    }
+                    return Ok(());
+                }
+                let config = SubscriptionConfigEnvelope::from_slice(net_packet.payload())?;
+                if self.subscription_identity.as_ref().is_none_or(|identity| {
+                    identity.0 != config.network_code || identity.1 != config.device_id
+                }) {
+                    log::warn!(
+                        "服务器 {} 下发了不匹配的订阅链接管理身份，已忽略",
+                        self.server_id
+                    );
+                    return Ok(());
+                }
+                self.app_state.push_subscription_config(config);
             }
             _ => {}
         }
@@ -665,9 +940,6 @@ impl ServerTurnInboundHandler {
             }
             if raw.ttl() >= 1 {
                 self.basic_outbound.flood_direct_p2p(&raw, None);
-                self.basic_outbound
-                    .flood_connected_servers(raw, Some(self.server_id))
-                    .await;
             }
         }
         self.process_plain_packet(network_addr, transport_client, net_packet)
@@ -692,7 +964,11 @@ impl ServerTurnInboundHandler {
                 .await;
         }
 
-        let net_packet = self.packet_compression.decompress(net_packet)?;
+        let net_packet = self
+            .policy
+            .load()
+            .packet_compression
+            .decompress(net_packet)?;
         self.process_decompressed_packet(
             network_addr,
             transport_client,
@@ -737,7 +1013,7 @@ impl ServerTurnInboundHandler {
                 }
             }
             MsgType::PunchStart1 => {
-                if !allow_punch(&self.turn, &src) {
+                if !allow_punch(&self.policy.load().turn, &src) {
                     log::debug!("ignore configured turn target PunchStart1 from {src}");
                     return Ok(());
                 }
@@ -771,7 +1047,7 @@ impl ServerTurnInboundHandler {
                 }
             }
             MsgType::PunchStart2 => {
-                if !allow_punch(&self.turn, &src) {
+                if !allow_punch(&self.policy.load().turn, &src) {
                     log::debug!("ignore configured turn target PunchStart2 from {src}");
                     return Ok(());
                 }
@@ -839,7 +1115,7 @@ impl ServerTurnInboundHandler {
         &self,
         transport_client: &mut TransportClient,
     ) -> anyhow::Result<()> {
-        if self.auto_sync_subnet
+        if self.policy.load().auto_sync_subnet
             && let Some(known_hash) = self.server_info.subnet_sync_request_hash(self.server_id)
         {
             let payload = encode_subnet_sync_request(&known_hash);
@@ -863,6 +1139,10 @@ impl ServerTurnInboundHandler {
     }
     pub fn set_server_version(&self, version: String) {
         self.server_info.set_server_version(self.server_id, version);
+    }
+    pub fn set_server_identity(&self, instance_id: Vec<u8>, supported: bool) {
+        self.server_info
+            .set_server_identity(self.server_id, instance_id, supported);
     }
     pub fn set_subnet_sync_supported(&self, supported: bool) {
         self.server_info
@@ -1073,13 +1353,27 @@ mod tests {
         ] {
             assert!(IpUpdateContext::validate_target(current, invalid).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn managed_ip_change_inside_same_prefix_is_live() {
+        let TestUpdateContext {
+            context,
+            network: shared_network,
+            registration_ip,
+            ..
+        } = update_context(DeviceMode::No, true, 1);
+        let target = VirtualIp::new(Ipv4Addr::new(10, 26, 0, 10), 24).unwrap();
 
         assert_eq!(
-            IpUpdateContext::parse_update_ip(&[10, 26, 0, 9]).unwrap(),
-            Ipv4Addr::new(10, 26, 0, 9)
+            context
+                .apply_managed_network(target, crate::core::DEFAULT_MTU, Vec::new(), None)
+                .await
+                .unwrap(),
+            ManagedNetworkApply::Live
         );
-        assert!(IpUpdateContext::parse_update_ip(&[10, 26, 0]).is_err());
-        assert!(IpUpdateContext::parse_update_ip(&[10, 26, 0, 9, 1]).is_err());
+        assert_eq!(shared_network.ip(), Some(Ipv4Addr::new(10, 26, 0, 10)));
+        assert_eq!(registration_ip.get(), Some(Ipv4Addr::new(10, 26, 0, 10)));
     }
 
     #[test]
@@ -1176,5 +1470,77 @@ mod tests {
         assert!(context.apply_and_fast_register(new_ip).await.unwrap());
         assert_eq!(shared_network.ip(), Some(new_ip));
         assert_eq!(registration_ip.get(), Some(new_ip));
+    }
+
+    #[tokio::test]
+    async fn tun_rebuild_request_is_delivered_once_and_completed_by_java_side() {
+        let coordinator = TunRebuildCoordinator::default();
+        let request_coordinator = coordinator.clone();
+        let apply = tokio::spawn(async move {
+            request_coordinator
+                .request(
+                    Ipv4Addr::new(10, 26, 0, 9),
+                    24,
+                    1380,
+                    Vec::new(),
+                    Some("Managed VPN".to_string()),
+                )
+                .await
+        });
+
+        let request = tokio::time::timeout(Duration::from_secs(1), coordinator.wait_next())
+            .await
+            .expect("request should wake a blocked Java waiter")
+            .unwrap();
+        assert_eq!(request.ip, Ipv4Addr::new(10, 26, 0, 9));
+        assert_eq!(request.prefix_len, 24);
+        assert_eq!(request.mtu, 1380);
+        assert_eq!(request.session_name.as_deref(), Some("Managed VPN"));
+        assert_eq!(
+            coordinator.claim(request.request_id).await.unwrap(),
+            request,
+            "the Java-side fd handoff claims exactly the delivered request"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), coordinator.wait_next())
+                .await
+                .is_err()
+        );
+
+        coordinator.finish(request.request_id, Ok(())).await;
+        assert!(apply.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn tun_rebuild_close_wakes_waiters_and_rejects_pending_request() {
+        let coordinator = TunRebuildCoordinator::default();
+        assert!(!AndroidTunRebuildError::keep_current("test").restart_required);
+
+        let request_coordinator = coordinator.clone();
+        let rejected = tokio::spawn(async move {
+            request_coordinator
+                .request(Ipv4Addr::new(10, 26, 0, 9), 24, 1380, Vec::new(), None)
+                .await
+        });
+        let request = coordinator.wait_next().await.unwrap();
+        coordinator
+            .reject(request.request_id, "VPN builder failed".to_string())
+            .await
+            .unwrap();
+        assert!(rejected.await.unwrap().is_err());
+
+        let waiter_coordinator = coordinator.clone();
+        let waiter = tokio::spawn(async move { waiter_coordinator.wait_next().await });
+        tokio::task::yield_now().await;
+        coordinator.close();
+        assert!(waiter.await.unwrap().is_err());
+
+        let request_coordinator = coordinator.clone();
+        assert!(
+            request_coordinator
+                .request(Ipv4Addr::new(10, 26, 0, 9), 24, 1380, Vec::new(), None)
+                .await
+                .is_err()
+        );
     }
 }

@@ -149,6 +149,30 @@ public class VntApi {
         return nativeIsDirect(nativeHandle, ip);
     }
 
+    /** Returns the newest pending subscription configuration event, or null. */
+    public String takeSubscriptionConfigUpdate() {
+        return nativeTakeSubscriptionConfigUpdate(nativeHandle);
+    }
+
+    /** Confirms staged/applied/error after the host has rebuilt its VPN. */
+    public boolean ackSubscriptionConfig(String ackJson) {
+        return nativeAckSubscriptionConfig(nativeHandle, ackJson);
+    }
+
+    /**
+     * Reapplies a complete configuration to the running instance.
+     * The result contains either {"ok":true,"report":...} or
+     * {"ok":false,"error":...}. INSTANCE_RESTART is a request to the
+     * Android host/supervisor; this method never rebuilds the VPN itself.
+     */
+    public String reconfigure(String configJson) throws VntException {
+        try {
+            return nativeReconfigure(nativeHandle, configJson);
+        } catch (Exception e) {
+            throw new VntException("Failed to reconfigure VNT: " + e.getMessage(), e);
+        }
+    }
+
     /**
      * 获取对端NAT信息
      * @param ip 目标IP地址
@@ -222,6 +246,9 @@ public class VntApi {
     private static native String nativeGetPeerNatInfo(long apiHandle, String ip);
     private static native String nativeGetPacketLoss(long apiHandle, String ip);
     private static native String nativeGetTrafficInfo(long apiHandle, String ip);
+    private static native String nativeTakeSubscriptionConfigUpdate(long apiHandle);
+    private static native boolean nativeAckSubscriptionConfig(long apiHandle, String ackJson);
+    private static native String nativeReconfigure(long apiHandle, String configJson);
 
     // ========== 数据类 ==========
 
@@ -425,4 +452,6 @@ public class VntApi {
                     ", rxBytes=" + rxBytes + "}";
         }
     }
+    private static native String nativeTakeSubscriptionConfigUpdate(long handle);
+    private static native boolean nativeAckSubscriptionConfig(long handle, String ackJson);
 }

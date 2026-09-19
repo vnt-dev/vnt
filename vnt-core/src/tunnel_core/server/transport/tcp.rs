@@ -22,6 +22,14 @@ impl TlsTcpTransport {
     pub fn disconnect(&mut self) {
         self.framed = None;
     }
+    pub async fn graceful_disconnect(&mut self) {
+        if let Some(mut framed) = self.framed.take() {
+            // `SinkExt::close` flushes the length-delimited sink and shuts down
+            // the rustls writer, which sends TLS close_notify before dropping
+            // the underlying TCP stream.
+            let _ = framed.close().await;
+        }
+    }
     pub async fn connect(&mut self, config: &ConnectConfig) -> anyhow::Result<()> {
         if self.framed.is_some() {
             bail!("Already connected");
@@ -77,4 +85,58 @@ pub async fn connect_tls_tcp(
     let framed = Framed::new(tls_stream, LengthDelimitedCodec::new());
 
     Ok(framed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tls::cert::generate_deterministic_cert;
+    use crate::tls::verifier::CertValidationMode;
+    use rustls::pki_types::ServerName;
+    use sha2::{Digest, Sha256};
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
+
+    #[tokio::test]
+    async fn graceful_disconnect_sends_tls_close_notify() {
+        let (certificate, key) = generate_deterministic_cert("graceful-close-test").unwrap();
+        let fingerprint: [u8; 32] = Sha256::digest(certificate.as_ref()).into();
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let tls = TlsAcceptor::from(Arc::new(server_config))
+                .accept(tcp)
+                .await
+                .unwrap();
+            let mut framed = Framed::new(tls, LengthDelimitedCodec::new());
+            assert!(
+                framed.next().await.is_none(),
+                "graceful TLS shutdown must be observed as EOF, not a read error"
+            );
+        });
+
+        let client_config = CertValidationMode::VerifyFingerprint(fingerprint)
+            .create_tls_client_config()
+            .unwrap();
+        let tcp = TcpStream::connect(address).await.unwrap();
+        let tls = TlsConnector::from(Arc::new(client_config))
+            .connect(
+                ServerName::try_from("deterministic-node")
+                    .unwrap()
+                    .to_owned(),
+                tcp,
+            )
+            .await
+            .unwrap();
+        let mut transport = TlsTcpTransport {
+            framed: Some(Framed::new(tls, LengthDelimitedCodec::new())),
+        };
+        transport.graceful_disconnect().await;
+        server.await.unwrap();
+    }
 }

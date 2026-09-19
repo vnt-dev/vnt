@@ -20,6 +20,7 @@ tcp_ip = "0.2"
 
 anyhow.workspace = true
 parking_lot.workspace = true
+arc-swap.workspace = true
 
 quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"] }
 
@@ -52,6 +53,9 @@ lz4_flex = "0.14"
 reed-solomon-erasure = "6.0"
 
 serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+base64 = "0.22"
 rcgen = "0.14.6"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))'.dependencies]

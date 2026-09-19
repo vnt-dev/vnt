@@ -5,6 +5,7 @@ pub mod crypto;
 pub(crate) mod ethernet;
 pub(crate) mod event_script;
 pub(crate) mod fec;
+pub mod managed_config;
 pub mod nat;
 pub mod protocol;
 #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
@@ -17,6 +18,7 @@ pub mod utils;
 pub mod api;
 pub(crate) mod enhanced_tunnel;
 pub mod port_mapping;
+pub(crate) mod runtime_config;
 
 #[cfg(feature = "internal-bench")]
 #[doc(hidden)]

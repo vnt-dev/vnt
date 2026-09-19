@@ -1,7 +1,7 @@
+use crate::protocol::client_message::SharedNodeIdentity;
 use crate::protocol::control_message::{RegRequestMsg, RegistrationMode};
 use crate::tls::verifier::CertValidationMode;
 use anyhow::bail;
-use ipnet::Ipv4Net;
 use parking_lot::Mutex;
 use rand::seq::SliceRandom;
 use rustp2p_core::socket::LocalInterface;
@@ -34,14 +34,15 @@ pub(crate) struct ConnectRegConfig {
     pub cert_mode: CertValidationMode,
     pub network_code: String,
     pub device_id: String,
-    pub device_name: String,
+    pub identity: SharedNodeIdentity,
     pub ip: SharedRegistrationIp,
     pub key_sign: Option<String>,
     pub ip_variable: bool,
-    pub advertised_subnets: Arc<Vec<Ipv4Net>>,
     pub allow_ikev2: bool,
     pub allow_wireguard: bool,
     pub default_interface: Option<LocalInterface>,
+    pub managed: Option<crate::context::config::ManagedRegistration>,
+    pub client_instance_id: Arc<Vec<u8>>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectConfig {
@@ -59,7 +60,7 @@ pub enum ProtocolType {
     Wss,
     Dynamic,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ProtocolAddress {
     pub protocol_type: ProtocolType,
     pub address: String,
@@ -122,19 +123,25 @@ impl ConnectRegConfig {
         server_id: u32,
         registration_mode: RegistrationMode,
     ) -> RegRequestMsg {
+        let identity = self.identity.get();
         RegRequestMsg {
             network_code: self.network_code.to_string(),
             device_id: self.device_id.to_string(),
             ip: self.ip.get(),
-            name: self.device_name.to_string(),
+            name: identity.name,
             version: env!("CARGO_PKG_VERSION").to_string(),
             key_sign: self.key_sign.clone(),
             ip_variable: self.ip_variable,
             server_id,
             registration_mode,
-            advertised_subnets: self.advertised_subnets.as_ref().clone(),
+            advertised_subnets: identity.advertised_subnets,
             allow_ikev2: self.allow_ikev2,
             allow_wireguard: self.allow_wireguard,
+            subscription: self
+                .managed
+                .as_ref()
+                .map(|managed| managed.create_registration(&self.network_code, &self.device_id)),
+            client_instance_id: self.client_instance_id.as_ref().clone(),
         }
     }
     /// 解析出全部候选服务器地址：动态地址（DNS TXT 记录或 http(s) 接口返回的
@@ -253,23 +260,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registration_request_reads_latest_shared_ip() {
+    fn registration_request_reads_latest_shared_ip_and_identity() {
         let initial_ip = Ipv4Addr::new(10, 26, 0, 2);
         let updated_ip = Ipv4Addr::new(10, 26, 0, 9);
         let shared_ip = SharedRegistrationIp::new(Some(initial_ip));
+        let shared_identity =
+            SharedNodeIdentity::new(crate::protocol::client_message::NodeIdentityTemplate {
+                name: "device".to_string(),
+                version: "test".to_string(),
+                network_code: "test".to_string(),
+                advertised_subnets: Vec::new(),
+            });
         let config = ConnectRegConfig {
             server_addr: ProtocolAddress::default(),
             cert_mode: CertValidationMode::default(),
             network_code: "test".to_string(),
             device_id: "device".to_string(),
-            device_name: "device".to_string(),
+            identity: shared_identity.clone(),
             ip: shared_ip.clone(),
             key_sign: None,
             ip_variable: true,
-            advertised_subnets: Arc::new(Vec::new()),
             allow_ikev2: false,
             allow_wireguard: false,
             default_interface: None,
+            managed: None,
+            client_instance_id: Arc::new(vec![1; 32]),
         };
 
         assert_eq!(
@@ -277,10 +292,15 @@ mod tests {
             Some(initial_ip)
         );
         shared_ip.set(updated_ip);
-        assert_eq!(
-            config.reg_msg_request(0, RegistrationMode::Normal).ip,
-            Some(updated_ip)
-        );
+        shared_identity.set(crate::protocol::client_message::NodeIdentityTemplate {
+            name: "renamed".to_string(),
+            version: "test".to_string(),
+            network_code: "test".to_string(),
+            advertised_subnets: Vec::new(),
+        });
+        let request = config.reg_msg_request(0, RegistrationMode::Normal);
+        assert_eq!(request.ip, Some(updated_ip));
+        assert_eq!(request.name, "renamed");
     }
 
     /// 动态 DNS TXT 记录中的 wss:// 必须映射为 Wss，

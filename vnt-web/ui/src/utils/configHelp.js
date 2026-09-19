@@ -1,6 +1,14 @@
 // 组网参数说明集中维护，Web 与桌面端共用。
 // 每项都包含“做什么、怎么填、何时使用”，避免表单本身被长说明淹没。
 export const configHelp = {
+  subscription: {
+    param: "subscription",
+    summary: "订阅 VNTS 服务端为设备维护的配置。",
+    usage: "客户端启动时会通过链接中的接入地址验证服务端并获取最新配置；运行期间，已验证的服务端连接还可以推送配置更新。客户端本地明确填写的字段始终优先于订阅值。",
+    format: "完整的 vnt2://join/1/… 订阅链接；可留空。",
+    example: "vnt2://join/1/…",
+    notes: ["订阅链接包含接入凭据，请像密码一样妥善保管。", "清空并保存后停止获取和接收订阅配置，不会删除其他本地配置。"],
+  },
   config_name: {
     param: "config_name",
     summary: "给这份配置起一个便于识别的名称。",

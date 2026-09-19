@@ -1,28 +1,28 @@
-use crate::compression::PacketCompression;
-use crate::context::config::{TurnRule, allow_punch};
+use crate::context::config::allow_punch;
 use crate::context::nat::PunchBackoff;
 use crate::context::{NetworkAddr, NetworkRoute, PacketLossStats, PeerInfoMap};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::{
-    NETWORK_CODE_HASH_LEN, NodeIdentityTemplate, PeerHandshake, PunchInfo, network_code_hash,
-    network_code_hash_matches,
+    NETWORK_CODE_HASH_LEN, NodeIdentityTemplate, PeerHandshake, PunchInfo, SharedNodeIdentity,
+    network_code_hash, network_code_hash_matches,
 };
 use crate::protocol::control_message::SelectiveBroadcast;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::node_info::{NodeInfo, NodeInfoMap};
 use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
 use crate::tunnel_core::p2p::transport::punch::{NatPuncher, PunchInfoGetter};
 use anyhow::bail;
+use bytes::Buf;
 use prost::Message;
 use rustp2p_core::endpoint::TunnelWriteHalf;
 use rustp2p_core::route_table::RouteKey;
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Arc;
 const GOSSIP_TTL: u8 = 15;
 
 #[derive(Clone, Copy)]
@@ -232,14 +232,12 @@ pub(crate) struct P2pInboundConfig {
     pub node_info_map: NodeInfoMap,
     pub packet_loss_stats: PacketLossStats,
     pub packet_crypto: PacketCrypto,
-    pub packet_compression: PacketCompression,
     pub enhanced_inbound: EnhancedInbound,
     pub fec_decoder: FecDecoder,
-    pub turn: Arc<Vec<TurnRule>>,
     pub basic_outbound: BasicOutbound,
     pub punch_backoff: PunchBackoff,
-    pub identity: NodeIdentityTemplate,
-    pub auto_sync_subnet: bool,
+    pub identity: SharedNodeIdentity,
+    pub policy: RuntimePolicyStore,
     pub puncher: NatPuncher,
     pub punch_info_getter: PunchInfoGetter,
     pub peer_map: PeerInfoMap,
@@ -252,14 +250,12 @@ pub(crate) struct P2pInboundHandler {
     node_info_map: NodeInfoMap,
     packet_loss_stats: PacketLossStats,
     packet_crypto: PacketCrypto,
-    packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
-    turn: Arc<Vec<TurnRule>>,
     basic_outbound: BasicOutbound,
     punch_backoff: PunchBackoff,
-    identity: NodeIdentityTemplate,
-    auto_sync_subnet: bool,
+    identity: SharedNodeIdentity,
+    policy: RuntimePolicyStore,
     puncher: NatPuncher,
     punch_info_getter: PunchInfoGetter,
     peer_map: PeerInfoMap,
@@ -273,14 +269,12 @@ impl P2pInboundHandler {
             node_info_map: config.node_info_map,
             packet_loss_stats: config.packet_loss_stats,
             packet_crypto: config.packet_crypto,
-            packet_compression: config.packet_compression,
             enhanced_inbound: config.enhanced_inbound,
             fec_decoder: config.fec_decoder,
-            turn: config.turn,
             basic_outbound: config.basic_outbound,
             punch_backoff: config.punch_backoff,
             identity: config.identity,
-            auto_sync_subnet: config.auto_sync_subnet,
+            policy: config.policy,
             puncher: config.puncher,
             punch_info_getter: config.punch_info_getter,
             peer_map: config.peer_map,
@@ -425,9 +419,6 @@ impl P2pInboundHandler {
         if msg_type == MsgType::NodeAnnouncement && packet.ttl() >= 1 {
             self.basic_outbound
                 .flood_direct_p2p(&encrypted, Some(&route_key));
-            self.basic_outbound
-                .flood_connected_servers(encrypted, None)
-                .await;
         }
         Ok(())
     }
@@ -484,7 +475,11 @@ impl P2pInboundHandler {
             max_ttl: net_packet.max_ttl(),
             ttl: net_packet.ttl(),
         };
-        let net_packet = self.packet_compression.decompress(net_packet)?;
+        let net_packet = self
+            .policy
+            .load()
+            .packet_compression
+            .decompress(net_packet)?;
         self.process_decompressed_packet(net, route_key, tunnel, net_packet, &ctx)
             .await
     }
@@ -522,7 +517,7 @@ impl P2pInboundHandler {
             }
             MsgType::Ping => {
                 let metric = ctx.max_ttl - ctx.ttl;
-                self.route_table.add_route(
+                self.route_table.add_probe_route(
                     ctx.src_ip,
                     Route::from_default_rt(route_key, metric),
                     true,
@@ -552,7 +547,7 @@ impl P2pInboundHandler {
                         // 转换为万分率
                         let loss_rate = (loss_rate_f64 * 10000.0).round() as u16;
 
-                        self.route_table.add_route(
+                        self.route_table.add_probe_route(
                             ctx.src_ip,
                             Route::from_with_loss(route_key, metric, (now - time) as _, loss_rate),
                             false,
@@ -580,7 +575,7 @@ impl P2pInboundHandler {
                 );
             }
             MsgType::PunchStart1 => {
-                if !allow_punch(&self.turn, &ctx.src_ip) {
+                if !allow_punch(&self.policy.load().turn, &ctx.src_ip) {
                     return Ok(());
                 }
                 let peer_info = PunchInfo::from_slice(net_packet.payload())?;
@@ -611,7 +606,7 @@ impl P2pInboundHandler {
                 }
             }
             MsgType::PunchStart2 => {
-                if !allow_punch(&self.turn, &ctx.src_ip) {
+                if !allow_punch(&self.policy.load().turn, &ctx.src_ip) {
                     return Ok(());
                 }
                 let peer_info = PunchInfo::from_slice(net_packet.payload())?;
@@ -624,7 +619,7 @@ impl P2pInboundHandler {
                 self.puncher.punch_uncheck(ctx.src_ip, peer_info)?;
             }
             MsgType::PunchReq => {
-                if !allow_punch(&self.turn, &ctx.src_ip) {
+                if !allow_punch(&self.policy.load().turn, &ctx.src_ip) {
                     log::debug!("ignore configured turn target PunchReq from {}", ctx.src_ip);
                     return Ok(());
                 }
@@ -646,15 +641,14 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                let kind =
-                    match validate_punch_payload(net_packet.payload(), &self.identity.network_code)
-                    {
-                        Ok(kind) => kind,
-                        Err(error) => {
-                            log::warn!("reject PunchReq from {}: {error}", ctx.src_ip);
-                            return Ok(());
-                        }
-                    };
+                let network_code = self.identity.network_code();
+                let kind = match validate_punch_payload(net_packet.payload(), &network_code) {
+                    Ok(kind) => kind,
+                    Err(error) => {
+                        log::warn!("reject PunchReq from {}: {error}", ctx.src_ip);
+                        return Ok(());
+                    }
+                };
                 let first = self.route_table.add_owner_route(ctx.src_ip, route_key);
                 if first {
                     self.punch_backoff.reset(ctx.src_ip);
@@ -664,14 +658,14 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     self.packet_crypto.encrypt_reserve(),
                     kind,
-                    &self.identity.network_code,
+                    &network_code,
                 )?;
 
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
                 tunnel.send(packet.into_bytes().into_buffer()).await?;
             }
             MsgType::PunchRes => {
-                if !allow_punch(&self.turn, &ctx.src_ip) {
+                if !allow_punch(&self.policy.load().turn, &ctx.src_ip) {
                     log::debug!("ignore configured turn target PunchRes from {}", ctx.src_ip);
                     return Ok(());
                 }
@@ -693,9 +687,8 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
-                if let Err(error) =
-                    validate_punch_payload(net_packet.payload(), &self.identity.network_code)
-                {
+                let network_code = self.identity.network_code();
+                if let Err(error) = validate_punch_payload(net_packet.payload(), &network_code) {
                     log::warn!("reject PunchRes from {}: {error}", ctx.src_ip);
                     return Ok(());
                 }
@@ -717,8 +710,9 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     net.ip
                 );
+                let local_identity = self.identity.get();
                 let identity =
-                    match direct_identity(net, ctx.src_ip, net_packet.payload(), &self.identity) {
+                    match direct_identity(net, ctx.src_ip, net_packet.payload(), &local_identity) {
                         Ok(identity) => identity,
                         Err(error) => {
                             log::warn!(
@@ -751,7 +745,7 @@ impl P2pInboundHandler {
                     self.packet_crypto.encrypt_reserve(),
                     identity
                         .as_ref()
-                        .map(|(_, request_id)| (&self.identity, *request_id)),
+                        .map(|(_, request_id)| (&local_identity, *request_id)),
                 )?;
                 self.packet_crypto.encrypt_in_place(&mut packet)?;
                 tunnel.send(packet.into_bytes().into_buffer()).await?;
@@ -769,8 +763,9 @@ impl P2pInboundHandler {
                     ctx.src_ip,
                     ctx.dest_ip
                 );
+                let local_identity = self.identity.get();
                 let identity =
-                    match direct_identity(net, ctx.src_ip, net_packet.payload(), &self.identity) {
+                    match direct_identity(net, ctx.src_ip, net_packet.payload(), &local_identity) {
                         Ok(identity) => identity,
                         Err(error) => {
                             log::warn!(
@@ -821,8 +816,10 @@ impl P2pInboundHandler {
         {
             return Ok(());
         }
-        let task = SelectiveBroadcast::decode(outer.payload())?;
-        let mut inner = NetPacket::new(TransmissionBytes::from(task.data.as_slice()))?;
+        let mut payload = outer.into_buffer().into_bytes().freeze();
+        payload.advance(HEAD_LENGTH);
+        let task = SelectiveBroadcast::decode(payload)?;
+        let mut inner = NetPacket::new(TransmissionBytes::from(task.data))?;
         if inner.msg_type()? != MsgType::Broadcast {
             return Ok(());
         }
@@ -853,33 +850,46 @@ impl P2pInboundHandler {
             return Ok(());
         }
 
-        if targets.contains(&net.ip)
+        let remaining = targets
+            .iter()
+            .copied()
+            .filter(|target| *target != net.ip)
+            .collect::<Vec<_>>();
+        let deliver_local = targets.contains(&net.ip)
             && self
                 .basic_outbound
-                .broadcast_first_delivery(source, inner.seq())
-        {
+                .broadcast_first_delivery(source, inner.seq());
+        if remaining.is_empty() {
+            if deliver_local {
+                // BytesMut::clone performs a full packet copy. Local-only
+                // delivery can consume the received packet directly.
+                let mut local = inner;
+                self.packet_crypto.decrypt_in_place(&mut local)?;
+                let local = self.policy.load().packet_compression.decompress(local)?;
+                self.enhanced_inbound
+                    .inbound(net, MsgType::Broadcast, source, local)
+                    .await?;
+            }
+            return Ok(());
+        }
+        if deliver_local {
+            // Forwarding needs the encrypted original, so this is the one case
+            // where a full mutable-buffer copy cannot be avoided.
             let mut local = NetPacket::new(inner.source_buf().clone())?;
             self.packet_crypto.decrypt_in_place(&mut local)?;
-            let local = self.packet_compression.decompress(local)?;
+            let local = self.policy.load().packet_compression.decompress(local)?;
             self.enhanced_inbound
                 .inbound(net, MsgType::Broadcast, source, local)
                 .await?;
         }
-
-        let remaining = targets
-            .into_iter()
-            .filter(|target| *target != net.ip)
-            .collect::<Vec<_>>();
-        if !remaining.is_empty() {
-            self.basic_outbound
-                .distribute_broadcast(
-                    *net,
-                    inner.into_bytes(),
-                    Some(remaining),
-                    Some(outer_source),
-                )
-                .await?;
-        }
+        self.basic_outbound
+            .distribute_broadcast(
+                *net,
+                inner.into_bytes(),
+                Some(remaining),
+                Some(outer_source),
+            )
+            .await?;
         Ok(())
     }
 
@@ -917,7 +927,7 @@ impl P2pInboundHandler {
     }
 
     fn sync_gossip_subnets(&self) {
-        if !self.auto_sync_subnet {
+        if !self.policy.load().auto_sync_subnet {
             return;
         }
         let routes = self

@@ -179,6 +179,17 @@ fn all_route(vnt_api: &VntApi) -> ClientRouteList {
 }
 
 pub async fn run_server(bind_port: Option<u16>, vnt_api: VntApi) -> anyhow::Result<()> {
+    let (_sender, receiver) = tokio::sync::watch::channel(vnt_api);
+    run_server_dynamic(bind_port, receiver).await
+}
+
+/// Run the control service against the currently active in-process network
+/// instance. The CLI supervisor updates the watch value after a managed
+/// configuration restart, so the listening port does not need to be rebound.
+pub async fn run_server_dynamic(
+    bind_port: Option<u16>,
+    vnt_api: tokio::sync::watch::Receiver<VntApi>,
+) -> anyhow::Result<()> {
     let mut port = bind_port.unwrap_or(DEFAULT_PORT);
     let listener;
 
@@ -212,7 +223,7 @@ pub async fn run_server(bind_port: Option<u16>, vnt_api: VntApi) -> anyhow::Resu
     loop {
         let (stream, peer_addr) = listener.accept().await?;
         log::info!("IPC Connection from {}", peer_addr);
-        let vnt_api = vnt_api.clone();
+        let vnt_api = vnt_api.borrow().clone();
         tokio::spawn(async move {
             if let Err(e) = handle_connection(stream, vnt_api).await {
                 log::warn!("IPC Error handling client: {:?},peer_addr={peer_addr}", e);

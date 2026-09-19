@@ -9,6 +9,7 @@ public class VntNetwork {
 
     private long nativeHandle;
     private boolean closed = false;
+    private Thread tunRebuildThread;
 
     // 包内构造，只能通过VntManager创建
     VntNetwork(long handle) {
@@ -50,6 +51,69 @@ public class VntNetwork {
         if (!nativeSetNetworkIp(nativeHandle, ip, prefixLen)) {
             throw new VntException("Failed to set network IP");
         }
+    }
+
+    /** Blocks until Rust has a pending Android TUN replacement request. */
+    public TunRebuildRequest waitTunRebuild() throws VntException {
+        checkClosed();
+        return TunRebuildRequest.fromJson(nativeWaitTunRebuild(nativeHandle));
+    }
+
+    /** Ownership of a detached TUN fd transfers to Rust. */
+    public void replaceTun(long requestId, int tunFd) throws VntException {
+        checkClosed();
+        if (!nativeReplaceTun(nativeHandle, requestId, tunFd)) {
+            throw new VntException("Failed to replace TUN task");
+        }
+    }
+
+    /** Ends a pending rebuild without disturbing the current Rust-owned TUN. */
+    public void rejectTunRebuild(long requestId, String reason) throws VntException {
+        checkClosed();
+        if (!nativeRejectTunRebuild(nativeHandle, requestId, reason)) {
+            throw new VntException("Failed to reject TUN rebuild");
+        }
+    }
+
+    /**
+     * Runs a Java-owned listener loop. Rust does not receive or retain this
+     * listener; the loop pulls events through {@link #waitTunRebuild()}.
+     */
+    public synchronized void listenTunRebuild(TunRebuildListener listener) {
+        checkClosed();
+        if (tunRebuildThread != null) {
+            throw new IllegalStateException("TUN rebuild listener already started");
+        }
+        tunRebuildThread = new Thread(() -> {
+            while (!closed) {
+                try {
+                    TunRebuildRequest request = waitTunRebuild();
+                    try {
+                        listener.onTunRebuildRequired(request);
+                    } catch (Exception error) {
+                        // A listener failure must complete the pending Rust
+                        // request immediately; otherwise the config update
+                        // would wait for its 30-second timeout.
+                        if (!closed) {
+                            try {
+                                rejectTunRebuild(request.getRequestId(), error.toString());
+                            } catch (Exception rejectError) {
+                                error.addSuppressed(rejectError);
+                            }
+                            error.printStackTrace();
+                        }
+                    }
+                } catch (IllegalStateException ignored) {
+                    break;
+                } catch (Exception error) {
+                    if (!closed) {
+                        error.printStackTrace();
+                    }
+                }
+            }
+        }, "vnt-tun-rebuild-listener");
+        tunRebuildThread.setDaemon(true);
+        tunRebuildThread.start();
     }
 
     /**
@@ -116,6 +180,9 @@ public class VntNetwork {
     private static native String nativeRegister(long handle);
     private static native boolean nativeStartTun(long handle, int tunFd);
     private static native boolean nativeSetNetworkIp(long handle, String ip, int prefixLen);
+    private static native String nativeWaitTunRebuild(long handle);
+    private static native boolean nativeReplaceTun(long handle, long requestId, int tunFd);
+    private static native boolean nativeRejectTunRebuild(long handle, long requestId, String reason);
     private static native long nativeGetApi(long handle);
     private static native boolean nativeIsNoTun(long handle);
     private static native boolean nativeStop(long handle);

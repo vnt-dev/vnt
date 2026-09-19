@@ -1,15 +1,13 @@
-use crate::compression::PacketCompression;
 use crate::context::config::{TurnRule, is_turn_ip, turn_ip_for};
 use crate::context::{NetworkAddr, ServerInfoCollection, SharedNetworkAddr, TrafficStats};
 use crate::crypto::PacketCrypto;
-use crate::fec::FecEncoder;
+use crate::nat::SubnetExternalRoute;
 use crate::nat::subnet_packet::SubnetPacketMapper;
-use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
-use crate::protocol::ProtoToBytesMut;
 use crate::protocol::control_message::ClientType;
 use crate::protocol::control_message::SelectiveBroadcast;
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::p2p::outbound::P2pOutbound;
 use crate::tunnel_core::p2p::route_table::Route;
 use crate::tunnel_core::server::outbound::ServerOutbound;
@@ -17,6 +15,7 @@ use anyhow::bail;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use pnet_packet::ipv4::Ipv4Packet;
+use prost::Message;
 use rustp2p_core::route_table::RouteKey;
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
@@ -91,7 +90,7 @@ pub(crate) struct BasicOutbound {
     server_outbound: ServerOutbound,
     p2p_outbound: Option<P2pOutbound>,
     packet_crypto: PacketCrypto,
-    turn: Arc<Vec<TurnRule>>,
+    policy: RuntimePolicyStore,
     graph_seen: GraphSeen,
     broadcast_seen: BroadcastSeen,
 }
@@ -101,13 +100,13 @@ impl BasicOutbound {
         server_outbound: ServerOutbound,
         p2p_outbound: Option<P2pOutbound>,
         packet_crypto: PacketCrypto,
-        turn: Arc<Vec<TurnRule>>,
+        policy: RuntimePolicyStore,
     ) -> Self {
         Self {
             server_outbound,
             p2p_outbound,
             packet_crypto,
-            turn,
+            policy,
             graph_seen: Arc::new(Mutex::new(HashMap::new())),
             broadcast_seen: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -154,7 +153,8 @@ impl BasicOutbound {
         packet: NetPacket<TransmissionBytes>,
         exclude: Option<&RouteKey>,
     ) -> anyhow::Result<bool> {
-        let preferred = preferred_turn(net, &self.turn, &dest);
+        let policy = self.policy.load();
+        let preferred = preferred_turn(net, &policy.turn, &dest);
         let selected_p2p = self.p2p_outbound.as_ref().and_then(|p2p| match preferred {
             Some(PreferredTurn::Peer(turn_ip)) => {
                 p2p.get_direct_route_to_peer(dest, turn_ip, exclude)
@@ -229,16 +229,6 @@ impl BasicOutbound {
             .as_ref()
             .map(|p2p| p2p.flood_direct(packet, exclude))
             .unwrap_or(0)
-    }
-
-    pub async fn flood_connected_servers(
-        &self,
-        packet: NetPacket<Bytes>,
-        exclude_server: Option<u32>,
-    ) -> usize {
-        self.server_outbound
-            .flood_connected_raw(packet, exclude_server)
-            .await
     }
 
     pub fn is_any_server_connected(&self) -> bool {
@@ -632,17 +622,17 @@ impl BasicOutbound {
         inner: NetPacket<Bytes>,
         task: &BroadcastP2pTask,
     ) -> anyhow::Result<()> {
-        let payload =
-            SelectiveBroadcast::new(&task.targets, inner.source_buf().to_vec()).encode_bytes_mut();
+        let payload = SelectiveBroadcast::new(&task.targets, inner.source_buf().clone());
         let mut outer = NetPacket::new(TransmissionBytes::zeroed_size(
-            HEAD_LENGTH + payload.len(),
+            HEAD_LENGTH + payload.encoded_len(),
             p2p.encrypt_reserve(),
         ))?;
         outer.set_msg_type(MsgType::TargetBroadcast);
         outer.set_ttl(1);
         outer.set_src_id(local_ip.into());
         outer.set_dest_id(task.owner.into());
-        outer.payload_mut().copy_from_slice(&payload);
+        let mut destination = outer.payload_mut();
+        payload.encode(&mut destination)?;
         p2p.send_to(outer, &task.route.route_key()).await
     }
 
@@ -991,15 +981,9 @@ pub(crate) struct HybridOutbound {
     server_info: ServerInfoCollection,
     traffic_stats: TrafficStats,
     basic_outbound: BasicOutbound,
-    packet_compression: PacketCompression,
     external_route: SubnetExternalRoute,
-    subnet_mapping: SubnetMappingTable,
     subnet_packet_mapper: SubnetPacketMapper,
-    relay_subnets: AllowSubnetExternalRoute,
-    fec_encoder: Option<FecEncoder>,
-    no_broadcast: bool,
-    allow_ikev2: bool,
-    allow_wireguard: bool,
+    policy: RuntimePolicyStore,
 }
 impl HybridOutbound {
     #[allow(clippy::too_many_arguments)]
@@ -1008,51 +992,29 @@ impl HybridOutbound {
         server_info: ServerInfoCollection,
         traffic_stats: TrafficStats,
         basic_outbound: BasicOutbound,
-        packet_compression: PacketCompression,
         external_route: SubnetExternalRoute,
-        subnet_mapping: SubnetMappingTable,
         subnet_packet_mapper: SubnetPacketMapper,
-        relay_subnets: AllowSubnetExternalRoute,
-        fec_encoder: Option<FecEncoder>,
+        policy: RuntimePolicyStore,
     ) -> Self {
         Self {
             network,
             server_info,
             traffic_stats,
             basic_outbound,
-            packet_compression,
             external_route,
-            subnet_mapping,
             subnet_packet_mapper,
-            relay_subnets,
-            fec_encoder,
-            no_broadcast: false,
-            allow_ikev2: false,
-            allow_wireguard: false,
+            policy,
         }
-    }
-
-    pub fn with_no_broadcast(mut self, no_broadcast: bool) -> Self {
-        self.no_broadcast = no_broadcast;
-        self
-    }
-    pub fn with_allow_ikev2(mut self, allow_ikev2: bool) -> Self {
-        self.allow_ikev2 = allow_ikev2;
-        self
-    }
-
-    pub fn with_allow_wireguard(mut self, allow_wireguard: bool) -> Self {
-        self.allow_wireguard = allow_wireguard;
-        self
     }
     pub fn is_relay_client(&self, ip: &Ipv4Addr) -> bool {
         self.relay_msg_type(ip).is_some()
     }
     fn relay_msg_type(&self, ip: &Ipv4Addr) -> Option<MsgType> {
+        let policy = self.policy.load();
         relay_msg_type_for(
             self.server_info.client_type(ip),
-            self.allow_ikev2,
-            self.allow_wireguard,
+            policy.allow_ikev2,
+            policy.allow_wireguard,
         )
     }
     pub async fn server_relay_outbound(
@@ -1072,7 +1034,8 @@ impl HybridOutbound {
         if header_length < Ipv4Packet::minimum_packet_size()
             || total_length < header_length
             || total_length > data.len()
-            || (ipv4.get_source() != net.ip && !self.relay_subnets.allow(&ipv4.get_source()))
+            || (ipv4.get_source() != net.ip
+                && !self.policy.load().relay_subnets.allow(&ipv4.get_source()))
             || (ipv4.get_destination() != dest
                 && self.external_route.route(&ipv4.get_destination()) != Some(dest))
         {
@@ -1107,7 +1070,8 @@ impl HybridOutbound {
 
         let len = packet.buffer().len() as u64;
 
-        if let Some(fec_encoder) = &self.fec_encoder {
+        let policy = self.policy.load();
+        if let Some(fec_encoder) = &policy.fec_encoder {
             packet = fec_encoder.encode(packet)?;
             self.basic_outbound
                 .send_fec_packet(net, dest, packet)
@@ -1147,7 +1111,8 @@ impl HybridOutbound {
         // source. Restore the mapped source immediately before tunnelling them
         // back to the overlay peer. Access-side packets remain untouched.
         let packets = if dest_is_overlay {
-            if let Some(mapped) = self.subnet_mapping.reverse(source) {
+            let policy = self.policy.load();
+            if let Some(mapped) = policy.subnet_mapping.reverse(source) {
                 self.subnet_packet_mapper
                     .map_source(dest, data, 0, source, mapped)?
             } else {
@@ -1182,11 +1147,12 @@ impl HybridOutbound {
         packet.set_ttl(15);
         packet.set_dest_id(dest.into());
 
-        packet = self
+        let policy = self.policy.load();
+        packet = policy
             .packet_compression
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
 
-        if let Some(fec_encoder) = &self.fec_encoder {
+        if let Some(fec_encoder) = &policy.fec_encoder {
             self.basic_outbound.encrypt_in_place(&mut packet)?;
             packet = fec_encoder.encode(packet)?;
             self.basic_outbound
@@ -1219,7 +1185,7 @@ impl HybridOutbound {
             return self.ipv4_gateway_outbound(net, ip).await;
         }
         if dest.is_multicast() || dest == net.broadcast || dest.is_broadcast() {
-            if self.no_broadcast {
+            if self.policy.load().no_broadcast {
                 return Ok(());
             }
             return self.ethernet_broadcast_outbound(net, data).await;
@@ -1246,7 +1212,8 @@ impl HybridOutbound {
                 return Ok(());
             };
             let source = ipv4.get_source();
-            if let Some(mapped) = self.subnet_mapping.reverse(source) {
+            let policy = self.policy.load();
+            if let Some(mapped) = policy.subnet_mapping.reverse(source) {
                 self.subnet_packet_mapper.map_source(
                     dest,
                     data,
@@ -1280,10 +1247,11 @@ impl HybridOutbound {
         packet.set_dest_id(dest.into());
         packet.set_ttl(15);
         packet.set_ethernet_flag(true);
-        let mut packet = self
+        let policy = self.policy.load();
+        let mut packet = policy
             .packet_compression
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
-        if let Some(fec_encoder) = &self.fec_encoder {
+        if let Some(fec_encoder) = &policy.fec_encoder {
             self.basic_outbound.encrypt_in_place(&mut packet)?;
             let packet = fec_encoder.encode(packet)?;
             self.basic_outbound
@@ -1326,7 +1294,8 @@ impl HybridOutbound {
         packet.set_src_id(net.ip.into());
         packet.set_dest_id(Ipv4Addr::BROADCAST.into());
         packet.set_ttl(15);
-        let mut packet = self
+        let policy = self.policy.load();
+        let mut packet = policy
             .packet_compression
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
         self.basic_outbound.encrypt_in_place(&mut packet)?;
@@ -1348,7 +1317,8 @@ impl HybridOutbound {
         packet.set_dest_id(Ipv4Addr::BROADCAST.into());
         packet.set_ttl(15);
         packet.set_ethernet_flag(true);
-        let mut packet = self
+        let policy = self.policy.load();
+        let mut packet = policy
             .packet_compression
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
         self.basic_outbound.encrypt_in_place(&mut packet)?;
@@ -1362,6 +1332,10 @@ impl HybridOutbound {
     }
 
     pub fn no_broadcast(&self) -> bool {
-        self.no_broadcast
+        self.policy.load().no_broadcast
+    }
+
+    pub fn no_nat(&self) -> bool {
+        self.policy.load().no_nat
     }
 }

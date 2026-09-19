@@ -3,7 +3,7 @@ import { ref, onMounted } from "vue";
 import QRCode from "qrcode";
 import { useAppStore } from "../stores/app";
 import { useUiStore } from "../stores/ui";
-import { deleteConfig, getConfig } from "../api";
+import { clearSubscriptionOverrides, deleteConfig, detachSubscription, getConfig, getSubscriptionStatus } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import AppModal from "../components/AppModal.vue";
 import ConfigEditor from "./ConfigEditor.vue";
@@ -20,6 +20,34 @@ const qrLoading = ref(false);
 const qrImage = ref("");
 const qrConfig = ref(null);
 const qrError = ref("");
+const managedStatuses = ref({});
+const managedDetail = ref(null);
+
+const refreshSubscriptionStatuses = async () => {
+  const entries = await Promise.all(app.configList.map(async (cfg) => {
+    try { return [cfg.file_name, await getSubscriptionStatus(cfg.file_name)]; } catch { return [cfg.file_name, null]; }
+  }));
+  managedStatuses.value = Object.fromEntries(entries);
+};
+
+const openManagedDetail = async (fileName) => {
+  try { managedDetail.value = await getSubscriptionStatus(fileName); } catch (e) { ui.toast.error(e.message); }
+};
+
+const managedAction = async (action) => {
+  if (!managedDetail.value) return;
+  try {
+    const file = managedDetail.value.file_name;
+    if (action === "clear") managedDetail.value = await clearSubscriptionOverrides(file);
+    if (action === "detach") { await detachSubscription(file); managedDetail.value = null; }
+    await refreshSubscriptionStatuses();
+    ui.toast.success(
+      action === "detach"
+        ? "已解除服务端管理，当前 TOML 保留"
+        : "已清除本地覆盖；运行中实例会在下次服务端推送或重启后使用新配置",
+    );
+  } catch (e) { ui.toast.error(e.message); }
+};
 
 // 配置对应的实例运行状态(无实例返回 null)
 const instStatus = (fileName) => {
@@ -39,8 +67,9 @@ const openEditor = (fileName) => {
   showEditor.value = true;
 };
 
-const onSaved = () => {
-  app.fetchConfigList();
+const onSaved = async () => {
+  await app.fetchConfigList();
+  await refreshSubscriptionStatuses();
 };
 
 const openQr = async (fileName) => {
@@ -83,18 +112,20 @@ const handleDelete = async (fileName) => {
   }
 };
 
-onMounted(() => app.fetchConfigList());
+onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionStatuses(); });
 </script>
 
 <template>
   <div class="page-stack">
     <Teleport to="#page-actions">
+      <div class="flex gap-2">
       <button class="btn-primary btn-sm" @click="openEditor(null)">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
         </svg>
         新建配置
       </button>
+      </div>
     </Teleport>
 
     <EmptyState v-if="app.configList.length === 0" text="暂无配置，点击右上角新建" />
@@ -124,6 +155,11 @@ onMounted(() => app.fetchConfigList());
         >
           运行中
         </div>
+        <button
+          v-if="managedStatuses[cfg.file_name]"
+          class="absolute left-4 bottom-4 rounded bg-violet-100 px-2 py-1 text-[11px] font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+          @click.stop="openManagedDetail(cfg.file_name)"
+        >订阅链接</button>
         <div
           v-else-if="instStatus(cfg.file_name) === 'starting'"
           class="absolute right-12 top-3 rounded bg-indigo-500 px-2 py-1 text-xs text-white"
@@ -199,6 +235,14 @@ onMounted(() => app.fetchConfigList());
           </div>
         </div>
       </template>
+    </AppModal>
+
+    <AppModal :show="Boolean(managedDetail)" panel-class="w-full max-w-lg" @close="managedDetail = null">
+      <template #header><div><h2 class="text-lg font-bold">服务端管理</h2><p class="mt-1 text-xs muted">字段来源与同步状态</p></div><button class="btn-ghost btn-sm" @click="managedDetail = null">关闭</button></template>
+      <template #body><div v-if="managedDetail" class="space-y-4 p-6 text-sm">
+        <dl class="grid grid-cols-[8rem_1fr] gap-2 rounded-lg bg-slate-50 p-4 dark:bg-slate-800"><dt class="muted">设备</dt><dd class="font-mono">{{ managedDetail.device_id }}</dd><dt class="muted">配置版本</dt><dd>{{ managedDetail.applied_revision }} / {{ managedDetail.target_revision }}</dd><dt class="muted">实时同步</dt><dd>{{ managedDetail.config_sync_verified ? '已验证同步服务器' : '暂无已验证同步服务器' }}</dd><dt class="muted">本地覆盖</dt><dd>{{ managedDetail.local_overrides.length ? managedDetail.local_overrides.join(', ') : '无' }}</dd><dt v-if="managedDetail.last_error" class="muted">错误</dt><dd v-if="managedDetail.last_error" class="text-red-500">{{ managedDetail.last_error }}</dd></dl>
+        <div class="flex flex-wrap gap-2"><button class="btn-secondary" @click="managedAction('clear')">清除本地覆盖</button><button class="btn-danger" @click="managedAction('detach')">解除服务端管理</button></div>
+      </div></template>
     </AppModal>
   </div>
 </template>

@@ -11,8 +11,10 @@ use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
 use vnt_ipc as vnt_core;
 use vnt_ipc::port_mapping::PortMapping;
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct FileConfig {
+    /// 服务端签发的配置源；启动时先拉取远端配置，本文件中的字段覆盖远端值。
+    pub subscription: Option<String>,
     pub server: Option<Vec<String>>,
     pub peer_address: Option<Vec<String>>,
     pub turn: Option<Vec<String>>,
@@ -61,6 +63,57 @@ impl FileConfig {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    /// Merge a higher-priority local configuration over a lower-priority
+    /// configuration received through a subscription. `None` means the local
+    /// file did not specify the field, while `Some(false)` and empty arrays are
+    /// deliberate overrides.
+    pub fn overlay(mut self, higher: Self) -> Self {
+        macro_rules! overlay {
+            ($($field:ident),+ $(,)?) => {
+                $(if higher.$field.is_some() { self.$field = higher.$field; })+
+            };
+        }
+        overlay!(
+            subscription,
+            server,
+            peer_address,
+            turn,
+            punch_model,
+            network_code,
+            ip,
+            no_punch,
+            no_broadcast,
+            allow_ikev2,
+            allow_wireguard,
+            rtx,
+            compress,
+            fec,
+            input,
+            subnet_mapping,
+            output,
+            auto_sync_subnet,
+            no_nat,
+            device_mode,
+            legacy_no_tun,
+            mtu,
+            ctrl_port,
+            port_mapping,
+            allow_mapping,
+            device_id,
+            device_name,
+            tun_name,
+            outbound_interface,
+            password,
+            cert_mode,
+            udp_stun,
+            tcp_stun,
+            tunnel_addr,
+            tunnel_port,
+            event_script
+        );
+        self
     }
 
     pub fn to_server_addr(&self) -> anyhow::Result<Vec<ProtocolAddress>> {
@@ -129,7 +182,7 @@ impl FileConfig {
     }
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// 服务器地址 例如 `-s quic://127.0.0.1:29872`, 支持quic/tcp/wss/dynamic；dynamic 默认解析dns txt记录，也可填入http(s)接口如 dynamic://https://xxx
@@ -233,6 +286,9 @@ pub struct Args {
     /// 读取配置文件
     #[arg(long)]
     pub conf: Option<PathBuf>,
+    /// 服务端签发的订阅链接；优先于配置文件中的 subscription。
+    #[arg(long = "sub", value_name = "LINK")]
+    pub subscription: Option<String>,
     /// 输出配置文件示例
     #[clap(long)]
     pub conf_example: bool,
@@ -387,6 +443,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         tunnel_addr,
         tunnel_port,
         event_script: args.event_script.or_else(|| file.event_script.clone()),
+        managed: None,
     };
 
     let ctrl_config = CtrlConfig {
@@ -519,6 +576,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         tunnel_addr,
         tunnel_port,
         event_script: file.event_script.clone(),
+        managed: None,
     };
     let ctrl_config = CtrlConfig {
         ctrl_port: file.ctrl_port,
@@ -565,6 +623,9 @@ impl FileConfig {
             r#"# ==================================
 # VNT 配置文件示例（程序版本 v{version}）
 # ==================================
+
+# 可选的服务端配置源。本文件中明确填写的字段会覆盖订阅链接下发的同名字段。
+# subscription = "vnt2://join/1/..."
 
 # --- 网络配置 ---
 # 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
@@ -712,6 +773,32 @@ server = ["quic://1.2.3.4:29872"]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subscription_uses_sub_cli_flag() {
+        let args = Args::try_parse_from(["vnt", "--sub", "vnt2://join/1/example"]).unwrap();
+        assert_eq!(args.subscription.as_deref(), Some("vnt2://join/1/example"));
+    }
+
+    #[test]
+    fn local_file_overlays_subscription_config_field_by_field() {
+        let remote: FileConfig = toml::from_str(
+            "server=['tcp://remote:29872']\nnetwork_code='remote-net'\nmtu=1300\nno_punch=true",
+        )
+        .unwrap();
+        let local: FileConfig = toml::from_str(
+            "subscription='vnt2://join/1/example'\nnetwork_code='local-net'\nmtu=1400\nno_punch=false",
+        )
+        .unwrap();
+        let merged = remote.overlay(local);
+        assert_eq!(merged.network_code.as_deref(), Some("local-net"));
+        assert_eq!(merged.mtu, Some(1400));
+        assert_eq!(merged.no_punch, Some(false));
+        assert_eq!(
+            merged.server.as_deref(),
+            Some(&["tcp://remote:29872".into()][..])
+        );
+    }
 
     /// 纯参数模式下 --tunnel-port 不能被静默丢弃
     #[test]

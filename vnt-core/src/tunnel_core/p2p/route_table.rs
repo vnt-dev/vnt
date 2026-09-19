@@ -308,8 +308,16 @@ impl RouteTable {
     }
 
     /// 添加路由（心跳时调用，用于更新路由时间和添加跨节点转发路由）
+    #[cfg(test)]
     pub fn add_route(&self, id: Ipv4Addr, route: Route, is_default: bool) {
         self.inner.add_route(id, route, false, is_default);
+    }
+
+    /// Learns a route from Ping/Pong. A one-hop probe proves that the
+    /// physical tunnel terminates at `id`, so it may also refresh or migrate
+    /// the RouteKey owner. Relayed probes must never claim the ingress tunnel.
+    pub fn add_probe_route(&self, id: Ipv4Addr, route: Route, is_default: bool) {
+        self.inner.add_probe_route(id, route, is_default);
     }
 
     /// Adds a two-hop route advertised by a directly connected Gossip peer.
@@ -564,6 +572,16 @@ impl RouteTableInner {
         added
     }
 
+    fn add_probe_route(&self, id: Ipv4Addr, route: Route, is_default: bool) {
+        let now = Instant::now();
+        let mut state = self.state.write();
+        if route.metric() == 1 {
+            state.route_key_owner.insert(route.route_key(), id);
+        }
+        add_route_locked(&mut state, id, route, false, is_default, now);
+        clear_unreachable_for_route(&mut state, id, route.route_key());
+    }
+
     fn remove_oldest_route(&self, expired_time: Instant) -> Vec<(Ipv4Addr, RouteKey)> {
         let now = Instant::now();
         let mut state = self.state.write();
@@ -813,6 +831,57 @@ mod tests {
         let route = table.get_route_by_id(&peer).unwrap();
         assert_eq!(route.rtt(), 37);
         assert_eq!(route.loss_rate(), 125);
+    }
+
+    #[test]
+    fn one_hop_probe_migrates_route_owner_to_new_ip() {
+        let table = RouteTable::new();
+        let old_ip = Ipv4Addr::new(10, 0, 0, 2);
+        let new_ip = Ipv4Addr::new(10, 0, 0, 9);
+        let key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:1991".parse().unwrap(),
+            "127.0.0.1:2991".parse().unwrap(),
+        );
+
+        table.add_owner_route(old_ip, key);
+        table.add_probe_route(new_ip, Route::from_with_loss(key, 1, 17, 25), false);
+
+        assert_eq!(table.route_owner(&key), Some(new_ip));
+        let route = table.get_route_by_id(&new_ip).unwrap();
+        assert_eq!(route.rtt(), 17);
+        assert_eq!(route.loss_rate(), 25);
+
+        // Expiring the old logical IP must not remove the migrated owner.
+        table
+            .inner
+            .state
+            .write()
+            .route_key_time
+            .insert((old_ip, key), Instant::now() - Duration::from_secs(11));
+        table.remove_oldest_route(Instant::now() - Duration::from_secs(10));
+        assert!(!table.exists(&old_ip));
+        assert!(table.exists(&new_ip));
+        assert_eq!(table.route_owner(&key), Some(new_ip));
+    }
+
+    #[test]
+    fn relayed_probe_does_not_steal_route_owner() {
+        let table = RouteTable::new();
+        let direct_peer = Ipv4Addr::new(10, 0, 0, 2);
+        let relayed_peer = Ipv4Addr::new(10, 0, 0, 9);
+        let key = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:1992".parse().unwrap(),
+            "127.0.0.1:2992".parse().unwrap(),
+        );
+
+        table.add_owner_route(direct_peer, key);
+        table.add_gossip_relay_route(relayed_peer, Route::from_default_rt(key, 2));
+        table.add_probe_route(relayed_peer, Route::from_with_loss(key, 2, 31, 50), false);
+
+        assert_eq!(table.route_owner(&key), Some(direct_peer));
+        assert_eq!(table.get_route_by_id(&relayed_peer).unwrap().metric(), 2);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::context::config::{PunchRule, TurnRule, allow_punch, punch_model_for};
+use crate::context::config::{PunchRule, allow_punch, punch_model_for};
 use crate::context::nat::PunchBackoff;
 use crate::context::{ServerInfoCollection, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
@@ -7,6 +7,7 @@ use crate::protocol::client_message::{
 };
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::node_info::NodeInfoMap;
 use crate::tunnel_core::p2p::route_table::RouteTable;
@@ -52,7 +53,7 @@ pub struct PunchTaskContext {
     pub server_info: ServerInfoCollection,
     pub punch_backoff: PunchBackoff,
     pub punch_info_getter: PunchInfoGetter,
-    pub turn: Arc<Vec<TurnRule>>,
+    pub policy: RuntimePolicyStore,
     pub node_info_map: NodeInfoMap,
 }
 
@@ -78,7 +79,7 @@ pub async fn punch_task(
         let mut list = ctx.server_info.client_online_ips();
         list.retain(|dest_ip| {
             is_other_peer(src_ip, *dest_ip)
-                && allow_punch(&ctx.turn, dest_ip)
+                && allow_punch(&ctx.policy.load().turn, dest_ip)
                 && ctx.punch_backoff.should_punch(*dest_ip)
         });
         let mut list = list
@@ -126,7 +127,7 @@ pub struct NatPuncher {
     puncher: Option<Puncher>,
     packet_crypto: PacketCrypto,
     limiter: PunchLimiter,
-    punch_rules: Arc<Vec<PunchRule>>,
+    policy: RuntimePolicyStore,
     network_code_hash: [u8; NETWORK_CODE_HASH_LEN],
 }
 
@@ -136,7 +137,7 @@ impl NatPuncher {
         punch_backoff: PunchBackoff,
         puncher: Option<Puncher>,
         packet_crypto: PacketCrypto,
-        punch_rules: Arc<Vec<PunchRule>>,
+        policy: RuntimePolicyStore,
         identity: NodeIdentityTemplate,
     ) -> Self {
         Self {
@@ -145,7 +146,7 @@ impl NatPuncher {
             puncher,
             packet_crypto,
             limiter: PunchLimiter::default(),
-            punch_rules,
+            policy,
             network_code_hash: network_code_hash(&identity.network_code),
         }
     }
@@ -157,6 +158,9 @@ impl NatPuncher {
         let Some(puncher) = self.puncher.clone() else {
             return Ok(None);
         };
+        if self.policy.load().no_punch {
+            return Ok(None);
+        }
         let Some((punch_model, effective_policies)) =
             self.effective_punch_model(dest_ip, &punch_info)
         else {
@@ -193,6 +197,9 @@ impl NatPuncher {
         let Some(puncher) = self.puncher.clone() else {
             return Ok(());
         };
+        if self.policy.load().no_punch {
+            return Ok(());
+        }
         let Some((punch_model, _)) = self.effective_punch_model(dest_ip, &punch_info) else {
             log::debug!("skip punch to {dest_ip}: punch model intersection is empty");
             return Ok(());
@@ -212,7 +219,8 @@ impl NatPuncher {
         dest_ip: Ipv4Addr,
         punch_info: &PunchInfo,
     ) -> Option<(PunchModel, PunchPolicySet)> {
-        effective_punch_model(&self.punch_rules, dest_ip, punch_info.punch_model.clone())
+        let policy = self.policy.load();
+        effective_punch_model(&policy.punch_model, dest_ip, punch_info.punch_model.clone())
     }
     fn spawn_punch(
         &self,
@@ -308,7 +316,7 @@ pub async fn gossip_punch_task(
         for node in candidates {
             let dest_ip = node.ip;
             if !is_other_peer(src_ip, dest_ip)
-                || !allow_punch(&ctx.turn, &dest_ip)
+                || !allow_punch(&ctx.policy.load().turn, &dest_ip)
                 || !ctx.punch_backoff.should_punch(dest_ip)
             {
                 continue;

@@ -2,6 +2,7 @@ use crate::context::{NetworkAddr, SharedNetworkAddr};
 use crate::nat::AllowSubnetExternalRoute;
 use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
 use crate::protocol::transmission::TransmissionBytes;
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::outbound::HybridOutbound;
 use crate::utils::task_control::TaskGroup;
 use anyhow::Context;
@@ -171,7 +172,7 @@ impl InternalNatInbound {
 #[derive(Clone)]
 pub(crate) struct PortMappingManager {
     no_tun: bool,
-    allow_port_mapping: bool,
+    policy: RuntimePolicyStore,
     network: SharedNetworkAddr,
     default_interface: Option<LocalInterface>,
 }
@@ -179,13 +180,13 @@ pub(crate) struct PortMappingManager {
 impl PortMappingManager {
     pub fn new(
         no_tun: bool,
-        allow_port_mapping: bool,
+        policy: RuntimePolicyStore,
         network: SharedNetworkAddr,
         default_interface: Option<LocalInterface>,
     ) -> Self {
         Self {
             no_tun,
-            allow_port_mapping,
+            policy,
             network,
             default_interface,
         }
@@ -201,7 +202,7 @@ impl PortMappingManager {
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
-        if !self.allow_port_mapping {
+        if !self.policy.load().allow_mapping {
             log::debug!("port mapping not enabled");
             return Ok(());
         }
@@ -243,7 +244,7 @@ impl PortMappingManager {
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
-        if !self.allow_port_mapping {
+        if !self.policy.load().allow_mapping {
             log::debug!("port mapping not enabled");
             return Ok(());
         }

@@ -5,22 +5,30 @@ use crate::utils::task_control::TaskGroup;
 use route_manager::{Route, RouteManager};
 use std::time::Duration;
 
+pub(crate) fn prepare(if_index: u32) -> std::io::Result<SystemRouteReconciler> {
+    Ok(SystemRouteReconciler {
+        inner: RouteReconciler::new(if_index)?,
+    })
+}
+
+/// A prepared reconciler has already opened the platform route manager.  This
+/// lets a device replacement fail before the old interface's route watcher is
+/// stopped.
+pub(crate) struct SystemRouteReconciler {
+    inner: RouteReconciler<SystemRouteBackend>,
+}
+
 pub(crate) fn start(
     task_group: &TaskGroup,
     mut desired: tokio::sync::watch::Receiver<Vec<NetInput>>,
-    if_index: u32,
+    mut reconciler: SystemRouteReconciler,
 ) {
     task_group.spawn(async move {
-        let mut reconciler = match RouteReconciler::new(if_index) {
-            Ok(reconciler) => reconciler,
-            Err(error) => {
-                log::error!("create subnet route manager failed: {error:?}");
-                return;
-            }
-        };
         let mut retry = tokio::time::interval(Duration::from_secs(5));
         loop {
-            reconciler.reconcile(desired.borrow_and_update().clone());
+            reconciler
+                .inner
+                .reconcile(desired.borrow_and_update().clone());
             tokio::select! {
                 changed = desired.changed() => {
                     if changed.is_err() {

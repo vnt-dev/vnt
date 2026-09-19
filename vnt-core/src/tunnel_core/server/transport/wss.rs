@@ -4,6 +4,7 @@ use anyhow::{Context, bail};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
@@ -21,6 +22,14 @@ impl WssTransport {
     }
     pub fn disconnect(&mut self) {
         self.stream = None;
+    }
+    pub async fn graceful_disconnect(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            // Close the WebSocket protocol first, then explicitly shut down
+            // rustls so the peer receives TLS close_notify as well.
+            let _ = stream.close(None).await;
+            let _ = stream.get_mut().shutdown().await;
+        }
     }
     pub async fn connect(&mut self, config: &ConnectConfig) -> anyhow::Result<()> {
         if self.stream.is_some() {

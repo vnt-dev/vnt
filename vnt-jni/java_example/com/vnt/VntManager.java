@@ -34,6 +34,15 @@ public class VntManager {
         nativeDestroy();
     }
 
+    /** Fetches the latest server-managed configuration for a subscription. */
+    public static String fetchSubscriptionConfig(String subscription) throws VntException {
+        try {
+            return nativeFetchSubscriptionConfig(subscription);
+        } catch (Exception error) {
+            throw new VntException("Failed to fetch subscription config", error);
+        }
+    }
+
     /**
      * 创建网络实例
      * @param config 网络配置对象
@@ -52,5 +61,6 @@ public class VntManager {
 
     private static native boolean nativeInit();
     private static native void nativeDestroy();
+    private static native String nativeFetchSubscriptionConfig(String subscription);
     private static native long nativeCreateNetwork(String configJson);
 }

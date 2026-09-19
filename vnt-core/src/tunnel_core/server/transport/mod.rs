@@ -35,6 +35,15 @@ impl TransportClient {
         };
         *self = TransportClient::Pending;
     }
+    pub async fn graceful_disconnect(&mut self) {
+        match self {
+            TransportClient::Quic(client) => client.disconnect(),
+            TransportClient::TlsTcp(client) => client.graceful_disconnect().await,
+            TransportClient::Wss(client) => client.graceful_disconnect().await,
+            TransportClient::Pending => {}
+        }
+        *self = TransportClient::Pending;
+    }
     pub async fn connect_timeout(
         &mut self,
         config: &ConnectConfig,

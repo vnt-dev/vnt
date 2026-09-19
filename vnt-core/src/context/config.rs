@@ -12,6 +12,10 @@ use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 pub const MAX_NETWORK_CODE_LEN: usize = 32;
 pub const MAX_DEVICE_ID_LEN: usize = 64;
@@ -113,6 +117,15 @@ const PUNCH_POLICIES: [PunchPolicy; 4] = [
 pub struct PunchRule {
     target: Ipv4Net,
     policies: PunchPolicySet,
+}
+
+impl PartialEq for PunchRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.target == other.target
+            && PUNCH_POLICIES
+                .iter()
+                .all(|policy| self.policies.is_match(*policy) == other.policies.is_match(*policy))
+    }
 }
 
 impl PunchRule {
@@ -556,6 +569,83 @@ pub struct Config {
     pub tunnel_port: Option<u16>,
     /// 事件脚本路径/命令；网卡创建成功、掉线、重连成功、IP 变化时以参数方式调用
     pub event_script: Option<String>,
+    /// Opaque server-management credential. Its Debug implementation is
+    /// deliberately redacted.
+    pub managed: Option<ManagedRegistration>,
+}
+
+#[derive(Clone)]
+pub struct ManagedRegistration {
+    credential_key: Vec<u8>,
+    pub network_code: String,
+    pub device_id: String,
+    pub instance_id: Vec<u8>,
+    revision: Arc<AtomicU64>,
+}
+
+impl ManagedRegistration {
+    pub fn new(
+        credential_key: Vec<u8>,
+        network_code: String,
+        device_id: String,
+        instance_id: Vec<u8>,
+        revision: u64,
+    ) -> Self {
+        Self {
+            credential_key,
+            network_code,
+            device_id,
+            instance_id,
+            revision: Arc::new(AtomicU64::new(revision)),
+        }
+    }
+
+    pub(crate) fn create_registration(
+        &self,
+        _runtime_network_code: &str,
+        _runtime_device_id: &str,
+    ) -> crate::protocol::control_message::SubscriptionRegistration {
+        let client_nonce = crate::managed_config::random_nonce();
+        let client_proof = crate::managed_config::client_proof(&self.credential_key, &client_nonce);
+        crate::protocol::control_message::SubscriptionRegistration {
+            network_code: self.network_code.clone(),
+            device_id: self.device_id.clone(),
+            client_nonce,
+            client_proof,
+            instance_id: self.instance_id.clone(),
+            applied_revision: self.revision.load(Ordering::Acquire),
+        }
+    }
+
+    pub(crate) fn verify_server_proof(
+        &self,
+        registration: &crate::protocol::control_message::SubscriptionRegistration,
+        proof: &crate::protocol::control_message::SubscriptionServerProof,
+    ) -> bool {
+        crate::managed_config::verify_server_proof(
+            &self.credential_key,
+            &registration.client_nonce,
+            &proof.server_nonce,
+            &proof.server_proof,
+        )
+    }
+
+    pub(crate) fn mark_applied(&self, revision: u64) {
+        self.revision.fetch_max(revision, Ordering::AcqRel);
+    }
+}
+
+impl std::fmt::Debug for ManagedRegistration {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ManagedRegistration")
+            .field("credential_key", &"[REDACTED]")
+            .field("network_code", &self.network_code)
+            .field("device_id", &self.device_id)
+            .field("instance_id", &"[REDACTED]")
+            .field("revision", &self.revision.load(Ordering::Acquire))
+            .finish()
+    }
 }
 impl Config {
     pub fn normalize(&mut self) -> anyhow::Result<()> {
@@ -632,7 +722,7 @@ impl Config {
             let mut set = HashSet::new();
 
             for a in self.server_addr.iter() {
-                if !set.insert(a.address.as_str()) {
+                if !set.insert(a.to_string()) {
                     bail!("服务器地址不能相同")
                 }
             }
@@ -680,23 +770,23 @@ impl Config {
         index: usize,
         default_interface: Option<rustp2p_core::socket::LocalInterface>,
         registration_ip: crate::tunnel_core::server::transport::config::SharedRegistrationIp,
+        identity: crate::protocol::client_message::SharedNodeIdentity,
+        client_instance_id: std::sync::Arc<Vec<u8>>,
     ) -> ConnectRegConfig {
         ConnectRegConfig {
             server_addr: self.server_addr[index].clone(),
             cert_mode: self.cert_mode.clone(),
             network_code: self.network_code.clone(),
             device_id: self.device_id.clone(),
-            device_name: self.device_name.clone(),
+            identity,
             ip: registration_ip,
             key_sign: self.key_sign(),
             ip_variable: self.ip.is_none(),
-            advertised_subnets: std::sync::Arc::new(crate::nat::advertised_subnets(
-                &self.output,
-                &self.subnet_mapping,
-            )),
             allow_ikev2: self.allow_ikev2,
             allow_wireguard: self.allow_wireguard,
             default_interface,
+            managed: self.managed.clone(),
+            client_instance_id,
         }
     }
 }
@@ -730,6 +820,41 @@ mod tests {
         assert!("10.26.0.0/24".parse::<VirtualIp>().is_err());
         assert!("10.26.0.255/24".parse::<VirtualIp>().is_err());
         assert!("10.26.0.2/31".parse::<VirtualIp>().is_err());
+    }
+
+    #[test]
+    fn managed_registration_reports_latest_locally_applied_revision() {
+        let managed = ManagedRegistration::new(
+            vec![7; 32],
+            "managed-network".into(),
+            "managed-device".into(),
+            vec![9; 32],
+            3,
+        );
+        assert_eq!(
+            managed
+                .create_registration("managed-network", "managed-device")
+                .applied_revision,
+            3
+        );
+
+        managed.mark_applied(5);
+        assert_eq!(
+            managed
+                .create_registration("managed-network", "managed-device")
+                .applied_revision,
+            5
+        );
+
+        // Late completion of an older update must never move registration
+        // backwards and trigger a stale server catch-up on reconnect.
+        managed.mark_applied(4);
+        assert_eq!(
+            managed
+                .create_registration("managed-network", "managed-device")
+                .applied_revision,
+            5
+        );
     }
 
     #[test]

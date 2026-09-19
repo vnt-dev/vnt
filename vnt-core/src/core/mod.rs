@@ -1,24 +1,27 @@
 use crate::api::VntApi;
-use crate::compression::PacketCompression;
 use crate::context::config::{Config, DeviceMode};
 use crate::context::{AppState, NetworkAddr, NetworkRoute};
 use crate::crypto::PacketCrypto;
-use crate::enhanced_tunnel::enhanced_ipv4_tunnel;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
+use crate::enhanced_tunnel::{
+    MtuTunnelComponents, TunnelComponents, TunnelConfig, enhanced_ipv4_tunnel,
+};
 use crate::event_script::EventScript;
 #[cfg(not(target_os = "android"))]
 use crate::event_script::EventScriptType;
 use crate::fec::{FecDecoder, FecEncoder};
-#[cfg(target_os = "android")]
-use crate::nat::NetInput;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{
     AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable, advertised_subnets,
 };
-use crate::protocol::client_message::NodeIdentityTemplate;
+use crate::protocol::client_message::{NodeIdentityTemplate, SharedNodeIdentity};
 use crate::protocol::control_message::ErrorResponseMsg;
+use crate::runtime_config::{
+    MtuComponentController, RuntimeConfigController, RuntimePolicy, RuntimePolicyStore,
+    ServerComponentController,
+};
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tun::{DeviceConfig, DeviceIOManager, TunDataInbound, TunReceiver, tun_channel};
 use crate::tunnel_core::outbound::{BasicOutbound, HybridOutbound};
@@ -29,36 +32,29 @@ use crate::tunnel_core::p2p::transport::task::{
 };
 use crate::tunnel_core::server::connection_manager::{
     InboundHandlerConfig, ServerTurnManager, create_server_tunnel, register_with_first_available,
+    server_addresses,
 };
 use crate::tunnel_core::server::inbound::IpUpdateContext;
 use crate::tunnel_core::server::rpc::ServerRPC;
 use crate::utils::task_control::TaskGroup;
 use anyhow::{Context, bail};
 use ipnet::Ipv4Net;
+use rand::RngExt;
 use std::net::Ipv4Addr;
 
 pub const DEFAULT_MTU: u16 = 1380;
 
-#[cfg(target_os = "android")]
-pub type AndroidSubnetRouteCallback =
-    std::sync::Arc<dyn Fn(Vec<NetInput>) -> anyhow::Result<()> + Send + Sync + 'static>;
-
 /// Context for deferred registration
 struct RegistrationContext {
+    server_task_group: TaskGroup,
     server_managers: Vec<ServerTurnManager>,
     ip_update: IpUpdateContext,
     subnet_external_route: SubnetExternalRoute,
     puncher: NatPuncher,
     packet_crypto: PacketCrypto,
-    packet_compression: PacketCompression,
     enhanced_inbound: EnhancedInbound,
     fec_decoder: FecDecoder,
-    turn: std::sync::Arc<Vec<crate::context::config::TurnRule>>,
-    punch_model: std::sync::Arc<Vec<crate::context::config::PunchRule>>,
-    auto_sync_subnet: bool,
-    allow_ikev2: bool,
-    allow_wireguard: bool,
-    relay_subnets: AllowSubnetExternalRoute,
+    policy: RuntimePolicyStore,
     basic_outbound: BasicOutbound,
 }
 
@@ -68,14 +64,13 @@ pub struct NetworkManager {
     app_state: AppState,
     task_group: TaskGroup,
     device_io_manager: DeviceIOManager,
-    #[cfg(target_os = "android")]
     ip_update: IpUpdateContext,
+    node_identity: SharedNodeIdentity,
     enhanced_outbound: Option<EnhancedOutbound>,
     server_rpc: ServerRPC,
+    runtime_config: RuntimeConfigController,
     tun_receiver: Option<TunReceiver>,
     registration_context: Option<Box<RegistrationContext>>,
-    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
-    system_routes_started: std::sync::atomic::AtomicBool,
 }
 pub enum RegisterResponse {
     Success(NetworkAddr),
@@ -95,8 +90,6 @@ impl NetworkManager {
         app_state.nat_info.set_on_change(move || backoff.cap_all());
         config.normalize()?;
         config.check()?;
-        let turn = std::sync::Arc::new(config.turn.clone());
-        let punch_model = std::sync::Arc::new(config.punch_model.clone());
         let outbound_interface_name = config
             .outbound_interface
             .as_deref()
@@ -116,24 +109,45 @@ impl NetworkManager {
         }
         let mtu = config.mtu.unwrap_or(DEFAULT_MTU);
         let packet_crypto = PacketCrypto::new_from_str(config.password.as_deref())?;
-        let packet_compression = PacketCompression::new(config.compress);
-        let node_identity = NodeIdentityTemplate {
+        let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
+        let relay_subnets = AllowSubnetExternalRoute::new(advertised_subnets(
+            &config.output,
+            &config.subnet_mapping,
+        ));
+        let subnet_mapping = SubnetMappingTable::new(config.subnet_mapping.clone());
+        let runtime_policy = RuntimePolicyStore::new(RuntimePolicy::from_config_with_handles(
+            &config,
+            None,
+            subnet_mapping.clone(),
+            allow_subnet.clone(),
+            relay_subnets.clone(),
+        ));
+        let node_identity = SharedNodeIdentity::new(NodeIdentityTemplate {
             name: config.device_name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             network_code: config.network_code.clone(),
             advertised_subnets: advertised_subnets(&config.output, &config.subnet_mapping),
-        };
+        });
+        let mut instance = vec![0_u8; 32];
+        rand::rng().fill(instance.as_mut_slice());
+        let client_instance_id = std::sync::Arc::new(instance);
         let (server_manager_list, tunnel_to_server, server_rpc, registration_ip) =
             create_server_tunnel(
                 app_state.clone(),
                 &config,
                 packet_crypto.clone(),
                 default_interface.clone(),
+                node_identity.clone(),
+                client_instance_id.clone(),
             );
+        app_state
+            .server_info_collection
+            .update_server(server_addresses(&config));
+        let server_task_group = task_group.child_scope();
         let device_io_manager = DeviceIOManager::new(task_group.clone());
         let ip_update = IpUpdateContext::new(
             app_state.network.clone(),
-            registration_ip,
+            registration_ip.clone(),
             tunnel_to_server.clone(),
             device_io_manager.clone(),
             config.device_mode,
@@ -144,52 +158,35 @@ impl NetworkManager {
                 .map(|addr| addr.to_string())
                 .collect(),
         );
-        let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
-        let relay_subnets = AllowSubnetExternalRoute::new(advertised_subnets(
-            &config.output,
-            &config.subnet_mapping,
-        ));
-
-        let p2p_enabled =
-            !config.no_punch || !config.peer_address.is_empty() || !config.turn.is_empty();
-        let (puncher, p2p_socket, p2p_task) = if p2p_enabled {
-            let (puncher, p2p_socket_manager, p2p_task) = init_tunnel(
-                task_group.clone(),
-                app_state.clone(),
-                tunnel_to_server.clone(),
-                packet_crypto.clone(),
-                P2pInitConfig {
-                    tunnel_addr: config.tunnel_addr.clone(),
-                    tunnel_port: config.tunnel_port,
-                    automatic_punch: !config.no_punch,
-                    auto_sync_subnet: config.auto_sync_subnet,
-                    peer_address: config.peer_address.clone(),
-                    turn: turn.clone(),
-                    default_interface: default_interface.clone(),
-                    identity: node_identity.clone(),
-                },
-            )
-            .await?;
-
-            (
-                (!config.no_punch).then_some(puncher),
-                Some(p2p_socket_manager),
-                Some(p2p_task),
-            )
-        } else {
-            (None, None, None)
-        };
+        // Keep the listener resident so no_punch/peer/turn can be changed
+        // without replacing the instance or its virtual network device.
+        let (puncher, p2p_socket_manager, p2p_task) = init_tunnel(
+            task_group.clone(),
+            app_state.clone(),
+            tunnel_to_server.clone(),
+            packet_crypto.clone(),
+            P2pInitConfig {
+                tunnel_addr: config.tunnel_addr.clone(),
+                tunnel_port: config.tunnel_port,
+                automatic_punch: true,
+                policy: runtime_policy.clone(),
+                default_interface: default_interface.clone(),
+                identity: node_identity.clone(),
+            },
+        )
+        .await?;
+        let p2p_socket = Some(p2p_socket_manager);
+        let p2p_task = Some(p2p_task);
         let puncher = NatPuncher::new(
             app_state.network.clone(),
             app_state.punch_backoff.clone(),
-            puncher,
+            Some(puncher),
             packet_crypto.clone(),
-            punch_model.clone(),
-            node_identity.clone(),
+            runtime_policy.clone(),
+            node_identity.get(),
         );
         let subnet_external_route = app_state.subnet_route.clone();
         subnet_external_route.set_route_table(config.input.clone());
-        let subnet_mapping = SubnetMappingTable::new(config.subnet_mapping.clone());
         let subnet_packet_mapper = SubnetPacketMapper::default();
 
         let fec_decoder = FecDecoder::new(packet_crypto.clone());
@@ -197,7 +194,7 @@ impl NetworkManager {
             tunnel_to_server.clone(),
             p2p_socket.clone(),
             packet_crypto.clone(),
-            turn.clone(),
+            runtime_policy.clone(),
         );
         if p2p_socket.is_some() {
             task_group.spawn(node_announcement_task(
@@ -207,7 +204,7 @@ impl NetworkManager {
                 node_identity.clone(),
             ));
         }
-        if !config.no_punch {
+        {
             let punch_state = app_state.clone();
             let punch_ctx = PunchTaskContext {
                 network: app_state.network.clone(),
@@ -216,7 +213,7 @@ impl NetworkManager {
                 punch_info_getter: std::sync::Arc::new(move |target| {
                     punch_state.get_punch_info(target)
                 }),
-                turn: turn.clone(),
+                policy: runtime_policy.clone(),
                 node_info_map: app_state.node_info_map.clone(),
             };
             task_group.spawn(gossip_punch_task(
@@ -225,42 +222,52 @@ impl NetworkManager {
                 punch_ctx,
             ));
         }
-        let fec_encoder = if config.fec {
-            Some(FecEncoder::new(
-                &task_group,
-                basic_outbound.clone(),
-                app_state.network.clone(),
-            ))
-        } else {
-            None
-        };
+        let shared_fec_encoder = FecEncoder::new(
+            &task_group,
+            basic_outbound.clone(),
+            app_state.network.clone(),
+        );
+        let fec_encoder = config.fec.then_some(shared_fec_encoder.clone());
+        runtime_policy.store(RuntimePolicy::from_config_with_handles(
+            &config,
+            fec_encoder.clone(),
+            subnet_mapping.clone(),
+            allow_subnet.clone(),
+            relay_subnets.clone(),
+        ));
+        let runtime_config = RuntimeConfigController::new(
+            runtime_policy.clone(),
+            shared_fec_encoder,
+            subnet_mapping.clone(),
+            allow_subnet.clone(),
+            relay_subnets.clone(),
+        );
 
         let hybrid_outbound = HybridOutbound::new(
             app_state.network.clone(),
             app_state.server_info_collection.clone(),
             app_state.traffic_stats.clone(),
             basic_outbound.clone(),
-            packet_compression.clone(),
             subnet_external_route.clone(),
-            subnet_mapping.clone(),
             subnet_packet_mapper.clone(),
-            relay_subnets.clone(),
-            fec_encoder,
-        )
-        .with_no_broadcast(config.no_broadcast)
-        .with_allow_ikev2(config.allow_ikev2)
-        .with_allow_wireguard(config.allow_wireguard);
+            runtime_policy.clone(),
+        );
         let port_mapping_manager = PortMappingManager::new(
             config.device_mode == DeviceMode::No,
-            config.allow_port_mapping,
+            runtime_policy.clone(),
             app_state.network.clone(),
             default_interface.clone(),
         );
-        let internal_nat_inbound = if config.no_nat && config.device_mode != DeviceMode::No {
-            None
-        } else {
-            let nat_inbound = InternalNatInbound::create(
-                &task_group,
+        // Keep the NAT stack resident. `no_nat` is a policy gate, so toggling
+        // it does not tear down the virtual device or lose in-flight overlay
+        // state. In no-device mode NAT remains the mandatory local endpoint.
+        // Keep all MTU-fixed workers in their own scope. The root task group
+        // owns stable dispatchers and port mappings, while this scope can be
+        // replaced without restarting the network instance.
+        let mtu_task_group = task_group.child_scope();
+        let internal_nat_inbound = Some(
+            InternalNatInbound::create(
+                &mtu_task_group,
                 mtu,
                 hybrid_outbound.clone(),
                 allow_subnet.clone(),
@@ -268,9 +275,8 @@ impl NetworkManager {
                 config.device_mode == DeviceMode::No,
                 default_interface.clone(),
             )
-            .await?;
-            Some(nat_inbound)
-        };
+            .await?,
+        );
 
         let (enhanced_tun_inbound, tun_receiver) = match config.device_mode {
             DeviceMode::No => (
@@ -293,27 +299,54 @@ impl NetworkManager {
             }
         };
 
-        let (enhanced_inbound, enhanced_outbound) = enhanced_ipv4_tunnel(
+        let mtu_components = MtuTunnelComponents {
+            hybrid_outbound: hybrid_outbound.clone(),
+            external_route: subnet_external_route.clone(),
+            subnet_mapping: subnet_mapping.clone(),
+            subnet_packet_mapper: subnet_packet_mapper.clone(),
+            allow_subnet: allow_subnet.clone(),
+            network: app_state.network.clone(),
+            no_tun: config.device_mode == DeviceMode::No,
+            default_interface: default_interface.clone(),
+            port_mapping_manager: port_mapping_manager.clone(),
+            policy: runtime_policy.clone(),
+            runtime_config: runtime_config.clone(),
+        };
+        let tunnel_components = TunnelComponents {
+            hybrid_outbound: hybrid_outbound.clone(),
+            external_route: subnet_external_route.clone(),
+            subnet_mapping: subnet_mapping.clone(),
+            subnet_packet_mapper: subnet_packet_mapper.clone(),
+            internal_nat_inbound,
+            port_mapping_manager,
+            policy: runtime_policy.clone(),
+            runtime_config: runtime_config.clone(),
+        };
+        let (enhanced_inbound, enhanced_outbound, quic_client) = enhanced_ipv4_tunnel(
             app_state.clone(),
+            mtu_task_group.clone(),
             task_group.clone(),
-            enhanced_tun_inbound,
-            crate::enhanced_tunnel::TunnelConfig {
+            enhanced_tun_inbound.clone(),
+            TunnelConfig {
                 mtu,
                 password: config.password.clone(),
-                open_quic_client: config.rtx,
                 port_mapping: config.port_mapping.clone(),
                 device_mode: config.device_mode,
             },
-            crate::enhanced_tunnel::TunnelComponents {
-                hybrid_outbound: hybrid_outbound.clone(),
-                external_route: subnet_external_route.clone(),
-                subnet_mapping,
-                subnet_packet_mapper,
-                internal_nat_inbound,
-                port_mapping_manager,
-            },
+            tunnel_components,
         )
         .await?;
+
+        runtime_config.attach_mtu_components(MtuComponentController {
+            app_state: app_state.clone(),
+            root_task_group: task_group.clone(),
+            active_scope: std::sync::Arc::new(tokio::sync::Mutex::new(mtu_task_group)),
+            tun_data_inbound: enhanced_tun_inbound,
+            components: mtu_components,
+            enhanced_inbound: enhanced_inbound.clone(),
+            enhanced_outbound: enhanced_outbound.clone(),
+            quic_client,
+        });
 
         if let Some(p2p_task) = p2p_task {
             let handler = P2pInboundHandler::new(P2pInboundConfig {
@@ -325,14 +358,12 @@ impl NetworkManager {
                 node_info_map: app_state.node_info_map.clone(),
                 packet_loss_stats: app_state.packet_loss_stats.clone(),
                 packet_crypto: packet_crypto.clone(),
-                packet_compression: packet_compression.clone(),
                 enhanced_inbound: enhanced_inbound.clone(),
                 fec_decoder: fec_decoder.clone(),
-                turn: turn.clone(),
                 basic_outbound: basic_outbound.clone(),
                 punch_backoff: app_state.punch_backoff.clone(),
                 identity: node_identity.clone(),
-                auto_sync_subnet: config.auto_sync_subnet,
+                policy: runtime_policy.clone(),
                 puncher: puncher.clone(),
                 punch_info_getter: {
                     let state = app_state.clone();
@@ -344,40 +375,57 @@ impl NetworkManager {
         }
 
         let registration_context = Box::new(RegistrationContext {
+            server_task_group,
             server_managers: server_manager_list,
             ip_update: ip_update.clone(),
             subnet_external_route,
             puncher,
             packet_crypto,
-            packet_compression,
             enhanced_inbound,
             fec_decoder,
-            turn,
-            punch_model,
-            auto_sync_subnet: config.auto_sync_subnet,
-            allow_ikev2: config.allow_ikev2,
-            allow_wireguard: config.allow_wireguard,
-            relay_subnets,
+            policy: runtime_policy,
             basic_outbound: basic_outbound.clone(),
+        });
+
+        runtime_config.attach_server_components(ServerComponentController {
+            app_state: app_state.clone(),
+            root_task_group: task_group.clone(),
+            active_scope: std::sync::Arc::new(tokio::sync::Mutex::new(
+                registration_context.server_task_group.clone(),
+            )),
+            registration_ip,
+            default_interface,
+            identity: node_identity.clone(),
+            packet_crypto: registration_context.packet_crypto.clone(),
+            external_route: registration_context.subnet_external_route.clone(),
+            client_instance_id,
+            puncher: registration_context.puncher.clone(),
+            enhanced_inbound: registration_context.enhanced_inbound.clone(),
+            fec_decoder: registration_context.fec_decoder.clone(),
+            basic_outbound: basic_outbound.clone(),
+            server_outbound: tunnel_to_server,
+            server_rpc: server_rpc.clone(),
         });
 
         app_state.set_config(config.clone());
         let event_script = EventScript::new(config.event_script.clone());
-        Ok(Self {
+        let manager = Self {
             config,
             event_script,
             app_state,
             task_group,
             device_io_manager,
-            #[cfg(target_os = "android")]
             ip_update,
+            node_identity,
             enhanced_outbound,
             server_rpc,
+            runtime_config,
             tun_receiver,
             registration_context: Some(registration_context),
-            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
-            system_routes_started: std::sync::atomic::AtomicBool::new(false),
-        })
+        };
+        #[cfg(target_os = "android")]
+        manager.start_android_tun_route_watch();
+        Ok(manager)
     }
 
     /// Register with server(s) and start data handling tasks.
@@ -387,8 +435,7 @@ impl NetworkManager {
         let Some(mut ctx) = self.registration_context.take() else {
             bail!("register can only be called once");
         };
-        match Self::register_impl(&self.app_state, &self.task_group, &mut ctx, self.config.ip).await
-        {
+        match Self::register_impl(&self.app_state, &mut ctx, self.config.ip).await {
             Ok(response) => Ok(response),
             Err(e) => {
                 // 注册失败时归还上下文，允许调用方重试
@@ -400,7 +447,6 @@ impl NetworkManager {
 
     async fn register_impl(
         app_state: &AppState,
-        task_group: &TaskGroup,
         ctx: &mut RegistrationContext,
         fixed_ip: Option<crate::context::config::VirtualIp>,
     ) -> anyhow::Result<RegisterResponse> {
@@ -414,6 +460,7 @@ impl NetworkManager {
                 prefix_len: fixed_ip.prefix_len(),
             };
             app_state.network.set(addr);
+            ctx.ip_update.set_registered_ip(addr.ip);
             log::info!("Local fixed network activated: {fixed_ip}");
             addr
         } else {
@@ -446,6 +493,9 @@ impl NetworkManager {
                 crate::protocol::control_message::ResponseMessage::FastReg(_) => {
                     bail!("Unexpected FastReg response");
                 }
+                crate::protocol::control_message::ResponseMessage::SubscriptionConfig(_) => {
+                    bail!("Unexpected subscription configuration response during registration");
+                }
             };
             let addr = NetworkAddr {
                 gateway: Some(reg_response.gateway),
@@ -454,12 +504,18 @@ impl NetworkManager {
                 prefix_len: reg_response.prefix_len,
             };
             app_state.network.set(addr);
+            ctx.ip_update.set_registered_ip(addr.ip);
             initially_connected_server = Some(server_index);
             if !reg_response.server_version.is_empty() {
                 app_state
                     .server_info_collection
                     .set_server_version(server_index as u32, reg_response.server_version);
             }
+            app_state.server_info_collection.set_server_identity(
+                server_index as u32,
+                reg_response.server_instance_id,
+                reg_response.multi_link_supported,
+            );
             addr
         };
 
@@ -470,26 +526,20 @@ impl NetworkManager {
                     app_state.network.clone(),
                     ctx.subnet_external_route.clone(),
                 ),
-                ip_update: ctx.ip_update.clone(),
                 server_info: app_state.server_info_collection.clone(),
                 nat_info: app_state.nat_info.clone(),
                 peer_map: app_state.peer_map.clone(),
                 punch_backoff: app_state.punch_backoff.clone(),
                 puncher: ctx.puncher.clone(),
-                punch_model: ctx.punch_model.clone(),
                 packet_crypto: ctx.packet_crypto.clone(),
-                packet_compression: ctx.packet_compression.clone(),
                 enhanced_inbound: ctx.enhanced_inbound.clone(),
                 fec_decoder: ctx.fec_decoder.clone(),
-                turn: ctx.turn.clone(),
-                auto_sync_subnet: ctx.auto_sync_subnet,
-                allow_ikev2: ctx.allow_ikev2,
-                allow_wireguard: ctx.allow_wireguard,
-                relay_subnets: ctx.relay_subnets.clone(),
+                policy: ctx.policy.clone(),
                 basic_outbound: ctx.basic_outbound.clone(),
+                app_state: app_state.clone(),
             });
             turn_manager.data_handle_task(
-                task_group,
+                &ctx.server_task_group,
                 handler_config,
                 initially_connected_server == Some(index),
             );
@@ -552,8 +602,9 @@ impl NetworkManager {
     }
     #[cfg(not(target_os = "android"))]
     pub async fn set_device_network_ip(&self, ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<()> {
-        // 服务端数据处理任务早于虚拟网卡初始化启动。若此间已经收到 UpdateIp，
-        // 必须以共享状态中的最新地址为准，不能再用最初注册响应覆盖新地址。
+        // 服务端数据处理任务早于虚拟网卡初始化启动。启动期间配置协调器可能已
+        // 应用了新地址，因此必须以共享状态中的最新地址为准，不能再用最初注册
+        // 响应覆盖它。
         let (ip, prefix_len) = self
             .app_state
             .get_network()
@@ -561,28 +612,9 @@ impl NetworkManager {
             .unwrap_or((ip, prefix_len));
         self.device_io_manager.set_network(ip, prefix_len).await?;
         #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-        if !self
-            .system_routes_started
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            let if_index = self.device_if_index().await?;
-            if self
-                .system_routes_started
-                .compare_exchange(
-                    false,
-                    true,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                crate::system_subnet_routes::start(
-                    &self.task_group,
-                    self.app_state.subnet_route.subscribe(),
-                    if_index,
-                );
-            }
-        }
+        self.device_io_manager
+            .start_system_routes(self.app_state.subnet_route.subscribe())
+            .await?;
         // 网卡设置成功（应用 IP）后触发事件脚本
         if let Some(network) = self.app_state.get_network() {
             let server = self
@@ -615,67 +647,50 @@ impl NetworkManager {
     }
 
     #[cfg(target_os = "android")]
-    pub fn set_android_ip_update_callback(
-        &self,
-        callback: crate::tunnel_core::server::inbound::AndroidIpUpdateCallback,
-    ) {
-        self.ip_update.set_android_callback(callback);
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn set_android_subnet_route_callback(&self, callback: AndroidSubnetRouteCallback) {
-        if !self.config.auto_sync_subnet {
-            return;
-        }
+    fn start_android_tun_route_watch(&self) {
         let mut routes = self.app_state.subnet_route.subscribe();
+        let ip_update = self.ip_update.clone();
         self.task_group.spawn(async move {
             loop {
                 if routes.changed().await.is_err() {
                     break;
                 }
                 let snapshot = routes.borrow_and_update().clone();
-                if let Err(error) = callback(snapshot) {
-                    log::warn!("通知 Android 子网路由变化失败: {error:#}");
+                if let Err(error) = ip_update.request_android_route_rebuild(snapshot).await {
+                    log::warn!("请求 Android TUN 路由重建失败: {error:#}");
                 }
             }
         });
     }
 
     #[cfg(target_os = "android")]
-    pub async fn prepare_android_ip_update(
+    pub fn tun_rebuild_coordinator(
         &self,
-        request_id: u64,
-        ip: Ipv4Addr,
-    ) -> anyhow::Result<()> {
-        self.ip_update.prepare_android_update(request_id, ip).await
+    ) -> crate::tunnel_core::server::inbound::TunRebuildCoordinator {
+        self.ip_update.tun_rebuild_coordinator()
     }
 
     #[cfg(target_os = "android")]
-    pub async fn complete_android_ip_update(
+    pub async fn replace_tun_task(
         &self,
         request_id: u64,
-        ip: Ipv4Addr,
-        tun_fd: Option<std::os::fd::OwnedFd>,
+        tun_fd: std::os::fd::OwnedFd,
     ) -> anyhow::Result<()> {
         self.ip_update
-            .complete_android_update(request_id, ip, tun_fd)
+            .replace_android_tun_task(request_id, tun_fd)
             .await
     }
 
     #[cfg(target_os = "android")]
-    pub async fn prepare_android_route_update(&self) -> anyhow::Result<()> {
-        self.ip_update.prepare_android_route_update().await
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn complete_android_route_update(
-        &self,
-        tun_fd: std::os::fd::OwnedFd,
-    ) -> anyhow::Result<()> {
-        self.ip_update.complete_android_route_update(tun_fd).await
+    pub async fn reject_tun_rebuild(&self, request_id: u64, reason: String) -> anyhow::Result<()> {
+        self.ip_update
+            .reject_android_tun_rebuild(request_id, reason)
+            .await
     }
 
     fn stop_network(&mut self) {
+        #[cfg(target_os = "android")]
+        self.ip_update.close_android_tun_rebuild();
         self.task_group.stop();
         self.app_state.stop_network();
     }
@@ -687,7 +702,13 @@ impl NetworkManager {
         self.task_group.wait_all_stopped().await;
     }
     pub fn vnt_api(&self) -> VntApi {
-        VntApi::new(self.app_state.clone(), self.server_rpc.clone())
+        VntApi::new(
+            self.app_state.clone(),
+            self.server_rpc.clone(),
+            self.ip_update.clone(),
+            self.node_identity.clone(),
+            self.runtime_config.clone(),
+        )
     }
 }
 impl Drop for NetworkManager {

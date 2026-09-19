@@ -8,11 +8,13 @@ use crate::nat::SubnetMappingTable;
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::outbound::HybridOutbound;
+use arc_swap::ArcSwap;
 use pnet_base::MacAddr;
 use pnet_packet::arp::ArpOperations;
 use pnet_packet::ethernet::EtherTypes;
 use pnet_packet::ipv4::Ipv4Packet;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 fn learned_unicast_peer(
     mac_table: &MacTable,
@@ -35,7 +37,14 @@ fn suppress_ipv4_flood(no_broadcast: bool, net_broadcast: Ipv4Addr, dest: Ipv4Ad
     no_broadcast && (dest.is_multicast() || dest == net_broadcast || dest.is_broadcast())
 }
 
+#[derive(Clone)]
 pub struct EnhancedOutbound {
+    inner: Arc<ArcSwap<EnhancedOutboundInner>>,
+}
+
+/// MTU-dependent outbound implementation behind the stable virtual-device
+/// dispatcher. A TUN task holds the outer value for its full lifetime.
+struct EnhancedOutboundInner {
     network: SharedNetworkAddr,
     enhanced_quic_outbound: EnhancedQuicOutbound,
     hybrid_outbound: HybridOutbound,
@@ -54,15 +63,34 @@ impl EnhancedOutbound {
         mac_table: MacTable,
     ) -> Self {
         Self {
-            network,
-            enhanced_quic_outbound,
-            hybrid_outbound,
-            subnet_mapping,
-            subnet_packet_mapper,
-            mac_table,
+            inner: Arc::new(ArcSwap::from_pointee(EnhancedOutboundInner {
+                network,
+                enhanced_quic_outbound,
+                hybrid_outbound,
+                subnet_mapping,
+                subnet_packet_mapper,
+                mac_table,
+            })),
         }
     }
+
+    pub(crate) fn replace_from(&self, prepared: &Self) {
+        self.inner.store(prepared.inner.load_full());
+    }
+
     pub async fn ipv4_outbound(&self, data: TransmissionBytes) {
+        let inner = self.inner.load();
+        inner.ipv4_outbound(data).await;
+    }
+
+    pub async fn ethernet_outbound(&self, data: TransmissionBytes) -> Option<TransmissionBytes> {
+        let inner = self.inner.load();
+        inner.ethernet_outbound(data).await
+    }
+}
+
+impl EnhancedOutboundInner {
+    async fn ipv4_outbound(&self, data: TransmissionBytes) {
         if data.is_empty() || data[0] >> 4 != 4 {
             return;
         }
@@ -70,7 +98,7 @@ impl EnhancedOutbound {
             log::warn!("EnhancedOutbound error: {:?}", e);
         }
     }
-    pub async fn ethernet_outbound(&self, data: TransmissionBytes) -> Option<TransmissionBytes> {
+    async fn ethernet_outbound(&self, data: TransmissionBytes) -> Option<TransmissionBytes> {
         self.ethernet_outbound_impl(data).await.unwrap_or_else(|e| {
             log::warn!("EnhancedOutbound Ethernet error: {e:?}");
             None

@@ -13,6 +13,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     config.protoc_arg("--experimental_allow_proto3_optional");
+    // Keep selective-broadcast payloads reference counted. This avoids building an
+    // intermediate Vec for every broadcast and lets decoding from `Bytes` retain a
+    // slice of the received frame instead of copying the embedded packet.
+    config.bytes([".protocol.control_message.SelectiveBroadcast.data"]);
 
     config.compile_protos(
         &[
