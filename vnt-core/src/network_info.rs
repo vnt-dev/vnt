@@ -1,6 +1,6 @@
 use crate::api::VntApi;
-use crate::context::config::{Config, DeviceMode};
 use crate::context::NetworkAddr;
+use crate::context::config::{Config, DeviceMode};
 use crate::core::NetworkManager;
 use crate::log_manager::InstanceLog;
 use crate::managed_config::{Subscription, SubscriptionListener};
@@ -550,10 +550,7 @@ impl RuntimeChangeManager {
                 }
             },
             None => {
-                routes_rx
-                    .changed()
-                    .await
-                    .context("route source closed")?;
+                routes_rx.changed().await.context("route source closed")?;
                 (local_config.clone(), std::collections::HashSet::new())
             }
         };

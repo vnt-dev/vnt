@@ -293,14 +293,8 @@ impl DeviceIOManager {
         let mtu = device_config.mtu;
         // 先创建新设备：创建失败时不影响当前任务
         let replacement_device = Arc::new(create_device(device_config)?);
-        self.swap_running_device(
-            replacement_device,
-            DeviceStateUpdate {
-                network: None,
-                mtu,
-            },
-        )
-        .await?;
+        self.swap_running_device(replacement_device, DeviceStateUpdate { network: None, mtu })
+            .await?;
         // 旧接口已随旧任务关闭：丢弃按旧接口建立的路由对账器（其 Drop 会
         // 清理旧接口路由），下次应用路由时按新接口重建。
         #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]

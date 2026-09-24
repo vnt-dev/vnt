@@ -150,10 +150,7 @@ mtu = 1400
     #[test]
     fn subscription_link_parses_v2_payload() {
         let subscription = Subscription::parse(SUBSCRIPTION).unwrap();
-        assert_eq!(
-            subscription.join_id,
-            "11111111-2222-3333-4444-555555555555"
-        );
+        assert_eq!(subscription.join_id, "11111111-2222-3333-4444-555555555555");
         assert_eq!(subscription.server, "tcp://127.0.0.1:29872");
     }
 }

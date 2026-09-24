@@ -125,11 +125,10 @@ impl ServerRPC {
             verified,
         } = tables;
         self.tunnel_to_server.update_senders(senders);
-        self.state
-            .store(Arc::new(ServerRpcState {
-                rpc_notifier: notifiers,
-                subscription_verified: verified,
-            }));
+        self.state.store(Arc::new(ServerRpcState {
+            rpc_notifier: notifiers,
+            subscription_verified: verified,
+        }));
     }
 
     pub async fn acknowledge_subscription_config(

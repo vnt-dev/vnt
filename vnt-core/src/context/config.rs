@@ -740,8 +740,10 @@ impl Config {
             table.insert("event_script".into(), event_script.clone().into());
         }
         let mut text = toml::to_string(&table).unwrap_or_default();
-        let mut header = String::from("# 当前生效配置（本地配置与服务端下发合并后的结果）
-");
+        let mut header = String::from(
+            "# 当前生效配置（本地配置与服务端下发合并后的结果）
+",
+        );
         if let Some(managed) = &self.managed {
             header.push_str(&format!(
                 "# 服务端管理: 已应用 revision {}
@@ -1294,7 +1296,10 @@ mod tests {
         assert!(text.contains("network_code = \"net\""), "{text}");
         assert!(text.contains("device_id = \"dev\""), "{text}");
         assert!(text.contains("device_name = \"node\""), "{text}");
-        assert!(text.contains("server = [\"tcp://127.0.0.1:29872\"]"), "{text}");
+        assert!(
+            text.contains("server = [\"tcp://127.0.0.1:29872\"]"),
+            "{text}"
+        );
         assert!(text.contains("compress = true"), "{text}");
         assert!(text.contains("mtu = 1380"), "{text}");
         // 默认值字段不输出

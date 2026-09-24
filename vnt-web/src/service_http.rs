@@ -37,10 +37,10 @@ use vnt_core::log_manager::{LogEntry, LogManager};
 use vnt_core::managed_config::Subscription;
 use vnt_core::nat::{NetInput, SubnetMapping};
 use vnt_core::network_info::{ChangeOutcome, RuntimeChangeManager, RuntimeEvent};
-use vnt_core::utils::task_control::TaskGroupManager;
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
+use vnt_core::utils::task_control::TaskGroupManager;
 
 const CONFIG_DIR: &str = "vnt_config";
 const CURRENT_CONFIG_RECORD: &str = "vnt_current_config.txt";
@@ -99,7 +99,10 @@ struct InstanceState {
 }
 
 impl HttpAppState {
-    fn runtime_manager(&self, file_name: &str) -> Option<Arc<tokio::sync::Mutex<RuntimeChangeManager>>> {
+    fn runtime_manager(
+        &self,
+        file_name: &str,
+    ) -> Option<Arc<tokio::sync::Mutex<RuntimeChangeManager>>> {
         self.inner.lock().runtime_managers.get(file_name).cloned()
     }
 
@@ -600,11 +603,8 @@ async fn resolve_subscription_config_with_retry(
     let subscription = match local_table.get("subscription") {
         None => None,
         Some(link_value) => {
-            let mut link = Subscription::parse(
-                link_value
-                    .as_str()
-                    .context("subscription 必须是字符串")?,
-            )?;
+            let mut link =
+                Subscription::parse(link_value.as_str().context("subscription 必须是字符串")?)?;
             // 稳定的订阅实例 ID：跨进程重启保持服务端视角的身份一致
             link.set_instance_id(state.subscription_instance_id(file_name))?;
             Some(link)
@@ -1534,11 +1534,8 @@ async fn start_vnt_internal_reserved(
             state.abort_start_task_if_generation(&file_name, generation);
             // 中止启动任务会丢弃其中持有的管理器；兜底再摘除并停止一次
             if let Some(manager) = state.take_runtime_manager(&file_name)
-                && let Ok(mut guard) = tokio::time::timeout(
-                    Duration::from_secs(10),
-                    manager.lock(),
-                )
-                .await
+                && let Ok(mut guard) =
+                    tokio::time::timeout(Duration::from_secs(10), manager.lock()).await
             {
                 guard.stop().await;
             }
@@ -1598,7 +1595,10 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         (device_mode, vnt_api)
     };
     if device_mode.has_device() {
-        state.record_log(&file_name, format!("创建并应用 {} 虚拟网卡成功", device_mode));
+        state.record_log(
+            &file_name,
+            format!("创建并应用 {} 虚拟网卡成功", device_mode),
+        );
     } else {
         state.record_log(&file_name, "device_mode=no，不创建虚拟网卡");
     }
@@ -1774,12 +1774,9 @@ async fn stop_running_instance(state: &HttpAppState, file_name: &str) -> anyhow:
         }
     } else if let Some(manager) = state.runtime_manager(file_name) {
         // 启动早期还没有任务组句柄：退回直接停止管理器
-        if tokio::time::timeout(
-            Duration::from_secs(10),
-            async {
-                manager.lock().await.stop().await;
-            },
-        )
+        if tokio::time::timeout(Duration::from_secs(10), async {
+            manager.lock().await.stop().await;
+        })
         .await
         .is_err()
         {
@@ -1815,7 +1812,9 @@ async fn stop_vnt_handler(
         None
     };
     state.abort_start_task(&req.file_name);
-    if state.runtime_manager(&req.file_name).is_none() && state.status(&req.file_name) != VntStatus::Starting {
+    if state.runtime_manager(&req.file_name).is_none()
+        && state.status(&req.file_name) != VntStatus::Starting
+    {
         return Json(ApiResponse::error("实例不存在"));
     }
     if let Err(error) = stop_running_instance(&state, &req.file_name).await {
@@ -2155,8 +2154,7 @@ async fn get_subscription_status(
         let sync_state = load_subscription_state(&request.file_name);
         // 身份由运行中管理器持有的最新订阅信封提供（链接只携带 join_id）；
         // 管理器不存在或首份信封未达时返回空串
-        let (network_code, device_id) =
-            subscription_identity(&state, &request.file_name).await;
+        let (network_code, device_id) = subscription_identity(&state, &request.file_name).await;
         let local_overrides = if sync_state.remote_toml.is_empty() {
             local
                 .as_table()
@@ -2243,8 +2241,7 @@ async fn clear_subscription_overrides(
         let _link = Subscription::parse(&link_value)?;
         let sync_state = load_subscription_state(&request.file_name);
         // 身份由运行中管理器持有的最新订阅信封提供（链接只携带 join_id）
-        let (network_code, device_id) =
-            subscription_identity(&state, &request.file_name).await;
+        let (network_code, device_id) = subscription_identity(&state, &request.file_name).await;
         let local_overrides = if sync_state.remote_toml.is_empty() {
             value
                 .as_table()

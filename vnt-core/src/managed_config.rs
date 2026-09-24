@@ -566,11 +566,17 @@ fn parse_typed_list<T: std::str::FromStr>(table: &toml::Table, key: &str) -> Vec
 }
 
 fn parse_envelope_string(table: &toml::Table, key: &str) -> Option<String> {
-    table.get(key).and_then(toml::Value::as_str).map(str::to_string)
+    table
+        .get(key)
+        .and_then(toml::Value::as_str)
+        .map(str::to_string)
 }
 
 fn parse_envelope_bool(table: &toml::Table, key: &str) -> bool {
-    table.get(key).and_then(toml::Value::as_bool).unwrap_or(false)
+    table
+        .get(key)
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn parse_envelope_u16(table: &toml::Table, key: &str) -> Option<u16> {
@@ -856,7 +862,9 @@ mod tests {
         // 同一连接上的后续信封必须与学到的身份一致
         let mut drifted = authenticated_envelope(&key, &client_nonce, "other-net", "managed-dev");
         drifted.revision = 2;
-        assert!(validate_subscription_envelope(&key, &client_nonce, &drifted, &mut learned).is_err());
+        assert!(
+            validate_subscription_envelope(&key, &client_nonce, &drifted, &mut learned).is_err()
+        );
     }
 
     #[test]
@@ -866,7 +874,9 @@ mod tests {
         let mut config = authenticated_envelope(&key, &client_nonce, "managed-net", "managed-dev");
         config.server_proof.server_proof[0] ^= 1;
         let mut learned = None;
-        assert!(validate_subscription_envelope(&key, &client_nonce, &config, &mut learned).is_err());
+        assert!(
+            validate_subscription_envelope(&key, &client_nonce, &config, &mut learned).is_err()
+        );
         assert!(learned.is_none());
     }
 

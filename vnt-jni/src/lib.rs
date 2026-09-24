@@ -438,11 +438,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeNextEvent<'local>(
 /// TUN fd（None 表示未携带）：携带 fd 且有虚拟网卡时整体重建 fd 型设备；
 /// 未携带 fd 时网卡相关变更无法应用（返回 need_fd/rebuild，提示宿主忽略
 /// 了 nextEvent 携带的标志，应改用携带 fd 的入口）。
-fn apply_pending_change(
-    env: &mut JNIEnv,
-    handle: jlong,
-    tun_fd: Option<jint>,
-) -> jstring {
+fn apply_pending_change(env: &mut JNIEnv, handle: jlong, tun_fd: Option<jint>) -> jstring {
     let result: anyhow::Result<String> = (|| {
         let (manager, runtime) = {
             let global_state = GLOBAL_STATE.lock();

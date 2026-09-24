@@ -25,10 +25,11 @@
 //! fd 型虚拟网卡重建（携带宿主新建的 TUN fd）。
 
 use super::{DEFAULT_MTU, NetworkManager, ServerLinks};
-use crate::event_script::EventScriptType;
+use crate::context::config::Config;
 #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
 use crate::context::config::DeviceMode;
 use crate::context::{NetworkAddr, NetworkRoute};
+use crate::event_script::EventScriptType;
 use crate::network_info::RuntimeChange;
 use crate::runtime_config::RuntimePolicy;
 #[cfg(not(target_os = "android"))]
@@ -38,7 +39,6 @@ use crate::tunnel_core::server::connection_manager::{
 };
 use crate::tunnel_core::server::transport::config::ProtocolAddress;
 use anyhow::{Context, bail};
-use crate::context::config::Config;
 
 impl NetworkManager {
     /// 判断一次运行期快照是否包含需要改动网络的字段：虚拟 IP/网段
@@ -293,7 +293,10 @@ impl NetworkManager {
 
     /// 桌面 unix 专用变体：携带宿主新建的 TUN fd 时直接以该 fd 构建新
     /// 虚拟网卡，不经过系统设备创建流程。
-    #[cfg(all(unix, not(any(target_os = "android", target_os = "ios", target_os = "tvos"))))]
+    #[cfg(all(
+        unix,
+        not(any(target_os = "android", target_os = "ios", target_os = "tvos"))
+    ))]
     pub async fn restart_device_fd(
         &mut self,
         change: &RuntimeChange,
@@ -427,15 +430,21 @@ impl NetworkManager {
                 self.server_handler_config(&links),
                 false,
             );
-            links
-                .registry
-                .add(server_id, address.clone(), sender, notifier, subscription_verified, task);
+            links.registry.add(
+                server_id,
+                address.clone(),
+                sender,
+                notifier,
+                subscription_verified,
+                task,
+            );
             log::info!("已为新增服务端创建连接任务: {server_id} {address}");
         }
         self.app_state
             .server_info_collection
             .update_server(links.registry.id_address_pairs());
-        self.server_rpc.update_server_links(links.registry.publish());
+        self.server_rpc
+            .update_server_links(links.registry.publish());
         Ok(())
     }
 
@@ -600,7 +609,9 @@ impl NetworkManager {
 
     /// 提交路由快照，并把配置中影响路由的字段（`ip`、`input`）应用到实例。
     fn commit_runtime_snapshot(&mut self, change: &RuntimeChange) {
-        self.app_state.subnet_route.apply_routes(change.routes.clone());
+        self.app_state
+            .subnet_route
+            .apply_routes(change.routes.clone());
         if change.config.ip != self.config.ip || change.config.input != self.config.input {
             self.config.ip = change.config.ip;
             self.config.input = change.config.input.clone();

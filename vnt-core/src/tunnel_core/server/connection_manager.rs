@@ -63,11 +63,7 @@ pub(crate) fn create_server_tunnel(
     default_interface: Option<rustp2p_core::socket::LocalInterface>,
     identity: SharedNodeIdentity,
     client_instance_id: Arc<Vec<u8>>,
-) -> (
-    Vec<ServerTurnManager>,
-    ServerOutbound,
-    ServerRPC,
-) {
+) -> (Vec<ServerTurnManager>, ServerOutbound, ServerRPC) {
     let mut rpc_notifier: HashMap<u32, RpcNotifier> = HashMap::new();
     let mut sender_map: HashMap<u32, Sender<(Bytes, Instant)>> = HashMap::new();
     let mut subscription_verified_map = HashMap::new();
@@ -110,11 +106,7 @@ pub(crate) fn create_server_tunnel(
         subscription_verified_map,
     );
 
-    (
-        server_manager_list,
-        tunnel_to_server,
-        server_rpc,
-    )
+    (server_manager_list, tunnel_to_server, server_rpc)
 }
 
 pub(crate) fn server_addresses(
@@ -150,13 +142,8 @@ pub(crate) fn create_server_manager(
     client_instance_id: Arc<Vec<u8>>,
     network: crate::context::SharedNetworkAddr,
 ) -> NewServerLink {
-    let connect_reg_config = config.to_connect_config(
-        0,
-        default_interface,
-        network,
-        identity,
-        client_instance_id,
-    );
+    let connect_reg_config =
+        config.to_connect_config(0, default_interface, network, identity, client_instance_id);
     let (sender, receiver) = tokio::sync::mpsc::channel(1024);
     let notifier = RpcNotifier::new();
     let manager = ServerTurnManager::new(

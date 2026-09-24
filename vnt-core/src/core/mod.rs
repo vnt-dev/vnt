@@ -192,10 +192,7 @@ impl NetworkManager {
         let subnet_external_route = app_state.subnet_route.clone();
         subnet_external_route.set_route_table(config.input.clone());
         let route_changes = subnet_external_route.subscribe();
-        task_group.spawn(forward_network_route_changes(
-            route_changes,
-            routes_tx,
-        ));
+        task_group.spawn(forward_network_route_changes(route_changes, routes_tx));
         let outbound_interface_name = config
             .outbound_interface
             .as_deref()
@@ -240,15 +237,14 @@ impl NetworkManager {
         let mut instance = vec![0_u8; 32];
         rand::rng().fill(instance.as_mut_slice());
         let client_instance_id = std::sync::Arc::new(instance);
-        let (server_manager_list, tunnel_to_server, server_rpc) =
-            create_server_tunnel(
-                app_state.clone(),
-                &config,
-                packet_crypto.clone(),
-                default_interface.clone(),
-                node_identity.clone(),
-                client_instance_id.clone(),
-            );
+        let (server_manager_list, tunnel_to_server, server_rpc) = create_server_tunnel(
+            app_state.clone(),
+            &config,
+            packet_crypto.clone(),
+            default_interface.clone(),
+            node_identity.clone(),
+            client_instance_id.clone(),
+        );
         app_state
             .server_info_collection
             .update_server(server_addresses(&config));
@@ -767,9 +763,7 @@ impl NetworkManager {
                 .set_network(network.ip, network.prefix_len)
                 .await?;
             #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-            self.device_io_manager
-                .apply_system_routes(routes)
-                .await?;
+            self.device_io_manager.apply_system_routes(routes).await?;
         }
         Ok(())
     }
@@ -828,22 +822,18 @@ mod network_route_change_tests {
     async fn subnet_sync_route_source_wakes_the_unified_listener() {
         let routes = SubnetExternalRoute::default();
         let (routes_tx, mut routes_rx) = tokio::sync::watch::channel(Vec::new());
-        let task = tokio::spawn(forward_network_route_changes(
-            routes.subscribe(),
-            routes_tx,
-        ));
+        let task = tokio::spawn(forward_network_route_changes(routes.subscribe(), routes_tx));
 
         let route: crate::nat::NetInput = "192.168.50.0/24,10.26.0.3".parse().unwrap();
         routes.set_automatic_routes(vec![route.clone()]);
         // 独立模式（无订阅）下 changed_with 等待路由源变更并返回完整快照
-        let change =
-            tokio::time::timeout(
-                Duration::from_secs(1),
-                RuntimeChangeManager::changed_with(&mut None, &mut routes_rx, &Config::default()),
-            )
-            .await
-            .unwrap()
-            .unwrap();
+        let change = tokio::time::timeout(
+            Duration::from_secs(1),
+            RuntimeChangeManager::changed_with(&mut None, &mut routes_rx, &Config::default()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(change.routes, vec![route]);
         // 独立模式下配置保持构造时传入的本地配置
         assert_eq!(change.config.network_code, Config::default().network_code);
