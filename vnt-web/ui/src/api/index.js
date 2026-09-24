@@ -42,6 +42,14 @@ export const getRoutes = (fileName) =>
 export const getStartStatus = (fileName) =>
   request(`/api/start/status?file_name=${encodeURIComponent(fileName)}`);
 
+// GET /api/instance/logs?file_name= 实例最近日志(每个实例保留最后 50 条)
+export const getInstanceLogs = (fileName) =>
+  request(`/api/instance/logs?file_name=${encodeURIComponent(fileName)}`);
+
+// GET /api/instance/config?file_name= 运行中实例当前生效配置(TOML 文本)
+export const getInstanceConfig = (fileName) =>
+  request(`/api/instance/config?file_name=${encodeURIComponent(fileName)}`);
+
 // GET /api/version
 export const getVersion = () => request("/api/version");
 

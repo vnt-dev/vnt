@@ -78,22 +78,16 @@ impl SharedNodeIdentity {
         self.value.read().network_code.clone()
     }
 
+    #[cfg(test)]
     pub fn set(&self, value: NodeIdentityTemplate) {
-        if *self.value.read() == value {
-            return;
+        if *self.value.read() != value {
+            *self.value.write() = value;
+            self.changed.notify_one();
         }
-        *self.value.write() = value;
-        // A permit is retained if the announcement task is currently sending,
-        // avoiding a lost wake-up and a full periodic interval of stale data.
-        self.changed.notify_one();
     }
 
     pub async fn changed(&self) {
         self.changed.notified().await;
-    }
-
-    pub fn notify_changed(&self) {
-        self.changed.notify_one();
     }
 }
 

@@ -1,16 +1,13 @@
 use crate::api::VntApi;
 use crate::context::config::{Config, DeviceMode};
-use crate::context::{AppState, NetworkAddr, NetworkRoute};
+use crate::context::{AppState, NetworkAddr, NetworkRoute, SharedNetworkAddr};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
-use crate::enhanced_tunnel::{
-    MtuTunnelComponents, TunnelComponents, TunnelConfig, enhanced_ipv4_tunnel,
-};
+use crate::enhanced_tunnel::{TunnelComponents, TunnelConfig, enhanced_ipv4_tunnel};
 use crate::event_script::EventScript;
-#[cfg(not(target_os = "android"))]
-use crate::event_script::EventScriptType;
 use crate::fec::{FecDecoder, FecEncoder};
+use crate::log_manager::InstanceLog;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{
@@ -18,10 +15,7 @@ use crate::nat::{
 };
 use crate::protocol::client_message::{NodeIdentityTemplate, SharedNodeIdentity};
 use crate::protocol::control_message::ErrorResponseMsg;
-use crate::runtime_config::{
-    MtuComponentController, RuntimeConfigController, RuntimePolicy, RuntimePolicyStore,
-    ServerComponentController,
-};
+use crate::runtime_config::{RuntimePolicy, RuntimePolicyStore};
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tun::{DeviceConfig, DeviceIOManager, TunDataInbound, TunReceiver, tun_channel};
 use crate::tunnel_core::outbound::{BasicOutbound, HybridOutbound};
@@ -31,24 +25,30 @@ use crate::tunnel_core::p2p::transport::task::{
     P2pInitConfig, init_tunnel, node_announcement_task,
 };
 use crate::tunnel_core::server::connection_manager::{
-    InboundHandlerConfig, ServerTurnManager, create_server_tunnel, register_with_first_available,
-    server_addresses,
+    InboundHandlerConfig, ServerLinkRegistry, ServerTurnManager, create_server_tunnel,
+    register_with_first_available, server_addresses,
 };
-use crate::tunnel_core::server::inbound::IpUpdateContext;
 use crate::tunnel_core::server::rpc::ServerRPC;
 use crate::utils::task_control::TaskGroup;
 use anyhow::{Context, bail};
 use ipnet::Ipv4Net;
+use parking_lot::Mutex;
 use rand::RngExt;
-use std::net::Ipv4Addr;
+use std::sync::Arc;
+pub mod change_runtime;
+mod ip_update;
 
+use ip_update::IpUpdateContext;
 pub const DEFAULT_MTU: u16 = 1380;
+/// P2P 栈（rustp2p-core IpStack）要求 IPv6 MTU >= 1280，低于它的配置
+/// 无法创建组网实例
+pub const MIN_MTU: u16 = 1280;
 
 /// Context for deferred registration
 struct RegistrationContext {
     server_task_group: TaskGroup,
+    server_links: Arc<Mutex<ServerLinks>>,
     server_managers: Vec<ServerTurnManager>,
-    ip_update: IpUpdateContext,
     subnet_external_route: SubnetExternalRoute,
     puncher: NatPuncher,
     packet_crypto: PacketCrypto,
@@ -58,29 +58,125 @@ struct RegistrationContext {
     basic_outbound: BasicOutbound,
 }
 
+/// 运行期服务端连接登记与其按需重建所需的构件。初始服务端的连接任务
+/// 由注册任务挂入，之后可通过 [`NetworkManager::apply_server_change`]
+/// 按快照增删。
+struct ServerLinks {
+    registry: ServerLinkRegistry,
+    packet_crypto: PacketCrypto,
+    puncher: NatPuncher,
+    enhanced_inbound: EnhancedInbound,
+    fec_decoder: FecDecoder,
+    policy: RuntimePolicyStore,
+    basic_outbound: BasicOutbound,
+    default_interface: Option<rustp2p_core::socket::LocalInterface>,
+    identity: SharedNodeIdentity,
+    client_instance_id: Arc<Vec<u8>>,
+    network: SharedNetworkAddr,
+}
+
+impl ServerLinks {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        registry: ServerLinkRegistry,
+        packet_crypto: PacketCrypto,
+        puncher: NatPuncher,
+        enhanced_inbound: EnhancedInbound,
+        fec_decoder: FecDecoder,
+        policy: RuntimePolicyStore,
+        basic_outbound: BasicOutbound,
+        default_interface: Option<rustp2p_core::socket::LocalInterface>,
+        identity: SharedNodeIdentity,
+        client_instance_id: Arc<Vec<u8>>,
+        network: SharedNetworkAddr,
+    ) -> Self {
+        Self {
+            registry,
+            packet_crypto,
+            puncher,
+            enhanced_inbound,
+            fec_decoder,
+            policy,
+            basic_outbound,
+            default_interface,
+            identity,
+            client_instance_id,
+            network,
+        }
+    }
+}
+
 pub struct NetworkManager {
     config: Box<Config>,
-    event_script: EventScript,
     app_state: AppState,
+    log: Arc<InstanceLog>,
     task_group: TaskGroup,
     device_io_manager: DeviceIOManager,
     ip_update: IpUpdateContext,
-    node_identity: SharedNodeIdentity,
+    /// 运行期事件脚本句柄：网卡被（重新）应用时触发 device_applied
+    event_script: EventScript,
     enhanced_outbound: Option<EnhancedOutbound>,
     server_rpc: ServerRPC,
-    runtime_config: RuntimeConfigController,
+    server_task_group: TaskGroup,
+    server_links: Arc<Mutex<ServerLinks>>,
     tun_receiver: Option<TunReceiver>,
-    registration_context: Option<Box<RegistrationContext>>,
+    registration_status: tokio::sync::watch::Receiver<RegistrationStatus>,
+    /// 运行期策略存储：apply_policy_change 通过 store() 热更新策略字段
+    runtime_policy: RuntimePolicyStore,
+    /// FEC 编码句柄：保留它使 `fec` 开关可以在运行期双向切换
+    /// （policy 中是否引用该句柄决定编码是否生效）
+    fec_encoder: FecEncoder,
 }
-pub enum RegisterResponse {
-    Success(NetworkAddr),
+
+pub type NetworkInstance = NetworkManager;
+enum RegisterResponse {
+    /// 注册成功，网段信息已写入 `app_state.network`
+    Registered,
     Failed(ErrorResponseMsg),
 }
 
+/// `create_network` 启动的后台注册任务状态。注册动作对调用方透明，
+/// 等待方只通过该状态拿到「注册成功」或「服务端拒绝」的结果。
+enum RegistrationStatus {
+    /// 注册进行中（含连接失败重试中）
+    Pending,
+    /// 注册成功，`app_state.network` 已写入网段信息
+    Ready,
+    /// 服务端明确拒绝注册，携带错误消息，不再重试
+    Failed(String),
+}
+
 impl NetworkManager {
+    pub async fn stop(mut self) {
+        self.task_group.stop();
+        self.wait_all_stopped().await;
+    }
+
+    /// 创建网络实例，并在实例任务组内后台连接服务器注册。
+    /// 建网过程中的错误会写入实例日志。
+    ///
+    /// `routes_tx` 是运行期变化通道的完整入栈路由发送端：核心把子网路由的
+    /// 每一次生效快照推送给调用方持有的 [`crate::network_info::RuntimeChangeListener`]。
     pub async fn create_network(
+        config: Box<Config>,
+        task_group: TaskGroup,
+        log: Arc<InstanceLog>,
+        routes_tx: tokio::sync::watch::Sender<Vec<crate::nat::NetInput>>,
+    ) -> anyhow::Result<NetworkManager> {
+        match Self::create_network_impl(config, task_group, log.clone(), routes_tx).await {
+            Ok(manager) => Ok(manager),
+            Err(error) => {
+                log.error(format!("创建网络失败: {error:#}"));
+                Err(error)
+            }
+        }
+    }
+
+    async fn create_network_impl(
         mut config: Box<Config>,
         task_group: TaskGroup,
+        log: Arc<InstanceLog>,
+        routes_tx: tokio::sync::watch::Sender<Vec<crate::nat::NetInput>>,
     ) -> anyhow::Result<NetworkManager> {
         let app_state = AppState::default();
         // 本机 NAT 身份变化（换网/NAT 重启等）时，把所有对端的
@@ -90,6 +186,16 @@ impl NetworkManager {
         app_state.nat_info.set_on_change(move || backoff.cap_all());
         config.normalize()?;
         config.check()?;
+        // Install the route source before any server or gossip producer can
+        // publish automatic routes. Every source is therefore observed even
+        // when it changes during network task startup.
+        let subnet_external_route = app_state.subnet_route.clone();
+        subnet_external_route.set_route_table(config.input.clone());
+        let route_changes = subnet_external_route.subscribe();
+        task_group.spawn(forward_network_route_changes(
+            route_changes,
+            routes_tx,
+        ));
         let outbound_interface_name = config
             .outbound_interface
             .as_deref()
@@ -108,6 +214,9 @@ impl NetworkManager {
             log::info!("绑定出口网卡: {name}");
         }
         let mtu = config.mtu.unwrap_or(DEFAULT_MTU);
+        if mtu < MIN_MTU {
+            bail!("MTU 必须 >= {MIN_MTU}（P2P 栈 IPv6 MTU 下限），当前配置: {mtu}");
+        }
         let packet_crypto = PacketCrypto::new_from_str(config.password.as_deref())?;
         let allow_subnet = AllowSubnetExternalRoute::new(config.output.clone());
         let relay_subnets = AllowSubnetExternalRoute::new(advertised_subnets(
@@ -131,7 +240,7 @@ impl NetworkManager {
         let mut instance = vec![0_u8; 32];
         rand::rng().fill(instance.as_mut_slice());
         let client_instance_id = std::sync::Arc::new(instance);
-        let (server_manager_list, tunnel_to_server, server_rpc, registration_ip) =
+        let (server_manager_list, tunnel_to_server, server_rpc) =
             create_server_tunnel(
                 app_state.clone(),
                 &config,
@@ -145,19 +254,7 @@ impl NetworkManager {
             .update_server(server_addresses(&config));
         let server_task_group = task_group.child_scope();
         let device_io_manager = DeviceIOManager::new(task_group.clone());
-        let ip_update = IpUpdateContext::new(
-            app_state.network.clone(),
-            registration_ip.clone(),
-            tunnel_to_server.clone(),
-            device_io_manager.clone(),
-            config.device_mode,
-            EventScript::new(config.event_script.clone()),
-            config
-                .server_addr
-                .iter()
-                .map(|addr| addr.to_string())
-                .collect(),
-        );
+        let ip_update = IpUpdateContext::new(tunnel_to_server.clone());
         // Keep the listener resident so no_punch/peer/turn can be changed
         // without replacing the instance or its virtual network device.
         let (puncher, p2p_socket_manager, p2p_task) = init_tunnel(
@@ -185,8 +282,6 @@ impl NetworkManager {
             runtime_policy.clone(),
             node_identity.get(),
         );
-        let subnet_external_route = app_state.subnet_route.clone();
-        subnet_external_route.set_route_table(config.input.clone());
         let subnet_packet_mapper = SubnetPacketMapper::default();
 
         let fec_decoder = FecDecoder::new(packet_crypto.clone());
@@ -235,13 +330,8 @@ impl NetworkManager {
             allow_subnet.clone(),
             relay_subnets.clone(),
         ));
-        let runtime_config = RuntimeConfigController::new(
-            runtime_policy.clone(),
-            shared_fec_encoder,
-            subnet_mapping.clone(),
-            allow_subnet.clone(),
-            relay_subnets.clone(),
-        );
+        // shared_fec_encoder 不丢弃：由 manager 保留句柄，
+        // apply_policy_change 才能双向热切换 fec 开关
 
         let hybrid_outbound = HybridOutbound::new(
             app_state.network.clone(),
@@ -299,19 +389,6 @@ impl NetworkManager {
             }
         };
 
-        let mtu_components = MtuTunnelComponents {
-            hybrid_outbound: hybrid_outbound.clone(),
-            external_route: subnet_external_route.clone(),
-            subnet_mapping: subnet_mapping.clone(),
-            subnet_packet_mapper: subnet_packet_mapper.clone(),
-            allow_subnet: allow_subnet.clone(),
-            network: app_state.network.clone(),
-            no_tun: config.device_mode == DeviceMode::No,
-            default_interface: default_interface.clone(),
-            port_mapping_manager: port_mapping_manager.clone(),
-            policy: runtime_policy.clone(),
-            runtime_config: runtime_config.clone(),
-        };
         let tunnel_components = TunnelComponents {
             hybrid_outbound: hybrid_outbound.clone(),
             external_route: subnet_external_route.clone(),
@@ -320,9 +397,8 @@ impl NetworkManager {
             internal_nat_inbound,
             port_mapping_manager,
             policy: runtime_policy.clone(),
-            runtime_config: runtime_config.clone(),
         };
-        let (enhanced_inbound, enhanced_outbound, quic_client) = enhanced_ipv4_tunnel(
+        let (enhanced_inbound, enhanced_outbound, _quic_client) = enhanced_ipv4_tunnel(
             app_state.clone(),
             mtu_task_group.clone(),
             task_group.clone(),
@@ -336,17 +412,6 @@ impl NetworkManager {
             tunnel_components,
         )
         .await?;
-
-        runtime_config.attach_mtu_components(MtuComponentController {
-            app_state: app_state.clone(),
-            root_task_group: task_group.clone(),
-            active_scope: std::sync::Arc::new(tokio::sync::Mutex::new(mtu_task_group)),
-            tun_data_inbound: enhanced_tun_inbound,
-            components: mtu_components,
-            enhanced_inbound: enhanced_inbound.clone(),
-            enhanced_outbound: enhanced_outbound.clone(),
-            quic_client,
-        });
 
         if let Some(p2p_task) = p2p_task {
             let handler = P2pInboundHandler::new(P2pInboundConfig {
@@ -374,75 +439,135 @@ impl NetworkManager {
             p2p_task.start(handler);
         }
 
+        // 运行期服务端连接登记：初始 server_id 与地址按配置顺序登记，
+        // 连接任务由注册任务挂入；之后可通过 apply_server_change 增删。
+        let server_link_registry = {
+            let mut registry = ServerLinkRegistry::new();
+            for (index, address) in config.server_addr.iter().enumerate() {
+                registry.insert_initial(index as u32, address.clone());
+            }
+            registry
+        };
+        let server_links = Arc::new(Mutex::new(ServerLinks::new(
+            server_link_registry,
+            packet_crypto.clone(),
+            puncher.clone(),
+            enhanced_inbound.clone(),
+            fec_decoder.clone(),
+            runtime_policy.clone(),
+            basic_outbound.clone(),
+            default_interface.clone(),
+            node_identity.clone(),
+            client_instance_id.clone(),
+            app_state.network.clone(),
+        )));
+
         let registration_context = Box::new(RegistrationContext {
-            server_task_group,
+            server_task_group: server_task_group.clone(),
+            server_links: server_links.clone(),
             server_managers: server_manager_list,
-            ip_update: ip_update.clone(),
             subnet_external_route,
             puncher,
             packet_crypto,
             enhanced_inbound,
             fec_decoder,
-            policy: runtime_policy,
+            policy: runtime_policy.clone(),
             basic_outbound: basic_outbound.clone(),
-        });
-
-        runtime_config.attach_server_components(ServerComponentController {
-            app_state: app_state.clone(),
-            root_task_group: task_group.clone(),
-            active_scope: std::sync::Arc::new(tokio::sync::Mutex::new(
-                registration_context.server_task_group.clone(),
-            )),
-            registration_ip,
-            default_interface,
-            identity: node_identity.clone(),
-            packet_crypto: registration_context.packet_crypto.clone(),
-            external_route: registration_context.subnet_external_route.clone(),
-            client_instance_id,
-            puncher: registration_context.puncher.clone(),
-            enhanced_inbound: registration_context.enhanced_inbound.clone(),
-            fec_decoder: registration_context.fec_decoder.clone(),
-            basic_outbound: basic_outbound.clone(),
-            server_outbound: tunnel_to_server,
-            server_rpc: server_rpc.clone(),
         });
 
         app_state.set_config(config.clone());
+        let fixed_ip = config.ip;
+        let (registration_status, registration_status_rx) =
+            tokio::sync::watch::channel(RegistrationStatus::Pending);
+        // 事件脚本路径来自构造配置（变更它需要重建实例，由
+        // needs_instance_rebuild 覆盖）
         let event_script = EventScript::new(config.event_script.clone());
         let manager = Self {
             config,
-            event_script,
-            app_state,
-            task_group,
+            app_state: app_state.clone(),
+            log: log.clone(),
+            task_group: task_group.clone(),
             device_io_manager,
             ip_update,
-            node_identity,
+            event_script,
             enhanced_outbound,
             server_rpc,
-            runtime_config,
+            server_task_group,
+            server_links,
             tun_receiver,
-            registration_context: Some(registration_context),
+            registration_status: registration_status_rx,
+            runtime_policy: runtime_policy.clone(),
+            fec_encoder: shared_fec_encoder,
         };
-        #[cfg(target_os = "android")]
-        manager.start_android_tun_route_watch();
+        // 连接服务器并注册：注册在实例任务组内后台进行，调用方无需关心注册
+        // 动作，通过 current_network 获取网段信息即可
+        manager.task_group.spawn(async move {
+            Self::registration_task(
+                app_state,
+                registration_context,
+                fixed_ip,
+                registration_status,
+                log,
+            )
+            .await;
+        });
         Ok(manager)
     }
 
-    /// Register with server(s) and start data handling tasks.
-    /// Returns the registration response on success.
-    /// On connection-level failure the internal state is kept, so the call can be retried.
-    pub async fn register(&mut self) -> anyhow::Result<RegisterResponse> {
-        let Some(mut ctx) = self.registration_context.take() else {
-            bail!("register can only be called once");
-        };
-        match Self::register_impl(&self.app_state, &mut ctx, self.config.ip).await {
-            Ok(response) => Ok(response),
-            Err(e) => {
-                // 注册失败时归还上下文，允许调用方重试
-                self.registration_context = Some(ctx);
-                Err(e)
+    /// 后台注册任务：连接服务器并注册，把结果写入共享状态与 watch 通道。
+    /// 连接级错误按 5 秒间隔重试；服务端明确拒绝时记录错误并不再重试。
+    async fn registration_task(
+        app_state: AppState,
+        mut ctx: Box<RegistrationContext>,
+        fixed_ip: Option<crate::context::config::VirtualIp>,
+        status: tokio::sync::watch::Sender<RegistrationStatus>,
+        log: Arc<InstanceLog>,
+    ) {
+        loop {
+            match Self::register_impl(&app_state, &mut ctx, fixed_ip).await {
+                Ok(RegisterResponse::Registered) => {
+                    if let Some(addr) = app_state.network.get() {
+                        log.info(format!("注册成功 {}/{}", addr.ip, addr.prefix_len));
+                    }
+                    let _ = status.send(RegistrationStatus::Ready);
+                    return;
+                }
+                Ok(RegisterResponse::Failed(e)) => {
+                    log::error!("注册失败: {}", e.message);
+                    log.error(format!("注册失败: {}", e.message));
+                    let _ = status.send(RegistrationStatus::Failed(e.message));
+                    return;
+                }
+                Err(e) => {
+                    log::error!("Register failed: {e:?}, 5 秒后重试");
+                    log.warn(format!("连接服务器失败，5 秒后重试: {e:#}"));
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
             }
         }
+    }
+
+    /// 获取当前网络（网段信息）。已配置时立即返回；
+    /// 否则等待 create_network 启动的后台注册结果。
+    pub async fn current_network(&self) -> anyhow::Result<NetworkAddr> {
+        if let Some(addr) = self.app_state.network.get() {
+            return Ok(addr);
+        }
+        let mut status = self.registration_status.clone();
+        loop {
+            match &*status.borrow_and_update() {
+                RegistrationStatus::Ready => break,
+                RegistrationStatus::Failed(message) => bail!("{message}"),
+                RegistrationStatus::Pending => {}
+            }
+            if status.changed().await.is_err() {
+                bail!("网络注册在完成前被停止");
+            }
+        }
+        self.app_state
+            .network
+            .get()
+            .context("network is not registered")
     }
 
     async fn register_impl(
@@ -451,7 +576,7 @@ impl NetworkManager {
         fixed_ip: Option<crate::context::config::VirtualIp>,
     ) -> anyhow::Result<RegisterResponse> {
         let mut initially_connected_server = None;
-        let network_addr = if let Some(fixed_ip) = fixed_ip {
+        if let Some(fixed_ip) = fixed_ip {
             let network = fixed_ip.network();
             let addr = NetworkAddr {
                 gateway: None,
@@ -460,9 +585,7 @@ impl NetworkManager {
                 prefix_len: fixed_ip.prefix_len(),
             };
             app_state.network.set(addr);
-            ctx.ip_update.set_registered_ip(addr.ip);
             log::info!("Local fixed network activated: {fixed_ip}");
-            addr
         } else {
             let is_multi_server = ctx.server_managers.len() > 1;
             let (server_index, response) = if is_multi_server {
@@ -496,6 +619,11 @@ impl NetworkManager {
                 crate::protocol::control_message::ResponseMessage::SubscriptionConfig(_) => {
                     bail!("Unexpected subscription configuration response during registration");
                 }
+                crate::protocol::control_message::ResponseMessage::SubscriptionRegister(_)
+                | crate::protocol::control_message::ResponseMessage::SubscriptionPush(_)
+                | crate::protocol::control_message::ResponseMessage::SubscriptionPong(_) => {
+                    bail!("Unexpected subscription control response during traffic registration");
+                }
             };
             let addr = NetworkAddr {
                 gateway: Some(reg_response.gateway),
@@ -504,7 +632,6 @@ impl NetworkManager {
                 prefix_len: reg_response.prefix_len,
             };
             app_state.network.set(addr);
-            ctx.ip_update.set_registered_ip(addr.ip);
             initially_connected_server = Some(server_index);
             if !reg_response.server_version.is_empty() {
                 app_state
@@ -516,11 +643,10 @@ impl NetworkManager {
                 reg_response.server_instance_id,
                 reg_response.multi_link_supported,
             );
-            addr
-        };
+        }
 
         // Start data handling tasks for all servers
-        for (index, turn_manager) in ctx.server_managers.drain(..).enumerate() {
+        for (server_id, turn_manager) in ctx.server_managers.drain(..).enumerate() {
             let handler_config = Box::new(InboundHandlerConfig {
                 network_route: NetworkRoute::new(
                     app_state.network.clone(),
@@ -538,14 +664,18 @@ impl NetworkManager {
                 basic_outbound: ctx.basic_outbound.clone(),
                 app_state: app_state.clone(),
             });
-            turn_manager.data_handle_task(
+            let task = turn_manager.data_handle_task(
                 &ctx.server_task_group,
                 handler_config,
-                initially_connected_server == Some(index),
+                initially_connected_server == Some(server_id),
             );
+            ctx.server_links
+                .lock()
+                .registry
+                .attach_task(server_id as u32, task);
         }
 
-        Ok(RegisterResponse::Success(network_addr))
+        Ok(RegisterResponse::Registered)
     }
 
     pub fn device_mode(&self) -> DeviceMode {
@@ -556,39 +686,44 @@ impl NetworkManager {
         if self.tun_receiver.is_none() || self.enhanced_outbound.is_none() {
             bail!("start_device requires tun/tap mode and can only be called once");
         }
+        let network = self.current_network().await?;
+        let routes = self.app_state.subnet_route.all_route();
         let mut config = DeviceConfig::default();
         config = config
             .set_device_mode(self.config.device_mode)
             .set_mtu(self.config.mtu.unwrap_or(DEFAULT_MTU));
         if self.config.device_mode == DeviceMode::Tap {
-            let net = self
-                .app_state
-                .get_network()
-                .context("network is not registered")?;
-            config = config.set_mac_addr(crate::ethernet::mac_from_ip(net.ip).octets());
+            config = config.set_mac_addr(crate::ethernet::mac_from_ip(network.ip).octets());
         }
         if let Some(tun_name) = self.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
         }
         // 失败时 tun_receiver/enhanced_outbound 不会被消耗，可以重试
-        self.device_io_manager
+        if let Err(e) = self
+            .device_io_manager
             .start_task(config, &mut self.tun_receiver, &mut self.enhanced_outbound)
             .await
+        {
+            self.log.error(format!("启动虚拟网卡失败: {e:#}"));
+            return Err(e);
+        }
+        self.apply_network_state(&network, routes).await
     }
     #[cfg(unix)]
-    pub async fn start_device_fd(&mut self, tun_fd: Option<i32>) -> anyhow::Result<()> {
+    pub async fn start_device_fd(
+        &mut self,
+        tun_fd: Option<std::os::fd::OwnedFd>,
+    ) -> anyhow::Result<()> {
         if self.tun_receiver.is_none() || self.enhanced_outbound.is_none() {
             bail!("start_device_fd requires tun/tap mode and can only be called once");
         }
+        let network = self.current_network().await?;
+        let routes = self.app_state.subnet_route.all_route();
         let mut config = DeviceConfig::default()
             .set_device_mode(self.config.device_mode)
             .set_mtu(self.config.mtu.unwrap_or(DEFAULT_MTU));
         if self.config.device_mode == DeviceMode::Tap {
-            let net = self
-                .app_state
-                .get_network()
-                .context("network is not registered")?;
-            config = config.set_mac_addr(crate::ethernet::mac_from_ip(net.ip).octets());
+            config = config.set_mac_addr(crate::ethernet::mac_from_ip(network.ip).octets());
         }
         if let Some(tun_fd) = tun_fd {
             config = config.set_tun_fd(tun_fd);
@@ -596,119 +731,83 @@ impl NetworkManager {
         if let Some(tun_name) = self.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
         }
-        self.device_io_manager
+        if let Err(e) = self
+            .device_io_manager
             .start_task(config, &mut self.tun_receiver, &mut self.enhanced_outbound)
             .await
+        {
+            self.log.error(format!("启动虚拟网卡失败: {e:#}"));
+            return Err(e);
+        }
+        self.apply_network_state(&network, routes).await
     }
-    #[cfg(not(target_os = "android"))]
-    pub async fn set_device_network_ip(&self, ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<()> {
-        // 服务端数据处理任务早于虚拟网卡初始化启动。启动期间配置协调器可能已
-        // 应用了新地址，因此必须以共享状态中的最新地址为准，不能再用最初注册
-        // 响应覆盖它。
-        let (ip, prefix_len) = self
-            .app_state
-            .get_network()
-            .map(|network| (network.ip, network.prefix_len))
-            .unwrap_or((ip, prefix_len));
-        self.device_io_manager.set_network(ip, prefix_len).await?;
-        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-        self.device_io_manager
-            .start_system_routes(self.app_state.subnet_route.subscribe())
-            .await?;
-        // 网卡设置成功（应用 IP）后触发事件脚本
-        if let Some(network) = self.app_state.get_network() {
-            let server = self
-                .config
-                .server_addr
-                .iter()
-                .map(|addr| addr.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            self.event_script
-                .notify(
-                    EventScriptType::NetCardCreated,
-                    &[
-                        ("ip", network.ip.to_string()),
-                        ("prefix-length", network.prefix_len.to_string()),
-                        (
-                            "gateway",
-                            network
-                                .gateway
-                                .map(|gateway| gateway.to_string())
-                                .unwrap_or_else(|| "-".to_string()),
-                        ),
-                        ("broadcast", network.broadcast.to_string()),
-                        ("server", server),
-                    ],
-                )
-                .await;
+
+    /// Applies the registered network address together with the current
+    /// complete inbound route set, without creating a virtual device.
+    pub async fn apply_initial_network_info(&mut self) -> anyhow::Result<()> {
+        let network = self.current_network().await?;
+        let routes = self.app_state.subnet_route.all_route();
+        self.apply_network_state(&network, routes).await
+    }
+
+    /// Commits the registered address and complete route set to the platform.
+    async fn apply_network_state(
+        &mut self,
+        network: &NetworkAddr,
+        routes: Vec<crate::nat::NetInput>,
+    ) -> anyhow::Result<()> {
+        #[cfg(target_os = "android")]
+        let _ = network;
+        // 先提交转发路由表（配置即新值），再执行网卡与系统路由变更动作；
+        // 动作失败不回滚，错误上抛由调用方记录
+        self.app_state.subnet_route.apply_routes(routes.clone());
+        #[cfg(not(target_os = "android"))]
+        if self.device_mode().has_device() {
+            self.device_io_manager
+                .set_network(network.ip, network.prefix_len)
+                .await?;
+            #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+            self.device_io_manager
+                .apply_system_routes(routes)
+                .await?;
         }
         Ok(())
     }
 
-    #[cfg(target_os = "android")]
-    fn start_android_tun_route_watch(&self) {
-        let mut routes = self.app_state.subnet_route.subscribe();
-        let ip_update = self.ip_update.clone();
-        self.task_group.spawn(async move {
-            loop {
-                if routes.changed().await.is_err() {
-                    break;
-                }
-                let snapshot = routes.borrow_and_update().clone();
-                if let Err(error) = ip_update.request_android_route_rebuild(snapshot).await {
-                    log::warn!("请求 Android TUN 路由重建失败: {error:#}");
-                }
-            }
-        });
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn tun_rebuild_coordinator(
-        &self,
-    ) -> crate::tunnel_core::server::inbound::TunRebuildCoordinator {
-        self.ip_update.tun_rebuild_coordinator()
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn replace_tun_task(
-        &self,
-        request_id: u64,
-        tun_fd: std::os::fd::OwnedFd,
-    ) -> anyhow::Result<()> {
-        self.ip_update
-            .replace_android_tun_task(request_id, tun_fd)
-            .await
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn reject_tun_rebuild(&self, request_id: u64, reason: String) -> anyhow::Result<()> {
-        self.ip_update
-            .reject_android_tun_rebuild(request_id, reason)
-            .await
-    }
-
     fn stop_network(&mut self) {
-        #[cfg(target_os = "android")]
-        self.ip_update.close_android_tun_rebuild();
         self.task_group.stop();
         self.app_state.stop_network();
-    }
-    #[cfg(not(target_os = "android"))]
-    pub async fn device_if_index(&self) -> anyhow::Result<u32> {
-        self.device_io_manager.device_if_index().await
     }
     pub async fn wait_all_stopped(&mut self) {
         self.task_group.wait_all_stopped().await;
     }
     pub fn vnt_api(&self) -> VntApi {
-        VntApi::new(
-            self.app_state.clone(),
-            self.server_rpc.clone(),
-            self.ip_update.clone(),
-            self.node_identity.clone(),
-            self.runtime_config.clone(),
-        )
+        VntApi::new(self.app_state.clone(), self.server_rpc.clone())
+    }
+}
+
+/// 把子网路由源的最新完整生效快照转发给运行期变化消费者。
+/// 消费端被丢弃或路由源关闭时退出。
+async fn forward_network_route_changes(
+    mut route_changes: tokio::sync::watch::Receiver<Vec<crate::nat::NetInput>>,
+    routes_tx: tokio::sync::watch::Sender<Vec<crate::nat::NetInput>>,
+) {
+    loop {
+        let routes = route_changes.borrow_and_update().clone();
+        if routes_tx.is_closed() {
+            break;
+        }
+        routes_tx.send_if_modified(|current| {
+            if *current == routes {
+                false
+            } else {
+                *current = routes;
+                true
+            }
+        });
+        if route_changes.changed().await.is_err() {
+            break;
+        }
     }
 }
 impl Drop for NetworkManager {
@@ -718,10 +817,95 @@ impl Drop for NetworkManager {
 }
 
 #[cfg(test)]
-mod decentralized_loopback_tests {
-    use super::{NetworkManager, RegisterResponse};
+mod network_route_change_tests {
+    use super::forward_network_route_changes;
+    use crate::context::config::Config;
+    use crate::nat::SubnetExternalRoute;
+    use crate::network_info::RuntimeChangeManager;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn subnet_sync_route_source_wakes_the_unified_listener() {
+        let routes = SubnetExternalRoute::default();
+        let (routes_tx, mut routes_rx) = tokio::sync::watch::channel(Vec::new());
+        let task = tokio::spawn(forward_network_route_changes(
+            routes.subscribe(),
+            routes_tx,
+        ));
+
+        let route: crate::nat::NetInput = "192.168.50.0/24,10.26.0.3".parse().unwrap();
+        routes.set_automatic_routes(vec![route.clone()]);
+        // 独立模式（无订阅）下 changed_with 等待路由源变更并返回完整快照
+        let change =
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                RuntimeChangeManager::changed_with(&mut None, &mut routes_rx, &Config::default()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(change.routes, vec![route]);
+        // 独立模式下配置保持构造时传入的本地配置
+        assert_eq!(change.config.network_code, Config::default().network_code);
+        task.abort();
+    }
+}
+
+#[cfg(test)]
+mod inspect_change_tests {
+    use super::InstanceLog;
     use crate::context::config::{Config, DeviceMode};
-    use crate::utils::task_control::{TaskGroupGuard, TaskGroupManager};
+    use crate::network_info::{RuntimeChange, RuntimeChangeManager};
+    use std::sync::Arc;
+
+    fn standalone_config() -> Config {
+        Config {
+            network_code: "inspect-change-test".to_string(),
+            device_id: "inspect-device".to_string(),
+            device_name: "inspect-node".to_string(),
+            ip: Some("10.26.0.2/24".parse().unwrap()),
+            device_mode: DeviceMode::No,
+            ..Config::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn identical_snapshot_needs_nothing_and_password_flags_rebuild() {
+        let config = standalone_config();
+        let manager = RuntimeChangeManager::new(
+            config.clone(),
+            None,
+            Arc::new(InstanceLog::new("inspect-change-test")),
+        )
+        .await
+        .unwrap();
+
+        // 相同快照：两个标志都为 false
+        let plan = manager.inspect_change(&RuntimeChange {
+            config: config.clone(),
+            routes: Vec::new(),
+        });
+        assert!(!plan.instance_rebuild, "相同快照不应要求重建实例");
+        // 桌面平台的网卡类变更由 apply 内部热应用，vpn_rebuild 恒为 false
+        assert!(!plan.vpn_rebuild);
+
+        // 密码只能重建实例生效：instance_rebuild 置位，vpn_rebuild 不受影响
+        let mut changed = config;
+        changed.password = Some("another-password".to_string());
+        let plan = manager.inspect_change(&RuntimeChange {
+            config: changed,
+            routes: Vec::new(),
+        });
+        assert!(plan.instance_rebuild);
+        assert!(!plan.vpn_rebuild);
+    }
+}
+
+#[cfg(test)]
+mod decentralized_loopback_tests {
+    use super::InstanceLog;
+    use crate::context::config::{Config, DeviceMode};
+    use crate::network_info::RuntimeChangeManager;
     use std::net::{Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
     use std::time::Duration;
 
@@ -747,11 +931,8 @@ mod decentralized_loopback_tests {
         let ports = reserve_loopback_ports(4);
         let peers = [ports[1], ports[2], ports[3], ports[2]];
         let mut managers = Vec::new();
-        let mut guards: Vec<TaskGroupGuard> = Vec::new();
 
         for index in 0..4 {
-            let manager = TaskGroupManager::new();
-            let (task_group, guard) = manager.create_task().unwrap();
             let ip = Ipv4Addr::new(10, 26, 0, index as u8 + 2);
             let config = Config {
                 network_code: "loopback-gossip-test".to_string(),
@@ -765,23 +946,24 @@ mod decentralized_loopback_tests {
                 peer_address: vec![format!("tcp://127.0.0.1:{}", peers[index]).parse().unwrap()],
                 ..Config::default()
             };
-            let mut network = NetworkManager::create_network(Box::new(config), task_group)
-                .await
-                .unwrap();
-            assert!(matches!(
-                network.register().await.unwrap(),
-                RegisterResponse::Success(_)
-            ));
-            managers.push(network);
-            guards.push(guard);
+            // 配置管理器创建并持有组网实例（含路由通道与任务组）
+            let manager = RuntimeChangeManager::new(
+                config,
+                None,
+                std::sync::Arc::new(InstanceLog::new("loopback-test")),
+            )
+            .await
+            .unwrap();
+            manager.current_network().await.unwrap();
+            managers.push(manager);
         }
 
         // Passive graph discovery waits for the first 25-35 second periodic
         // announcement; route creation no longer triggers an immediate one.
         tokio::time::timeout(Duration::from_secs(45), async {
             loop {
-                let a = managers[0].vnt_api();
-                let d = managers[3].vnt_api();
+                let a = managers[0].api().unwrap();
+                let d = managers[3].api().unwrap();
                 let a_to_d = a.find_route(&Ipv4Addr::new(10, 26, 0, 5));
                 let d_to_a = d.find_route(&Ipv4Addr::new(10, 26, 0, 2));
                 let a_knows_d = a
@@ -801,11 +983,12 @@ mod decentralized_loopback_tests {
         .unwrap_or_else(|_| {
             panic!(
                 "loopback graph did not converge: A={:?}, D={:?}",
-                managers[0].vnt_api().route_table(),
-                managers[3].vnt_api().route_table()
+                managers[0].api().unwrap().route_table(),
+                managers[3].api().unwrap().route_table()
             )
         });
 
-        drop(guards);
+        // 管理器 drop 即停止组网实例
+        drop(managers);
     }
 }

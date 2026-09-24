@@ -3,7 +3,7 @@ import { ref, onMounted } from "vue";
 import QRCode from "qrcode";
 import { useAppStore } from "../stores/app";
 import { useUiStore } from "../stores/ui";
-import { clearSubscriptionOverrides, deleteConfig, detachSubscription, getConfig, getSubscriptionStatus } from "../api";
+import { clearSubscriptionOverrides, deleteConfig, detachSubscription, getConfig, getInstanceConfig, getSubscriptionStatus } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import AppModal from "../components/AppModal.vue";
 import ConfigEditor from "./ConfigEditor.vue";
@@ -16,6 +16,10 @@ const ui = useUiStore();
 const showEditor = ref(false);
 const editorFileName = ref(null);
 const showQr = ref(false);
+const showConfigText = ref(false);
+const configText = ref("");
+const configTextName = ref("");
+const configTextLoading = ref(false);
 const qrLoading = ref(false);
 const qrImage = ref("");
 const qrConfig = ref(null);
@@ -44,7 +48,7 @@ const managedAction = async (action) => {
     ui.toast.success(
       action === "detach"
         ? "已解除服务端管理，当前 TOML 保留"
-        : "已清除本地覆盖；运行中实例会在下次服务端推送或重启后使用新配置",
+        : "已清除本地覆盖；网络信息会在下次服务端推送时更新，其他配置重启后生效",
     );
   } catch (e) { ui.toast.error(e.message); }
 };
@@ -109,6 +113,31 @@ const handleDelete = async (fileName) => {
     app.fetchConfigList();
   } catch (e) {
     ui.toast.error(e.message);
+  }
+};
+
+// 查看运行中实例当前生效的配置（本地 + 服务端下发的合并结果）
+const openConfigText = async (fileName) => {
+  configTextName.value = fileName;
+  configText.value = "";
+  configTextLoading.value = true;
+  showConfigText.value = true;
+  try {
+    configText.value = await getInstanceConfig(fileName);
+  } catch (e) {
+    ui.toast.error(e.message);
+    showConfigText.value = false;
+  } finally {
+    configTextLoading.value = false;
+  }
+};
+
+const copyConfigText = async () => {
+  try {
+    await navigator.clipboard.writeText(configText.value);
+    ui.toast.success("已复制");
+  } catch {
+    ui.toast.error("复制失败");
   }
 };
 
@@ -188,6 +217,13 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
         </div>
         <div class="config-card-actions mt-4 flex justify-end transition-opacity">
           <button
+            v-if="instStatus(cfg.file_name) === 'running'"
+            class="mr-4 text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+            @click.stop="openConfigText(cfg.file_name)"
+          >
+            查看配置
+          </button>
+          <button
             class="mr-4 text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
             @click.stop="openEditor(cfg.file_name)"
           >
@@ -237,10 +273,29 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
       </template>
     </AppModal>
 
+    <AppModal :show="showConfigText" panel-class="w-full max-w-2xl" @close="showConfigText = false">
+      <template #header>
+        <div>
+          <h2 class="text-lg font-bold text-slate-900 dark:text-white">当前生效配置</h2>
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ configTextName }}</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn-ghost btn-sm" type="button" :disabled="!configText" @click="copyConfigText">复制</button>
+          <button class="btn-ghost btn-sm" type="button" @click="showConfigText = false">关闭</button>
+        </div>
+      </template>
+      <template #body>
+        <div class="p-6">
+          <div v-if="configTextLoading" class="py-16 text-center text-sm muted">正在读取…</div>
+          <pre v-else class="max-h-[60vh] overflow-auto rounded-lg bg-slate-50 p-4 font-mono text-xs leading-5 text-slate-800 dark:bg-slate-800 dark:text-slate-200">{{ configText }}</pre>
+        </div>
+      </template>
+    </AppModal>
+
     <AppModal :show="Boolean(managedDetail)" panel-class="w-full max-w-lg" @close="managedDetail = null">
       <template #header><div><h2 class="text-lg font-bold">服务端管理</h2><p class="mt-1 text-xs muted">字段来源与同步状态</p></div><button class="btn-ghost btn-sm" @click="managedDetail = null">关闭</button></template>
       <template #body><div v-if="managedDetail" class="space-y-4 p-6 text-sm">
-        <dl class="grid grid-cols-[8rem_1fr] gap-2 rounded-lg bg-slate-50 p-4 dark:bg-slate-800"><dt class="muted">设备</dt><dd class="font-mono">{{ managedDetail.device_id }}</dd><dt class="muted">配置版本</dt><dd>{{ managedDetail.applied_revision }} / {{ managedDetail.target_revision }}</dd><dt class="muted">实时同步</dt><dd>{{ managedDetail.config_sync_verified ? '已验证同步服务器' : '暂无已验证同步服务器' }}</dd><dt class="muted">本地覆盖</dt><dd>{{ managedDetail.local_overrides.length ? managedDetail.local_overrides.join(', ') : '无' }}</dd><dt v-if="managedDetail.last_error" class="muted">错误</dt><dd v-if="managedDetail.last_error" class="text-red-500">{{ managedDetail.last_error }}</dd></dl>
+        <dl class="grid grid-cols-[8rem_1fr] gap-2 rounded-lg bg-slate-50 p-4 dark:bg-slate-800"><dt class="muted">设备</dt><dd class="font-mono">{{ managedDetail.device_id }}</dd><dt class="muted">已接收版本</dt><dd>{{ managedDetail.acknowledged_revision }} / {{ managedDetail.target_revision }}</dd><dt class="muted">最近处理版本</dt><dd>{{ managedDetail.applied_revision }}</dd><dt class="muted">网络信息同步</dt><dd>{{ managedDetail.config_sync_verified ? '已验证同步服务器' : '暂无已验证同步服务器' }}</dd><dt class="muted">本地覆盖</dt><dd>{{ managedDetail.local_overrides.length ? managedDetail.local_overrides.join(', ') : '无' }}</dd><dt v-if="managedDetail.last_error" class="muted">错误</dt><dd v-if="managedDetail.last_error" class="text-red-500">{{ managedDetail.last_error }}</dd></dl>
         <div class="flex flex-wrap gap-2"><button class="btn-secondary" @click="managedAction('clear')">清除本地覆盖</button><button class="btn-danger" @click="managedAction('detach')">解除服务端管理</button></div>
       </div></template>
     </AppModal>

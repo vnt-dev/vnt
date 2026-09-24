@@ -15,9 +15,9 @@ use crate::tunnel_core::server::outbound::ServerOutbound;
 use crate::tunnel_core::server::rpc::{RpcNotifier, ServerRPC};
 use crate::tunnel_core::server::transport::TransportClient;
 use crate::tunnel_core::server::transport::config::{
-    ConnectConfig, ConnectRegConfig, SharedRegistrationIp,
+    ConnectConfig, ConnectRegConfig, ProtocolAddress,
 };
-use crate::utils::task_control::TaskGroup;
+use crate::utils::task_control::{SubTask, TaskGroup};
 use anyhow::bail;
 use bytes::Bytes;
 use futures::stream::{FuturesUnordered, Stream, StreamExt};
@@ -67,44 +67,18 @@ pub(crate) fn create_server_tunnel(
     Vec<ServerTurnManager>,
     ServerOutbound,
     ServerRPC,
-    SharedRegistrationIp,
-) {
-    create_server_tunnel_with_registration_ip(
-        app_state,
-        config,
-        packet_crypto,
-        default_interface,
-        identity,
-        client_instance_id,
-        None,
-    )
-}
-
-pub(crate) fn create_server_tunnel_with_registration_ip(
-    app_state: AppState,
-    config: &Config,
-    packet_crypto: PacketCrypto,
-    default_interface: Option<rustp2p_core::socket::LocalInterface>,
-    identity: SharedNodeIdentity,
-    client_instance_id: Arc<Vec<u8>>,
-    registration_ip: Option<SharedRegistrationIp>,
-) -> (
-    Vec<ServerTurnManager>,
-    ServerOutbound,
-    ServerRPC,
-    SharedRegistrationIp,
 ) {
     let mut rpc_notifier: HashMap<u32, RpcNotifier> = HashMap::new();
     let mut sender_map: HashMap<u32, Sender<(Bytes, Instant)>> = HashMap::new();
     let mut subscription_verified_map = HashMap::new();
     let mut server_manager_list = Vec::with_capacity(config.server_addr.len());
-    let registration_ip =
-        registration_ip.unwrap_or_else(|| SharedRegistrationIp::new(config.ip.map(|ip| ip.ip())));
+    // 重注册声称的 IP 直接读共享网络地址：地址变更只写 app_state.network
+    let network = app_state.network.clone();
     for (index, _server_addr) in config.server_addr.iter().enumerate() {
         let connect_reg_config = config.to_connect_config(
             index,
             default_interface.clone(),
-            registration_ip.clone(),
+            network.clone(),
             identity.clone(),
             client_instance_id.clone(),
         );
@@ -140,7 +114,6 @@ pub(crate) fn create_server_tunnel_with_registration_ip(
         server_manager_list,
         tunnel_to_server,
         server_rpc,
-        registration_ip,
     )
 }
 
@@ -156,6 +129,179 @@ pub(crate) fn server_addresses(
         .enumerate()
         .map(|(index, address)| (index as u32, address.clone()))
         .collect()
+}
+
+/// 按需新建一个服务端连接的全部构件：连接管理器、出站发送通道、RPC
+/// 通知器与订阅校验标记。调用方负责把它们登记到 [`ServerLinkRegistry`]
+/// 并通过 [`ServerRPC`] 发布。
+pub(crate) struct NewServerLink {
+    pub(crate) manager: ServerTurnManager,
+    pub(crate) sender: Sender<(Bytes, Instant)>,
+    pub(crate) notifier: RpcNotifier,
+    pub(crate) subscription_verified: Arc<AtomicBool>,
+}
+
+/// 为单个服务端地址构建连接构件。`config.server_addr` 应只包含该地址。
+pub(crate) fn create_server_manager(
+    server_id: u32,
+    config: &Config,
+    default_interface: Option<rustp2p_core::socket::LocalInterface>,
+    identity: SharedNodeIdentity,
+    client_instance_id: Arc<Vec<u8>>,
+    network: crate::context::SharedNetworkAddr,
+) -> NewServerLink {
+    let connect_reg_config = config.to_connect_config(
+        0,
+        default_interface,
+        network,
+        identity,
+        client_instance_id,
+    );
+    let (sender, receiver) = tokio::sync::mpsc::channel(1024);
+    let notifier = RpcNotifier::new();
+    let manager = ServerTurnManager::new(
+        server_id,
+        connect_reg_config,
+        receiver,
+        notifier.clone(),
+        EventScript::new(config.event_script.clone()),
+    );
+    NewServerLink {
+        subscription_verified: manager.subscription_verified.clone(),
+        manager,
+        sender,
+        notifier,
+    }
+}
+
+/// 运行期服务端连接登记表：server_id 到地址与连接任务的映射，以及
+/// 出站/RPC 发布所需的通道、通知器与订阅校验标记。
+pub(crate) struct ServerLinkRegistry {
+    links: HashMap<u32, ServerLinkEntry>,
+    senders: HashMap<u32, Sender<(Bytes, Instant)>>,
+    notifiers: HashMap<u32, RpcNotifier>,
+    verified: HashMap<u32, Arc<AtomicBool>>,
+    next_server_id: u32,
+}
+
+struct ServerLinkEntry {
+    address: ProtocolAddress,
+    task: Option<SubTask>,
+}
+
+/// 一次发布到出站/RPC 的完整服务端登记快照。
+pub(crate) struct ServerLinkTables {
+    pub(crate) senders: Arc<HashMap<u32, Sender<(Bytes, Instant)>>>,
+    pub(crate) notifiers: HashMap<u32, RpcNotifier>,
+    pub(crate) verified: HashMap<u32, Arc<AtomicBool>>,
+}
+
+impl ServerLinkRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            links: HashMap::new(),
+            senders: HashMap::new(),
+            notifiers: HashMap::new(),
+            verified: HashMap::new(),
+            next_server_id: 0,
+        }
+    }
+
+    /// 登记建网时创建的初始服务端（连接任务由注册任务稍后挂入）。
+    pub(crate) fn insert_initial(&mut self, server_id: u32, address: ProtocolAddress) {
+        self.links.insert(
+            server_id,
+            ServerLinkEntry {
+                address,
+                task: None,
+            },
+        );
+        self.next_server_id = self.next_server_id.max(server_id + 1);
+    }
+
+    pub(crate) fn attach_task(&mut self, server_id: u32, task: SubTask) {
+        if let Some(entry) = self.links.get_mut(&server_id) {
+            entry.task = Some(task);
+        }
+    }
+
+    /// 分配一个新的 server_id（新地址不复用已删除地址的 id）。
+    pub(crate) fn next_id(&mut self) -> u32 {
+        let server_id = self.next_server_id;
+        self.next_server_id += 1;
+        server_id
+    }
+
+    /// 当前已不在 `new_addresses` 中的 server_id（待删除）。
+    pub(crate) fn removed_by(&self, new_addresses: &[ProtocolAddress]) -> Vec<u32> {
+        self.links
+            .iter()
+            .filter(|(_, entry)| !new_addresses.contains(&entry.address))
+            .map(|(server_id, _)| *server_id)
+            .collect()
+    }
+
+    pub(crate) fn is_known(&self, address: &ProtocolAddress) -> bool {
+        self.links.values().any(|entry| &entry.address == address)
+    }
+
+    /// 登记一个新增的服务端连接。
+    pub(crate) fn add(
+        &mut self,
+        server_id: u32,
+        address: ProtocolAddress,
+        sender: Sender<(Bytes, Instant)>,
+        notifier: RpcNotifier,
+        verified: Arc<AtomicBool>,
+        task: SubTask,
+    ) {
+        self.senders.insert(server_id, sender);
+        self.notifiers.insert(server_id, notifier);
+        self.verified.insert(server_id, verified);
+        self.links.insert(
+            server_id,
+            ServerLinkEntry {
+                address,
+                task: Some(task),
+            },
+        );
+    }
+
+    /// 摘除不在 `new_addresses` 中的服务端登记，返回待停止的连接任务。
+    /// 调用方在锁外 await 任务停止。
+    pub(crate) fn plan_removals(
+        &mut self,
+        new_addresses: &[ProtocolAddress],
+    ) -> Vec<(u32, ProtocolAddress, Option<SubTask>)> {
+        let removed = self.removed_by(new_addresses);
+        removed
+            .into_iter()
+            .filter_map(|server_id| {
+                let entry = self.links.remove(&server_id)?;
+                self.senders.remove(&server_id);
+                self.notifiers.remove(&server_id);
+                self.verified.remove(&server_id);
+                Some((server_id, entry.address, entry.task))
+            })
+            .collect()
+    }
+
+    /// 当前 server_id 与地址的对应关系（发布给服务端信息集合）。
+    pub(crate) fn id_address_pairs(&self) -> Vec<(u32, ProtocolAddress)> {
+        self.links
+            .iter()
+            .map(|(server_id, entry)| (*server_id, entry.address.clone()))
+            .collect()
+    }
+
+    /// 生成一次完整发布快照。
+    pub(crate) fn publish(&self) -> ServerLinkTables {
+        ServerLinkTables {
+            senders: Arc::new(self.senders.clone()),
+            notifiers: self.notifiers.clone(),
+            verified: self.verified.clone(),
+        }
+    }
 }
 
 impl ServerTurnManager {
@@ -272,18 +418,24 @@ impl ServerTurnManager {
             ResponseMessage::SubscriptionConfig(_) => {
                 self.disconnect();
             }
+            ResponseMessage::SubscriptionRegister(_)
+            | ResponseMessage::SubscriptionPush(_)
+            | ResponseMessage::SubscriptionPong(_) => {
+                self.disconnect();
+            }
         }
         Ok(response)
     }
 
     /// Start a server data task. Servers which were not part of the successful
     /// initial registration enter the normal reconnect loop immediately.
+    /// Returns the task handle so the caller can stop this server alone.
     pub fn data_handle_task(
         mut self,
         task_group: &TaskGroup,
         config: Box<InboundHandlerConfig>,
         initially_connected: bool,
-    ) {
+    ) -> SubTask {
         let subscription_identity = self
             .config
             .managed
@@ -300,7 +452,10 @@ impl ServerTurnManager {
             unreachable!()
         };
 
-        task_group.spawn(async move {
+        // 服务端连接任务可被单独停止/重建（运行期增删服务器）：用
+        // spawn_restartable，任务退出（含被停止）不会因任务组空置而
+        // 把组关停，后续新增服务器仍可 spawn 进来
+        task_group.spawn_restartable(async move {
             let mut already_connected = initially_connected;
             let mut has_connected_once = initially_connected;
             loop {
@@ -404,7 +559,7 @@ impl ServerTurnManager {
                 already_connected = false;
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-        });
+        })
     }
 
     pub async fn data_handle_loop(

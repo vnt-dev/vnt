@@ -220,17 +220,17 @@ public class VntConfig {
         private String subscriptionInstanceId;
 
         /** Enables authenticated server management for this instance. */
-        public Builder setSubscription(String subscription, long appliedRevision) {
-            return setSubscription(subscription, appliedRevision, randomInstanceId());
+        public Builder setSubscription(String subscription, long acknowledgedRevision) {
+            return setSubscription(subscription, acknowledgedRevision, randomInstanceId());
         }
 
         /**
          * Enables subscription synchronization with a task-stable instance ID.
          * Persist and reuse instanceId while rebuilding the same Android VPN task.
          */
-        public Builder setSubscription(String subscription, long appliedRevision, String instanceId) {
+        public Builder setSubscription(String subscription, long acknowledgedRevision, String instanceId) {
             this.subscription = subscription;
-            this.subscriptionRevision = appliedRevision;
+            this.subscriptionRevision = acknowledgedRevision;
             this.subscriptionInstanceId = instanceId;
             return this;
         }

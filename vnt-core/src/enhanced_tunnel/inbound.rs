@@ -65,10 +65,6 @@ impl EnhancedInbound {
             })),
         }
     }
-
-    pub(crate) fn replace_from(&self, prepared: &Self) {
-        self.inner.store(prepared.inner.load_full());
-    }
 }
 
 impl EnhancedInboundInner {

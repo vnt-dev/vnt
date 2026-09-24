@@ -62,6 +62,7 @@ impl<'de> Deserialize<'de> for NetInput {
 #[derive(Clone)]
 pub struct SubnetExternalRoute {
     route_table: Arc<Mutex<SubnetRouteTables>>,
+    applied_routes: Arc<ArcSwap<Vec<NetInput>>>,
     changes: tokio::sync::watch::Sender<Vec<NetInput>>,
 }
 
@@ -78,6 +79,7 @@ impl Default for SubnetExternalRoute {
         let (changes, _) = tokio::sync::watch::channel(Vec::new());
         Self {
             route_table: Arc::new(Mutex::new(SubnetRouteTables::default())),
+            applied_routes: Arc::new(ArcSwap::from_pointee(Vec::new())),
             changes,
         }
     }
@@ -107,8 +109,8 @@ impl SubnetExternalRoute {
         self.publish(routes);
     }
     pub fn route(&self, ip: &Ipv4Addr) -> Option<Ipv4Addr> {
-        let route_table = self.route_table.lock();
-        for net in &route_table.effective_routes {
+        let route_table = self.applied_routes.load();
+        for net in route_table.iter() {
             if net.net.contains(ip) {
                 return Some(net.target_ip);
             }
@@ -117,6 +119,10 @@ impl SubnetExternalRoute {
     }
     pub fn all_route(&self) -> Vec<NetInput> {
         self.route_table.lock().effective_routes.clone()
+    }
+    /// 当前已应用到转发面的完整路由快照（`apply_routes` 提交的值）。
+    pub fn applied_routes(&self) -> Vec<NetInput> {
+        self.applied_routes.load_full().as_ref().clone()
     }
     pub fn static_routes(&self) -> Vec<NetInput> {
         self.route_table.lock().static_routes.clone()
@@ -141,6 +147,20 @@ impl SubnetExternalRoute {
     }
     pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Vec<NetInput>> {
         self.changes.subscribe()
+    }
+
+    /// Commits the exact route snapshot selected by the network-information
+    /// state machine. Source updates never change packet forwarding directly.
+    pub(crate) fn apply_routes(&self, mut routes: Vec<NetInput>) {
+        routes.sort_by_key(|route| {
+            (
+                std::cmp::Reverse(route.net.prefix_len()),
+                route.net,
+                route.target_ip,
+            )
+        });
+        routes.dedup();
+        self.applied_routes.store(Arc::new(routes));
     }
 
     fn publish(&self, routes: Vec<NetInput>) {
@@ -189,10 +209,6 @@ impl AllowSubnetExternalRoute {
             route_table: Arc::new(ArcSwap::from_pointee(route_table)),
         }
     }
-    pub(crate) fn replace(&self, mut route_table: Vec<Ipv4Net>) {
-        route_table.sort_by_key(|route| route.prefix_len());
-        self.route_table.store(Arc::new(route_table));
-    }
     pub fn allow(&self, ip: &Ipv4Addr) -> bool {
         let route_table = self.route_table.load();
         if route_table.is_empty() {
@@ -233,6 +249,7 @@ mod tests {
             "192.168.0.0/24,10.26.0.2".parse::<NetInput>().unwrap(),
             "192.168.0.0/25,10.26.0.4".parse::<NetInput>().unwrap(),
         ]);
+        routes.apply_routes(routes.all_route());
 
         assert_eq!(
             routes.route(&"192.168.0.20".parse().unwrap()),
@@ -251,11 +268,27 @@ mod tests {
         let routes = SubnetExternalRoute::new(vec![static_route.clone()]);
 
         routes.set_gossip_routes(vec![gossip_route]);
+        routes.apply_routes(routes.all_route());
 
         assert_eq!(
             routes.route(&"192.168.0.20".parse().unwrap()),
             Some(static_route.target_ip)
         );
         assert_eq!(routes.all_route(), vec![static_route]);
+    }
+
+    #[test]
+    fn desired_route_changes_do_not_change_forwarding_until_apply() {
+        let routes = SubnetExternalRoute::new(Vec::new());
+        let input = "192.168.50.0/24,10.26.0.7".parse::<NetInput>().unwrap();
+        routes.set_automatic_routes(vec![input]);
+        let destination = "192.168.50.10".parse().unwrap();
+        assert_eq!(routes.route(&destination), None);
+
+        routes.apply_routes(routes.all_route());
+        assert_eq!(
+            routes.route(&destination),
+            Some("10.26.0.7".parse().unwrap())
+        );
     }
 }

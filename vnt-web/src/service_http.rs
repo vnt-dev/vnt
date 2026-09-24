@@ -16,31 +16,31 @@ use parking_lot::Mutex;
 use rand::RngExt;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+#[cfg(test)]
 use std::future::Future;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use time::{OffsetDateTime, macros::format_description};
 use tokio::fs;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
-use vnt_core::api::{ApplyAction, ReconfigureFallback, VntApi};
+use vnt_core::api::VntApi;
 use vnt_core::context::config::{
     Config as CoreConfig, DeviceMode, PeerAddress, PunchRule, TurnRule, VirtualIp,
 };
-use vnt_core::core::{DEFAULT_MTU, NetworkManager, RegisterResponse};
+use vnt_core::core::DEFAULT_MTU;
+use vnt_core::log_manager::{LogEntry, LogManager};
 use vnt_core::managed_config::Subscription;
 use vnt_core::nat::{NetInput, SubnetMapping};
+use vnt_core::network_info::{ChangeOutcome, RuntimeChangeManager, RuntimeEvent};
+use vnt_core::utils::task_control::TaskGroupManager;
 use vnt_core::port_mapping::PortMapping;
-use vnt_core::protocol::control_message::{SubscriptionConfigAck, SubscriptionConfigApplyStatus};
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
-use vnt_core::utils::task_control::TaskGroupManager;
 
 const CONFIG_DIR: &str = "vnt_config";
 const CURRENT_CONFIG_RECORD: &str = "vnt_current_config.txt";
@@ -57,6 +57,8 @@ enum VntStatus {
 #[derive(Clone)]
 struct HttpAppState {
     inner: Arc<Mutex<HttpAppStateInner>>,
+    /// 按配置文件名管理的实例日志，每个实例保留最近 50 条
+    logs: Arc<LogManager>,
 }
 
 #[derive(Default)]
@@ -65,27 +67,20 @@ struct HttpAppStateInner {
     instances: HashMap<String, InstanceState>,
     /// Stable for this desktop process, including managed in-process restarts.
     subscription_instance_ids: HashMap<String, Vec<u8>>,
-    /// One-shot effective configuration used only to recover a failed
-    /// subscription update without fetching the same broken revision again.
-    prepared_starts: HashMap<String, PreparedStart>,
+    /// 配置管理器：订阅连接与组网实例的生命周期持有者，跨实例重建保留
+    runtime_managers: HashMap<String, Arc<tokio::sync::Mutex<RuntimeChangeManager>>>,
 }
 
 #[derive(Default)]
 struct InstanceState {
     /// Monotonically increasing runtime incarnation for this config file.
     generation: u64,
-    /// Keeps the stopped slot alive while the managed coordinator replaces the
-    /// current runtime with its next generation.
-    managed_restart_pending: bool,
     vnt: Option<VntHandler>,
     status: VntStatus,
-    start_logs: Vec<String>,
     /// Cancels subscription fetching before the network startup task exists.
     start_cancellation: CancellationToken,
     /// 启动任务句柄，用于在 Starting 状态中断注册重试循环
     start_handle: Option<tokio::task::JoinHandle<()>>,
-    /// 每个实例持有自己的任务组管理器（TaskGroupManager 是单槽的，不能共享）
-    task_group_manager: TaskGroupManager,
     /// 启动时解析出的配置快照，用于多实例启动前冲突检测
     start_config: Option<StartConfig>,
     /// 启动时的本地 TOML 快照。订阅配置的有效运行配置包含远端字段，
@@ -95,40 +90,35 @@ struct InstanceState {
     config_name: String,
     /// Serializes server pushes and local override changes for this instance.
     config_apply_lock: Arc<tokio::sync::Mutex<()>>,
-    /// Generation-scoped managed configuration worker. It is deliberately
-    /// outside the network task group so it can orchestrate a fallback stop.
-    config_coordinator: Option<ConfigCoordinatorHandle>,
-}
-
-struct ConfigCoordinatorHandle {
-    generation: u64,
-    cancellation: CancellationToken,
-    join_handle: tokio::task::JoinHandle<()>,
+    /// 当前生效配置的 TOML 文本快照，由启动与监测循环发布。管理器锁在
+    /// 等待运行期事件时被监测循环持有，读取方不能直接去锁管理器。
+    config_text: Option<String>,
+    /// 实例任务组句柄：停止它即可让实例停机，供不能锁管理器的停止流程
+    /// 使用（监测循环在 next_event 等待期间持有管理器锁）。
+    task_groups: Option<TaskGroupManager>,
 }
 
 impl HttpAppState {
-    fn set_prepared_start_if_generation(
-        &self,
-        file_name: &str,
-        generation: u64,
-        prepared: PreparedStart,
-    ) -> bool {
-        let mut inner = self.inner.lock();
-        if inner
-            .instances
-            .get(file_name)
-            .is_none_or(|instance| instance.generation != generation)
-        {
-            return false;
-        }
-        inner
-            .prepared_starts
-            .insert(file_name.to_string(), prepared);
-        true
+    fn runtime_manager(&self, file_name: &str) -> Option<Arc<tokio::sync::Mutex<RuntimeChangeManager>>> {
+        self.inner.lock().runtime_managers.get(file_name).cloned()
     }
 
-    fn take_prepared_start(&self, file_name: &str) -> Option<PreparedStart> {
-        self.inner.lock().prepared_starts.remove(file_name)
+    fn install_runtime_manager(
+        &self,
+        file_name: &str,
+        manager: Arc<tokio::sync::Mutex<RuntimeChangeManager>>,
+    ) {
+        self.inner
+            .lock()
+            .runtime_managers
+            .insert(file_name.to_string(), manager);
+    }
+
+    fn take_runtime_manager(
+        &self,
+        file_name: &str,
+    ) -> Option<Arc<tokio::sync::Mutex<RuntimeChangeManager>>> {
+        self.inner.lock().runtime_managers.remove(file_name)
     }
 
     fn subscription_instance_id(&self, file_name: &str) -> Vec<u8> {
@@ -157,8 +147,8 @@ impl HttpAppState {
             .checked_add(1)
             .context("实例 generation 已耗尽")?;
         inst.status = VntStatus::Starting;
-        inst.managed_restart_pending = false;
-        inst.start_logs.clear();
+        // 每次启动重置实例日志，保证日志只反映当前这次运行
+        self.logs.instance(file_name).clear();
         inst.start_cancellation = CancellationToken::new();
         inst.start_config = None;
         inst.local_config = None;
@@ -188,10 +178,10 @@ impl HttpAppState {
         }
         // 实例已无任何运行内容时移除条目，避免实例表堆积已停止的配置。
         // 注意 Starting 失败路径走 record_log_and_stopped/starting_to_stopped 保留日志，
-        // 不经过这里，不会被误删。
-        let removable = !inst.managed_restart_pending
-            && inst.start_handle.is_none()
-            && inst.task_group_manager.is_stopped();
+        // 不经过这里，不会被误删。管理器已被摘除即代表组网实例与订阅连接
+        // 都已结束。
+        let removable =
+            inst.start_handle.is_none() && !inner.runtime_managers.contains_key(file_name);
         if removable {
             inner.instances.remove(file_name);
         }
@@ -209,8 +199,7 @@ impl HttpAppState {
         }
         inst.vnt.take();
         inst.status = VntStatus::Stopped;
-        inst.start_logs
-            .push(format!("[{}] 启动中断", HttpAppState::timestamp()));
+        self.logs.instance(file_name).warn("启动中断");
     }
     fn starting_to_running(&self, file_name: &str, generation: u64) -> bool {
         let mut inner = self.inner.lock();
@@ -222,7 +211,6 @@ impl HttpAppState {
             return false;
         }
         inst.status = VntStatus::Running;
-        inst.start_logs.clear();
         true
     }
 
@@ -245,15 +233,7 @@ impl HttpAppState {
     }
 
     fn record_log(&self, file_name: &str, msg: impl Into<String>) {
-        let mut inner = self.inner.lock();
-        let Some(inst) = inner.instances.get_mut(file_name) else {
-            return;
-        };
-        if inst.status != VntStatus::Starting {
-            return;
-        }
-        inst.start_logs
-            .push(format!("[{}] {}", Self::timestamp(), msg.into()));
+        self.logs.instance(file_name).info(msg);
     }
 
     fn start_cancellation(&self, file_name: &str, generation: u64) -> Option<CancellationToken> {
@@ -274,36 +254,10 @@ impl HttpAppState {
         if inst.generation != generation || inst.status != VntStatus::Starting {
             return;
         }
-        inst.start_logs
-            .push(format!("[{}] {}", Self::timestamp(), msg.into()));
+        self.logs.instance(file_name).error(msg);
         inst.status = VntStatus::Stopped;
     }
 
-    fn fail_generation_and_prepare_restart(
-        &self,
-        file_name: &str,
-        generation: u64,
-        message: String,
-        prepared: PreparedStart,
-    ) -> bool {
-        let mut inner = self.inner.lock();
-        let Some(instance) = inner.instances.get_mut(file_name) else {
-            return false;
-        };
-        if instance.generation != generation || instance.status != VntStatus::Starting {
-            return false;
-        }
-        instance.vnt.take();
-        instance.status = VntStatus::Stopped;
-        instance.managed_restart_pending = true;
-        instance
-            .start_logs
-            .push(format!("[{}] {message}", HttpAppState::timestamp()));
-        inner
-            .prepared_starts
-            .insert(file_name.to_string(), prepared);
-        true
-    }
     fn status(&self, file_name: &str) -> VntStatus {
         self.inner
             .lock()
@@ -313,61 +267,13 @@ impl HttpAppState {
             .unwrap_or(VntStatus::Stopped)
     }
 
-    fn task_group_manager(&self, file_name: &str) -> Option<TaskGroupManager> {
-        self.inner
-            .lock()
-            .instances
-            .get(file_name)
-            .map(|inst| inst.task_group_manager.clone())
-    }
-
+    #[cfg(test)]
     fn current_generation(&self, file_name: &str) -> Option<u64> {
         self.inner
             .lock()
             .instances
             .get(file_name)
             .map(|instance| instance.generation)
-    }
-
-    fn is_generation(&self, file_name: &str, generation: u64) -> bool {
-        self.current_generation(file_name) == Some(generation)
-    }
-
-    fn mark_managed_restart_if_generation(&self, file_name: &str, generation: u64) -> bool {
-        let mut inner = self.inner.lock();
-        let Some(instance) = inner.instances.get_mut(file_name) else {
-            return false;
-        };
-        if instance.generation != generation || instance.status != VntStatus::Running {
-            return false;
-        }
-        instance.managed_restart_pending = true;
-        true
-    }
-
-    fn clear_managed_restart_if_generation(&self, file_name: &str, generation: u64) {
-        if let Some(instance) = self
-            .inner
-            .lock()
-            .instances
-            .get_mut(file_name)
-            .filter(|instance| instance.generation == generation)
-        {
-            instance.managed_restart_pending = false;
-        }
-    }
-
-    fn task_group_manager_if_generation(
-        &self,
-        file_name: &str,
-        generation: u64,
-    ) -> Option<TaskGroupManager> {
-        self.inner
-            .lock()
-            .instances
-            .get(file_name)
-            .filter(|instance| instance.generation == generation)
-            .map(|instance| instance.task_group_manager.clone())
     }
 
     fn api(&self, file_name: &str) -> Option<VntApi> {
@@ -379,17 +285,6 @@ impl HttpAppState {
             .map(|handler| handler.api.clone())
     }
 
-    fn api_if_generation(&self, file_name: &str, generation: u64) -> Option<VntApi> {
-        self.inner
-            .lock()
-            .instances
-            .get(file_name)
-            .filter(|instance| instance.generation == generation)
-            .and_then(|instance| instance.vnt.as_ref())
-            .filter(|handler| handler.generation == generation)
-            .map(|handler| handler.api.clone())
-    }
-
     fn config_apply_lock(&self, file_name: &str) -> Option<Arc<tokio::sync::Mutex<()>>> {
         self.inner
             .lock()
@@ -398,54 +293,36 @@ impl HttpAppState {
             .map(|instance| instance.config_apply_lock.clone())
     }
 
-    fn install_config_coordinator(
-        &self,
-        file_name: &str,
-        generation: u64,
-        handle: ConfigCoordinatorHandle,
-    ) -> Option<ConfigCoordinatorHandle> {
-        let mut inner = self.inner.lock();
-        let instance = inner.instances.get_mut(file_name)?;
-        if instance.generation != generation {
-            handle.cancellation.cancel();
-            handle.join_handle.abort();
-            return None;
+    /// 启动解析出配置后写入展示名和配置快照（供实例列表与冲突检测使用）
+    /// 发布实例当前生效配置的文本快照（启动与每次应用变更后调用）。
+    fn set_instance_config_text(&self, file_name: &str, text: String) {
+        if let Some(inst) = self.inner.lock().instances.get_mut(file_name) {
+            inst.config_text = Some(text);
         }
-        instance.config_coordinator.replace(handle)
     }
 
-    fn take_config_coordinator(&self, file_name: &str) -> Option<ConfigCoordinatorHandle> {
+    fn instance_config_text(&self, file_name: &str) -> Option<String> {
         self.inner
             .lock()
             .instances
-            .get_mut(file_name)
-            .and_then(|instance| instance.config_coordinator.take())
+            .get(file_name)
+            .and_then(|inst| inst.config_text.clone())
     }
 
-    fn set_running_config_if_generation(
-        &self,
-        file_name: &str,
-        generation: u64,
-        config: StartConfig,
-    ) -> bool {
-        if let Some(instance) = self
-            .inner
-            .lock()
-            .instances
-            .get_mut(file_name)
-            .filter(|instance| instance.generation == generation)
-        {
-            instance.start_config = Some(config.clone());
-            if let Some(handler) = instance.vnt.as_mut() {
-                handler.start_config = config;
-            }
-            true
-        } else {
-            false
+    fn set_instance_task_groups(&self, file_name: &str, groups: TaskGroupManager) {
+        if let Some(inst) = self.inner.lock().instances.get_mut(file_name) {
+            inst.task_groups = Some(groups);
         }
     }
 
-    /// 启动解析出配置后写入展示名和配置快照（供实例列表与冲突检测使用）
+    fn instance_task_groups(&self, file_name: &str) -> Option<TaskGroupManager> {
+        self.inner
+            .lock()
+            .instances
+            .get(file_name)
+            .and_then(|inst| inst.task_groups.clone())
+    }
+
     fn set_starting_config(
         &self,
         file_name: &str,
@@ -493,11 +370,10 @@ impl HttpAppState {
             .lock()
             .instances
             .get_mut(file_name)
-            .map(|inst| {
+            .and_then(|inst| {
                 inst.start_cancellation.cancel();
                 inst.start_handle.take()
-            })
-            .flatten();
+            });
         if let Some(handle) = handle {
             handle.abort();
         }
@@ -520,17 +396,9 @@ impl HttpAppState {
         }
         true
     }
-
-    fn timestamp() -> String {
-        let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
-        let format = format_description!("[hour]:[minute]:[second]");
-        now.format(&format)
-            .unwrap_or_else(|_| "00:00:00".to_string())
-    }
 }
 
 struct VntHandler {
-    generation: u64,
     api: VntApi,
     config_name: String,
     config_file_name: String,
@@ -631,38 +499,25 @@ pub struct StartConfig {
 }
 
 impl StartConfig {
-    fn validate(&self) -> anyhow::Result<()> {
+    /// 本地配置的基础校验：与是否配置服务器无关的部分。
+    fn validate_local(&self) -> anyhow::Result<()> {
         if self.legacy_no_tun == Some(true) {
             bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"")
         }
+        validate_tunnel_binding(&self.tunnel_addr, self.tunnel_port)?;
+        Ok(())
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        self.validate_local()?;
         if self.server.is_empty() && self.ip.is_none() {
             bail!("未配置服务器时必须指定虚拟 IP")
         }
         if self.server.len() > 1 && self.ip.is_none() {
             bail!("配置多个服务器时必须指定虚拟 IP")
         }
-        validate_tunnel_binding(&self.tunnel_addr, self.tunnel_port)?;
         Ok(())
     }
-}
-
-#[derive(Clone)]
-struct SubscriptionRuntime {
-    link: Subscription,
-    revision: u64,
-    remote_toml: String,
-    content_sha256: Vec<u8>,
-    rollback_failure: Option<(u64, String)>,
-}
-
-#[derive(Clone)]
-struct PreparedStart {
-    effective_toml: String,
-    start_config: StartConfig,
-    revision: u64,
-    remote_toml: String,
-    content_sha256: Vec<u8>,
-    rollback_failure: Option<(u64, String)>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -670,6 +525,8 @@ struct SubscriptionStateFile {
     version: u8,
     remote_toml: String,
     target_revision: u64,
+    #[serde(default)]
+    acknowledged_revision: u64,
     applied_revision: u64,
     last_good_toml: Option<String>,
     #[serde(default)]
@@ -686,6 +543,7 @@ impl Default for SubscriptionStateFile {
             version: 1,
             remote_toml: String::new(),
             target_revision: 0,
+            acknowledged_revision: 0,
             applied_revision: 0,
             last_good_toml: None,
             last_good_config: None,
@@ -703,88 +561,71 @@ fn subscription_state_path(file_name: &str) -> PathBuf {
 }
 
 fn load_subscription_state(file_name: &str) -> SubscriptionStateFile {
-    std::fs::read(subscription_state_path(file_name))
+    let mut state: SubscriptionStateFile = std::fs::read(subscription_state_path(file_name))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    state.acknowledged_revision = state.acknowledged_revision.max(state.applied_revision);
+    state
 }
 
-fn save_subscription_state(file_name: &str, state: &SubscriptionStateFile) -> anyhow::Result<()> {
-    let path = subscription_state_path(file_name);
-    let parent = path.parent().context("订阅链接状态路径缺少父目录")?;
-    std::fs::create_dir_all(parent)?;
-    let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    std::fs::write(&temporary, serde_json::to_vec_pretty(state)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))?;
-    }
-    let backup = path.with_extension("json.bak");
-    if path.exists() {
-        let _ = std::fs::remove_file(&backup);
-        std::fs::rename(&path, &backup)?;
-    }
-    if let Err(error) = std::fs::rename(&temporary, &path) {
-        if backup.exists() {
-            let _ = std::fs::rename(&backup, &path);
-        }
-        return Err(error.into());
-    }
-    let _ = std::fs::remove_file(backup);
-    Ok(())
+/// 订阅身份（network_code, device_id）来自运行中管理器持有的最新订阅信封：
+/// 订阅链接只携带服务端签发的 join_id，身份由服务端认证成功后下发。
+/// 管理器不存在或首份信封尚未到达时返回空串。
+async fn subscription_identity(state: &HttpAppState, file_name: &str) -> (String, String) {
+    let Some(manager) = state.runtime_manager(file_name) else {
+        return (String::new(), String::new());
+    };
+    manager.lock().await.managed_identity().unwrap_or_default()
 }
 
+/// 解析本地配置并创建配置管理器（订阅模式在此等待服务端首份配置并启动
+/// 首个组网实例）。管理器存入实例表，跨组网实例重建保留。
 async fn resolve_subscription_config_with_retry(
     state: &HttpAppState,
     file_name: &str,
     local_content: &str,
     cancellation: &CancellationToken,
-) -> anyhow::Result<(StartConfig, String, Option<SubscriptionRuntime>)> {
+) -> anyhow::Result<StartConfig> {
     let local: toml::Value = toml::from_str(local_content).context("本地配置 TOML 无效")?;
     let local_table = local.as_table().context("本地配置 TOML 根节点必须是表")?;
-    let Some(link_value) = local_table.get("subscription") else {
-        return Ok((
-            toml::from_str(local_content)?,
-            local_content.to_string(),
-            None,
-        ));
-    };
-    let link_value = link_value.as_str().context("subscription 必须是字符串")?;
-    let link = Subscription::parse(link_value)?;
+    let start_config: StartConfig = toml::from_str(local_content)?;
+    let local_core = convert_config(start_config.clone())?;
 
-    let envelope = fetch_subscription_until_cancelled(
-        cancellation,
-        Duration::from_secs(5),
-        || link.fetch(),
-        |attempts, error| {
-            state.record_log(
-                file_name,
-                format!("获取订阅配置失败（第 {attempts} 次）：{error:#}；5 秒后重试"),
-            );
-        },
-    )
-    .await?;
-    let merged = resolve_effective_managed_config(
-        &envelope.toml,
-        local_content,
-        &link,
-        VirtualIp::new(envelope.managed_ip, envelope.managed_prefix_len)?,
-        envelope.managed_device_name.clone(),
-    )?;
-    Ok((
-        merged.config,
-        merged.effective_toml,
-        Some(SubscriptionRuntime {
-            link,
-            revision: envelope.revision,
-            remote_toml: envelope.toml,
-            content_sha256: envelope.content_sha256,
-            rollback_failure: None,
-        }),
-    ))
+    // 旧的配置管理器先摘除（Drop 会停止组网实例并断开订阅控制连接）
+    if let Some(old) = state.take_runtime_manager(file_name) {
+        drop(old);
+    }
+
+    let subscription = match local_table.get("subscription") {
+        None => None,
+        Some(link_value) => {
+            let mut link = Subscription::parse(
+                link_value
+                    .as_str()
+                    .context("subscription 必须是字符串")?,
+            )?;
+            // 稳定的订阅实例 ID：跨进程重启保持服务端视角的身份一致
+            link.set_instance_id(state.subscription_instance_id(file_name))?;
+            Some(link)
+        }
+    };
+
+    // 管理器创建即启动首个组网实例；订阅模式内部等待服务端首份配置，
+    // 等待期间可取消
+    let manager = tokio::select! {
+        _ = cancellation.cancelled() => return Err(anyhow!("启动已取消")),
+        result = RuntimeChangeManager::new(
+            local_core,
+            subscription,
+            state.logs.instance(file_name),
+        ) => result?,
+    };
+    state.install_runtime_manager(file_name, Arc::new(tokio::sync::Mutex::new(manager)));
+    Ok(start_config)
 }
 
+#[cfg(test)]
 async fn fetch_subscription_until_cancelled<T, Fetch, FetchFuture, Report>(
     cancellation: &CancellationToken,
     retry_delay: Duration,
@@ -822,13 +663,15 @@ where
 struct ResolvedManagedConfig {
     effective_toml: String,
     config: StartConfig,
+    #[cfg_attr(not(test), allow(dead_code))]
     overridden_fields: Vec<String>,
 }
 
 fn resolve_effective_managed_config(
     remote_content: &str,
     local_content: &str,
-    subscription: &Subscription,
+    network_code: &str,
+    device_id: &str,
     managed_ip: VirtualIp,
     managed_device_name: String,
 ) -> anyhow::Result<ResolvedManagedConfig> {
@@ -859,11 +702,11 @@ fn resolve_effective_managed_config(
     }
     remote_table.insert(
         "network_code".to_string(),
-        toml::Value::String(subscription.network_code.clone()),
+        toml::Value::String(network_code.to_string()),
     );
     remote_table.insert(
         "device_id".to_string(),
-        toml::Value::String(subscription.device_id.clone()),
+        toml::Value::String(device_id.to_string()),
     );
     let effective_toml = toml::to_string_pretty(&remote)?;
     let mut config: StartConfig = toml::from_str(&effective_toml)?;
@@ -897,46 +740,6 @@ fn local_override_fields(remote_content: &str, local_content: &str) -> anyhow::R
         })
         .map(|(key, _)| key.clone())
         .collect())
-}
-
-fn applied_subscription_ack(
-    revision: u64,
-    overridden_fields: Vec<String>,
-    apply_mode: &str,
-    changed_fields: Vec<String>,
-    config: &StartConfig,
-    effective_toml: &str,
-) -> SubscriptionConfigAck {
-    let mut ack = SubscriptionConfigAck::new(
-        revision,
-        SubscriptionConfigApplyStatus::SubscriptionConfigApplied,
-        String::new(),
-        overridden_fields,
-    );
-    ack.apply_mode = apply_mode.to_string();
-    ack.changed_fields = changed_fields;
-    ack.effective_device_name = config
-        .device_name
-        .clone()
-        .or_else(|| config.device_id.clone())
-        .unwrap_or_default();
-    if let Some(ip) = config.ip {
-        ack.effective_ip = ip.ip();
-        ack.effective_prefix_len = ip.prefix_len().into();
-    }
-    ack.effective_output = config.output.clone();
-    ack.allow_ikev2 = config.allow_ikev2;
-    ack.allow_wireguard = config.allow_wireguard;
-    ack.allow_mapping = config.allow_mapping;
-    let mut hasher = Sha256::new();
-    hasher.update(effective_toml.as_bytes());
-    hasher.update(ack.effective_device_name.as_bytes());
-    if let Some(ip) = config.ip {
-        hasher.update(ip.ip().octets());
-        hasher.update([ip.prefix_len()]);
-    }
-    ack.effective_config_sha256 = hasher.finalize().to_vec();
-    ack
 }
 
 fn validate_tunnel_binding(addrs: &[SocketAddr], legacy_port: Option<u16>) -> anyhow::Result<()> {
@@ -1084,7 +887,6 @@ struct HttpRouteDetail {
 #[derive(Serialize)]
 struct StartStatusResponse {
     status: VntStatus,
-    logs: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1099,19 +901,40 @@ async fn get_start_status(
     Query(req): Query<FileReq>,
 ) -> Json<ApiResponse<StartStatusResponse>> {
     let lock = state.inner.lock();
-    // 实例不存在（从未启动或已停止并清理）时返回 Stopped + 空日志，
+    // 实例不存在（从未启动或已停止并清理）时返回 Stopped，
     // 前端轮询已停止实例时自然终止
     let resp = match lock.instances.get(&req.file_name) {
         Some(inst) => StartStatusResponse {
             status: inst.status,
-            logs: inst.start_logs.clone(),
         },
         None => StartStatusResponse {
             status: VntStatus::Stopped,
-            logs: Vec::new(),
         },
     };
     Json(ApiResponse::success(resp))
+}
+
+/// 获取实例最近日志（每个实例保留最后 50 条，停止后仍可查询）
+async fn get_instance_logs(
+    State(state): State<HttpAppState>,
+    Query(req): Query<FileReq>,
+) -> Json<ApiResponse<Vec<LogEntry>>> {
+    Json(ApiResponse::success(state.logs.logs(&req.file_name)))
+}
+
+/// 运行中实例当前生效的配置（本地配置与服务端下发合并后的结果），以 TOML
+/// 文本返回，仅供查看。
+///
+/// 读快照而非实时锁管理器：监测循环在等待运行期事件时持有管理器锁，
+/// 直接去锁会阻塞到下一次事件。
+async fn get_instance_config(
+    State(state): State<HttpAppState>,
+    Query(req): Query<FileReq>,
+) -> Json<ApiResponse<String>> {
+    match state.instance_config_text(&req.file_name) {
+        Some(text) => Json(ApiResponse::success(text)),
+        None => Json(ApiResponse::error("实例未运行或配置尚未就绪")),
+    }
 }
 
 async fn get_instances(
@@ -1204,6 +1027,7 @@ impl VntService {
 
         let state = HttpAppState {
             inner: Arc::new(Default::default()),
+            logs: Arc::new(LogManager::new()),
         };
 
         for (file_name, path) in determine_auto_start_files(start_config_file_name).await {
@@ -1278,6 +1102,8 @@ fn api_router(state: HttpAppState, runtime: ServiceRuntime) -> Router {
         .route("/api/peers", get(get_peers))
         .route("/api/routes", get(get_routes))
         .route("/api/start/status", get(get_start_status))
+        .route("/api/instance/logs", get(get_instance_logs))
+        .route("/api/instance/config", get(get_instance_config))
         .route("/api/instances", get(get_instances))
         .route("/api/instance", delete(dismiss_instance_handler))
         .route("/api/start", post(start_vnt_handler))
@@ -1574,8 +1400,28 @@ async fn start_vnt_internal(
     file_name: String,
     file_path: PathBuf,
 ) -> anyhow::Result<()> {
+    let generation = begin_vnt_start(state, &file_name)?;
+    start_vnt_internal_reserved(state, file_name, file_path, generation).await
+}
+
+/// 在把启动任务放入后台前先公布 Starting 状态和当次日志。
+///
+/// HTTP 启动接口会在返回后被前端立即轮询；如果在 spawn 的任务里才
+/// 切换状态，轮询可能暂时读到上一轮的 Stopped 和旧日志。
+fn begin_vnt_start(state: &HttpAppState, file_name: &str) -> anyhow::Result<u64> {
     log::info!("Starting VNT service: {}", file_name);
-    let generation = state.starting(&file_name)?;
+    let generation = state.starting(file_name)?;
+    state.record_log(file_name, format!("启动配置: {}", file_name));
+    state.record_log(file_name, "读取配置文件");
+    Ok(generation)
+}
+
+async fn start_vnt_internal_reserved(
+    state: &HttpAppState,
+    file_name: String,
+    file_path: PathBuf,
+    generation: u64,
+) -> anyhow::Result<()> {
     let start_cancellation = state
         .start_cancellation(&file_name, generation)
         .context("启动实例取消信号缺失")?;
@@ -1585,9 +1431,6 @@ async fn start_vnt_internal(
     let on_error_guard = defer(move || {
         state_for_error.starting_to_stopped(&file_name_for_error, generation);
     });
-
-    state.record_log(&file_name, format!("启动配置: {}", file_name));
-    state.record_log(&file_name, "读取配置文件");
 
     // 读取并解析配置
     let local_content = fs::read_to_string(&file_path)
@@ -1605,48 +1448,22 @@ async fn start_vnt_internal(
         state.set_starting_config_name(&file_name, generation, config_name.to_string());
     }
 
-    let prepared_start = state.take_prepared_start(&file_name);
-    let (cfg, content, mut subscription_runtime) = if let Some(prepared) = prepared_start {
-        let local: toml::Value = toml::from_str(&local_content).context("本地配置 TOML 无效")?;
-        let link_value = local
-            .as_table()
-            .and_then(|table| table.get("subscription"))
-            .and_then(toml::Value::as_str)
-            .context("回滚配置缺少订阅链接")?;
-        (
-            prepared.start_config,
-            prepared.effective_toml,
-            Some(SubscriptionRuntime {
-                link: Subscription::parse(link_value)?,
-                revision: prepared.revision,
-                remote_toml: prepared.remote_toml,
-                content_sha256: prepared.content_sha256,
-                rollback_failure: prepared.rollback_failure,
-            }),
-        )
-    } else {
-        resolve_subscription_config_with_retry(
-            state,
-            &file_name,
-            &local_content,
-            &start_cancellation,
-        )
-        .await?
-    };
-    if let Some(runtime) = &mut subscription_runtime {
-        runtime
-            .link
-            .set_instance_id(state.subscription_instance_id(&file_name))?;
-        if runtime.rollback_failure.is_none() {
-            let mut sync_state = load_subscription_state(&file_name);
-            sync_state.remote_toml = runtime.remote_toml.clone();
-            sync_state.target_revision = runtime.revision;
-            save_subscription_state(&file_name, &sync_state)?;
-        }
-    }
+    let cfg = resolve_subscription_config_with_retry(
+        state,
+        &file_name,
+        &local_content,
+        &start_cancellation,
+    )
+    .await?;
 
     state.record_log(&file_name, "解析配置文件内容");
-    cfg.validate()?;
+    // 订阅模式下服务器与虚拟 IP 由服务端首份配置下发（管理器内部等待并
+    // 合并），本地配置只做与服务器无关的基础校验，与 cli 的解析流程一致
+    if cfg.subscription.is_some() {
+        cfg.validate_local()?;
+    } else {
+        cfg.validate()?;
+    }
 
     let config_display_name = cfg.config_name.clone().unwrap_or_else(|| file_name.clone());
 
@@ -1679,24 +1496,9 @@ async fn start_vnt_internal(
     );
 
     let start_config = cfg.clone();
-    let mut core_config = convert_config(cfg)?;
-    if let Some(runtime) = &subscription_runtime {
-        core_config.managed = Some(runtime.link.registration(runtime.revision));
-    }
-
-    state.record_log(&file_name, "创建异步任务组");
-    let task_group_manager = state
-        .task_group_manager(&file_name)
-        .context("Instance not found")?;
-    let (task_group, task_group_guard) = task_group_manager
-        .create_task()
-        .context("Create task failed")?;
-
-    state.record_log(&file_name, "创建组网管理器");
 
     let state_clone = state.clone();
     let file_name_clone = file_name.clone();
-    let failure_runtime = subscription_runtime.clone();
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let start_handle = tokio::spawn(async move {
         let result = start_vnt_network(StartNetworkContext {
@@ -1705,83 +1507,22 @@ async fn start_vnt_internal(
             generation,
             config_display_name,
             start_config,
-            core_config,
-            effective_content: content,
-            local_content,
-            subscription_runtime,
-            task_group,
-            task_group_guard,
         })
         .await;
-        let _ = ready_tx.send(
-            result
-                .as_ref()
-                .map(|_| ())
-                .map_err(|error| error.to_string()),
-        );
 
         if let Err(e) = result {
             log::error!("Failed to start VNT network: {:?}", e);
-            let mut rollback = None;
-            if let Some(runtime) = failure_runtime {
-                let mut sync_state = load_subscription_state(&file_name_clone);
-                if runtime.rollback_failure.is_none() {
-                    sync_state.remote_toml = runtime.remote_toml;
-                    sync_state.target_revision = runtime.revision;
-                    sync_state.failed_revision = Some(runtime.revision);
-                    sync_state.last_error = Some(e.to_string());
-                    if sync_state.applied_revision < runtime.revision
-                        && let (
-                            Some(last_good),
-                            Some(last_good_config),
-                            Some(last_good_content_sha256),
-                        ) = (
-                            sync_state.last_good_toml.clone(),
-                            sync_state.last_good_config.clone(),
-                            sync_state.last_good_content_sha256.clone(),
-                        )
-                    {
-                        rollback = Some(PreparedStart {
-                            effective_toml: last_good,
-                            start_config: last_good_config,
-                            revision: sync_state.applied_revision,
-                            remote_toml: sync_state.remote_toml.clone(),
-                            content_sha256: last_good_content_sha256,
-                            rollback_failure: Some((runtime.revision, e.to_string())),
-                        });
-                    }
-                } else {
-                    sync_state.last_error = Some(format!("恢复上一版本失败: {e}"));
-                }
-                if let Err(save_error) = save_subscription_state(&file_name_clone, &sync_state) {
-                    log::error!("保存订阅链接失败状态失败: {save_error:#}");
-                }
-            }
+            let error_message = e.to_string();
+            state_clone.record_log_and_stopped(
+                &file_name_clone,
+                generation,
+                format!("启动失败: {e:?}"),
+            );
             drop(on_error_guard);
-            if let Some(rollback) = rollback {
-                if state_clone.fail_generation_and_prepare_restart(
-                    &file_name_clone,
-                    generation,
-                    format!("启动失败: {e:?}，正在恢复上一份可用配置"),
-                    rollback,
-                ) && let Err(error) = start_vnt_boxed(
-                    &state_clone,
-                    file_name_clone.clone(),
-                    Path::new(CONFIG_DIR).join(&file_name_clone),
-                )
-                .await
-                {
-                    log::error!("启动回滚配置失败: {error:#}");
-                }
-            } else {
-                state_clone.record_log_and_stopped(
-                    &file_name_clone,
-                    generation,
-                    format!("启动失败: {e:?}"),
-                );
-            }
+            let _ = ready_tx.send(Err(error_message));
             return;
         }
+        let _ = ready_tx.send(Ok(()));
         drop(on_error_guard);
     });
     state.set_start_handle(&file_name, generation, start_handle);
@@ -1791,36 +1532,19 @@ async fn start_vnt_internal(
         Ok(Err(_)) => Err(anyhow!("启动任务在返回结果前退出")),
         Err(_) => {
             state.abort_start_task_if_generation(&file_name, generation);
-            if let Some(manager) = state.task_group_manager_if_generation(&file_name, generation) {
-                let _ =
-                    tokio::time::timeout(Duration::from_secs(10), manager.stop_and_wait()).await;
+            // 中止启动任务会丢弃其中持有的管理器；兜底再摘除并停止一次
+            if let Some(manager) = state.take_runtime_manager(&file_name)
+                && let Ok(mut guard) = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    manager.lock(),
+                )
+                .await
+            {
+                guard.stop().await;
             }
-            Err(anyhow!("启动网络实例超时"))
-        }
-    }
-}
-
-fn start_vnt_boxed<'a>(
-    state: &'a HttpAppState,
-    file_name: String,
-    file_path: PathBuf,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
-    Box::pin(start_vnt_internal(state, file_name, file_path))
-}
-
-async fn cancel_config_coordinator(state: &HttpAppState, file_name: &str) {
-    // Awaiting one worker may allow an in-flight managed restart to publish its
-    // replacement worker. Drain again after the join so explicit stop/restart
-    // cannot leave that replacement alive.
-    while let Some(mut coordinator) = state.take_config_coordinator(file_name) {
-        coordinator.cancellation.cancel();
-        if tokio::time::timeout(Duration::from_secs(10), &mut coordinator.join_handle)
-            .await
-            .is_err()
-        {
-            coordinator.join_handle.abort();
-            let _ = coordinator.join_handle.await;
-            log::warn!("停止配置协调器超时，已中止: {file_name}");
+            let error = "启动网络实例超时";
+            state.record_log_and_stopped(&file_name, generation, error);
+            Err(anyhow!(error))
         }
     }
 }
@@ -1831,15 +1555,9 @@ struct StartNetworkContext {
     generation: u64,
     config_display_name: String,
     start_config: StartConfig,
-    core_config: CoreConfig,
-    effective_content: String,
-    local_content: String,
-    subscription_runtime: Option<SubscriptionRuntime>,
-    task_group: vnt_core::utils::task_control::TaskGroup,
-    task_group_guard: vnt_core::utils::task_control::TaskGroupGuard,
 }
 
-/// 执行实际的网络启动操作
+/// 执行实际的网络启动操作（组网实例已由配置管理器创建）
 async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
     let StartNetworkContext {
         state,
@@ -1847,19 +1565,43 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         generation,
         config_display_name,
         start_config,
-        core_config,
-        effective_content,
-        local_content,
-        subscription_runtime,
-        task_group,
-        task_group_guard,
     } = context;
-    let mut network_manager =
-        NetworkManager::create_network(Box::new(core_config), task_group.clone())
-            .await
-            .map_err(|e| anyhow!("Create network failed: {:?}", e))?;
+    let manager = state
+        .runtime_manager(&file_name)
+        .context("配置管理器不可用")?;
 
-    let vnt_api = network_manager.vnt_api();
+    // 启动虚拟网卡（管理器内部等待注册完成）
+    let (device_mode, vnt_api) = {
+        let mut guard = manager.lock().await;
+        let network_addr = match guard.start_device().await {
+            Ok(network_addr) => network_addr,
+            Err(e) => {
+                log::error!("Register failed: {:?}", e);
+                state.record_log(&file_name, format!("注册失败:{}", e));
+                bail!("注册失败：{}", e)
+            }
+        };
+        let device_mode = guard.device_mode();
+        let vnt_api = guard.api().context("配置管理器 API 不可用")?;
+        let task_groups = guard.task_groups();
+        drop(guard);
+        state.set_instance_task_groups(&file_name, task_groups);
+        state.record_log(
+            &file_name,
+            format!("注册成功 {}/{}", network_addr.ip, network_addr.prefix_len),
+        );
+        log::info!(
+            "Network Started: {}/{}",
+            network_addr.ip,
+            network_addr.prefix_len
+        );
+        (device_mode, vnt_api)
+    };
+    if device_mode.has_device() {
+        state.record_log(&file_name, format!("创建并应用 {} 虚拟网卡成功", device_mode));
+    } else {
+        state.record_log(&file_name, "device_mode=no，不创建虚拟网卡");
+    }
 
     {
         let mut lock = state.inner.lock();
@@ -1873,8 +1615,7 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
             return Err(anyhow!("VNT is already running"));
         }
         inst.vnt = Some(VntHandler {
-            generation,
-            api: vnt_api.clone(),
+            api: vnt_api,
             config_name: config_display_name,
             config_file_name: file_name.clone(),
             start_config: start_config.clone(),
@@ -1887,427 +1628,81 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         state_for_vnt_cleanup.cleanup_generation(&file_name_for_cleanup, generation);
     });
 
-    state.record_log(&file_name, "连接服务器，执行注册");
-    log::info!("Registering with server");
-
-    let reg_msg = loop {
-        let reg_msg = match network_manager.register().await {
-            Ok(rs) => rs,
-            Err(e) => {
-                log::error!("Register failed: {:?}", e);
-                state.record_log(&file_name, format!("注册失败:{},5秒后重试", e));
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                continue;
-            }
-        };
-        match reg_msg {
-            RegisterResponse::Success(reg_msg) => {
-                break reg_msg;
-            }
-            RegisterResponse::Failed(e) => {
-                log::error!("Register failed: {:?}", e);
-                bail!("注册失败：{}", e.message)
-            }
-        }
-    };
-    state.record_log(
-        &file_name,
-        format!("注册成功 {}/{}", reg_msg.ip, reg_msg.prefix_len),
-    );
-    log::info!("Network Started: {}/{}", reg_msg.ip, reg_msg.prefix_len);
-    if network_manager.device_mode().has_device() {
-        let mode = network_manager.device_mode();
-        state.record_log(&file_name, format!("正在创建 {} 虚拟网卡", mode));
-        network_manager
-            .start_device()
-            .await
-            .with_context(|| format!("创建 {} 虚拟网卡失败", mode))?;
-
-        state.record_log(&file_name, format!("创建 {} 虚拟网卡成功，设置 IP", mode));
-        network_manager
-            .set_device_network_ip(reg_msg.ip, reg_msg.prefix_len)
-            .await
-            .with_context(|| format!("设置 {} 虚拟网卡 IP 失败", mode))?;
-        state.record_log(&file_name, "设置 IP 成功");
-    } else {
-        state.record_log(&file_name, "device_mode=no，不创建虚拟网卡");
-    }
-
     if !state.starting_to_running(&file_name, generation) {
         bail!("实例启动完成时 generation 已失效");
     }
 
-    if let Some(runtime) = &subscription_runtime {
-        let mut sync_state = load_subscription_state(&file_name);
-        sync_state.applied_revision = runtime.revision;
-        sync_state.last_good_toml = Some(effective_content.clone());
-        sync_state.last_good_config = Some(start_config.clone());
-        sync_state.last_good_content_sha256 = Some(runtime.content_sha256.clone());
-        if let Some((failed_revision, failure)) = &runtime.rollback_failure {
-            sync_state.failed_revision = Some(*failed_revision);
-            sync_state.last_error = Some(failure.clone());
-            let _ = vnt_api
-                .acknowledge_subscription_config(SubscriptionConfigAck::new(
-                    *failed_revision,
-                    SubscriptionConfigApplyStatus::SubscriptionConfigError,
-                    failure.clone(),
-                    Vec::new(),
-                ))
-                .await;
-        } else {
-            sync_state.remote_toml = runtime.remote_toml.clone();
-            sync_state.target_revision = runtime.revision;
-            sync_state.failed_revision = None;
-            sync_state.last_error = None;
-        }
-        if let Err(error) = save_subscription_state(&file_name, &sync_state) {
-            log::error!("保存订阅链接应用状态失败: {error:#}");
-        }
+    // 发布初始生效配置文本（本地配置与服务端下发的合并结果）
+    let config_text = {
+        let mut guard = manager.lock().await;
+        guard
+            .current_config()
+            .await
+            .ok()
+            .map(|config| config.to_toml_string())
+    };
+    if let Some(text) = config_text {
+        state.set_instance_config_text(&file_name, text);
     }
 
     // 启动成功后记录到自启列表
     record_add_running(&file_name).await;
 
-    if let Some(runtime) = subscription_runtime {
-        let managed_state = state.clone();
-        let managed_file_name = file_name.clone();
-        let managed_api = vnt_api.clone();
-        let apply_lock = state
-            .config_apply_lock(&file_name)
-            .context("Instance not found")?;
-        let (update_tx, mut update_rx) = tokio::sync::mpsc::channel(8);
-        let forward_api = managed_api.clone();
-        task_group.spawn(async move {
-            while let Some(updates) = forward_api.next_subscription_config_updates().await {
-                if update_tx.send((generation, updates)).await.is_err() {
-                    break;
-                }
-            }
-        });
-        let cancellation = CancellationToken::new();
-        let coordinator_cancellation = cancellation.clone();
-        let join_handle = tokio::spawn(async move {
-            let mut applied_revision = runtime.revision;
-            let mut failed_revision = load_subscription_state(&managed_file_name).failed_revision;
-            loop {
-                if coordinator_cancellation.is_cancelled() {
-                    break;
-                }
-                if !managed_state.is_generation(&managed_file_name, generation) {
-                    break;
-                }
-                let event = tokio::select! {
-                    _ = coordinator_cancellation.cancelled() => break,
-                    event = update_rx.recv() => event,
-                };
-                let Some((event_generation, mut updates)) = event else {
-                    break;
-                };
-                if event_generation != generation {
-                    continue;
-                }
-                while let Ok((queued_generation, mut queued)) = update_rx.try_recv() {
-                    if queued_generation == generation {
-                        updates.append(&mut queued);
-                    }
-                }
-                if !managed_state.is_generation(&managed_file_name, generation) {
-                    break;
-                }
-                let mut eligible = updates
-                    .into_iter()
-                    .filter(|value| {
-                        value.revision > applied_revision && failed_revision != Some(value.revision)
-                    })
-                    .collect::<Vec<_>>();
-                let Some(target_revision) = eligible.iter().map(|value| value.revision).max()
-                else {
-                    continue;
-                };
-                for superseded in eligible
-                    .iter()
-                    .filter(|value| value.revision < target_revision)
-                {
-                    let _ = managed_api
-                        .acknowledge_subscription_config(SubscriptionConfigAck::new(
-                            superseded.revision,
-                            SubscriptionConfigApplyStatus::SubscriptionConfigSuperseded,
-                            String::new(),
-                            Vec::new(),
-                        ))
-                        .await;
-                }
-                let update = eligible.swap_remove(
-                    eligible
-                        .iter()
-                        .position(|value| value.revision == target_revision)
-                        .expect("target revision exists"),
-                );
-                let _apply_guard = apply_lock.lock().await;
-                if !managed_state.is_generation(&managed_file_name, generation) {
-                    break;
-                }
-                let resolved = match resolve_effective_managed_config(
-                    &update.toml,
-                    &local_content,
-                    &runtime.link,
-                    match VirtualIp::new(update.managed_ip, update.managed_prefix_len) {
-                        Ok(value) => value,
-                        Err(error) => {
-                            log::error!(
-                                "订阅链接配置 revision {} 的目标 IP 无效: {error:#}",
-                                update.revision
-                            );
-                            continue;
-                        }
-                    },
-                    update.managed_device_name.clone(),
-                ) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        log::error!(
-                            "订阅链接配置 revision {} 校验失败: {error:#}",
-                            update.revision
-                        );
-                        failed_revision = Some(update.revision);
-                        let mut sync_state = load_subscription_state(&managed_file_name);
-                        sync_state.remote_toml = update.toml.clone();
-                        sync_state.target_revision = update.revision;
-                        sync_state.failed_revision = Some(update.revision);
-                        sync_state.last_error = Some(error.to_string());
-                        let _ = save_subscription_state(&managed_file_name, &sync_state);
-                        let _ = managed_api
-                            .acknowledge_subscription_config(SubscriptionConfigAck::new(
-                                update.revision,
-                                SubscriptionConfigApplyStatus::SubscriptionConfigError,
-                                error.to_string(),
-                                Vec::new(),
-                            ))
-                            .await;
-                        continue;
-                    }
-                };
-                let candidate = resolved.config;
-                let candidate_effective = resolved.effective_toml;
-                let overridden_fields = resolved.overridden_fields;
-                let mut core_candidate = match convert_config(candidate.clone()) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        log::error!("订阅链接配置转换失败: {error:#}");
-                        failed_revision = Some(update.revision);
-                        let mut sync_state = load_subscription_state(&managed_file_name);
-                        sync_state.remote_toml = update.toml.clone();
-                        sync_state.target_revision = update.revision;
-                        sync_state.failed_revision = Some(update.revision);
-                        sync_state.last_error = Some(error.to_string());
-                        let _ = save_subscription_state(&managed_file_name, &sync_state);
-                        let _ = managed_api
-                            .acknowledge_subscription_config(SubscriptionConfigAck::new(
-                                update.revision,
-                                SubscriptionConfigApplyStatus::SubscriptionConfigError,
-                                error.to_string(),
-                                overridden_fields,
-                            ))
-                            .await;
-                        continue;
-                    }
-                };
-                let Some(current_api) =
-                    managed_state.api_if_generation(&managed_file_name, generation)
-                else {
-                    break;
-                };
-                core_candidate.managed = current_api
-                    .get_config()
-                    .and_then(|config| config.managed.clone());
-                let reconfigure = tokio::select! {
-                    _ = coordinator_cancellation.cancelled() => break,
-                    result = current_api.reconfigure(Box::new(core_candidate)) => result,
-                };
-                if !managed_state.is_generation(&managed_file_name, generation) {
-                    break;
-                }
-                if let Ok(report) = &reconfigure
-                    && matches!(
-                        report.action,
-                        ApplyAction::NoChange | ApplyAction::Live | ApplyAction::ComponentReload
-                    )
-                {
-                    applied_revision = update.revision;
-                    failed_revision = None;
-                    if !managed_state.set_running_config_if_generation(
-                        &managed_file_name,
-                        generation,
-                        candidate.clone(),
-                    ) {
-                        break;
-                    }
-                    let sent = current_api
-                        .acknowledge_subscription_config(applied_subscription_ack(
-                            update.revision,
-                            overridden_fields.clone(),
-                            match report.action {
-                                ApplyAction::NoChange => "NO_CHANGE",
-                                ApplyAction::Live => "LIVE",
-                                ApplyAction::ComponentReload => "COMPONENT_RELOAD",
-                                ApplyAction::InstanceRestart => "INSTANCE_RESTART",
-                            },
-                            report.changed_fields.clone(),
-                            &candidate,
-                            &candidate_effective,
-                        ))
-                        .await
-                        .unwrap_or_default();
-                    let mut sync_state = load_subscription_state(&managed_file_name);
-                    sync_state.remote_toml = update.toml;
-                    sync_state.target_revision = update.revision;
-                    sync_state.applied_revision = update.revision;
-                    sync_state.last_good_toml = Some(candidate_effective);
-                    sync_state.last_good_config = Some(candidate.clone());
-                    sync_state.last_good_content_sha256 = Some(update.content_sha256.clone());
-                    sync_state.failed_revision = None;
-                    if sent > 0 {
-                        sync_state.last_error = None;
-                    } else {
-                        sync_state.last_error =
-                            Some("当前没有通过订阅链接验证的同步服务器".to_string());
-                    }
-                    let _ = save_subscription_state(&managed_file_name, &sync_state);
-                    managed_state.record_log(
-                        &managed_file_name,
-                        format!(
-                            "订阅链接配置 revision {} 已实时应用: {}",
-                            update.revision,
-                            report.changed_fields.join(", ")
-                        ),
-                    );
-                    continue;
-                }
-                if let Err(error) = &reconfigure {
-                    if error.fallback == ReconfigureFallback::KeepCurrent {
-                        failed_revision = Some(update.revision);
-                        let mut sync_state = load_subscription_state(&managed_file_name);
-                        sync_state.remote_toml = update.toml.clone();
-                        sync_state.target_revision = update.revision;
-                        sync_state.failed_revision = Some(update.revision);
-                        sync_state.last_error = Some(error.to_string());
-                        let _ = save_subscription_state(&managed_file_name, &sync_state);
-                        let _ = current_api
-                            .acknowledge_subscription_config(SubscriptionConfigAck::new(
-                                update.revision,
-                                SubscriptionConfigApplyStatus::SubscriptionConfigError,
-                                error.to_string(),
-                                overridden_fields,
-                            ))
-                            .await;
-                        continue;
-                    }
-                    log::warn!(
-                        "订阅链接配置 revision {} 热应用失败，改用重启兜底: {error:#}",
-                        update.revision
-                    );
-                }
-                let mut sync_state = load_subscription_state(&managed_file_name);
-                sync_state.remote_toml = update.toml.clone();
-                sync_state.target_revision = update.revision;
-                let _ = save_subscription_state(&managed_file_name, &sync_state);
-                let _ = current_api
-                    .acknowledge_subscription_config(SubscriptionConfigAck::new(
-                        update.revision,
-                        SubscriptionConfigApplyStatus::SubscriptionConfigStaged,
-                        String::new(),
-                        overridden_fields.clone(),
-                    ))
-                    .await;
-                managed_state.record_log(
-                    &managed_file_name,
-                    format!(
-                        "收到订阅链接配置 revision {}，正在重建网络实例",
-                        update.revision
-                    ),
-                );
-                if !managed_state.mark_managed_restart_if_generation(&managed_file_name, generation)
-                {
-                    break;
-                }
-                if !managed_state.abort_start_task_if_generation(&managed_file_name, generation) {
-                    managed_state
-                        .clear_managed_restart_if_generation(&managed_file_name, generation);
-                    break;
-                }
-                if let Some(manager) =
-                    managed_state.task_group_manager_if_generation(&managed_file_name, generation)
-                    && tokio::time::timeout(Duration::from_secs(10), manager.stop_and_wait())
-                        .await
-                        .is_err()
-                {
-                    managed_state
-                        .clear_managed_restart_if_generation(&managed_file_name, generation);
-                    let error = "停止旧网络实例超时".to_string();
-                    failed_revision = Some(update.revision);
-                    let mut sync_state = load_subscription_state(&managed_file_name);
-                    sync_state.failed_revision = Some(update.revision);
-                    sync_state.last_error = Some(error.clone());
-                    let _ = save_subscription_state(&managed_file_name, &sync_state);
-                    let _ = managed_api
-                        .acknowledge_subscription_config(SubscriptionConfigAck::new(
-                            update.revision,
-                            SubscriptionConfigApplyStatus::SubscriptionConfigError,
-                            error,
-                            Vec::new(),
-                        ))
-                        .await;
-                    continue;
-                }
-                if !managed_state.is_generation(&managed_file_name, generation) {
-                    break;
-                }
-                if !managed_state.set_prepared_start_if_generation(
-                    &managed_file_name,
-                    generation,
-                    PreparedStart {
-                        effective_toml: candidate_effective,
-                        start_config: candidate,
-                        revision: update.revision,
-                        remote_toml: update.toml,
-                        content_sha256: update.content_sha256,
-                        rollback_failure: None,
-                    },
-                ) {
-                    break;
-                }
-                let path = Path::new(CONFIG_DIR).join(&managed_file_name);
-                if let Err(error) =
-                    start_vnt_boxed(&managed_state, managed_file_name.clone(), path).await
-                {
-                    log::error!("应用订阅链接配置失败: {error:#}");
-                }
-                break;
-            }
-        });
-        if let Some(old) = state.install_config_coordinator(
-            &file_name,
-            generation,
-            ConfigCoordinatorHandle {
-                generation,
-                cancellation,
-                join_handle,
-            },
-        ) && old.generation == generation
-        {
-            old.cancellation.cancel();
-            old.join_handle.abort();
-        }
-    }
-
-    // 启动网络管理任务。
-    // 注意必须在任务组外等待：等待目标就是这个 task_group，
-    // 若 spawn 进组内会形成自引用等待，网络自行停止时永不返回
+    // 启动运行期事件循环。管理器持有订阅连接与组网实例，事件循环只通过
+    // 它获取/应用变化；组网实例重建（apply_change 内部）不经过这里。
     let file_name_for_wait = file_name.clone();
     tokio::spawn(async move {
-        network_manager.wait_all_stopped().await;
-        drop(task_group_guard);
-        drop(network_manager);
+        loop {
+            let event = {
+                let mut guard = manager.lock().await;
+                guard.next_event().await
+            };
+            match event {
+                Ok(RuntimeEvent::InstanceStopped) => break,
+                Ok(RuntimeEvent::Changed(change)) => {
+                    let outcome = {
+                        let mut guard = manager.lock().await;
+                        guard.apply_change(&change).await
+                    };
+                    match outcome {
+                        Ok(ChangeOutcome::Applied) => {
+                            state.record_log(
+                                &file_name_for_wait,
+                                format!("已应用运行期变化（入栈路由 {} 条）", change.routes.len()),
+                            );
+                            // 刷新生效配置文本快照
+                            let config_text = {
+                                let mut guard = manager.lock().await;
+                                guard
+                                    .current_config()
+                                    .await
+                                    .ok()
+                                    .map(|config| config.to_toml_string())
+                            };
+                            if let Some(text) = config_text {
+                                state.set_instance_config_text(&file_name_for_wait, text);
+                            }
+                        }
+                        // 桌面平台的 rebuild/need_fd 均由 apply_change 内部处理
+                        Ok(ChangeOutcome::Rebuild) | Ok(ChangeOutcome::NeedFd(_)) => {}
+                        Err(error) => {
+                            log::warn!("应用运行期变化失败: {error:#}");
+                            state.record_log(
+                                &file_name_for_wait,
+                                format!("应用运行期变化失败: {error:#}"),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("运行期变化监听结束: {error:#}");
+                    break;
+                }
+            }
+        }
+        // 事件循环结束：摘除管理器（停止组网实例并断开订阅连接）
+        drop(state.take_runtime_manager(&file_name_for_wait));
+        drop(manager);
         drop(vnt_cleanup_guard);
         record_remove_running(&file_name_for_wait).await;
         log::info!("Network manager stopped.");
@@ -2346,27 +1741,73 @@ async fn start_vnt_handler(
         return Json(ApiResponse::error("Config file not found"));
     }
     let file_name = req.file_name;
+    // 必须在返回 HTTP 响应前公布 Starting 并清理旧日志，
+    // 否则前端的首次轮询会把旧的 Stopped 误当成本次启动结果。
+    let generation = match begin_vnt_start(&state, &file_name) {
+        Ok(generation) => generation,
+        Err(error) => return Json(ApiResponse::error(error.to_string())),
+    };
     let start_state = state.clone();
     tokio::spawn(async move {
-        if let Err(error) = start_vnt_internal(&start_state, file_name.clone(), path).await {
+        if let Err(error) =
+            start_vnt_internal_reserved(&start_state, file_name.clone(), path, generation).await
+        {
             log::error!("启动 VNT 实例 {file_name} 失败: {error:#}");
         }
     });
     Json(ApiResponse::success(()))
 }
 
+/// 停止运行中的实例。
+///
+/// 不能直接锁管理器再 `stop()`：监测循环在 `next_event` 等待期间持有
+/// 管理器锁，停止流程去锁会死锁到超时（且管理器已被摘除，实例失控）。
+/// 改为停止实例任务组——监测循环的 `wait_all_stopped` 随即唤醒，由其
+/// 清理路径摘除管理器并把状态置为 Stopped。
+async fn stop_running_instance(state: &HttpAppState, file_name: &str) -> anyhow::Result<()> {
+    if let Some(groups) = state.instance_task_groups(file_name) {
+        if tokio::time::timeout(Duration::from_secs(10), groups.stop_and_wait())
+            .await
+            .is_err()
+        {
+            anyhow::bail!("停止网络实例超时");
+        }
+    } else if let Some(manager) = state.runtime_manager(file_name) {
+        // 启动早期还没有任务组句柄：退回直接停止管理器
+        if tokio::time::timeout(
+            Duration::from_secs(10),
+            async {
+                manager.lock().await.stop().await;
+            },
+        )
+        .await
+        .is_err()
+        {
+            anyhow::bail!("停止网络实例超时");
+        }
+    }
+    // 兜底摘除：监测循环通常已自行摘除
+    drop(state.take_runtime_manager(file_name));
+    // 等待状态落到 Stopped（监测循环清理或启动 guard 触发）
+    for _ in 0..100 {
+        if state.status(file_name) == VntStatus::Stopped {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Ok(())
+}
+
 async fn stop_vnt_handler(
     State(state): State<HttpAppState>,
     Json(req): Json<FileReq>,
 ) -> Json<ApiResponse<()>> {
-    let Some(task_group_manager) = state.task_group_manager(&req.file_name) else {
-        return Json(ApiResponse::error("实例不存在"));
-    };
     if state.status(&req.file_name) == VntStatus::Stopped {
+        // 摘除管理器（停止组网实例并断开订阅控制连接）
+        drop(state.take_runtime_manager(&req.file_name));
         return Json(ApiResponse::error("Vnt stopped"));
     }
-    // 先中断可能处于注册重试循环中的启动任务，再停止任务组
-    cancel_config_coordinator(&state, &req.file_name).await;
+    // 先中断可能处于注册重试循环中的启动任务，再停止实例
     let apply_lock = state.config_apply_lock(&req.file_name);
     let _apply_guard = if let Some(lock) = apply_lock.as_ref() {
         Some(lock.lock().await)
@@ -2374,11 +1815,11 @@ async fn stop_vnt_handler(
         None
     };
     state.abort_start_task(&req.file_name);
-    if tokio::time::timeout(Duration::from_secs(10), task_group_manager.stop_and_wait())
-        .await
-        .is_err()
-    {
-        return Json(ApiResponse::error("停止网络实例超时"));
+    if state.runtime_manager(&req.file_name).is_none() && state.status(&req.file_name) != VntStatus::Starting {
+        return Json(ApiResponse::error("实例不存在"));
+    }
+    if let Err(error) = stop_running_instance(&state, &req.file_name).await {
+        return Json(ApiResponse::error(error.to_string()));
     }
 
     record_remove_running(&req.file_name).await;
@@ -2391,7 +1832,8 @@ async fn dismiss_instance_handler(
     Query(req): Query<FileReq>,
 ) -> Json<ApiResponse<()>> {
     if state.status(&req.file_name) == VntStatus::Stopped {
-        cancel_config_coordinator(&state, &req.file_name).await;
+        // Drop 停止组网实例并断开订阅控制连接
+        drop(state.take_runtime_manager(&req.file_name));
     }
     let mut lock = state.inner.lock();
     match lock.instances.get(&req.file_name) {
@@ -2401,6 +1843,7 @@ async fn dismiss_instance_handler(
         }
         Some(_) => {
             lock.instances.remove(&req.file_name);
+            state.logs.remove(&req.file_name);
             Json(ApiResponse::success(()))
         }
     }
@@ -2421,7 +1864,6 @@ async fn restart_vnt_handler(
 
     // 先停止（如果正在运行则停止，否则忽略）
     if state.status(&req.file_name) != VntStatus::Stopped {
-        cancel_config_coordinator(&state, &req.file_name).await;
         let apply_lock = state.config_apply_lock(&req.file_name);
         let _apply_guard = if let Some(lock) = apply_lock.as_ref() {
             Some(lock.lock().await)
@@ -2429,20 +1871,22 @@ async fn restart_vnt_handler(
             None
         };
         state.abort_start_task(&req.file_name);
-        if let Some(task_group_manager) = state.task_group_manager(&req.file_name)
-            && tokio::time::timeout(Duration::from_secs(10), task_group_manager.stop_and_wait())
-                .await
-                .is_err()
-        {
-            return Json(ApiResponse::error("停止旧网络实例超时"));
+        if let Err(error) = stop_running_instance(&state, &req.file_name).await {
+            return Json(ApiResponse::error(format!("停止旧网络实例失败: {error}")));
         }
     }
 
     // 再启动；订阅拉取可能长期重试，不能让 HTTP 请求的超时取消后台启动。
     let file_name = req.file_name;
+    let generation = match begin_vnt_start(&state, &file_name) {
+        Ok(generation) => generation,
+        Err(error) => return Json(ApiResponse::error(error.to_string())),
+    };
     let start_state = state.clone();
     tokio::spawn(async move {
-        if let Err(error) = start_vnt_internal(&start_state, file_name.clone(), path).await {
+        if let Err(error) =
+            start_vnt_internal_reserved(&start_state, file_name.clone(), path, generation).await
+        {
             log::error!("重启 VNT 实例 {file_name} 失败: {error:#}");
         }
     });
@@ -2632,6 +2076,7 @@ struct SubscriptionStatusResponse {
     network_code: String,
     device_id: String,
     target_revision: u64,
+    acknowledged_revision: u64,
     applied_revision: u64,
     local_overrides: Vec<String>,
     failed_revision: Option<u64>,
@@ -2668,15 +2113,16 @@ async fn preview_subscription(
         let effective = resolve_effective_managed_config(
             &envelope.toml,
             "",
-            &join,
+            &envelope.network_code,
+            &envelope.device_id,
             VirtualIp::new(envelope.managed_ip, envelope.managed_prefix_len)?,
             envelope.managed_device_name,
         )?;
         Ok::<_, anyhow::Error>(SubscriptionPreviewResponse {
             server: vec![join.server],
             cert_mode: join.cert_mode,
-            network_code: join.network_code,
-            device_id: join.device_id,
+            network_code: envelope.network_code,
+            device_id: envelope.device_id,
             revision: envelope.revision,
             device_name: effective.config.device_name,
             ip: effective.config.ip.map(|ip| ip.to_string()),
@@ -2705,8 +2151,12 @@ async fn get_subscription_status(
             .and_then(|table| table.get("subscription"))
             .and_then(toml::Value::as_str)
             .context("该配置没有订阅链接")?;
-        let link = Subscription::parse(link_value)?;
+        let _link = Subscription::parse(link_value)?;
         let sync_state = load_subscription_state(&request.file_name);
+        // 身份由运行中管理器持有的最新订阅信封提供（链接只携带 join_id）；
+        // 管理器不存在或首份信封未达时返回空串
+        let (network_code, device_id) =
+            subscription_identity(&state, &request.file_name).await;
         let local_overrides = if sync_state.remote_toml.is_empty() {
             local
                 .as_table()
@@ -2725,9 +2175,10 @@ async fn get_subscription_status(
         };
         Ok::<_, anyhow::Error>(SubscriptionStatusResponse {
             file_name: request.file_name.clone(),
-            network_code: link.network_code,
-            device_id: link.device_id,
+            network_code,
+            device_id,
             target_revision: sync_state.target_revision,
+            acknowledged_revision: sync_state.acknowledged_revision,
             applied_revision: sync_state.applied_revision,
             local_overrides,
             failed_revision: sync_state.failed_revision,
@@ -2789,8 +2240,11 @@ async fn clear_subscription_overrides(
         // Clearing a local override is deliberately local-only. It does not
         // fetch or apply a remote revision: the next server push (or a later
         // start) establishes the new effective runtime configuration.
-        let link = Subscription::parse(&link_value)?;
+        let _link = Subscription::parse(&link_value)?;
         let sync_state = load_subscription_state(&request.file_name);
+        // 身份由运行中管理器持有的最新订阅信封提供（链接只携带 join_id）
+        let (network_code, device_id) =
+            subscription_identity(&state, &request.file_name).await;
         let local_overrides = if sync_state.remote_toml.is_empty() {
             value
                 .as_table()
@@ -2809,9 +2263,10 @@ async fn clear_subscription_overrides(
         };
         Ok::<_, anyhow::Error>(SubscriptionStatusResponse {
             file_name: request.file_name.clone(),
-            network_code: link.network_code,
-            device_id: link.device_id,
+            network_code,
+            device_id,
             target_revision: sync_state.target_revision,
+            acknowledged_revision: sync_state.acknowledged_revision,
             applied_revision: sync_state.applied_revision,
             local_overrides,
             failed_revision: sync_state.failed_revision,
@@ -3008,6 +2463,7 @@ async fn delete_config(
     match fs::remove_file(&path).await {
         Ok(_) => {
             let _ = fs::remove_file(subscription_state_path(&req.file_name)).await;
+            state.logs.remove(&req.file_name);
             Json(ApiResponse::success(()))
         }
         Err(e) => Json(ApiResponse::error(format!("Delete failed: {}", e))),
@@ -3015,7 +2471,10 @@ async fn delete_config(
 }
 
 fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
-    cfg.validate()?;
+    // 只做基础校验：服务器/虚拟 IP 的要求由调用方按订阅与否决定
+    // （订阅模式下二者来自服务端首份配置），最终以合并后配置的
+    // Config::check 为准
+    cfg.validate_local()?;
     let server_addrs: Vec<ProtocolAddress> = cfg
         .server
         .iter()
@@ -3389,18 +2848,6 @@ async fn get_routes(
 mod tests {
     use super::*;
 
-    fn managed_test_subscription() -> Subscription {
-        Subscription::parse(concat!(
-            "vnt2://join/1/",
-            "eyJ2IjoxLCJzZXJ2ZXIiOiJ0Y3A6Ly9leGFtcGxlLmNvbTo0NDMiLCJjZXJ0",
-            "X21vZGUiOiJzdGFuZGFyZCIsIm5ldHdvcmtfY29kZSI6InRydXN0ZWQtbmV0",
-            "IiwiZGV2aWNlX2lkIjoidHJ1c3RlZC1kZXZpY2UiLCJjcmVkZW50aWFsX2tl",
-            "eSI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB",
-            "QUEifQ"
-        ))
-        .unwrap()
-    }
-
     #[tokio::test]
     async fn subscription_fetch_retries_and_reports_each_failure() {
         let cancellation = CancellationToken::new();
@@ -3464,7 +2911,7 @@ mod tests {
 
     #[test]
     fn managed_merge_always_uses_subscription_identity() {
-        let subscription = managed_test_subscription();
+        // 身份来自服务端信封元数据，本地两层配置的同类值一律被忽略
         let merged = resolve_effective_managed_config(
             r#"network_code = "remote-forged"
 device_id = "remote-forged"
@@ -3481,7 +2928,8 @@ device_name = "local-name"
 event_script = "local-script"
 config_name = "local-label"
 "#,
-            &subscription,
+            "trusted-net",
+            "trusted-device",
             VirtualIp::new("10.26.0.2".parse().unwrap(), 24).unwrap(),
             "managed-name".to_string(),
         )
@@ -3632,6 +3080,7 @@ config_name = "local-label"
     fn new_test_state() -> HttpAppState {
         HttpAppState {
             inner: Arc::new(Mutex::new(HttpAppStateInner::default())),
+            logs: Arc::new(LogManager::new()),
         }
     }
 
@@ -3836,12 +3285,11 @@ ip = "10.26.0.2"
         assert_eq!(state.status("a.toml"), VntStatus::Stopped);
         assert_eq!(state.status("b.toml"), VntStatus::Starting);
 
-        let lock = state.inner.lock();
-        let a = lock.instances.get("a.toml").unwrap();
-        assert!(a.start_logs.iter().any(|l| l.contains("启动失败")));
-        let b = lock.instances.get("b.toml").unwrap();
-        assert_eq!(b.start_logs.len(), 1);
-        assert!(b.start_logs[0].contains("b 的日志"));
+        let a_logs = state.logs.logs("a.toml");
+        assert!(a_logs.iter().any(|log| log.message.contains("启动失败")));
+        let b_logs = state.logs.logs("b.toml");
+        assert_eq!(b_logs.len(), 1);
+        assert!(b_logs[0].message.contains("b 的日志"));
     }
 
     #[test]
@@ -3871,11 +3319,13 @@ ip = "10.26.0.2"
         let lock = state.inner.lock();
         let instance = lock.instances.get("a.toml").unwrap();
         assert_eq!(instance.status, VntStatus::Stopped);
+        drop(lock);
         assert!(
-            instance
-                .start_logs
+            state
+                .logs
+                .logs("a.toml")
                 .iter()
-                .any(|log| log.contains("创建 tun 虚拟网卡失败"))
+                .any(|log| log.message.contains("创建 tun 虚拟网卡失败"))
         );
     }
 
@@ -3908,6 +3358,8 @@ ip = "10.26.0.2"
         .await;
         assert_eq!(resp.code, 0);
         assert!(!state.inner.lock().instances.contains_key("a.toml"));
+        // 移除实例时同步清理其实例日志
+        assert!(state.logs.logs("a.toml").is_empty());
 
         // 不存在的实例报错
         let resp = dismiss_instance_handler(
@@ -3920,6 +3372,43 @@ ip = "10.26.0.2"
         assert_eq!(resp.code, -1);
     }
 
+    /// 实例日志端点：按实例返回最近日志，未知实例返回空列表
+    #[tokio::test]
+    async fn test_instance_logs_endpoint() {
+        let state = new_test_state();
+        let generation = state.starting("a.toml").unwrap();
+        state.record_log("a.toml", "连接服务器，执行注册");
+        state.record_log_and_stopped("a.toml", generation, "启动失败: 连接超时");
+
+        let resp = get_instance_logs(
+            State(state.clone()),
+            Query(FileReq {
+                file_name: "a.toml".to_string(),
+            }),
+        )
+        .await;
+        let Json(resp) = resp;
+        assert_eq!(resp.code, 0);
+        let logs = resp.data.unwrap();
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[0].message, "连接服务器，执行注册");
+        assert_eq!(logs[0].level, vnt_core::log_manager::LogLevel::Info);
+        assert_eq!(logs[1].level, vnt_core::log_manager::LogLevel::Error);
+        assert!(logs[1].message.contains("连接超时"));
+
+        // 未知实例返回空列表
+        let resp = get_instance_logs(
+            State(state.clone()),
+            Query(FileReq {
+                file_name: "missing.toml".to_string(),
+            }),
+        )
+        .await;
+        let Json(resp) = resp;
+        assert_eq!(resp.code, 0);
+        assert!(resp.data.unwrap().is_empty());
+    }
+
     /// 同一 file_name 重复 starting 报错
     #[test]
     fn test_duplicate_starting_same_file() {
@@ -3928,6 +3417,24 @@ ip = "10.26.0.2"
         assert!(state.starting("a.toml").is_err());
         // 不同 file_name 不受影响
         state.starting("b.toml").unwrap();
+    }
+
+    /// HTTP 处理器返回前必须让首次轮询看到本次启动，而不是上次的日志。
+    #[test]
+    fn begin_start_publishes_current_attempt_before_worker_runs() {
+        let state = new_test_state();
+        let old_generation = state.starting("a.toml").unwrap();
+        state.record_log_and_stopped("a.toml", old_generation, "上次启动失败");
+
+        let generation = begin_vnt_start(&state, "a.toml").unwrap();
+
+        assert!(generation > old_generation);
+        assert_eq!(state.status("a.toml"), VntStatus::Starting);
+        let logs = state.logs.logs("a.toml");
+        assert_eq!(logs.len(), 2);
+        assert!(logs[0].message.contains("启动配置"));
+        assert_eq!(logs[1].message, "读取配置文件");
+        assert!(logs.iter().all(|log| !log.message.contains("上次")));
     }
 
     #[test]
@@ -3940,60 +3447,8 @@ ip = "10.26.0.2"
 
         state.cleanup_generation("a.toml", old_generation);
         state.starting_to_stopped("a.toml", old_generation);
-        assert!(!state.set_running_config_if_generation(
-            "a.toml",
-            old_generation,
-            new_test_config(),
-        ));
-
         assert_eq!(state.current_generation("a.toml"), Some(new_generation));
         assert_eq!(state.status("a.toml"), VntStatus::Starting);
-    }
-
-    #[test]
-    fn managed_restart_keeps_slot_until_next_generation_starts() {
-        let state = new_test_state();
-        let old_generation = state.starting("a.toml").unwrap();
-        assert!(state.starting_to_running("a.toml", old_generation));
-        assert!(state.mark_managed_restart_if_generation("a.toml", old_generation));
-
-        state.cleanup_generation("a.toml", old_generation);
-        assert_eq!(state.status("a.toml"), VntStatus::Stopped);
-        assert!(state.inner.lock().instances.contains_key("a.toml"));
-
-        let new_generation = state.starting("a.toml").unwrap();
-        assert!(new_generation > old_generation);
-    }
-
-    #[tokio::test]
-    async fn cancelling_config_coordinator_waits_for_worker_exit() {
-        let state = new_test_state();
-        let generation = state.starting("a.toml").unwrap();
-        let cancellation = CancellationToken::new();
-        let worker_cancellation = cancellation.clone();
-        let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let worker_exited = exited.clone();
-        let join_handle = tokio::spawn(async move {
-            worker_cancellation.cancelled().await;
-            worker_exited.store(true, std::sync::atomic::Ordering::Release);
-        });
-        assert!(
-            state
-                .install_config_coordinator(
-                    "a.toml",
-                    generation,
-                    ConfigCoordinatorHandle {
-                        generation,
-                        cancellation,
-                        join_handle,
-                    },
-                )
-                .is_none()
-        );
-
-        cancel_config_coordinator(&state, "a.toml").await;
-        assert!(exited.load(std::sync::atomic::Ordering::Acquire));
-        assert!(state.take_config_coordinator("a.toml").is_none());
     }
 
     /// device_id 相同（含双方都为 None）且同服务器同组网时冲突；
@@ -4121,6 +3576,24 @@ ip = "10.26.0.2"
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert_eq!(state.status(file_name), VntStatus::Stopped);
+    }
+
+    #[test]
+    fn subscription_only_config_skips_server_requirements() {
+        let cfg: StartConfig = toml::from_str(
+            r#"
+config_name = "sub-only"
+network_code = "net"
+subscription = "vnt2://join/2/eyJ2IjoyfQ"
+"#,
+        )
+        .unwrap();
+        assert!(cfg.subscription.is_some());
+        assert!(cfg.server.is_empty());
+        // 订阅模式下本地配置只做基础校验（服务器/IP 由服务端首份配置下发）
+        cfg.validate_local().unwrap();
+        // 完整校验仍然要求服务器或 IP
+        assert!(cfg.validate().is_err());
     }
 
     #[test]

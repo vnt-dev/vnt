@@ -224,8 +224,7 @@ impl SubscriptionServerProof {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SubscriptionConfigFetchRequest {
-    pub network_code: String,
-    pub device_id: String,
+    pub join_id: String,
     pub client_nonce: Vec<u8>,
     pub client_proof: Vec<u8>,
     pub instance_id: Vec<u8>,
@@ -235,14 +234,39 @@ pub struct SubscriptionConfigFetchRequest {
 impl SubscriptionConfigFetchRequest {
     fn to(self) -> proto::SubscriptionConfigFetchRequest {
         proto::SubscriptionConfigFetchRequest {
-            network_code: self.network_code,
-            device_id: self.device_id,
+            join_id: self.join_id,
             client_nonce: self.client_nonce,
             client_proof: self.client_proof,
             instance_id: self.instance_id,
             applied_revision: self.applied_revision,
         }
     }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SubscriptionRegisterRequest {
+    pub join_id: String,
+    pub client_nonce: Vec<u8>,
+    pub client_proof: Vec<u8>,
+    pub instance_id: Vec<u8>,
+    pub applied_revision: u64,
+}
+
+impl SubscriptionRegisterRequest {
+    fn to(self) -> proto::SubscriptionRegisterRequest {
+        proto::SubscriptionRegisterRequest {
+            join_id: self.join_id,
+            client_nonce: self.client_nonce,
+            client_proof: self.client_proof,
+            instance_id: self.instance_id,
+            applied_revision: self.applied_revision,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct SubscriptionPing {
+    pub nonce: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -347,7 +371,7 @@ impl SubscriptionConfigAck {
         }
     }
 
-    pub fn encode(self) -> BytesMut {
+    fn to(self) -> proto::SubscriptionConfigAck {
         proto::SubscriptionConfigAck {
             revision: self.revision,
             status: self.status as i32,
@@ -368,7 +392,10 @@ impl SubscriptionConfigAck {
             allow_mapping: self.allow_mapping,
             effective_config_sha256: self.effective_config_sha256,
         }
-        .encode_bytes_mut()
+    }
+
+    pub fn encode(self) -> BytesMut {
+        self.to().encode_bytes_mut()
     }
 }
 
@@ -489,8 +516,15 @@ impl ConfirmRegResponseMsg {
 }
 pub(crate) enum RequestMessage {
     Reg(RegRequestMsg),
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     FastReg(FastRegRequestMsg),
     SubscriptionConfig(SubscriptionConfigFetchRequest),
+    SubscriptionRegister(SubscriptionRegisterRequest),
+    /// 编码路径保留：订阅配置回执的线协议类型。当前的回执流程改为
+    /// 注册请求携带 applied_revision，客户端不再主动发送该消息。
+    #[allow(dead_code)]
+    SubscriptionAck(SubscriptionConfigAck),
+    SubscriptionPing(SubscriptionPing),
 }
 impl RequestMessage {
     pub fn encode(self) -> BytesMut {
@@ -499,6 +533,13 @@ impl RequestMessage {
             RequestMessage::FastReg(fast_reg) => RequestPayload::FastReg(fast_reg.to()),
             RequestMessage::SubscriptionConfig(request) => {
                 RequestPayload::SubscriptionConfig(request.to())
+            }
+            RequestMessage::SubscriptionRegister(request) => {
+                RequestPayload::SubscriptionRegister(request.to())
+            }
+            RequestMessage::SubscriptionAck(ack) => RequestPayload::SubscriptionAck(ack.to()),
+            RequestMessage::SubscriptionPing(ping) => {
+                RequestPayload::SubscriptionPing(proto::SubscriptionPing { nonce: ping.nonce })
             }
         };
         proto::RequestMessage {
@@ -514,6 +555,9 @@ pub enum ResponseMessage {
     ConfirmReg(ConfirmRegResponseMsg),
     FastReg(FastRegResponseMsg),
     SubscriptionConfig(SubscriptionConfigEnvelope),
+    SubscriptionRegister(SubscriptionConfigEnvelope),
+    SubscriptionPush(SubscriptionConfigEnvelope),
+    SubscriptionPong(SubscriptionPing),
 }
 impl ResponseMessage {
     pub fn from_slice(buf: &[u8]) -> anyhow::Result<Self> {
@@ -533,6 +577,22 @@ impl ResponseMessage {
             ResponsePayload::SubscriptionConfig(config) => Ok(ResponseMessage::SubscriptionConfig(
                 SubscriptionConfigEnvelope::from(config)?,
             )),
+            ResponsePayload::SubscriptionRegister(response) => {
+                let config = response.config.ok_or_else(|| {
+                    anyhow::anyhow!("subscription registration response is missing config")
+                })?;
+                Ok(ResponseMessage::SubscriptionRegister(
+                    SubscriptionConfigEnvelope::from(config)?,
+                ))
+            }
+            ResponsePayload::SubscriptionPush(config) => Ok(ResponseMessage::SubscriptionPush(
+                SubscriptionConfigEnvelope::from(config)?,
+            )),
+            ResponsePayload::SubscriptionPong(pong) => {
+                Ok(ResponseMessage::SubscriptionPong(SubscriptionPing {
+                    nonce: pong.nonce,
+                }))
+            }
         }
     }
     pub fn encode(self) -> BytesMut {
@@ -543,6 +603,17 @@ impl ResponseMessage {
             ResponseMessage::FastReg(fast_reg) => ResponsePayload::FastReg(fast_reg.to()),
             ResponseMessage::SubscriptionConfig(config) => {
                 ResponsePayload::SubscriptionConfig(config.to())
+            }
+            ResponseMessage::SubscriptionRegister(config) => {
+                ResponsePayload::SubscriptionRegister(proto::SubscriptionRegisterResponse {
+                    config: Some(config.to()),
+                })
+            }
+            ResponseMessage::SubscriptionPush(config) => {
+                ResponsePayload::SubscriptionPush(config.to())
+            }
+            ResponseMessage::SubscriptionPong(pong) => {
+                ResponsePayload::SubscriptionPong(proto::SubscriptionPong { nonce: pong.nonce })
             }
         };
         proto::ResponseMessage {
@@ -635,6 +706,29 @@ mod tests {
             panic!("expected subscription config");
         };
         assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn subscription_control_messages_use_dedicated_variants() {
+        let register = SubscriptionRegisterRequest {
+            join_id: "11111111-2222-3333-4444-555555555555".into(),
+            client_nonce: vec![1; 32],
+            client_proof: vec![2; 32],
+            instance_id: vec![3; 32],
+            applied_revision: 4,
+        };
+        let encoded = RequestMessage::SubscriptionRegister(register).encode();
+        let request = proto::RequestMessage::decode(encoded.as_ref()).unwrap();
+        assert!(matches!(
+            request.request_payload,
+            Some(RequestPayload::SubscriptionRegister(_))
+        ));
+
+        let ping = ResponseMessage::SubscriptionPong(SubscriptionPing { nonce: 9 });
+        assert_eq!(
+            ResponseMessage::from_slice(ping.clone().encode().as_ref()).unwrap(),
+            ping
+        );
     }
 
     #[test]

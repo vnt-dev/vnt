@@ -5,13 +5,12 @@ use crate::enhanced_tunnel::outbound::EnhancedOutbound;
 use crate::ethernet::MacTable;
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::subnet_packet::SubnetPacketMapper;
-use crate::nat::{AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable};
+use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
 use crate::port_mapping::PortMapping;
-use crate::runtime_config::{RuntimeConfigController, RuntimePolicyStore};
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tunnel_core::outbound::HybridOutbound;
 use crate::utils::task_control::TaskGroup;
-use rustp2p_core::socket::LocalInterface;
 
 pub(crate) mod quic_over;
 
@@ -35,30 +34,6 @@ pub(crate) struct TunnelComponents {
     pub internal_nat_inbound: Option<InternalNatInbound>,
     pub port_mapping_manager: PortMappingManager,
     pub policy: RuntimePolicyStore,
-    pub runtime_config: RuntimeConfigController,
-}
-
-/// Inputs retained by the runtime controller to prepare an MTU-dependent
-/// replacement without touching the stable network instance.
-#[derive(Clone)]
-pub(crate) struct MtuTunnelComponents {
-    pub hybrid_outbound: HybridOutbound,
-    pub external_route: SubnetExternalRoute,
-    pub subnet_mapping: SubnetMappingTable,
-    pub subnet_packet_mapper: SubnetPacketMapper,
-    pub allow_subnet: AllowSubnetExternalRoute,
-    pub network: crate::context::SharedNetworkAddr,
-    pub no_tun: bool,
-    pub default_interface: Option<LocalInterface>,
-    pub port_mapping_manager: PortMappingManager,
-    pub policy: RuntimePolicyStore,
-    pub runtime_config: RuntimeConfigController,
-}
-
-pub(crate) struct PreparedMtuTunnel {
-    pub inbound: EnhancedInbound,
-    pub outbound: Option<EnhancedOutbound>,
-    pub quic_client: quic_over::quic_client::QuicTunnelClient,
 }
 
 pub(crate) async fn enhanced_ipv4_tunnel(
@@ -68,31 +43,6 @@ pub(crate) async fn enhanced_ipv4_tunnel(
     tun_data_sender: EnhancedTunInbound,
     config: TunnelConfig,
     components: TunnelComponents,
-) -> anyhow::Result<(
-    EnhancedInbound,
-    Option<EnhancedOutbound>,
-    quic_over::quic_client::QuicTunnelClient,
-)> {
-    build_enhanced_ipv4_tunnel(
-        app_state,
-        task_group.clone(),
-        tun_data_sender,
-        config,
-        components,
-        true,
-        Some(port_mapping_root),
-    )
-    .await
-}
-
-async fn build_enhanced_ipv4_tunnel(
-    app_state: AppState,
-    task_group: TaskGroup,
-    tun_data_sender: EnhancedTunInbound,
-    config: TunnelConfig,
-    components: TunnelComponents,
-    initialize_port_mappings: bool,
-    port_mapping_root: Option<TaskGroup>,
 ) -> anyhow::Result<(
     EnhancedInbound,
     Option<EnhancedOutbound>,
@@ -119,9 +69,7 @@ async fn build_enhanced_ipv4_tunnel(
             internal_nat_manager: components.internal_nat_inbound.clone(),
             port_mapping_manager: components.port_mapping_manager,
             policy: components.policy.clone(),
-            runtime_config: components.runtime_config,
         },
-        initialize_port_mappings,
         port_mapping_root,
     )
     .await?;
@@ -149,60 +97,4 @@ async fn build_enhanced_ipv4_tunnel(
         )
     });
     Ok((enhanced_inbound, enhanced_outbound, quic_client))
-}
-
-pub(crate) async fn prepare_mtu_tunnel(
-    app_state: AppState,
-    task_group: TaskGroup,
-    tun_data_sender: EnhancedTunInbound,
-    config: TunnelConfig,
-    components: MtuTunnelComponents,
-) -> anyhow::Result<PreparedMtuTunnel> {
-    let internal_nat_inbound = Some(
-        InternalNatInbound::create(
-            &task_group,
-            config.mtu,
-            components.hybrid_outbound.clone(),
-            components.allow_subnet.clone(),
-            components.network.clone(),
-            components.no_tun,
-            components.default_interface.clone(),
-        )
-        .await?,
-    );
-    // In no-device mode the enhanced TUN input is the internal NAT stack
-    // itself, so it must follow the candidate MTU plane rather than retaining
-    // the old stack through the stable dispatcher.
-    let tun_data_sender = match tun_data_sender {
-        EnhancedTunInbound::Nat(_) => EnhancedTunInbound::Nat(
-            internal_nat_inbound
-                .clone()
-                .expect("internal NAT is constructed for every MTU plane"),
-        ),
-        other => other,
-    };
-    let (inbound, outbound, quic_client) = build_enhanced_ipv4_tunnel(
-        app_state,
-        task_group,
-        tun_data_sender,
-        config,
-        TunnelComponents {
-            hybrid_outbound: components.hybrid_outbound,
-            external_route: components.external_route,
-            subnet_mapping: components.subnet_mapping,
-            subnet_packet_mapper: components.subnet_packet_mapper,
-            internal_nat_inbound,
-            port_mapping_manager: components.port_mapping_manager,
-            policy: components.policy,
-            runtime_config: components.runtime_config,
-        },
-        false,
-        None,
-    )
-    .await?;
-    Ok(PreparedMtuTunnel {
-        inbound,
-        outbound,
-        quic_client,
-    })
 }

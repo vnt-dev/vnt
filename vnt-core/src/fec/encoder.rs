@@ -151,11 +151,6 @@ impl FecEncoder {
 
         Ok(outer_packet)
     }
-
-    pub(crate) fn clear_pending(&self) {
-        self.batch_states.lock().clear();
-        self.deadline_notify.notify_one();
-    }
 }
 
 /// 后台worker，处理满批次和超时批次

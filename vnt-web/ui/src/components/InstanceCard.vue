@@ -135,9 +135,9 @@ const confirmDismiss = async () => {
       </template>
       <template v-else>
         <button
-          v-if="inst.status === 'stopped'"
+          v-if="inst.status !== 'starting'"
           class="btn-ghost btn-sm"
-          @click.stop="startLog.openStartLog(inst.file_name)"
+          @click.stop="startLog.openInstanceLog(inst.file_name)"
         >
           日志
         </button>

@@ -6,6 +6,7 @@ use crate::protocol::rpc_message::{
     ClientInfo, ClientListRequest, ClientListResponse, RpcMessageRequest, RpcMessageResponse,
 };
 use crate::protocol::transmission::TransmissionBytes;
+use crate::tunnel_core::server::connection_manager::ServerLinkTables;
 use crate::tunnel_core::server::outbound::ServerOutbound;
 use anyhow::bail;
 use arc_swap::ArcSwap;
@@ -115,8 +116,20 @@ impl ServerRPC {
         }
     }
 
-    pub(crate) fn replace_from(&self, prepared: &ServerRPC) {
-        self.state.store(prepared.state.load_full());
+    /// 用新的服务端登记快照整体替换出站通道与 RPC 通知器
+    /// （运行期服务端增删后发布）。
+    pub(crate) fn update_server_links(&self, tables: ServerLinkTables) {
+        let ServerLinkTables {
+            senders,
+            notifiers,
+            verified,
+        } = tables;
+        self.tunnel_to_server.update_senders(senders);
+        self.state
+            .store(Arc::new(ServerRpcState {
+                rpc_notifier: notifiers,
+                subscription_verified: verified,
+            }));
     }
 
     pub async fn acknowledge_subscription_config(

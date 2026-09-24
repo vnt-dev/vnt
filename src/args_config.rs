@@ -625,7 +625,7 @@ impl FileConfig {
 # ==================================
 
 # 可选的服务端配置源。本文件中明确填写的字段会覆盖订阅链接下发的同名字段。
-# subscription = "vnt2://join/1/..."
+# subscription = "vnt2://join/2/..."
 
 # --- 网络配置 ---
 # 网络编号，相同网络编号的会组在同一个虚拟网 (必填)
@@ -776,8 +776,8 @@ mod tests {
 
     #[test]
     fn subscription_uses_sub_cli_flag() {
-        let args = Args::try_parse_from(["vnt", "--sub", "vnt2://join/1/example"]).unwrap();
-        assert_eq!(args.subscription.as_deref(), Some("vnt2://join/1/example"));
+        let args = Args::try_parse_from(["vnt", "--sub", "vnt2://join/2/example"]).unwrap();
+        assert_eq!(args.subscription.as_deref(), Some("vnt2://join/2/example"));
     }
 
     #[test]
@@ -787,7 +787,7 @@ mod tests {
         )
         .unwrap();
         let local: FileConfig = toml::from_str(
-            "subscription='vnt2://join/1/example'\nnetwork_code='local-net'\nmtu=1400\nno_punch=false",
+            "subscription='vnt2://join/2/example'\nnetwork_code='local-net'\nmtu=1400\nno_punch=false",
         )
         .unwrap();
         let merged = remote.overlay(local);

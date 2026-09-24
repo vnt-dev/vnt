@@ -1,32 +1,14 @@
+use crate::context::SharedNetworkAddr;
 use crate::protocol::client_message::SharedNodeIdentity;
 use crate::protocol::control_message::{RegRequestMsg, RegistrationMode};
 use crate::tls::verifier::CertValidationMode;
 use anyhow::bail;
-use parking_lot::Mutex;
 use rand::seq::SliceRandom;
 use rustp2p_core::socket::LocalInterface;
 use std::fmt;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-
-#[derive(Debug, Clone)]
-pub(crate) struct SharedRegistrationIp {
-    inner: Arc<Mutex<Option<Ipv4Addr>>>,
-}
-impl SharedRegistrationIp {
-    pub fn new(ip: Option<Ipv4Addr>) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(ip)),
-        }
-    }
-    pub fn get(&self) -> Option<Ipv4Addr> {
-        *self.inner.lock()
-    }
-    pub fn set(&self, ip: Ipv4Addr) {
-        *self.inner.lock() = Some(ip);
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectRegConfig {
@@ -35,7 +17,7 @@ pub(crate) struct ConnectRegConfig {
     pub network_code: String,
     pub device_id: String,
     pub identity: SharedNodeIdentity,
-    pub ip: SharedRegistrationIp,
+    pub ip: SharedNetworkAddr,
     pub key_sign: Option<String>,
     pub ip_variable: bool,
     pub allow_ikev2: bool,
@@ -127,7 +109,7 @@ impl ConnectRegConfig {
         RegRequestMsg {
             network_code: self.network_code.to_string(),
             device_id: self.device_id.to_string(),
-            ip: self.ip.get(),
+            ip: self.ip.get().map(|network| network.ip),
             name: identity.name,
             version: env!("CARGO_PKG_VERSION").to_string(),
             key_sign: self.key_sign.clone(),
@@ -258,12 +240,19 @@ impl ConnectConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
 
     #[test]
     fn registration_request_reads_latest_shared_ip_and_identity() {
         let initial_ip = Ipv4Addr::new(10, 26, 0, 2);
         let updated_ip = Ipv4Addr::new(10, 26, 0, 9);
-        let shared_ip = SharedRegistrationIp::new(Some(initial_ip));
+        let shared_ip = SharedNetworkAddr::default();
+        shared_ip.set(crate::context::NetworkAddr {
+            ip: initial_ip,
+            gateway: None,
+            prefix_len: 24,
+            broadcast: Ipv4Addr::new(10, 26, 0, 255),
+        });
         let shared_identity =
             SharedNodeIdentity::new(crate::protocol::client_message::NodeIdentityTemplate {
                 name: "device".to_string(),
@@ -291,7 +280,12 @@ mod tests {
             config.reg_msg_request(0, RegistrationMode::Normal).ip,
             Some(initial_ip)
         );
-        shared_ip.set(updated_ip);
+        shared_ip.set(crate::context::NetworkAddr {
+            ip: updated_ip,
+            gateway: None,
+            prefix_len: 24,
+            broadcast: Ipv4Addr::new(10, 26, 0, 255),
+        });
         shared_identity.set(crate::protocol::client_message::NodeIdentityTemplate {
             name: "renamed".to_string(),
             version: "test".to_string(),

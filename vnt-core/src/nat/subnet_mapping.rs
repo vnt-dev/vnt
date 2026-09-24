@@ -79,11 +79,6 @@ impl SubnetMappingTable {
         }
     }
 
-    pub(crate) fn replace(&self, mut rules: Vec<SubnetMapping>) {
-        rules.sort_by_key(|rule| std::cmp::Reverse(rule.mapped.prefix_len()));
-        self.rules.store(Arc::new(rules));
-    }
-
     pub fn is_empty(&self) -> bool {
         self.rules.load().is_empty()
     }

@@ -74,10 +74,6 @@ impl EnhancedOutbound {
         }
     }
 
-    pub(crate) fn replace_from(&self, prepared: &Self) {
-        self.inner.store(prepared.inner.load_full());
-    }
-
     pub async fn ipv4_outbound(&self, data: TransmissionBytes) {
         let inner = self.inner.load();
         inner.ipv4_outbound(data).await;
