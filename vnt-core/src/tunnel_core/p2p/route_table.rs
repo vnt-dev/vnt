@@ -248,6 +248,9 @@ impl RouteTable {
         true
     }
 
+    /// 每个直连对端的所有 RouteKey（含排除语义）。仅测试用作 owner 注册
+    /// 行为的观测原语；生产路径的泛洪请用 [`RouteTable::best_direct_routes`]。
+    #[cfg(test)]
     pub fn direct_routes(&self, exclude: Option<&RouteKey>) -> Vec<RouteKey> {
         let state = self.inner.state.read();
         let owners = &state.route_key_owner;
@@ -257,6 +260,21 @@ impl RouteTable {
             .filter_map(|(key, peer_ip)| {
                 (exclude != Some(key) && excluded_node != Some(*peer_ip)).then_some(*key)
             })
+            .collect()
+    }
+
+    /// 每个直连对端各取当前最优的一条 RouteKey（按评分，选择规则同
+    /// [`RouteTable::best_direct_route`]）。拓扑泛洪按对端发送一条，
+    /// 不再借泛洪为对端的每个备用边保活——备用路由的存活统一由
+    /// ping_all 的探测上限控制。`exclude` 为入境路由时其归属对端整体
+    /// 跳过，避免泛洪回环。
+    pub fn best_direct_routes(&self, exclude: Option<&RouteKey>) -> Vec<RouteKey> {
+        let excluded_peer = exclude.and_then(|key| self.route_owner(key));
+        self.direct_peer_ips()
+            .into_iter()
+            .filter(|peer| Some(*peer) != excluded_peer)
+            .filter_map(|peer| self.best_direct_route(peer))
+            .map(|route| route.route_key())
             .collect()
     }
 
@@ -1116,6 +1134,38 @@ mod tests {
             table.direct_peer_ips(),
             vec![Ipv4Addr::new(10, 26, 0, 2), Ipv4Addr::new(10, 26, 0, 3)]
         );
+    }
+
+    #[test]
+    fn best_direct_routes_keeps_one_best_route_per_peer() {
+        let table = RouteTable::new();
+        let peer_a = Ipv4Addr::new(10, 26, 0, 2);
+        let peer_b = Ipv4Addr::new(10, 26, 0, 3);
+        let slow = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2115".parse().unwrap(),
+            "127.0.0.1:3115".parse().unwrap(),
+        );
+        let fast = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2116".parse().unwrap(),
+            "127.0.0.1:3116".parse().unwrap(),
+        );
+        let other = RouteKey::new(
+            Protocol::UDP,
+            "127.0.0.1:2117".parse().unwrap(),
+            "127.0.0.1:3117".parse().unwrap(),
+        );
+
+        // 同一对端的两条直连路由：一条只有默认 RTT，一条实测更优
+        table.add_owner_route(peer_a, slow);
+        table.add_probe_route(peer_a, Route::from_with_loss(fast, 1, 5, 0), false);
+        table.add_owner_route(peer_b, other);
+
+        // 每个对端只保留最优的一条，按对端顺序稳定输出
+        assert_eq!(table.best_direct_routes(None), vec![fast, other]);
+        // 排除最优路由的归属对端后，该对端整体跳过（泛洪回环防护）
+        assert_eq!(table.best_direct_routes(Some(&fast)), vec![other]);
     }
 
     #[test]
