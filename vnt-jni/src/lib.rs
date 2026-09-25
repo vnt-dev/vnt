@@ -8,6 +8,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(unix)]
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use vnt_core::api::VntApi;
 use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule, VirtualIp};
@@ -18,6 +19,7 @@ use vnt_core::network_info::{ChangeOutcome, RuntimeChange, RuntimeChangeManager,
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
+use vnt_core::utils::task_control::TaskGroupManager;
 
 /// 全局状态管理
 struct GlobalState {
@@ -25,6 +27,9 @@ struct GlobalState {
     runtime: Arc<Runtime>,
     /// 配置管理器：订阅连接与组网实例的生命周期持有者
     managers: HashMap<i64, Arc<tokio::sync::Mutex<RuntimeChangeManager>>>,
+    /// 按 handle 管理的实例任务组句柄：停止流程经它停机，避免与
+    /// next_event 监听线程争抢管理器锁（见 nativeStop）
+    task_groups: HashMap<i64, TaskGroupManager>,
     /// API实例
     vnt_apis: HashMap<i64, VntApi>,
     /// 按 handle 管理的实例日志（每个实例保留最近 50 条）
@@ -40,6 +45,7 @@ impl GlobalState {
         Ok(Self {
             runtime: Arc::new(Runtime::new()?),
             managers: HashMap::new(),
+            task_groups: HashMap::new(),
             vnt_apis: HashMap::new(),
             logs: Arc::new(LogManager::new()),
             pending_changes: HashMap::new(),
@@ -172,7 +178,7 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
                     link.set_instance_id(instance_id)?;
                 }
             }
-            let local_config = parse_config_from_json(&config_str)?;
+            let local_config = parse_config_from_json(&config_str, subscription.is_some())?;
 
             // 配置管理器：订阅模式内部等待服务端首份配置并启动首个组网
             // 实例；虚拟网卡由宿主持有 fd 后经 nativeStartTun 启动
@@ -181,9 +187,12 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
                 subscription,
                 instance_log,
             ))?;
-            state
-                .managers
-                .insert(id, Arc::new(tokio::sync::Mutex::new(manager)));
+            let manager = Arc::new(tokio::sync::Mutex::new(manager));
+            // 任务组句柄随管理器一并登记：停止流程经它停机，避免与
+            // next_event 监听线程争抢管理器锁（见 nativeStop）
+            let task_groups = runtime.block_on(async { manager.lock().await.task_groups() });
+            state.managers.insert(id, manager);
+            state.task_groups.insert(id, task_groups);
 
             Ok(id)
         })();
@@ -634,18 +643,44 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
 ) -> jboolean {
     jni_guard!(env, 0, {
         let result: anyhow::Result<()> = (|| {
-            let (manager, runtime) = {
+            let (manager, task_groups, runtime) = {
                 let mut global_state = GLOBAL_STATE.lock();
                 let state = global_state.as_mut().context("VNT not initialized")?;
                 let manager = state.managers.remove(&handle);
+                let task_groups = state.task_groups.remove(&handle);
                 state.vnt_apis.remove(&handle);
                 state.pending_changes.remove(&handle);
                 state.logs.remove(&handle.to_string());
-                (manager, state.runtime.clone())
+                (manager, task_groups, state.runtime.clone())
             };
-            // 停止组网实例并断开订阅控制连接
+            // 停止组网实例并断开订阅控制连接。
+            // 不能直接 block_on(manager.lock().await.stop())：运行期监听
+            // 线程在 next_event 等待期间持有管理器锁，停止流程去锁会死锁
+            // （与 vnt-web stop_running_instance 同因）。改为停实例任务组：
+            // 监听线程的 wait_all_stopped 随即唤醒 next_event，其退出后
+            // 释放锁并 drop 管理器，订阅连接随 SubscriptionListener 的
+            // Drop 断开。
             if let Some(manager) = manager {
-                runtime.block_on(async { manager.lock().await.stop().await });
+                // 监听线程未持锁时（启动早期或已退出）从管理器现取句柄；
+                // 持锁时用创建时登记的句柄，避免与它争锁
+                let groups = match manager.try_lock() {
+                    Ok(guard) => Some(guard.task_groups()),
+                    Err(_) => task_groups,
+                };
+                // 释放本地引用：仅剩监听线程的引用时，其退出即 drop 管理器
+                drop(manager);
+                if let Some(groups) = groups {
+                    let stopped = runtime.block_on(async {
+                        tokio::time::timeout(Duration::from_secs(10), groups.stop_and_wait())
+                            .await
+                            .is_ok()
+                    });
+                    if !stopped {
+                        // 监听线程异常驻留：不再等待，其退出后仍会
+                        // drop 管理器完成清理
+                        log::warn!("停止网络实例超时（handle {handle}）");
+                    }
+                }
             }
 
             Ok(())
@@ -1275,8 +1310,12 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeFetchSubscriptionConfig<'lo
     })
 }
 
-/// 从JSON字符串解析配置
-fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
+/// 从JSON字符串解析配置。`managed` 表示托管（订阅）模式：该模式下本地
+/// `device_id` 只是占位符——`RuntimeChangeManager` 一定在等到首份订阅
+/// 信封后才创建组网实例，身份由 `merge_present_config` 以信封为准覆盖，
+/// 因此缺省时不允许触发任何本地 ID 生成（Android 上兜底生成需要写
+/// 可执行文件目录，只读会直接失败）。
+fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Config> {
     #[derive(serde::Deserialize)]
     struct ConfigJson {
         #[serde(default)]
@@ -1409,6 +1448,9 @@ fn parse_config_from_json(json_str: &str) -> anyhow::Result<Config> {
 
     let device_id = match cfg.device_id {
         Some(id) => id,
+        // 托管模式下留空占位：首份信封到达后身份必被信封覆盖，本地值到
+        // 不了任何组网实例；非托管模式仍走系统/文件兜底生成
+        None if managed => String::new(),
         None => vnt_core::utils::device_id::get_device_id()
             .map_err(|e| anyhow::anyhow!("failed to get device_id: {}", e))?,
     };
@@ -1507,18 +1549,40 @@ mod tests {
     fn json_identity_is_used_verbatim_before_the_first_envelope() {
         // 托管模式下本地 JSON 的身份只是占位：首份订阅信封到达后由
         // merge_present_config 以信封身份覆盖，此处不再从链接注入身份
-        let config = parse_config_from_json(&format!(
-            r#"{{
+        let config = parse_config_from_json(
+            &format!(
+                r#"{{
                 "server":["tcp://127.0.0.1:29872"],
                 "network_code":"json-net",
                 "device_id":"json-dev",
                 "subscription":"{SUBSCRIPTION}"
             }}"#
-        ))
+            ),
+            true,
+        )
         .unwrap();
         assert_eq!(config.network_code, "json-net");
         assert_eq!(config.device_id, "json-dev");
         assert!(config.managed.is_none());
+    }
+
+    #[test]
+    fn managed_json_without_device_id_uses_empty_placeholder() {
+        // 托管模式缺省 device_id 时不得触发本地生成（Android 上兜底生成
+        // 需要写只读的可执行文件目录，会直接失败）：身份由首份订阅信封
+        // 覆盖，本地值只是占位
+        let config = parse_config_from_json(
+            &format!(
+                r#"{{
+                "server":["tcp://127.0.0.1:29872"],
+                "network_code":"json-net",
+                "subscription":"{SUBSCRIPTION}"
+            }}"#
+            ),
+            true,
+        )
+        .unwrap();
+        assert_eq!(config.device_id, "");
     }
 
     #[test]
@@ -1557,6 +1621,7 @@ mod tests {
                 "network_code":"test",
                 "peer_address":["127.0.0.1:30001","udp://127.0.0.1:30002","dynamic://peers.example.com"]
             }"#,
+            false,
         )
         .unwrap();
         assert_eq!(config.peer_address.len(), 3);
@@ -1577,6 +1642,7 @@ mod tests {
                 "network_code":"test",
                 "ip":"10.26.0.2/20"
             }"#,
+            false,
         )
         .unwrap();
         assert_eq!(config.ip.unwrap().to_string(), "10.26.0.2/20");
@@ -1587,6 +1653,7 @@ mod tests {
                 "network_code":"test",
                 "ip":"10.26.0.2"
             }"#,
+            false,
         )
         .unwrap();
         assert_eq!(config.ip.unwrap().to_string(), "10.26.0.2/24");
@@ -1594,7 +1661,7 @@ mod tests {
 
     #[test]
     fn rejects_serverless_json_without_virtual_ip() {
-        let config = parse_config_from_json(r#"{"network_code":"test"}"#).unwrap();
+        let config = parse_config_from_json(r#"{"network_code":"test"}"#, false).unwrap();
         assert!(config.check().is_err());
     }
 
@@ -1606,6 +1673,7 @@ mod tests {
                 "network_code":"test",
                 "tunnel_addr":["192.168.1.10:29873","[2001:db8::10]:29873"]
             }"#,
+            false,
         )
         .unwrap();
         assert_eq!(config.tunnel_addr.len(), 2);
@@ -1623,6 +1691,7 @@ mod tests {
                 "allow_ikev2":true,
                 "allow_wireguard":true
             }"#,
+            false,
         )
         .unwrap();
         assert!(config.no_broadcast);
@@ -1638,6 +1707,7 @@ mod tests {
                 "network_code":"test",
                 "turn":["10.26.0.0/16,10.26.0.2","10.26.1.9,10.26.0.3"]
             }"#,
+            false,
         )
         .unwrap();
         assert_eq!(config.turn.len(), 2);
@@ -1653,6 +1723,7 @@ mod tests {
                 "network_code":"test-net",
                 "punch_model":["10.26.0.2,IPv4Udp","10.26.1.0/24,IPv4Tcp,IPv6Udp"]
             }"#,
+            false,
         )
         .unwrap();
         assert_eq!(config.punch_model.len(), 2);
@@ -1673,6 +1744,7 @@ mod tests {
                 "subnet_mapping":["192.168.2.2/32,192.168.1.3/32"],
                 "auto_sync_subnet":true
             }"#,
+            false,
         )
         .unwrap();
         assert_eq!(
