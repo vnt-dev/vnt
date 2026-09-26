@@ -255,10 +255,10 @@ impl DeviceIOManager {
         Ok(())
     }
 
-    /// Replaces the running TUN task with an fd supplied by the host. The new
-    /// device is validated before the old task is stopped; if the task group
-    /// races with shutdown, the old device is recreated from its retained Arc.
-    #[cfg(unix)]
+    /// 用宿主（VpnService）提供的 fd 替换运行中的虚拟网卡任务。Android
+    /// 专用：tun-rs 在该平台不支持 set_network_address，因此地址不通过
+    /// set_network 应用，而是随新任务一并写入 [`DeviceState`]。
+    #[cfg(target_os = "android")]
     pub async fn replace_task_fd(
         &self,
         tun_fd: std::os::fd::OwnedFd,
