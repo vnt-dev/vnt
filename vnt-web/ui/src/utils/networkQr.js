@@ -1,6 +1,9 @@
 export const NETWORK_QR_TYPE = "vnt-network";
 export const NETWORK_QR_VERSION = 1;
 
+// 订阅链接配置的二维码内容就是链接本身，扫码后由客户端按订阅链接处理；无订阅链接时返回空串
+export const buildSubscriptionQrPayload = (form) => String(form.subscription || "").trim();
+
 export const buildNetworkQrPayload = (form) => {
   const networkCode = String(form.network_code || "").trim();
   const servers = (form.server || []).map((server) => String(server).trim()).filter(Boolean);

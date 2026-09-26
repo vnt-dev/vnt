@@ -320,7 +320,7 @@ pub struct TunnelListenAddr {
     pub protocol: &'static str,
     pub addr: SocketAddr,
 }
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct SharedNetworkAddr {
     inner: Arc<Mutex<Option<NetworkAddr>>>,
 }

@@ -165,9 +165,12 @@ impl P2pOutbound {
     //     Ok(())
     // }
 
+    /// 泛洪给所有直连对端：每个对端只走其当前最优的一条直连路由。拓扑
+    /// 传播由接收方接力完成（ttl + 去重），无需借泛洪为对端的每条备用
+    /// 边保活——备用路由的存活统一由 ping_all 的探测上限控制。
     pub fn flood_direct(&self, buf: &NetPacket<Bytes>, exclude: Option<&RouteKey>) -> usize {
         let mut sent = 0;
-        for route_key in self.route_table.direct_routes(exclude) {
+        for route_key in self.route_table.best_direct_routes(exclude) {
             if self
                 .tunnel(&route_key)
                 .and_then(|tunnel| Ok(tunnel.try_send(buf.source_buf().clone())?))
@@ -249,5 +252,73 @@ mod tests {
 
         outbound.remove_tunnel(&route_key);
         assert!(outbound.tunnel(&route_key).is_err());
+    }
+
+    #[tokio::test]
+    async fn flood_direct_sends_one_packet_per_peer_over_its_best_route() {
+        let peer = Ipv4Addr::new(10, 26, 0, 3);
+        let mut first_incoming = TunnelIncoming::bind(Config::udp(0).enable_ipv6(false))
+            .await
+            .unwrap();
+        let mut second_incoming = TunnelIncoming::bind(Config::udp(0).enable_ipv6(false))
+            .await
+            .unwrap();
+        let first_addr = SocketAddr::new(
+            "127.0.0.1".parse().unwrap(),
+            first_incoming.local_addr().unwrap().port(),
+        );
+        let second_addr = SocketAddr::new(
+            "127.0.0.1".parse().unwrap(),
+            second_incoming.local_addr().unwrap().port(),
+        );
+        let first_client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let second_client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        first_client.send_to(b"open", first_addr).await.unwrap();
+        second_client.send_to(b"open", second_addr).await.unwrap();
+
+        let first_tunnel = first_incoming.next().await.unwrap();
+        let second_tunnel = second_incoming.next().await.unwrap();
+        let first_key = first_tunnel.route_key();
+        let second_key = second_tunnel.route_key();
+        let (_first_reader, first_writer) = first_tunnel.split();
+        let (_second_reader, second_writer) = second_tunnel.split();
+        let route_table = RouteTable::new();
+        let outbound = P2pOutbound::new(
+            first_incoming.puncher(),
+            route_table.clone(),
+            PacketCrypto::new_from_str(None).unwrap(),
+        );
+        outbound.register_tunnel(first_key, first_writer);
+        outbound.register_tunnel(second_key, second_writer);
+
+        // 同一对端的两条直连路由：一条只有默认 RTT，一条实测更优
+        route_table.add_owner_route(peer, first_key);
+        route_table.add_probe_route(peer, Route::from_with_loss(second_key, 1, 5, 0), false);
+
+        let mut graph_packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH)).unwrap();
+        graph_packet.set_msg_type(MsgType::NodeAnnouncement);
+        let graph_packet = graph_packet.into_bytes();
+
+        // 每个对端只经最优路由发一份，而不是每条路由各发一份
+        assert_eq!(outbound.flood_direct(&graph_packet, None), 1);
+        let mut buffer = [0; 64];
+        let (len, _) =
+            tokio::time::timeout(Duration::from_secs(2), second_client.recv_from(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(len, HEAD_LENGTH);
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(200),
+                first_client.recv_from(&mut buffer)
+            )
+            .await
+            .is_err(),
+            "non-best route must not receive the flood"
+        );
+
+        // 排除最优路由的归属对端后，该对端不再收到泛洪
+        assert_eq!(outbound.flood_direct(&graph_packet, Some(&second_key)), 0);
     }
 }

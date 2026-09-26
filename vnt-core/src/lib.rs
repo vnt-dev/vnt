@@ -5,8 +5,10 @@ pub mod crypto;
 pub(crate) mod ethernet;
 pub(crate) mod event_script;
 pub(crate) mod fec;
+pub mod log_manager;
 pub mod managed_config;
 pub mod nat;
+pub mod network_info;
 pub mod protocol;
 #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
 mod system_subnet_routes;

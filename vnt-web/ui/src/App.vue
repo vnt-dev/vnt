@@ -137,7 +137,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
           class="custom-scrollbar h-64 space-y-2 overflow-y-auto border-y border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-600 sm:h-80 sm:p-6 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
         >
           <div v-for="(log, idx) in startLog.startLogs" :key="idx" class="flex gap-3">
-            <span class="text-indigo-600 dark:text-indigo-400">›</span><span class="break-all">{{ log }}</span>
+            <span
+              class="shrink-0 tabular-nums"
+              :class="log.level === 'error' ? 'text-red-500' : log.level === 'warn' ? 'text-amber-500' : 'text-indigo-600 dark:text-indigo-400'"
+              >{{ log.time }}</span
+            ><span
+              class="break-all"
+              :class="log.level === 'error' ? 'text-red-600 dark:text-red-400' : log.level === 'warn' ? 'text-amber-600 dark:text-amber-400' : ''"
+              >{{ log.message }}</span
+            >
           </div>
           <div v-if="startLog.startStatus === 'starting'" class="animate-pulse text-indigo-600 dark:text-indigo-400">等待下一阶段…</div>
         </div>

@@ -145,11 +145,14 @@ export const useAppStore = defineStore("app", () => {
     }
     if (loadingMap.value[fileName]) return;
     loadingMap.value[fileName] = true;
-    startLog.openStartLog(fileName);
+    // 先打开弹窗，但等启动请求已在后端登记 Starting 后再开始轮询。
+    const logSession = startLog.openStartLog(fileName, false);
     try {
       await startVntApi(fileName);
+      startLog.startPolling(logSession);
       fetchInstances();
     } catch (e) {
+      startLog.markStartFailed(logSession, "启动失败: " + e.message);
       ui.toast.error("启动失败: " + e.message);
     } finally {
       loadingMap.value[fileName] = false;
@@ -164,7 +167,7 @@ export const useAppStore = defineStore("app", () => {
       await stopVntApi(fileName);
       ui.toast.success("已停止");
       if (startLog.logFileName === fileName) {
-        startLog.stopPolling();
+        startLog.stopPolling(true);
         startLog.showStartLog = false;
       }
       fetchInstances();
@@ -181,11 +184,13 @@ export const useAppStore = defineStore("app", () => {
   const restartVnt = async (fileName) => {
     if (!fileName || loadingMap.value[fileName]) return;
     loadingMap.value[fileName] = true;
-    startLog.openStartLog(fileName);
+    const logSession = startLog.openStartLog(fileName, false);
     try {
       await restartVntApi(fileName);
+      startLog.startPolling(logSession);
       fetchInstances();
     } catch (e) {
+      startLog.markStartFailed(logSession, "重启失败: " + e.message);
       ui.toast.error("重启失败: " + e.message);
     } finally {
       loadingMap.value[fileName] = false;
@@ -200,7 +205,7 @@ export const useAppStore = defineStore("app", () => {
       await deleteInstance(fileName);
       ui.toast.success("已移除");
       if (startLog.logFileName === fileName) {
-        startLog.stopPolling();
+        startLog.stopPolling(true);
         startLog.showStartLog = false;
       }
       if (selectedInstance.value === fileName) {
@@ -234,7 +239,7 @@ export const useAppStore = defineStore("app", () => {
 
   const destroy = () => {
     document.removeEventListener("visibilitychange", visibilityHandler);
-    startLog.stopPolling();
+    startLog.stopPolling(true);
     if (infoTimer) clearInterval(infoTimer);
   };
 

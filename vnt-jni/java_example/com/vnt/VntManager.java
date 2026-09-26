@@ -6,11 +6,12 @@ package com.vnt;
  * 使用示例:
  * 1. 初始化: VntManager.init()
  * 2. 创建网络: VntNetwork network = VntManager.createNetwork(config)
- * 3. 注册: RegisterResult result = network.register()
+ * 3. 获取网络: NetworkResult result = network.getNetwork()
  * 4. (Android端用result的IP/掩码创建VPN接口，获取tunFd)
  * 5. 启动TUN: network.startTun(tunFd)
  * 6. 获取API: VntApi api = network.getApi()
- * 7. 关闭: network.stop()
+ * 7. 查看日志: List<LogEntry> logs = network.getLogs()
+ * 8. 关闭: network.stop()
  */
 public class VntManager {
 

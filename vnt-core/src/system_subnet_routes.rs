@@ -1,9 +1,7 @@
 #![cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
 
 use crate::nat::NetInput;
-use crate::utils::task_control::TaskGroup;
 use route_manager::{Route, RouteManager};
-use std::time::Duration;
 
 pub(crate) fn prepare(if_index: u32) -> std::io::Result<SystemRouteReconciler> {
     Ok(SystemRouteReconciler {
@@ -11,34 +9,14 @@ pub(crate) fn prepare(if_index: u32) -> std::io::Result<SystemRouteReconciler> {
     })
 }
 
-/// A prepared reconciler has already opened the platform route manager.  This
-/// lets a device replacement fail before the old interface's route watcher is
-/// stopped.
 pub(crate) struct SystemRouteReconciler {
     inner: RouteReconciler<SystemRouteBackend>,
 }
 
-pub(crate) fn start(
-    task_group: &TaskGroup,
-    mut desired: tokio::sync::watch::Receiver<Vec<NetInput>>,
-    mut reconciler: SystemRouteReconciler,
-) {
-    task_group.spawn(async move {
-        let mut retry = tokio::time::interval(Duration::from_secs(5));
-        loop {
-            reconciler
-                .inner
-                .reconcile(desired.borrow_and_update().clone());
-            tokio::select! {
-                changed = desired.changed() => {
-                    if changed.is_err() {
-                        break;
-                    }
-                }
-                _ = retry.tick() => {}
-            }
-        }
-    });
+impl SystemRouteReconciler {
+    pub(crate) fn apply(&mut self, desired: Vec<NetInput>) -> std::io::Result<()> {
+        self.inner.reconcile(desired)
+    }
 }
 
 trait RouteBackend {
@@ -81,7 +59,7 @@ impl<B: RouteBackend> RouteReconciler<B> {
             .with_if_index(self.if_index)
     }
 
-    fn reconcile(&mut self, desired: Vec<NetInput>) {
+    fn reconcile(&mut self, desired: Vec<NetInput>) -> std::io::Result<()> {
         let stale = self
             .installed
             .iter()
@@ -90,13 +68,9 @@ impl<B: RouteBackend> RouteReconciler<B> {
             .collect::<Vec<_>>();
         for input in stale {
             let route = self.route(&input);
-            match self.backend.delete(&route) {
-                Ok(()) => {
-                    self.installed.retain(|installed| installed != &input);
-                    log::info!("delete route [{route}] successful");
-                }
-                Err(error) => log::warn!("delete route [{route}] error: {error:?}"),
-            }
+            self.backend.delete(&route)?;
+            self.installed.retain(|installed| installed != &input);
+            log::info!("delete route [{route}] successful");
         }
 
         for input in desired {
@@ -104,14 +78,11 @@ impl<B: RouteBackend> RouteReconciler<B> {
                 continue;
             }
             let route = self.route(&input);
-            match self.backend.add(&route) {
-                Ok(()) => {
-                    self.installed.push(input);
-                    log::info!("add route [{route}] successful");
-                }
-                Err(error) => log::warn!("add route [{route}] error: {error:?}"),
-            }
+            self.backend.add(&route)?;
+            self.installed.push(input);
+            log::info!("add route [{route}] successful");
         }
+        Ok(())
     }
 }
 
@@ -178,11 +149,11 @@ mod tests {
         let old = input("192.168.0.0/24", [10, 26, 0, 2]);
         let new = input("172.16.0.0/16", [10, 26, 0, 3]);
 
-        reconciler.reconcile(vec![old.clone()]);
+        assert!(reconciler.reconcile(vec![old.clone()]).is_err());
         assert!(reconciler.installed.is_empty());
-        reconciler.reconcile(vec![old.clone()]);
+        reconciler.reconcile(vec![old.clone()]).unwrap();
         assert_eq!(reconciler.installed, vec![old]);
-        reconciler.reconcile(vec![new.clone()]);
+        reconciler.reconcile(vec![new.clone()]).unwrap();
         assert_eq!(reconciler.installed, vec![new]);
 
         let events = events.lock().unwrap();
@@ -205,7 +176,9 @@ mod tests {
                 if_index: 9,
                 installed: Vec::new(),
             };
-            reconciler.reconcile(vec![input("192.168.1.0/24", [10, 26, 0, 2])]);
+            reconciler
+                .reconcile(vec![input("192.168.1.0/24", [10, 26, 0, 2])])
+                .unwrap();
         }
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 2);

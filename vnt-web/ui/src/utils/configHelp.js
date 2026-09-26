@@ -5,8 +5,8 @@ export const configHelp = {
     param: "subscription",
     summary: "订阅 VNTS 服务端为设备维护的配置。",
     usage: "客户端启动时会通过链接中的接入地址验证服务端并获取最新配置；运行期间，已验证的服务端连接还可以推送配置更新。客户端本地明确填写的字段始终优先于订阅值。",
-    format: "完整的 vnt2://join/1/… 订阅链接；可留空。",
-    example: "vnt2://join/1/…",
+    format: "完整的 vnt2://join/2/… 订阅链接；可留空。",
+    example: "vnt2://join/2/…",
     notes: ["订阅链接包含接入凭据，请像密码一样妥善保管。", "清空并保存后停止获取和接收订阅配置，不会删除其他本地配置。"],
   },
   config_name: {

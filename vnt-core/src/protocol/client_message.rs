@@ -78,22 +78,16 @@ impl SharedNodeIdentity {
         self.value.read().network_code.clone()
     }
 
+    #[cfg(test)]
     pub fn set(&self, value: NodeIdentityTemplate) {
-        if *self.value.read() == value {
-            return;
+        if *self.value.read() != value {
+            *self.value.write() = value;
+            self.changed.notify_one();
         }
-        *self.value.write() = value;
-        // A permit is retained if the announcement task is currently sending,
-        // avoiding a lost wake-up and a full periodic interval of stale data.
-        self.changed.notify_one();
     }
 
     pub async fn changed(&self) {
         self.changed.notified().await;
-    }
-
-    pub fn notify_changed(&self) {
-        self.changed.notify_one();
     }
 }
 
@@ -413,7 +407,7 @@ mod tests {
             identity: LocalNodeIdentity {
                 ip: "10.26.0.2".parse().unwrap(),
                 name: "node-a".to_string(),
-                version: "2.0.9".to_string(),
+                version: "2.0.10".to_string(),
                 network_code: "mesh-a".to_string(),
                 advertised_subnets: vec!["192.168.10.0/24".parse().unwrap()],
             },
@@ -429,7 +423,7 @@ mod tests {
             identity: LocalNodeIdentity {
                 ip: "10.26.0.2".parse().unwrap(),
                 name: "node-a".to_string(),
-                version: "2.0.9".to_string(),
+                version: "2.0.10".to_string(),
                 network_code: "must-not-be-broadcast".to_string(),
                 advertised_subnets: vec!["192.168.10.0/24".parse().unwrap()],
             },
@@ -449,7 +443,7 @@ mod tests {
         let wire = proto::NodeAnnouncement::decode(encoded.as_ref()).unwrap();
         let public = wire.identity.unwrap();
         assert_eq!(public.name, "node-a");
-        assert_eq!(public.version, "2.0.9");
+        assert_eq!(public.version, "2.0.10");
 
         let source = Ipv4Addr::new(10, 26, 0, 2);
         let decoded = NodeAnnouncement::from_slice(encoded.as_ref(), source).unwrap();

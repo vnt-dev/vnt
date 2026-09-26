@@ -11,9 +11,7 @@ use crate::enhanced_tunnel::quic_over::{quic_client, quic_server};
 use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
 use crate::nat::{SubnetExternalRoute, SubnetMappingTable};
 use crate::port_mapping::PortMapping;
-use crate::runtime_config::{
-    PortMappingComponentController, RuntimeConfigController, RuntimePolicyStore,
-};
+use crate::runtime_config::RuntimePolicyStore;
 use crate::tls;
 use crate::tun::TunDataInbound;
 use crate::tunnel_core::outbound::HybridOutbound;
@@ -43,7 +41,6 @@ pub(crate) struct QuicTunnelComponents {
     pub internal_nat_manager: Option<InternalNatInbound>,
     pub port_mapping_manager: PortMappingManager,
     pub policy: RuntimePolicyStore,
-    pub runtime_config: RuntimeConfigController,
 }
 
 pub(crate) async fn quic_tunnel_start(
@@ -52,8 +49,7 @@ pub(crate) async fn quic_tunnel_start(
     tun_data_sender: Option<TunDataInbound>,
     config: QuicTunnelConfig,
     components: QuicTunnelComponents,
-    initialize_port_mappings: bool,
-    port_mapping_root: Option<TaskGroup>,
+    port_mapping_root: TaskGroup,
 ) -> anyhow::Result<(
     EnhancedQuicInbound,
     Option<EnhancedQuicOutbound>,
@@ -106,35 +102,12 @@ pub(crate) async fn quic_tunnel_start(
         )
         .await;
     }
-    if initialize_port_mappings {
-        let port_mapping_root = port_mapping_root
-            .context("port mapping root task group is required during initialization")?;
-        let mut active_mappings: Vec<(PortMapping, TaskGroup)> = Vec::new();
-        for mapping in &config.port_mapping {
-            let scope = port_mapping_root.child_scope();
-            if let Err(error) = crate::port_mapping::port_mapping_start(
-                &scope,
-                vec![mapping.clone()],
-                quic_client.clone(),
-            )
-            .await
-            {
-                scope.stop();
-                for (_, prepared_scope) in active_mappings {
-                    prepared_scope.stop();
-                }
-                return Err(error);
-            }
-            active_mappings.push((mapping.clone(), scope));
-        }
-        components
-            .runtime_config
-            .attach_port_mapping_components(PortMappingComponentController {
-                root_task_group: port_mapping_root,
-                active: Arc::new(tokio::sync::Mutex::new(active_mappings)),
-                quic_client: quic_client.clone(),
-            });
-    }
+    crate::port_mapping::port_mapping_start(
+        &port_mapping_root,
+        config.port_mapping,
+        quic_client.clone(),
+    )
+    .await?;
 
     let quic_inbound = EnhancedQuicInbound::new(inbound);
     Ok((quic_inbound, quic_outbound, quic_client))

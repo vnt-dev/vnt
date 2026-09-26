@@ -583,6 +583,16 @@ pub struct ManagedRegistration {
     revision: Arc<AtomicU64>,
 }
 
+impl PartialEq for ManagedRegistration {
+    fn eq(&self, other: &Self) -> bool {
+        // revision 是运行期回执状态而非配置，比较时刻意排除
+        self.credential_key == other.credential_key
+            && self.network_code == other.network_code
+            && self.device_id == other.device_id
+            && self.instance_id == other.instance_id
+    }
+}
+
 impl ManagedRegistration {
     pub fn new(
         credential_key: Vec<u8>,
@@ -617,6 +627,11 @@ impl ManagedRegistration {
         }
     }
 
+    /// 已应用的服务端配置 revision（0 表示尚未应用）。
+    pub(crate) fn applied_revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
     pub(crate) fn verify_server_proof(
         &self,
         registration: &crate::protocol::control_message::SubscriptionRegistration,
@@ -648,6 +663,98 @@ impl std::fmt::Debug for ManagedRegistration {
     }
 }
 impl Config {
+    /// 序列化为配置文件（TOML）文本，用于查看实例当前生效的配置。
+    ///
+    /// 只输出与默认值不同的字段（布尔项仅在为 true 时输出），身份字段
+    /// （network_code/device_id）始终输出；订阅托管时把已应用的 revision
+    /// 以注释形式标注在头部。键名与配置文件一致（如 server 对应
+    /// server_addr、allow_mapping 对应 allow_port_mapping）。
+    pub fn to_toml_string(&self) -> String {
+        let mut table = toml::Table::new();
+        table.insert("network_code".into(), self.network_code.clone().into());
+        table.insert("device_id".into(), self.device_id.clone().into());
+        if !self.device_name.is_empty() {
+            table.insert("device_name".into(), self.device_name.clone().into());
+        }
+        if !self.server_addr.is_empty() {
+            table.insert(
+                "server".into(),
+                toml_string_array(self.server_addr.iter().map(ToString::to_string)),
+            );
+        }
+        if let Some(ip) = &self.ip {
+            table.insert("ip".into(), ip.to_string().into());
+        }
+        insert_string_array(&mut table, "peer_address", &self.peer_address);
+        insert_string_array(&mut table, "turn", &self.turn);
+        insert_string_array(&mut table, "punch_model", &self.punch_model);
+        if self.cert_mode != CertValidationMode::default() {
+            table.insert("cert_mode".into(), self.cert_mode.to_string().into());
+        }
+        if let Some(password) = &self.password {
+            table.insert("password".into(), password.clone().into());
+        }
+        if let Some(outbound_interface) = &self.outbound_interface {
+            table.insert(
+                "outbound_interface".into(),
+                outbound_interface.clone().into(),
+            );
+        }
+        if let Some(tun_name) = &self.tun_name {
+            table.insert("tun_name".into(), tun_name.clone().into());
+        }
+        if self.device_mode != DeviceMode::default() {
+            table.insert("device_mode".into(), self.device_mode.to_string().into());
+        }
+        if let Some(mtu) = self.mtu {
+            table.insert("mtu".into(), i64::from(mtu).into());
+        }
+        if let Some(tunnel_port) = self.tunnel_port {
+            table.insert("tunnel_port".into(), i64::from(tunnel_port).into());
+        }
+        insert_string_array(&mut table, "tunnel_addr", &self.tunnel_addr);
+        insert_string_array(&mut table, "input", &self.input);
+        insert_string_array(&mut table, "subnet_mapping", &self.subnet_mapping);
+        insert_string_array(&mut table, "output", &self.output);
+        insert_string_array(&mut table, "port_mapping", &self.port_mapping);
+        insert_string_array(&mut table, "udp_stun", &self.udp_stun);
+        insert_string_array(&mut table, "tcp_stun", &self.tcp_stun);
+        for (key, value) in [
+            ("no_punch", self.no_punch),
+            ("no_broadcast", self.no_broadcast),
+            ("allow_ikev2", self.allow_ikev2),
+            ("allow_wireguard", self.allow_wireguard),
+            ("rtx", self.rtx),
+            ("compress", self.compress),
+            ("fec", self.fec),
+            ("auto_sync_subnet", self.auto_sync_subnet),
+            ("no_nat", self.no_nat),
+            // 配置文件里的键名是 allow_mapping
+            ("allow_mapping", self.allow_port_mapping),
+        ] {
+            if value {
+                table.insert(key.into(), value.into());
+            }
+        }
+        if let Some(event_script) = &self.event_script {
+            table.insert("event_script".into(), event_script.clone().into());
+        }
+        let mut text = toml::to_string(&table).unwrap_or_default();
+        let mut header = String::from(
+            "# 当前生效配置（本地配置与服务端下发合并后的结果）
+",
+        );
+        if let Some(managed) = &self.managed {
+            header.push_str(&format!(
+                "# 服务端管理: 已应用 revision {}
+",
+                managed.applied_revision()
+            ));
+        }
+        text.insert_str(0, &header);
+        text
+    }
+
     pub fn normalize(&mut self) -> anyhow::Result<()> {
         self.check_turn_rules()?;
         self.check_tunnel_addr()?;
@@ -769,7 +876,7 @@ impl Config {
         &self,
         index: usize,
         default_interface: Option<rustp2p_core::socket::LocalInterface>,
-        registration_ip: crate::tunnel_core::server::transport::config::SharedRegistrationIp,
+        network: crate::context::SharedNetworkAddr,
         identity: crate::protocol::client_message::SharedNodeIdentity,
         client_instance_id: std::sync::Arc<Vec<u8>>,
     ) -> ConnectRegConfig {
@@ -779,7 +886,7 @@ impl Config {
             network_code: self.network_code.clone(),
             device_id: self.device_id.clone(),
             identity,
-            ip: registration_ip,
+            ip: network,
             key_sign: self.key_sign(),
             ip_variable: self.ip.is_none(),
             allow_ikev2: self.allow_ikev2,
@@ -789,6 +896,26 @@ impl Config {
             client_instance_id,
         }
     }
+}
+
+/// 把实现了 Display 的集合序列化为 TOML 字符串数组。
+fn insert_string_array<T: std::fmt::Display>(table: &mut toml::Table, key: &str, values: &[T]) {
+    if values.is_empty() {
+        return;
+    }
+    table.insert(
+        key.into(),
+        toml::Value::Array(
+            values
+                .iter()
+                .map(|value| toml::Value::String(value.to_string()))
+                .collect(),
+        ),
+    );
+}
+
+fn toml_string_array<I: IntoIterator<Item = String>>(values: I) -> toml::Value {
+    toml::Value::Array(values.into_iter().map(toml::Value::String).collect())
 }
 
 #[cfg(test)]
@@ -1152,5 +1279,34 @@ mod tests {
         assert!(!allow_punch(&rules, &Ipv4Addr::new(10, 26, 0, 9)));
         assert!(allow_punch(&rules, &Ipv4Addr::new(10, 26, 0, 2)));
         assert!(allow_punch(&rules, &Ipv4Addr::new(10, 27, 0, 9)));
+    }
+
+    #[test]
+    fn to_toml_string_emits_non_default_fields_and_identity() {
+        let config = Config {
+            network_code: "net".to_string(),
+            device_id: "dev".to_string(),
+            device_name: "node".to_string(),
+            compress: true,
+            mtu: Some(1380),
+            server_addr: vec!["tcp://127.0.0.1:29872".parse().unwrap()],
+            ..Config::default()
+        };
+        let text = config.to_toml_string();
+        assert!(text.contains("network_code = \"net\""), "{text}");
+        assert!(text.contains("device_id = \"dev\""), "{text}");
+        assert!(text.contains("device_name = \"node\""), "{text}");
+        assert!(
+            text.contains("server = [\"tcp://127.0.0.1:29872\"]"),
+            "{text}"
+        );
+        assert!(text.contains("compress = true"), "{text}");
+        assert!(text.contains("mtu = 1380"), "{text}");
+        // 默认值字段不输出
+        assert!(!text.contains("rtx"), "{text}");
+        assert!(!text.contains("no_punch"), "{text}");
+        assert!(!text.contains("password"), "{text}");
+        // 输出本身是合法 TOML
+        assert!(toml::from_str::<toml::Table>(&text).is_ok(), "{text}");
     }
 }

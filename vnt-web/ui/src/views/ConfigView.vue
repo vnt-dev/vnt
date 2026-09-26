@@ -1,24 +1,32 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import QRCode from "qrcode";
 import { useAppStore } from "../stores/app";
 import { useUiStore } from "../stores/ui";
-import { clearSubscriptionOverrides, deleteConfig, detachSubscription, getConfig, getSubscriptionStatus } from "../api";
+import { clearSubscriptionOverrides, deleteConfig, detachSubscription, getConfig, getInstanceConfig, getSubscriptionStatus } from "../api";
 import EmptyState from "../components/EmptyState.vue";
 import AppModal from "../components/AppModal.vue";
 import ConfigEditor from "./ConfigEditor.vue";
 import { parseTomlToForm } from "../utils/toml";
-import { buildNetworkQrPayload } from "../utils/networkQr";
+import { buildNetworkQrPayload, buildSubscriptionQrPayload } from "../utils/networkQr";
 
 const app = useAppStore();
 const ui = useUiStore();
+const route = useRoute();
+const router = useRouter();
 
 const showEditor = ref(false);
 const editorFileName = ref(null);
 const showQr = ref(false);
+const showConfigText = ref(false);
+const configText = ref("");
+const configTextName = ref("");
+const configTextLoading = ref(false);
 const qrLoading = ref(false);
 const qrImage = ref("");
 const qrConfig = ref(null);
+const qrSubscription = ref("");
 const qrError = ref("");
 const managedStatuses = ref({});
 const managedDetail = ref(null);
@@ -44,7 +52,7 @@ const managedAction = async (action) => {
     ui.toast.success(
       action === "detach"
         ? "已解除服务端管理，当前 TOML 保留"
-        : "已清除本地覆盖；运行中实例会在下次服务端推送或重启后使用新配置",
+        : "已清除本地覆盖；网络信息会在下次服务端推送时更新，其他配置重启后生效",
     );
   } catch (e) { ui.toast.error(e.message); }
 };
@@ -67,6 +75,17 @@ const openEditor = (fileName) => {
   showEditor.value = true;
 };
 
+// 从其他页面带 ?edit=文件名 跳转过来时直接打开编辑器;消费后立即清掉参数,避免刷新重复弹出
+watch(
+  () => route.query.edit,
+  (fileName) => {
+    if (!fileName) return;
+    openEditor(String(fileName));
+    router.replace({ path: "/config" });
+  },
+  { immediate: true },
+);
+
 const onSaved = async () => {
   await app.fetchConfigList();
   await refreshSubscriptionStatuses();
@@ -77,12 +96,16 @@ const openQr = async (fileName) => {
   qrLoading.value = true;
   qrImage.value = "";
   qrConfig.value = null;
+  qrSubscription.value = "";
   qrError.value = "";
   try {
     const form = parseTomlToForm(await getConfig(fileName));
-    const payload = buildNetworkQrPayload(form);
+    // 订阅链接配置的二维码内容就是链接本身；普通配置编码组网参数
+    const subscription = buildSubscriptionQrPayload(form);
+    const payload = subscription ? null : buildNetworkQrPayload(form);
+    qrSubscription.value = subscription;
     qrConfig.value = payload;
-    qrImage.value = await QRCode.toDataURL(JSON.stringify(payload), {
+    qrImage.value = await QRCode.toDataURL(subscription || JSON.stringify(payload), {
       errorCorrectionLevel: "M",
       width: 360,
       margin: 2,
@@ -109,6 +132,40 @@ const handleDelete = async (fileName) => {
     app.fetchConfigList();
   } catch (e) {
     ui.toast.error(e.message);
+  }
+};
+
+// 查看运行中实例当前生效的配置（本地 + 服务端下发的合并结果）
+const openConfigText = async (fileName) => {
+  configTextName.value = fileName;
+  configText.value = "";
+  configTextLoading.value = true;
+  showConfigText.value = true;
+  try {
+    configText.value = await getInstanceConfig(fileName);
+  } catch (e) {
+    ui.toast.error(e.message);
+    showConfigText.value = false;
+  } finally {
+    configTextLoading.value = false;
+  }
+};
+
+const copyConfigText = async () => {
+  try {
+    await navigator.clipboard.writeText(configText.value);
+    ui.toast.success("已复制");
+  } catch {
+    ui.toast.error("复制失败");
+  }
+};
+
+const copySubscription = async () => {
+  try {
+    await navigator.clipboard.writeText(qrSubscription.value);
+    ui.toast.success("已复制");
+  } catch {
+    ui.toast.error("复制失败");
   }
 };
 
@@ -188,6 +245,13 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
         </div>
         <div class="config-card-actions mt-4 flex justify-end transition-opacity">
           <button
+            v-if="instStatus(cfg.file_name) === 'running'"
+            class="mr-4 text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+            @click.stop="openConfigText(cfg.file_name)"
+          >
+            查看配置
+          </button>
+          <button
             class="mr-4 text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
             @click.stop="openEditor(cfg.file_name)"
           >
@@ -210,8 +274,8 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
     <AppModal :show="showQr" panel-class="w-full max-w-md" @close="showQr = false">
       <template #header>
         <div>
-          <h2 class="text-lg font-bold text-slate-900 dark:text-white">扫码加入网络</h2>
-          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">使用 VNT 安卓客户端扫描</p>
+          <h2 class="text-lg font-bold text-slate-900 dark:text-white">{{ qrSubscription ? "扫码订阅配置" : "扫码加入网络" }}</h2>
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ qrSubscription ? "使用 VNT 安卓客户端扫描，按订阅链接接入" : "使用 VNT 安卓客户端扫描" }}</p>
         </div>
         <button class="btn-ghost btn-sm" type="button" @click="showQr = false">关闭</button>
       </template>
@@ -233,6 +297,37 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
             </dl>
             <p class="text-xs leading-5 text-amber-600 dark:text-amber-400">二维码包含组网凭据，请仅分享给可信设备。</p>
           </div>
+          <div v-else-if="qrSubscription" class="space-y-5">
+            <div class="mx-auto w-fit rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <img :src="qrImage" class="h-auto w-full max-w-[320px]" alt="VNT 订阅配置二维码" />
+            </div>
+            <div class="rounded-lg bg-slate-50 p-4 text-sm dark:bg-slate-800/60">
+              <p class="break-all font-mono text-slate-900 dark:text-white">{{ qrSubscription }}</p>
+            </div>
+            <div class="flex justify-center">
+              <button class="btn-ghost btn-sm" type="button" @click="copySubscription">复制订阅链接</button>
+            </div>
+            <p class="text-xs leading-5 text-amber-600 dark:text-amber-400">二维码包含接入凭据，请仅分享给可信设备。</p>
+          </div>
+        </div>
+      </template>
+    </AppModal>
+
+    <AppModal :show="showConfigText" panel-class="w-full max-w-2xl" @close="showConfigText = false">
+      <template #header>
+        <div>
+          <h2 class="text-lg font-bold text-slate-900 dark:text-white">当前生效配置</h2>
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ configTextName }}</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn-ghost btn-sm" type="button" :disabled="!configText" @click="copyConfigText">复制</button>
+          <button class="btn-ghost btn-sm" type="button" @click="showConfigText = false">关闭</button>
+        </div>
+      </template>
+      <template #body>
+        <div class="p-6">
+          <div v-if="configTextLoading" class="py-16 text-center text-sm muted">正在读取…</div>
+          <pre v-else class="max-h-[60vh] overflow-auto rounded-lg bg-slate-50 p-4 font-mono text-xs leading-5 text-slate-800 dark:bg-slate-800 dark:text-slate-200">{{ configText }}</pre>
         </div>
       </template>
     </AppModal>
@@ -240,7 +335,7 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
     <AppModal :show="Boolean(managedDetail)" panel-class="w-full max-w-lg" @close="managedDetail = null">
       <template #header><div><h2 class="text-lg font-bold">服务端管理</h2><p class="mt-1 text-xs muted">字段来源与同步状态</p></div><button class="btn-ghost btn-sm" @click="managedDetail = null">关闭</button></template>
       <template #body><div v-if="managedDetail" class="space-y-4 p-6 text-sm">
-        <dl class="grid grid-cols-[8rem_1fr] gap-2 rounded-lg bg-slate-50 p-4 dark:bg-slate-800"><dt class="muted">设备</dt><dd class="font-mono">{{ managedDetail.device_id }}</dd><dt class="muted">配置版本</dt><dd>{{ managedDetail.applied_revision }} / {{ managedDetail.target_revision }}</dd><dt class="muted">实时同步</dt><dd>{{ managedDetail.config_sync_verified ? '已验证同步服务器' : '暂无已验证同步服务器' }}</dd><dt class="muted">本地覆盖</dt><dd>{{ managedDetail.local_overrides.length ? managedDetail.local_overrides.join(', ') : '无' }}</dd><dt v-if="managedDetail.last_error" class="muted">错误</dt><dd v-if="managedDetail.last_error" class="text-red-500">{{ managedDetail.last_error }}</dd></dl>
+        <dl class="grid grid-cols-[8rem_1fr] gap-2 rounded-lg bg-slate-50 p-4 dark:bg-slate-800"><dt class="muted">设备</dt><dd class="font-mono">{{ managedDetail.device_id }}</dd><dt class="muted">已接收版本</dt><dd>{{ managedDetail.acknowledged_revision }} / {{ managedDetail.target_revision }}</dd><dt class="muted">最近处理版本</dt><dd>{{ managedDetail.applied_revision }}</dd><dt class="muted">网络信息同步</dt><dd>{{ managedDetail.config_sync_verified ? '已验证同步服务器' : '暂无已验证同步服务器' }}</dd><dt class="muted">本地覆盖</dt><dd>{{ managedDetail.local_overrides.length ? managedDetail.local_overrides.join(', ') : '无' }}</dd><dt v-if="managedDetail.last_error" class="muted">错误</dt><dd v-if="managedDetail.last_error" class="text-red-500">{{ managedDetail.last_error }}</dd></dl>
         <div class="flex flex-wrap gap-2"><button class="btn-secondary" @click="managedAction('clear')">清除本地覆盖</button><button class="btn-danger" @click="managedAction('detach')">解除服务端管理</button></div>
       </div></template>
     </AppModal>

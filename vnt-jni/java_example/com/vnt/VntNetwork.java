@@ -1,5 +1,10 @@
 package com.vnt;
 
+import java.util.ArrayList;
+import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 /**
  * VNT网络实例
  *
@@ -9,7 +14,6 @@ public class VntNetwork {
 
     private long nativeHandle;
     private boolean closed = false;
-    private Thread tunRebuildThread;
 
     // 包内构造，只能通过VntManager创建
     VntNetwork(long handle) {
@@ -17,20 +21,44 @@ public class VntNetwork {
     }
 
     /**
-     * 注册网络（连接服务器）
-     * @return 注册结果，包含分配的IP、掩码等信息
-     * @throws VntException 注册失败时抛出异常
+     * 获取当前网络（网段信息）。
+     * createNetwork 时底层已在后台连接服务器并注册：网络已配置则立即返回，
+     * 否则等待注册结果返回网段信息。
+     * @return 网络信息，包含本机IP、掩码等
+     * @throws VntException 获取失败时抛出异常
      */
-    public RegisterResult register() throws VntException {
+    public NetworkResult getNetwork() throws VntException {
         checkClosed();
-        String resultJson = nativeRegister(nativeHandle);
-        return RegisterResult.fromJson(resultJson);
+        String resultJson = nativeGetNetwork(nativeHandle);
+        return NetworkResult.fromJson(resultJson);
     }
 
     /**
-     * 启动TUN设备
-     * @param tunFd TUN设备文件描述符（Android VpnService.Builder.establish()返回的fd）
-     *              传入-1表示让VNT自动创建（仅非Android平台支持）
+     * 获取实例最近日志（每个实例保留最后 50 条，按时间正序）。
+     * createNetwork 时底层已在后台连接服务器并注册，运行期错误会写入实例日志。
+     * @return 日志条目列表
+     * @throws VntException 获取失败时抛出异常
+     */
+    public List<LogEntry> getLogs() throws VntException {
+        checkClosed();
+        String resultJson = nativeGetLogs(nativeHandle);
+        try {
+            JSONArray array = new JSONArray(resultJson);
+            List<LogEntry> logs = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                logs.add(LogEntry.fromJson(array.getJSONObject(i)));
+            }
+            return logs;
+        } catch (Exception e) {
+            throw new VntException("Failed to parse logs: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 启动TUN设备。
+     * Android 传入 VpnService.Builder.establish() 返回的 fd；传 -1 表示由
+     * VNT 自动创建（仅非 Android 平台支持）。
+     * @param tunFd TUN设备文件描述符
      * @throws VntException 启动失败时抛出异常
      */
     public void startTun(int tunFd) throws VntException {
@@ -41,79 +69,46 @@ public class VntNetwork {
     }
 
     /**
-     * 设置网络IP（仅非Android平台使用）
-     * @param ip IP地址
-     * @param prefixLen 前缀长度
-     * @throws VntException 设置失败时抛出异常
+     * 阻塞等待下一次运行期事件：组网实例停止或新的完整快照。
+     * 对应 PC 端 cli/web 主循环的 nextEvent：收到 instance_stopped 时应
+     * 结束变更循环，收到 changed 时快照由 {@link #applyRuntimeChange(int)}
+     * 消费。
      */
-    public void setNetworkIp(String ip, int prefixLen) throws VntException {
+    public RuntimeEvent nextEvent() throws VntException {
         checkClosed();
-        if (!nativeSetNetworkIp(nativeHandle, ip, prefixLen)) {
-            throw new VntException("Failed to set network IP");
-        }
-    }
-
-    /** Blocks until Rust has a pending Android TUN replacement request. */
-    public TunRebuildRequest waitTunRebuild() throws VntException {
-        checkClosed();
-        return TunRebuildRequest.fromJson(nativeWaitTunRebuild(nativeHandle));
-    }
-
-    /** Ownership of a detached TUN fd transfers to Rust. */
-    public void replaceTun(long requestId, int tunFd) throws VntException {
-        checkClosed();
-        if (!nativeReplaceTun(nativeHandle, requestId, tunFd)) {
-            throw new VntException("Failed to replace TUN task");
-        }
-    }
-
-    /** Ends a pending rebuild without disturbing the current Rust-owned TUN. */
-    public void rejectTunRebuild(long requestId, String reason) throws VntException {
-        checkClosed();
-        if (!nativeRejectTunRebuild(nativeHandle, requestId, reason)) {
-            throw new VntException("Failed to reject TUN rebuild");
-        }
+        return RuntimeEvent.fromJson(nativeNextEvent(nativeHandle));
     }
 
     /**
-     * Runs a Java-owned listener loop. Rust does not receive or retain this
-     * listener; the loop pulls events through {@link #waitTunRebuild()}.
+     * 应用 nextEvent 返回的最新快照（不携带 TUN fd）：纯策略/服务器类变更
+     * 原地生效。快照的 {@link RuntimeChange#isVpnRebuild()} /
+     * {@link RuntimeChange#isInstanceRebuild()} 为 true 说明需要新接口，
+     * 应改用 {@link #applyRuntimeChange(int)} 携带新建接口的 fd。
+     *
+     * @return 应用结果：applied / need_fd、rebuild（忽略了需要新接口的标志）
+     * @throws VntException 应用失败时抛出异常
      */
-    public synchronized void listenTunRebuild(TunRebuildListener listener) {
+    public ChangeApplyResult applyRuntimeChange() throws VntException {
         checkClosed();
-        if (tunRebuildThread != null) {
-            throw new IllegalStateException("TUN rebuild listener already started");
-        }
-        tunRebuildThread = new Thread(() -> {
-            while (!closed) {
-                try {
-                    TunRebuildRequest request = waitTunRebuild();
-                    try {
-                        listener.onTunRebuildRequired(request);
-                    } catch (Exception error) {
-                        // A listener failure must complete the pending Rust
-                        // request immediately; otherwise the config update
-                        // would wait for its 30-second timeout.
-                        if (!closed) {
-                            try {
-                                rejectTunRebuild(request.getRequestId(), error.toString());
-                            } catch (Exception rejectError) {
-                                error.addSuppressed(rejectError);
-                            }
-                            error.printStackTrace();
-                        }
-                    }
-                } catch (IllegalStateException ignored) {
-                    break;
-                } catch (Exception error) {
-                    if (!closed) {
-                        error.printStackTrace();
-                    }
-                }
-            }
-        }, "vnt-tun-rebuild-listener");
-        tunRebuildThread.setDaemon(true);
-        tunRebuildThread.start();
+        String resultJson = nativeApplyRuntimeChange(nativeHandle);
+        return ChangeApplyResult.fromJson(resultJson);
+    }
+
+    /**
+     * 应用 nextEvent 返回的最新快照，携带宿主新建的 TUN fd：快照的
+     * {@link RuntimeChange#isVpnRebuild()} /
+     * {@link RuntimeChange#isInstanceRebuild()} 为 true 时使用。携带 fd
+     * 且有虚拟网卡时整体重建 fd 型设备（虚拟地址/MTU 以快照为准）；组网
+     * 实例由 native 内部重建，订阅连接保持不断。
+     *
+     * @param tunFd 宿主新建的 TUN fd
+     * @return 应用结果：applied / need_fd / rebuild
+     * @throws VntException 应用失败时抛出异常
+     */
+    public ChangeApplyResult applyRuntimeChange(int tunFd) throws VntException {
+        checkClosed();
+        String resultJson = nativeApplyRuntimeChangeFd(nativeHandle, tunFd);
+        return ChangeApplyResult.fromJson(resultJson);
     }
 
     /**
@@ -177,12 +172,12 @@ public class VntNetwork {
 
     // ========== Native 方法 ==========
 
-    private static native String nativeRegister(long handle);
+    private static native String nativeGetNetwork(long handle);
+    private static native String nativeGetLogs(long handle);
     private static native boolean nativeStartTun(long handle, int tunFd);
-    private static native boolean nativeSetNetworkIp(long handle, String ip, int prefixLen);
-    private static native String nativeWaitTunRebuild(long handle);
-    private static native boolean nativeReplaceTun(long handle, long requestId, int tunFd);
-    private static native boolean nativeRejectTunRebuild(long handle, long requestId, String reason);
+    private static native String nativeNextEvent(long handle);
+    private static native String nativeApplyRuntimeChange(long handle);
+    private static native String nativeApplyRuntimeChangeFd(long handle, int tunFd);
     private static native long nativeGetApi(long handle);
     private static native boolean nativeIsNoTun(long handle);
     private static native boolean nativeStop(long handle);

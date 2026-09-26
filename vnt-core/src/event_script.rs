@@ -1,11 +1,10 @@
-/// 事件脚本：在指定事件（网卡创建成功、掉线、重连成功、IP 变化）发生时调用外部脚本。
+/// 事件脚本：在掉线或重连成功时调用外部脚本。
 ///
 /// 脚本通过命令行参数接收事件名和事件数据，例如：
 /// ```text
-/// <script> netcard-created --ip 10.26.0.2 --prefix-length 24 --gateway 10.26.0.1 --broadcast 10.26.0.255 --server quic://1.2.3.4:29872
 /// <script> disconnected --server quic://1.2.3.4:29872
 /// <script> reconnected --server quic://1.2.3.4:29872 --ip 10.26.0.2 ...
-/// <script> ip-updated --old-ip 10.26.0.2 --new-ip 10.26.0.9 --prefix-length 24 --gateway 10.26.0.1 --broadcast 10.26.0.255 --server quic://1.2.3.4:29872
+/// <script> device_applied --ip 10.26.0.2 --prefix-length 24 --mtu 1380 ...
 /// ```
 ///
 /// 脚本异步执行（fire-and-forget），失败仅记录日志，不影响组网主流程。
@@ -14,24 +13,22 @@ use tokio::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EventScriptType {
-    /// 虚拟网卡创建成功、应用 IP 完成
-    NetCardCreated,
     /// 与服务器断开连接（掉线）
     Disconnected,
     /// 断开后重连成功
     Reconnected,
-    /// 服务端下发新 IP，本机虚拟 IP 发生变化
-    IpUpdated,
+    /// 配置变更后虚拟网卡被（重新）应用：热更新地址/路由/MTU/网卡名、
+    /// 重启网卡任务，或实例重建后新网卡启动
+    DeviceApplied,
 }
 
 impl EventScriptType {
     /// 传给脚本的第一个参数（事件名）。
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
-            Self::NetCardCreated => "netcard-created",
             Self::Disconnected => "disconnected",
             Self::Reconnected => "reconnected",
-            Self::IpUpdated => "ip-updated",
+            Self::DeviceApplied => "device_applied",
         }
     }
 }

@@ -55,10 +55,6 @@ impl QuicTunnelClient {
         }
     }
 
-    pub(crate) fn replace_from(&self, prepared: &Self) {
-        self.inner.store(prepared.inner.load_full());
-    }
-
     pub async fn open_bi(&self, dest: Ipv4Addr) -> anyhow::Result<(SendStream, RecvStream)> {
         let inner = self.inner.load();
         inner.open_bi(dest).await

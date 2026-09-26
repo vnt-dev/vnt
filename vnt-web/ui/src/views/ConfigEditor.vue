@@ -77,7 +77,7 @@ const resetSections = (data) => {
   }
 };
 
-// 打开时加载内容
+// 打开时加载内容;immediate 保证带着 show=true 首次挂载(如从总览页跳转打开)时也能加载
 watch(
   () => props.show,
   async (val) => {
@@ -113,6 +113,7 @@ watch(
       editorContent.value = NEW_CONFIG_TEMPLATE;
     }
   },
+  { immediate: true },
 );
 
 // 表单和订阅页签共用同一份结构化配置。从 TOML 模式切回时先解析，
@@ -1050,7 +1051,7 @@ const sectionChevronClass = (expanded) =>
               <div>
                 <h4 class="font-bold text-slate-900 dark:text-white">订阅服务端配置</h4>
                 <p class="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
-                  填入 VNTS 提供的订阅链接，启动时获取最新配置，并在连接通过验证后接收服务端实时更新。
+                  填入 VNTS 提供的订阅链接。启动时获取完整配置；运行中仅实时应用虚拟 IP、网关、掩码和出口路由，其他字段在下次启动时生效。
                 </p>
               </div>
             </div>
@@ -1069,7 +1070,7 @@ const sectionChevronClass = (expanded) =>
               v-model.trim="formData.subscription"
               rows="5"
               class="input min-h-32 resize-y font-mono text-xs leading-5"
-              placeholder="可选：vnt2://join/1/…"
+              placeholder="可选：vnt2://join/2/…"
               spellcheck="false"
             ></textarea>
             <p class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">

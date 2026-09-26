@@ -2,13 +2,19 @@
 import { ref, computed, watch } from "vue";
 import { useAppStore } from "../stores/app";
 import { useUiStore } from "../stores/ui";
+import { getConfig } from "../api";
 import AppSelect from "./AppSelect.vue";
+import AppModal from "./AppModal.vue";
 
 // 启动组网面板:选择配置 + 启动,总览页与实例页复用
 const app = useAppStore();
 const ui = useUiStore();
 
 const localSelectedConfig = ref("");
+const showPreview = ref(false);
+const previewText = ref("");
+const previewName = ref("");
+const previewLoading = ref(false);
 
 // 只列出没有对应实例的配置(同一配置最多一个实例)
 const availableConfigs = computed(() =>
@@ -41,6 +47,31 @@ const handleStart = () => {
   }
   app.startVnt(localSelectedConfig.value);
 };
+
+// 预览配置文件的原始内容(尚未启动,没有合并后的生效配置)
+const openPreview = async (fileName) => {
+  previewName.value = fileName;
+  previewText.value = "";
+  previewLoading.value = true;
+  showPreview.value = true;
+  try {
+    previewText.value = await getConfig(fileName);
+  } catch (e) {
+    ui.toast.error(e.message);
+    showPreview.value = false;
+  } finally {
+    previewLoading.value = false;
+  }
+};
+
+const copyPreview = async () => {
+  try {
+    await navigator.clipboard.writeText(previewText.value);
+    ui.toast.success("已复制");
+  } catch {
+    ui.toast.error("复制失败");
+  }
+};
 </script>
 
 <template>
@@ -62,6 +93,13 @@ const handleStart = () => {
         <AppSelect v-model="localSelectedConfig" :options="configOptions" placeholder="请选择配置…" aria-label="选择配置" />
       </div>
       <button
+        class="btn-ghost"
+        :disabled="!localSelectedConfig"
+        @click="openPreview(localSelectedConfig)"
+      >
+        预览
+      </button>
+      <button
         class="btn-primary px-8"
         :disabled="!localSelectedConfig || !!app.loadingMap[localSelectedConfig]"
         @click="handleStart"
@@ -71,4 +109,23 @@ const handleStart = () => {
       </button>
     </div>
   </div>
+
+  <AppModal :show="showPreview" panel-class="w-full max-w-2xl" @close="showPreview = false">
+    <template #header>
+      <div>
+        <h2 class="text-lg font-bold text-slate-900 dark:text-white">配置预览</h2>
+        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ previewName }}</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn-ghost btn-sm" type="button" :disabled="!previewText" @click="copyPreview">复制</button>
+        <button class="btn-ghost btn-sm" type="button" @click="showPreview = false">关闭</button>
+      </div>
+    </template>
+    <template #body>
+      <div class="p-6">
+        <div v-if="previewLoading" class="py-16 text-center text-sm muted">正在读取…</div>
+        <pre v-else class="max-h-[60vh] overflow-auto rounded-lg bg-slate-50 p-4 font-mono text-xs leading-5 text-slate-800 dark:bg-slate-800 dark:text-slate-200">{{ previewText }}</pre>
+      </div>
+    </template>
+  </AppModal>
 </template>

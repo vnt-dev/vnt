@@ -13,7 +13,7 @@ use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::inbound::P2pInboundHandler;
 use crate::tunnel_core::p2p::node_info::NodeInfoMap;
 use crate::tunnel_core::p2p::outbound::P2pOutbound;
-use crate::tunnel_core::p2p::route_table::RouteTable;
+use crate::tunnel_core::p2p::route_table::{Route, RouteTable};
 use crate::tunnel_core::p2p::transport::nat_test::{
     my_nat_info, query_tcp_public_addr_loop, query_udp_public_addr_loop,
 };
@@ -370,6 +370,16 @@ impl P2pTask {
     }
 }
 
+/// ping_all 的每节点探测上限：路由列表按评分降序维护，前 N 条即最优
+/// 候选。仅探测有限条数，超出上限的备用路由不再保活，由
+/// route_timeout_task 自然过期，避免为每个备用路径持续付出保活开销。
+const MAX_PINGED_ROUTES_PER_NODE: usize = 3;
+
+/// 取出一个节点待探测的路由：评分最高的前 MAX_PINGED_ROUTES_PER_NODE 条。
+fn ping_targets(list: &[Route]) -> &[Route] {
+    &list[..list.len().min(MAX_PINGED_ROUTES_PER_NODE)]
+}
+
 pub async fn ping_all(
     network: SharedNetworkAddr,
     packet_loss_stats: PacketLossStats,
@@ -384,10 +394,7 @@ pub async fn ping_all(
         let vec = route_table.route_table();
 
         for (id, list) in vec {
-            for (index, route) in list.iter().enumerate() {
-                if index > 4 && !route.is_direct() {
-                    continue;
-                }
+            for route in ping_targets(&list) {
                 let ping = match build_route_ping(
                     src,
                     id,
@@ -517,6 +524,7 @@ pub async fn tunnel_dispatch_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustp2p_core::route_table::{Protocol, RouteKey};
 
     #[test]
     fn direct_peer_probe_uses_unspecified_destination() {
@@ -572,5 +580,36 @@ mod tests {
         assert_eq!(packet.msg_type().unwrap(), MsgType::Ping);
         assert_eq!(packet.max_ttl(), 2);
         assert_eq!(packet.ttl(), 2);
+    }
+
+    #[test]
+    fn pings_only_the_best_routes_per_node() {
+        let local = SocketAddr::from(([10, 26, 0, 2], 40000));
+        let peer = SocketAddr::from(([10, 26, 0, 9], 40000));
+        // RouteTable 维护列表为评分降序，这里显式排好序后验证只取前 3 条
+        let mut list = [10u32, 20, 30, 40, 50]
+            .map(|rtt| {
+                Route::from_with_loss(
+                    RouteKey::new(
+                        Protocol::UDP,
+                        local,
+                        SocketAddr::new(peer.ip(), 40000 + rtt as u16),
+                    ),
+                    1,
+                    rtt,
+                    0,
+                )
+            })
+            .to_vec();
+        list.sort_by_key(|route| std::cmp::Reverse(route.score()));
+
+        let targets = ping_targets(&list);
+        assert_eq!(targets.len(), MAX_PINGED_ROUTES_PER_NODE);
+        assert_eq!(
+            targets.iter().map(|route| route.rtt()).collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
+        assert_eq!(ping_targets(&list[..2]).len(), 2);
+        assert!(ping_targets(&[]).is_empty());
     }
 }

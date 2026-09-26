@@ -43,17 +43,23 @@ impl ServerOutbound {
         }
     }
 
-    /// Atomically redirects all existing outbound handles to a prepared set
-    /// of server queues. Data-plane owners keep this stable dispatcher.
-    pub(crate) fn replace_from(&self, prepared: &ServerOutbound) {
-        self.inner.store(prepared.inner.load_full());
-    }
     pub fn exists_route(&self, dest: &Ipv4Addr) -> bool {
         let inner = self.inner.load();
         inner
             .server_info_collection
             .find_ip_to_server(&inner.server_id_list, dest)
             .is_some()
+    }
+
+    /// 用新的发送通道表整体替换当前表（运行期服务端增删后发布）。
+    pub(crate) fn update_senders(&self, sender: Arc<HashMap<u32, Sender<(Bytes, Instant)>>>) {
+        let inner = self.inner.load();
+        self.inner.store(Arc::new(ServerOutboundInner {
+            server_id_list: Arc::new(sender.keys().copied().collect()),
+            sender,
+            server_info_collection: inner.server_info_collection.clone(),
+            packet_crypto: inner.packet_crypto.clone(),
+        }));
     }
     pub fn server_id_list(&self) -> Arc<Vec<u32>> {
         self.inner.load().server_id_list.clone()
