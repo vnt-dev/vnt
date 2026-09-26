@@ -3,17 +3,13 @@ name: Build vn-link-cli
 on:
   workflow_dispatch:
   push:
+    branches:
+      - '**'
     tags:
       - 'vn-link-cli-*'
-    paths:
-      - 'vn-link-cli/**'
-      - 'vn-link/**'
-      - '.github/workflows/vn-link-cli.yml'
   pull_request:
-    paths:
-      - 'vn-link-cli/**'
-      - 'vn-link/**'
-      - '.github/workflows/vn-link-cli.yml'
+    branches:
+      - '**'
 
 env:
   CARGO_TERM_COLOR: always
