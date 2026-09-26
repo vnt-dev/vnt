@@ -10,11 +10,11 @@ log = "0.4.17"
 anyhow = "1.0.82"
 parking_lot = "0.12.1"
 
-tokio = { version = "1.37.0", features = ["full"] }
+tokio = { version = "1.37.0", features = ["rt", "rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
 crossbeam-utils = "0.8"
 
 [features]
-default = ["server_encrypt", "aes_gcm", "aes_cbc", "aes_ecb", "sm4_cbc", "chacha20_poly1305", "port_mapping", "lz4_compress"]
+default = []
 openssl = ["vnt/openssl"]
 openssl-vendored = ["vnt/openssl-vendored"]
 ring-cipher = ["vnt/ring-cipher"]

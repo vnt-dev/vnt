@@ -27,43 +27,43 @@ jobs:
         include:
           - TARGET: i686-unknown-linux-musl
             OS: ubuntu-latest
-            FEATURES: ring-cipher,openssl-vendored,wss
+            FEATURES: ""
           - TARGET: x86_64-unknown-linux-musl
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: aarch64-unknown-linux-musl
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: armv7-unknown-linux-musleabihf
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: armv7-unknown-linux-musleabi
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: arm-unknown-linux-musleabihf
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: arm-unknown-linux-musleabi
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: x86_64-apple-darwin
             OS: macos-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: aarch64-apple-darwin
             OS: macos-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: i686-pc-windows-msvc
             OS: windows-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: x86_64-pc-windows-msvc
             OS: windows-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: mipsel-unknown-linux-musl
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
           - TARGET: mips-unknown-linux-musl
             OS: ubuntu-latest
-            FEATURES: ring-cipher,wss
+            FEATURES: ""
 
     runs-on: ${{ matrix.OS }}
     env:
@@ -206,10 +206,12 @@ jobs:
 
       - name: Build vn-link-cli
         run: |
+          FEATURE_ARG=""
+          if [ -n "$FEATURES" ]; then FEATURE_ARG="--features $FEATURES"; fi
           if [[ $TARGET =~ ^mips.*$ ]]; then
-            cargo +nightly build --package vn-link-cli --release --target $TARGET -Z build-std=std,panic_abort --features $FEATURES
+            cargo +nightly build --package vn-link-cli --release --target $TARGET --no-default-features $FEATURE_ARG -Z build-std=std,panic_abort
           else
-            cargo build --package vn-link-cli --release --target $TARGET --features $FEATURES
+            cargo build --package vn-link-cli --release --target $TARGET --no-default-features $FEATURE_ARG
           fi
 
       - name: Compress
