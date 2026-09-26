@@ -104,28 +104,27 @@ fn heartbeat0(
         }
     }
     let peer_list = { device_map.lock().1.clone() };
-    for peer in peer_list.values() {
-        if !peer.status.is_online() || peer.wireguard {
-            continue;
-        }
-        if current_device.is_gateway(&peer.virtual_ip) {
-            continue;
-        }
-        if current_device.status.offline() {
-            continue;
-        }
-        if context.route_table.route_one(&peer.virtual_ip).is_none() {
-            //路由为空，则向服务端地址发送
-            let net_packet = match heartbeat_packet_client(client_cipher, src_ip, peer.virtual_ip) {
-                Ok(net_packet) => net_packet,
-                Err(e) => {
-                    log::error!("heartbeat_packet err={:?}", e);
-                    continue;
-                }
-            };
-            if let Err(e) = context.send_default(&net_packet, current_device.connect_server) {
-                log::error!("heartbeat_packet send_default err={:?}", e);
+    let mut no_route_peers: Vec<_> = peer_list
+        .values()
+        .filter(|peer| {
+            peer.status.is_online()
+                && !peer.wireguard
+                && !current_device.is_gateway(&peer.virtual_ip)
+                && context.route_table.route_one(&peer.virtual_ip).is_none()
+        })
+        .collect();
+    no_route_peers.shuffle(&mut rand::thread_rng());
+    const MAX_NO_ROUTE_HEARTBEAT: usize = 4;
+    for peer in no_route_peers.iter().take(MAX_NO_ROUTE_HEARTBEAT) {
+        let net_packet = match heartbeat_packet_client(client_cipher, src_ip, peer.virtual_ip) {
+            Ok(net_packet) => net_packet,
+            Err(e) => {
+                log::error!("heartbeat_packet err={:?}", e);
+                continue;
             }
+        };
+        if let Err(e) = context.send_default(&net_packet, current_device.connect_server) {
+            log::error!("heartbeat_packet send_default err={:?}", e);
         }
     }
 }
@@ -176,43 +175,53 @@ fn client_relay0(
     device_map: &Mutex<(u16, HashMap<Ipv4Addr, PeerDeviceInfo>)>,
     client_cipher: &Cipher,
 ) -> anyhow::Result<()> {
-    // 离线了不再探测
     if current_device.status.offline() {
         return Ok(());
     }
-    let peer_list = { device_map.lock().1.clone() };
+    let all_peers = { device_map.lock().1.clone() };
+    let mut probe_peers: Vec<_> = all_peers
+        .values()
+        .filter(|peer| {
+            !peer.wireguard
+                && peer.status.is_online()
+                && peer.virtual_ip != current_device.virtual_ip
+                && !(context
+                    .route_table
+                    .route_one_p2p(&peer.virtual_ip)
+                    .is_some()
+                    && !context.first_latency())
+        })
+        .collect();
+    probe_peers.shuffle(&mut rand::thread_rng());
+
     let mut routes = context.route_table.route_table_p2p();
-    for peer in peer_list.values() {
-        if peer.wireguard
-            || !peer.status.is_online()
-            || peer.virtual_ip == current_device.virtual_ip
-        {
-            continue;
-        }
-        if context
-            .route_table
-            .route_one_p2p(&peer.virtual_ip)
-            .is_some()
-            && !context.first_latency()
-        {
-            continue;
-        }
+    if routes.is_empty() {
+        return Ok(());
+    }
+    routes.shuffle(&mut rand::thread_rng());
+
+    const MAX_PROBE_PEERS: usize = 3;
+    const MAX_PROBE_ROUTES: usize = 2;
+    let mut sent = 0usize;
+    for peer in probe_peers.iter().take(MAX_PROBE_PEERS) {
         let client_packet =
             heartbeat_packet_client(client_cipher, current_device.virtual_ip, peer.virtual_ip)?;
-
-        //随机发送到其他地址，看有没有客户端符合转发条件
-        routes.shuffle(&mut rand::thread_rng());
-
-        for (index, (ip, route)) in routes.iter().enumerate() {
+        let mut route_sent = 0usize;
+        for (ip, route) in routes.iter() {
             if current_device.is_gateway(ip) {
                 continue;
             }
             if let Err(e) = context.send_by_key(&client_packet, route.route_key()) {
                 log::error!("{:?}", e);
             }
-            if index >= 2 {
+            route_sent += 1;
+            if route_sent >= MAX_PROBE_ROUTES {
                 break;
             }
+        }
+        sent += 1;
+        if sent >= MAX_PROBE_PEERS {
+            break;
         }
     }
     Ok(())

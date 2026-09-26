@@ -103,7 +103,7 @@ fn broadcast(
     let mut relay = false;
     let mut overflow = false;
     for (index, peer_ip) in list.into_iter().enumerate() {
-        if index > MAX_COUNT {
+        if index >= MAX_COUNT {
             overflow = true;
             break;
         }
