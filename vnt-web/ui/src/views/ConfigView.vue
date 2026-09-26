@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, watch, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import QRCode from "qrcode";
 import { useAppStore } from "../stores/app";
 import { useUiStore } from "../stores/ui";
@@ -12,6 +13,8 @@ import { buildNetworkQrPayload, buildSubscriptionQrPayload } from "../utils/netw
 
 const app = useAppStore();
 const ui = useUiStore();
+const route = useRoute();
+const router = useRouter();
 
 const showEditor = ref(false);
 const editorFileName = ref(null);
@@ -71,6 +74,17 @@ const openEditor = (fileName) => {
   editorFileName.value = fileName;
   showEditor.value = true;
 };
+
+// 从其他页面带 ?edit=文件名 跳转过来时直接打开编辑器;消费后立即清掉参数,避免刷新重复弹出
+watch(
+  () => route.query.edit,
+  (fileName) => {
+    if (!fileName) return;
+    openEditor(String(fileName));
+    router.replace({ path: "/config" });
+  },
+  { immediate: true },
+);
 
 const onSaved = async () => {
   await app.fetchConfigList();

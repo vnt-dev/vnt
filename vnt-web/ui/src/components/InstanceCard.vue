@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from "vue";
+import { useRouter } from "vue-router";
 import { useAppStore } from "../stores/app";
 import { useStartLogStore } from "../stores/startLog";
 import { useUiStore } from "../stores/ui";
@@ -13,6 +14,7 @@ const props = defineProps({
 const app = useAppStore();
 const startLog = useStartLogStore();
 const ui = useUiStore();
+const router = useRouter();
 
 const info = computed(() => app.infoOf(props.inst.file_name));
 const loading = computed(() => !!app.loadingMap[props.inst.file_name]);
@@ -40,6 +42,11 @@ const statusText = (status) =>
 
 const select = () => {
   if (props.selectable) app.selectedInstance = props.inst.file_name;
+};
+
+// 跳转到组网配置页,由 query 参数带上要编辑的配置文件名
+const editConfig = () => {
+  router.push({ path: "/config", query: { edit: props.inst.file_name } });
 };
 
 const confirmStop = async () => {
@@ -87,6 +94,7 @@ const confirmDismiss = async () => {
         {{ displayName }}
       </h3>
       <div class="flex shrink-0 items-center gap-1.5">
+        <button class="btn-ghost btn-sm" title="编辑对应配置" @click.stop="editConfig">编辑</button>
         <span
           v-if="info.config_changed"
           class="badge-yellow"

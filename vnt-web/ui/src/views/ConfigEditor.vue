@@ -77,7 +77,7 @@ const resetSections = (data) => {
   }
 };
 
-// 打开时加载内容
+// 打开时加载内容;immediate 保证带着 show=true 首次挂载(如从总览页跳转打开)时也能加载
 watch(
   () => props.show,
   async (val) => {
@@ -113,6 +113,7 @@ watch(
       editorContent.value = NEW_CONFIG_TEMPLATE;
     }
   },
+  { immediate: true },
 );
 
 // 表单和订阅页签共用同一份结构化配置。从 TOML 模式切回时先解析，
