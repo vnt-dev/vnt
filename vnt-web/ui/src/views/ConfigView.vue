@@ -8,7 +8,7 @@ import EmptyState from "../components/EmptyState.vue";
 import AppModal from "../components/AppModal.vue";
 import ConfigEditor from "./ConfigEditor.vue";
 import { parseTomlToForm } from "../utils/toml";
-import { buildNetworkQrPayload } from "../utils/networkQr";
+import { buildNetworkQrPayload, buildSubscriptionQrPayload } from "../utils/networkQr";
 
 const app = useAppStore();
 const ui = useUiStore();
@@ -23,6 +23,7 @@ const configTextLoading = ref(false);
 const qrLoading = ref(false);
 const qrImage = ref("");
 const qrConfig = ref(null);
+const qrSubscription = ref("");
 const qrError = ref("");
 const managedStatuses = ref({});
 const managedDetail = ref(null);
@@ -81,12 +82,16 @@ const openQr = async (fileName) => {
   qrLoading.value = true;
   qrImage.value = "";
   qrConfig.value = null;
+  qrSubscription.value = "";
   qrError.value = "";
   try {
     const form = parseTomlToForm(await getConfig(fileName));
-    const payload = buildNetworkQrPayload(form);
+    // 订阅链接配置的二维码内容就是链接本身；普通配置编码组网参数
+    const subscription = buildSubscriptionQrPayload(form);
+    const payload = subscription ? null : buildNetworkQrPayload(form);
+    qrSubscription.value = subscription;
     qrConfig.value = payload;
-    qrImage.value = await QRCode.toDataURL(JSON.stringify(payload), {
+    qrImage.value = await QRCode.toDataURL(subscription || JSON.stringify(payload), {
       errorCorrectionLevel: "M",
       width: 360,
       margin: 2,
@@ -135,6 +140,15 @@ const openConfigText = async (fileName) => {
 const copyConfigText = async () => {
   try {
     await navigator.clipboard.writeText(configText.value);
+    ui.toast.success("已复制");
+  } catch {
+    ui.toast.error("复制失败");
+  }
+};
+
+const copySubscription = async () => {
+  try {
+    await navigator.clipboard.writeText(qrSubscription.value);
     ui.toast.success("已复制");
   } catch {
     ui.toast.error("复制失败");
@@ -246,8 +260,8 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
     <AppModal :show="showQr" panel-class="w-full max-w-md" @close="showQr = false">
       <template #header>
         <div>
-          <h2 class="text-lg font-bold text-slate-900 dark:text-white">扫码加入网络</h2>
-          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">使用 VNT 安卓客户端扫描</p>
+          <h2 class="text-lg font-bold text-slate-900 dark:text-white">{{ qrSubscription ? "扫码订阅配置" : "扫码加入网络" }}</h2>
+          <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ qrSubscription ? "使用 VNT 安卓客户端扫描，按订阅链接接入" : "使用 VNT 安卓客户端扫描" }}</p>
         </div>
         <button class="btn-ghost btn-sm" type="button" @click="showQr = false">关闭</button>
       </template>
@@ -268,6 +282,18 @@ onMounted(async () => { await app.fetchConfigList(); await refreshSubscriptionSt
               <div class="flex gap-3"><dt class="w-20 shrink-0 muted">加密密码</dt><dd class="text-slate-900 dark:text-white">{{ qrConfig.password ? "已包含" : "未设置" }}</dd></div>
             </dl>
             <p class="text-xs leading-5 text-amber-600 dark:text-amber-400">二维码包含组网凭据，请仅分享给可信设备。</p>
+          </div>
+          <div v-else-if="qrSubscription" class="space-y-5">
+            <div class="mx-auto w-fit rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+              <img :src="qrImage" class="h-auto w-full max-w-[320px]" alt="VNT 订阅配置二维码" />
+            </div>
+            <div class="rounded-lg bg-slate-50 p-4 text-sm dark:bg-slate-800/60">
+              <p class="break-all font-mono text-slate-900 dark:text-white">{{ qrSubscription }}</p>
+            </div>
+            <div class="flex justify-center">
+              <button class="btn-ghost btn-sm" type="button" @click="copySubscription">复制订阅链接</button>
+            </div>
+            <p class="text-xs leading-5 text-amber-600 dark:text-amber-400">二维码包含接入凭据，请仅分享给可信设备。</p>
           </div>
         </div>
       </template>
