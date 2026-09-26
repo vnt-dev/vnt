@@ -1,0 +1,260 @@
+name: Build vn-link-cli
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'vn-link-cli-*'
+    paths:
+      - 'vn-link-cli/**'
+      - 'vn-link/**'
+      - '.github/workflows/vn-link-cli.yml'
+  pull_request:
+    paths:
+      - 'vn-link-cli/**'
+      - 'vn-link/**'
+      - '.github/workflows/vn-link-cli.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - TARGET: i686-unknown-linux-musl
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,openssl-vendored,wss
+          - TARGET: x86_64-unknown-linux-musl
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: aarch64-unknown-linux-musl
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: armv7-unknown-linux-musleabihf
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: armv7-unknown-linux-musleabi
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: arm-unknown-linux-musleabihf
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: arm-unknown-linux-musleabi
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: x86_64-apple-darwin
+            OS: macos-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: aarch64-apple-darwin
+            OS: macos-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: i686-pc-windows-msvc
+            OS: windows-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: x86_64-pc-windows-msvc
+            OS: windows-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: mipsel-unknown-linux-musl
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+          - TARGET: mips-unknown-linux-musl
+            OS: ubuntu-latest
+            FEATURES: ring-cipher,wss
+
+    runs-on: ${{ matrix.OS }}
+    env:
+      NAME: vn-link-cli
+      TARGET: ${{ matrix.TARGET }}
+      OS: ${{ matrix.OS }}
+      FEATURES: ${{ matrix.FEATURES }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Init submodules
+        run: git submodule update --init --recursive --remote && git submodule status
+
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ./target
+          key: build-cargo-registry-${{matrix.TARGET}}
+
+      - name: Use strawberry perl
+        if: startsWith(matrix.OS, 'windows')
+        run: echo OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          override: true
+
+      - name: Verify Rust version
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Install dependencies on Ubuntu
+        if: startsWith(matrix.OS, 'ubuntu')
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang llvm libc6-dev-i386 \
+            crossbuild-essential-arm64 crossbuild-essential-armhf musl-tools libc6-dev wget tar
+
+          case $TARGET in
+            mipsel-unknown-linux-musl)
+              MUSL_URI=mipsel-linux-muslsf-cross
+              URL=mipsel-linux-muslsf
+              ;;
+            aarch64-unknown-linux-musl)
+              MUSL_URI=aarch64-linux-musl-cross
+              ;;
+            armv7-unknown-linux-musleabihf)
+              MUSL_URI=armv7l-linux-musleabihf-cross
+              ;;
+            armv7-unknown-linux-musleabi)
+              MUSL_URI=armv7m-linux-musleabi-cross
+              ;;
+            arm-unknown-linux-musleabihf)
+              MUSL_URI=arm-linux-musleabihf-cross
+              ;;
+            arm-unknown-linux-musleabi)
+              MUSL_URI=arm-linux-musleabi-cross
+              ;;
+            mips-unknown-linux-musl)
+              MUSL_URI=mips-linux-muslsf-cross
+              URL=mips-linux-muslsf
+              ;;
+            i686-unknown-linux-musl)
+              MUSL_URI=i686-linux-musl-cross
+              ;;
+          esac
+
+          if [ -n "$MUSL_URI" ]; then
+            mkdir -p /opt/musl_gcc
+            wget -c https://github.com/rustp2p/musl-cross/releases/download/0.0.1/$MUSL_URI.tgz -P /opt/musl_gcc/
+            tar zxf /opt/musl_gcc/$MUSL_URI.tgz -C /opt/musl_gcc/
+            sudo ln -s /opt/musl_gcc/$MUSL_URI/bin/*gcc /usr/bin/
+          fi
+
+          if [[ $TARGET =~ ^mips.*$ ]]; then
+            cd /opt/musl_gcc/${URL}-cross/lib/gcc/${URL}/11.2.1
+            cp libgcc_eh.a libunwind.a
+            rustup toolchain install nightly-x86_64-unknown-linux-gnu
+            rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+            RUST_LIB_SRC=$HOME/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/
+            if [[ -f $RUST_LIB_SRC/library/Cargo.lock && ! -f $RUST_LIB_SRC/Cargo.lock ]]; then
+               cp -f $RUST_LIB_SRC/library/Cargo.lock $RUST_LIB_SRC/Cargo.lock
+            fi
+          fi
+
+      - name: Configure cargo for cross-compilation
+        run: |
+          cat >>~/.cargo/config <<EOF
+          [target.x86_64-unknown-linux-musl]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.aarch64-unknown-linux-musl]
+          linker = "aarch64-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.armv7-unknown-linux-musleabihf]
+          linker = "armv7l-linux-musleabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.armv7-unknown-linux-musleabi]
+          linker = "armv7m-linux-musleabi-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.arm-unknown-linux-musleabihf]
+          linker = "arm-linux-musleabihf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.arm-unknown-linux-musleabi]
+          linker = "arm-linux-musleabi-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.mipsel-unknown-linux-musl]
+          linker = "mipsel-linux-muslsf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/mipsel-linux-muslsf/lib",
+          "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/lib/gcc/mipsel-linux-muslsf/11.2.1"]
+          [target.mips-unknown-linux-musl]
+          linker = "mips-linux-muslsf-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/mips-linux-muslsf/lib",
+          "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/lib/gcc/mips-linux-muslsf/11.2.1"]
+          [target.x86_64-pc-windows-msvc]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.i686-pc-windows-msvc]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.x86_64-apple-darwin]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.aarch64-apple-darwin]
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          [target.i686-unknown-linux-musl]
+          linker = "i686-linux-musl-gcc"
+          rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]
+          EOF
+
+      - name: Install rust target
+        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') &&  ! startsWith(matrix.TARGET, 'mips') }}
+        run: rustup target add $TARGET
+
+      - name: Build vn-link-cli
+        run: |
+          if [[ $TARGET =~ ^mips.*$ ]]; then
+            cargo +nightly build --package vn-link-cli --release --target $TARGET -Z build-std=std,panic_abort --features $FEATURES
+          else
+            cargo build --package vn-link-cli --release --target $TARGET --features $FEATURES
+          fi
+
+      - name: Compress
+        run: |
+          mkdir -p ./artifacts
+          if [[ $OS =~ ^windows.*$ ]]; then
+              EXEC=vn-link-cli.exe
+          else
+              EXEC=vn-link-cli
+          fi
+          if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
+            TAG=$GITHUB_REF_NAME
+          else
+            TAG=$GITHUB_SHA
+          fi
+          mv ./target/$TARGET/release/$EXEC ./artifacts/$EXEC
+          cd ./artifacts
+          tar -czf vn-link-cli-$TARGET-$TAG.tar.gz *
+          mkdir upload_file
+          mv vn-link-cli-$TARGET-$TAG.tar.gz ./upload_file/
+
+      - name: Archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn-link-cli-${{ matrix.TARGET }}
+          path: ./artifacts/upload_file
+
+  deploy:
+    if: startsWith(github.ref, 'refs/tags/vn-link-cli-')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+      - name: Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./artifacts/**/*.tar.gz
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
