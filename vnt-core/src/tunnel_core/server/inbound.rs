@@ -19,6 +19,7 @@ use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
 use crate::tunnel_core::server::rpc::RpcNotifier;
 use crate::tunnel_core::server::transport::TransportClient;
+use crate::utils::atomic64::AtomicI64;
 use anyhow::bail;
 use pnet_packet::Packet;
 use pnet_packet::icmp::{IcmpPacket, IcmpTypes};
@@ -27,7 +28,7 @@ use prost::Message;
 use rustp2p_core::nat::NatInfo;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) struct ServerTurnInboundHandler {
     server_id: u32,

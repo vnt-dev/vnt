@@ -3,6 +3,7 @@ use crate::nat::{NetInput, SubnetMapping};
 use crate::port_mapping::PortMapping;
 use crate::tls::verifier::CertValidationMode;
 use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAddress};
+use crate::utils::atomic64::AtomicU64;
 use anyhow::{anyhow, bail};
 use ipnet::Ipv4Net;
 use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
@@ -14,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::Ordering,
 };
 
 pub const MAX_NETWORK_CODE_LEN: usize = 32;

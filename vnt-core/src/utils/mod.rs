@@ -1,4 +1,5 @@
 pub(crate) mod addr;
+pub(crate) mod atomic64;
 pub mod device_id;
 pub(crate) mod dns_query;
 pub(crate) mod http_get;
