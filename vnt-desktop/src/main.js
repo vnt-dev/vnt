@@ -4,16 +4,33 @@ import { check } from "@tauri-apps/plugin-updater";
 
 let pendingUpdate = null;
 
+// Tauri 命令返回 Err(String) 时，invoke 是以原始字符串 reject 的（不是 Error），
+// 上层直接读 e.message 会得到 undefined。统一在边界处转成 Error，
+// 让 Web 与桌面端拿到一致的错误对象。
+const asError = (error) => {
+  if (error instanceof Error) return error;
+  if (typeof error === "string") return new Error(error);
+  if (error && typeof error.message === "string") return new Error(error.message);
+  let detail;
+  try {
+    detail = JSON.stringify(error);
+  } catch {
+    detail = String(error);
+  }
+  return new Error(detail ?? String(error));
+};
+const invokeSafe = (cmd, args) => invoke(cmd, args).catch(asError);
+
 globalThis.__VNT_DESKTOP__ = true;
 globalThis.__VNT_API_REQUEST__ = ({ method, path, body }) =>
-  invoke("api_request", { method, path, body });
+  invokeSafe("api_request", { method, path, body });
 globalThis.__VNT_SETTINGS__ = {
-  status: () => invoke("kernel_status"),
-  saveAndRestart: (config) => invoke("save_and_restart_kernel", { config }),
-  installService: () => invoke("install_kernel_service"),
-  uninstallService: () => invoke("uninstall_kernel_service"),
-  generateToken: () => invoke("generate_web_token"),
-  openUrl: (url) => invoke("open_web_url", { url }),
+  status: () => invokeSafe("kernel_status"),
+  saveAndRestart: (config) => invokeSafe("save_and_restart_kernel", { config }),
+  installService: () => invokeSafe("install_kernel_service"),
+  uninstallService: () => invokeSafe("uninstall_kernel_service"),
+  generateToken: () => invokeSafe("generate_web_token"),
+  openUrl: (url) => invokeSafe("open_web_url", { url }),
 };
 globalThis.__VNT_UPDATER__ = {
   check: async () => {
