@@ -338,6 +338,19 @@ fn child_running(runtime: &mut KernelRuntime) -> bool {
         .is_some_and(|child| child.try_wait().ok().flatten().is_none())
 }
 
+/// 桌面端访问内置内核的 HTTP 客户端。
+///
+/// 目标地址始终是回环或用户显式配置的内网监听地址，因此必须忽略系统代理：
+/// reqwest 默认会读取 `HTTP_PROXY` 等环境变量以及 Windows 的 Internet Settings
+/// （`ProxyEnable=1` 时），用户机器上的代理会把发往本地内核的请求劫持走，
+/// 表现为连接失败或响应无法解析，而 Web 端同地址却完全正常。
+fn kernel_client() -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(15))
+        .build()?)
+}
+
 fn spawn_child(
     runtime: &mut KernelRuntime,
     executable_path: &Path,
@@ -770,9 +783,7 @@ pub fn run() -> Result<(), tauri::Error> {
             config.auto_start = service.installed && service.auto_start;
             save_kernel_config(&config_path, &config)?;
             let executable_path = resolve_sidecar_path()?;
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()?;
+            let client = kernel_client()?;
             let mut runtime = KernelRuntime {
                 config,
                 child: None,
@@ -855,6 +866,56 @@ mod tests {
         install_rustls_crypto_provider();
         assert!(rustls::crypto::CryptoProvider::get_default().is_some());
         reqwest::Client::builder().build().unwrap();
+    }
+
+    #[tokio::test]
+    async fn kernel_client_bypasses_proxy_for_local_kernel() {
+        install_rustls_crypto_provider();
+        // 先占一个端口再释放，得到一个必然无人监听的地址作为代理目标
+        let dead_port = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let kernel_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0_u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                    )
+                    .await;
+                let _ = socket.flush().await;
+            }
+        });
+
+        // 继承代理的客户端会把本地请求发往代理，连不上内核
+        let proxied = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::http(format!("http://127.0.0.1:{dead_port}")).unwrap())
+            .build()
+            .unwrap();
+        assert!(
+            proxied
+                .get(format!("http://{kernel_addr}/api/version"))
+                .send()
+                .await
+                .is_err()
+        );
+
+        // 内核客户端必须直连本地地址，不受代理影响
+        let kernel = kernel_client().unwrap();
+        assert!(
+            kernel
+                .get(format!("http://{kernel_addr}/api/version"))
+                .send()
+                .await
+                .is_ok()
+        );
     }
 
     #[test]
