@@ -255,7 +255,7 @@ impl NetworkManager {
             }
             self.device_io_manager
                 .apply_system_routes(change.routes.clone())
-                .await?;
+                .await;
             // MTU 热更新：桌面平台 tun-rs 支持动态修改，无需重建设备
             let mtu = change.config.mtu.or(self.config.mtu).unwrap_or(DEFAULT_MTU);
             self.device_io_manager.set_mtu(mtu).await?;

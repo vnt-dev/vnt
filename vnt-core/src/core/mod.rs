@@ -755,7 +755,7 @@ impl NetworkManager {
         #[cfg(target_os = "android")]
         let _ = network;
         // 先提交转发路由表（配置即新值），再执行网卡与系统路由变更动作；
-        // 动作失败不回滚，错误上抛由调用方记录
+        // 动作失败不回滚，错误上抛由调用方记录（系统路由失败内部自行消化）
         self.app_state.subnet_route.apply_routes(routes.clone());
         #[cfg(not(target_os = "android"))]
         if self.device_mode().has_device() {
@@ -763,7 +763,7 @@ impl NetworkManager {
                 .set_network(network.ip, network.prefix_len)
                 .await?;
             #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-            self.device_io_manager.apply_system_routes(routes).await?;
+            self.device_io_manager.apply_system_routes(routes).await;
         }
         Ok(())
     }

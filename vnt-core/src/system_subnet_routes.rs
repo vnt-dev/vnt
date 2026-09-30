@@ -14,7 +14,7 @@ pub(crate) struct SystemRouteReconciler {
 }
 
 impl SystemRouteReconciler {
-    pub(crate) fn apply(&mut self, desired: Vec<NetInput>) -> std::io::Result<()> {
+    pub(crate) fn apply(&mut self, desired: Vec<NetInput>) {
         self.inner.reconcile(desired)
     }
 }
@@ -59,7 +59,10 @@ impl<B: RouteBackend> RouteReconciler<B> {
             .with_if_index(self.if_index)
     }
 
-    fn reconcile(&mut self, desired: Vec<NetInput>) -> std::io::Result<()> {
+    /// 单条路由失败（如同前缀路由已产生的 EEXIST）只告警跳过：路由冲突
+    /// 不应让组网启动失败。失败条目不记入 installed，后续 reconcile 会重试；
+    /// 删除失败的条目保留在 installed 中，供重试与 Drop 清理。
+    fn reconcile(&mut self, desired: Vec<NetInput>) {
         let stale = self
             .installed
             .iter()
@@ -68,9 +71,13 @@ impl<B: RouteBackend> RouteReconciler<B> {
             .collect::<Vec<_>>();
         for input in stale {
             let route = self.route(&input);
-            self.backend.delete(&route)?;
-            self.installed.retain(|installed| installed != &input);
-            log::info!("delete route [{route}] successful");
+            match self.backend.delete(&route) {
+                Ok(()) => {
+                    self.installed.retain(|installed| installed != &input);
+                    log::info!("delete route [{route}] successful");
+                }
+                Err(error) => log::warn!("delete route [{route}] error: {error:?}"),
+            }
         }
 
         for input in desired {
@@ -78,11 +85,14 @@ impl<B: RouteBackend> RouteReconciler<B> {
                 continue;
             }
             let route = self.route(&input);
-            self.backend.add(&route)?;
-            self.installed.push(input);
-            log::info!("add route [{route}] successful");
+            match self.backend.add(&route) {
+                Ok(()) => {
+                    self.installed.push(input);
+                    log::info!("add route [{route}] successful");
+                }
+                Err(error) => log::warn!("add route [{route}] error: {error:?}"),
+            }
         }
-        Ok(())
     }
 }
 
@@ -149,11 +159,11 @@ mod tests {
         let old = input("192.168.0.0/24", [10, 26, 0, 2]);
         let new = input("172.16.0.0/16", [10, 26, 0, 3]);
 
-        assert!(reconciler.reconcile(vec![old.clone()]).is_err());
+        reconciler.reconcile(vec![old.clone()]);
         assert!(reconciler.installed.is_empty());
-        reconciler.reconcile(vec![old.clone()]).unwrap();
+        reconciler.reconcile(vec![old.clone()]);
         assert_eq!(reconciler.installed, vec![old]);
-        reconciler.reconcile(vec![new.clone()]).unwrap();
+        reconciler.reconcile(vec![new.clone()]);
         assert_eq!(reconciler.installed, vec![new]);
 
         let events = events.lock().unwrap();
@@ -162,6 +172,34 @@ mod tests {
         assert!(events[1].starts_with("add "));
         assert!(events[2].starts_with("delete "));
         assert!(events[3].starts_with("add "));
+    }
+
+    /// 单条路由添加失败（如内核已存在同前缀路由产生的 EEXIST）不能中断
+    /// 其余路由的安装，也不能让调用方拿到错误
+    #[test]
+    fn failed_add_does_not_block_remaining_routes() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let backend = MockBackend {
+            events: events.clone(),
+            fail_next_add: true,
+        };
+        let mut reconciler = RouteReconciler {
+            backend,
+            if_index: 7,
+            installed: Vec::new(),
+        };
+        let first = input("192.168.0.0/24", [10, 26, 0, 2]);
+        let second = input("172.16.0.0/16", [10, 26, 0, 3]);
+
+        reconciler.reconcile(vec![first.clone(), second.clone()]);
+        assert_eq!(reconciler.installed, vec![second.clone()]);
+
+        // 失败条目在下一次 reconcile 重试成功
+        reconciler.reconcile(vec![first.clone(), second.clone()]);
+        assert_eq!(reconciler.installed, vec![second, first]);
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 3);
     }
 
     #[test]
@@ -176,9 +214,7 @@ mod tests {
                 if_index: 9,
                 installed: Vec::new(),
             };
-            reconciler
-                .reconcile(vec![input("192.168.1.0/24", [10, 26, 0, 2])])
-                .unwrap();
+            reconciler.reconcile(vec![input("192.168.1.0/24", [10, 26, 0, 2])]);
         }
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 2);

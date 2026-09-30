@@ -161,17 +161,28 @@ impl DeviceIOManager {
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
-    pub async fn apply_system_routes(&self, routes: Vec<NetInput>) -> anyhow::Result<()> {
+    pub async fn apply_system_routes(&self, routes: Vec<NetInput>) {
         let mut binding = self.applied_system_routes.lock().await;
         if binding.is_none() {
-            let if_index = self.device_if_index().await?;
-            *binding = Some(crate::system_subnet_routes::prepare(if_index)?);
+            let if_index = match self.device_if_index().await {
+                Ok(if_index) => if_index,
+                Err(error) => {
+                    log::warn!("skip system routes, query device if_index failed: {error:#}");
+                    return;
+                }
+            };
+            match crate::system_subnet_routes::prepare(if_index) {
+                Ok(reconciler) => *binding = Some(reconciler),
+                Err(error) => {
+                    log::warn!("skip system routes, create route manager failed: {error:#}");
+                    return;
+                }
+            }
         }
         binding
             .as_mut()
             .expect("route reconciler initialized")
-            .apply(routes)?;
-        Ok(())
+            .apply(routes);
     }
 
     #[cfg(not(target_os = "android"))]
