@@ -37,7 +37,9 @@ pub async fn run_client(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
     framed
-        .send(IpcRequest { ipc_cmd: Some(cmd) }.encode_to_vec().into())
+        .send(prost::bytes::Bytes::from(
+            IpcRequest { ipc_cmd: Some(cmd) }.encode_to_vec(),
+        ))
         .await?;
     // 读响应加超时：服务端异常不回复时客户端不能永久挂起
     let response = tokio::time::timeout(Duration::from_secs(5), framed.next())

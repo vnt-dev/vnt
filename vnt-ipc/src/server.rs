@@ -111,7 +111,9 @@ async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result
         let rs = IpcResponse {
             response_payload: Some(rs),
         };
-        framed.send(rs.encode_to_vec().into()).await?;
+        framed
+            .send(prost::bytes::Bytes::from(rs.encode_to_vec()))
+            .await?;
     }
 
     Ok(())

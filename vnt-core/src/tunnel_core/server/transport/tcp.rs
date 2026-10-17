@@ -27,7 +27,7 @@ impl TlsTcpTransport {
             // `SinkExt::close` flushes the length-delimited sink and shuts down
             // the rustls writer, which sends TLS close_notify before dropping
             // the underlying TCP stream.
-            let _ = framed.close().await;
+            let _ = SinkExt::<Bytes>::close(&mut framed).await;
         }
     }
     pub async fn connect(&mut self, config: &ConnectConfig) -> anyhow::Result<()> {
