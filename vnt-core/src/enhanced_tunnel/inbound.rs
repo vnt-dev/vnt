@@ -89,6 +89,50 @@ impl EnhancedInboundInner {
         } else {
             None
         };
+        let ipv6_offset = if ethernet {
+            ethernet_frame
+                .filter(|frame| frame.ethertype == EtherTypes::Ipv6)
+                .map(|frame| frame.payload_offset)
+        } else if buf.first().is_some_and(|v| v >> 4 == 6) {
+            Some(0)
+        } else {
+            None
+        };
+        if let Some(offset) = ipv6_offset {
+            if self.device_mode == DeviceMode::No
+                || !matches!(
+                    msg_type,
+                    MsgType::Turn | MsgType::Broadcast | MsgType::ExcludeBroadcast
+                )
+                || crate::virtual_ipv6::packet(&buf[offset..]).is_none()
+            {
+                return Ok(());
+            }
+            if self.device_mode == DeviceMode::Tun && ethernet {
+                let frame = ethernet_frame.expect("IPv6 Ethernet frame was parsed above");
+                if !crate::ethernet::is_broadcast_or_multicast(frame.destination)
+                    && frame.destination != crate::ethernet::mac_from_ip(network_addr.ip)
+                {
+                    return Ok(());
+                }
+            }
+            if self.device_mode == DeviceMode::Tun
+                && ethernet
+                && crate::virtual_ipv6::is_ndp(&buf[offset..])
+            {
+                if let Some(reply) = crate::ethernet::build_ndp_reply(buf.as_ref(), network_addr.ip)
+                {
+                    self.hybrid_outbound
+                        .ethernet_unicast_outbound(*network_addr, src, reply)
+                        .await?;
+                }
+                return Ok(());
+            }
+            self.tun_data_inbound
+                .inbound(buf, network_addr, src, ethernet)
+                .await?;
+            return Ok(());
+        }
         if ethernet && self.device_mode != DeviceMode::Tap {
             if let Some(arp) = parse_arp_ipv4(buf.as_ref())
                 && arp.operation == ArpOperations::Request

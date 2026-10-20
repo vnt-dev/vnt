@@ -1,5 +1,5 @@
 use crate::context::NetworkAddr;
-use crate::ethernet::strip_ipv4;
+use crate::ethernet::{strip_ip, strip_ipv4};
 use crate::nat::internal_nat::InternalNatInbound;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tun::TunDataInbound;
@@ -22,7 +22,7 @@ impl EnhancedTunInbound {
         match self {
             EnhancedTunInbound::Tun(tun) => {
                 let data = if ethernet {
-                    let Some(ip) = strip_ipv4(data) else {
+                    let Some(ip) = strip_ip(data) else {
                         return Ok(());
                     };
                     ip
@@ -47,6 +47,9 @@ impl EnhancedTunInbound {
                 } else {
                     data
                 };
+                if data.first().is_some_and(|v| v >> 4 == 6) {
+                    return Ok(());
+                }
                 nat.send(&data, net).await
             }
         }
@@ -62,6 +65,73 @@ mod tests {
     use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
     use crate::tun::{TunDataInbound, tun_channel};
     use pnet_packet::ethernet::EtherTypes;
+
+    #[tokio::test]
+    async fn ipv6_tun_tap_conversion_and_destination_filter() {
+        use crate::ethernet::{strip_ip, wrap_ipv6};
+        let net = network();
+        let source = Ipv4Addr::new(10, 26, 0, 8);
+        let make_packet = |destination: std::net::Ipv6Addr| {
+            let mut data = TransmissionBytes::with_capacity(HEAD_LENGTH + 14, 128);
+            let mut bytes = [0u8; 48];
+            bytes[0] = 0x60;
+            bytes[5] = 8;
+            bytes[6] = 17;
+            bytes[8..24].copy_from_slice(&crate::virtual_ipv6::address(source).octets());
+            bytes[24..40].copy_from_slice(&destination.octets());
+            data.put(&bytes).unwrap();
+            data
+        };
+        let (tx, mut rx) = tun_channel();
+        let tun = EnhancedTunInbound::Tun(TunDataInbound::new(
+            tx,
+            AllowSubnetExternalRoute::new(vec![]),
+            DeviceMode::Tun,
+        ));
+        let expected = make_packet(crate::virtual_ipv6::address(net.ip));
+        let frame = wrap_ipv6(expected, source, &net).unwrap();
+        tun.inbound(frame, &net, source, true).await.unwrap();
+        assert_eq!(rx.receiver.recv().await.unwrap().len(), 48);
+        tun.inbound(
+            make_packet("2001:db8::1".parse().unwrap()),
+            &net,
+            source,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(rx.receiver.try_recv().is_err());
+        tun.inbound(
+            make_packet(crate::virtual_ipv6::address(source)),
+            &net,
+            source,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(rx.receiver.try_recv().is_err());
+        let (tx, mut rx) = tun_channel();
+        let tap = EnhancedTunInbound::Tap(TunDataInbound::new(
+            tx,
+            AllowSubnetExternalRoute::new(vec![]),
+            DeviceMode::Tap,
+        ));
+        let multicast = "ff02::1234".parse().unwrap();
+        tap.inbound(make_packet(multicast), &net, source, false)
+            .await
+            .unwrap();
+        let frame = rx.receiver.recv().await.unwrap();
+        assert_eq!(
+            parse_frame(&frame).unwrap().destination.octets(),
+            [0x33, 0x33, 0, 0, 0x12, 0x34]
+        );
+        assert_eq!(strip_ip(frame).unwrap().len(), 48);
+        let packet = make_packet("2001:db8::2".parse().unwrap());
+        let frame = wrap_ipv6(packet, source, &net).unwrap();
+        let expected = frame.as_ref().to_vec();
+        tap.inbound(frame, &net, source, true).await.unwrap();
+        assert_eq!(rx.receiver.recv().await.unwrap().as_ref(), expected);
+    }
 
     fn network() -> NetworkAddr {
         NetworkAddr {

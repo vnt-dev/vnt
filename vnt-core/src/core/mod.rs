@@ -37,6 +37,8 @@ use rand::RngExt;
 use std::sync::Arc;
 pub mod change_runtime;
 mod ip_update;
+#[cfg(test)]
+mod ipv6_tests;
 
 use ip_update::IpUpdateContext;
 pub const DEFAULT_MTU: u16 = 1380;

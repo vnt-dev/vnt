@@ -1,6 +1,6 @@
 use crate::context::NetworkAddr;
 use crate::context::config::DeviceMode;
-use crate::ethernet::wrap_ipv4;
+use crate::ethernet::{wrap_ipv4, wrap_ipv6};
 use crate::nat::AllowSubnetExternalRoute;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tun::TunInbound;
@@ -30,10 +30,32 @@ impl TunDataInbound {
 impl TunDataInbound {
     pub async fn send_ip(
         &self,
-        data: TransmissionBytes,
+        mut data: TransmissionBytes,
         net: &NetworkAddr,
         src_node: Ipv4Addr,
     ) -> anyhow::Result<()> {
+        if data.first().is_some_and(|v| v >> 4 == 6) {
+            let Some(ip) = crate::virtual_ipv6::packet(data.as_ref()) else {
+                return Ok(());
+            };
+            if ip.get_destination() != crate::virtual_ipv6::address(net.ip)
+                && !ip.get_destination().is_multicast()
+            {
+                return Ok(());
+            }
+            let length = 40 + usize::from(ip.get_payload_length());
+            data.set_len(length)?;
+            let data = if self.device_mode == DeviceMode::Tap {
+                let Some(frame) = wrap_ipv6(data, src_node, net) else {
+                    return Ok(());
+                };
+                frame
+            } else {
+                data
+            };
+            self.tun_inbound.sender.send(data).await?;
+            return Ok(());
+        }
         if data.is_empty() || data[0] >> 4 != 4 {
             return Ok(());
         }

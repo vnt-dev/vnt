@@ -16,6 +16,7 @@ pub mod tls;
 pub(crate) mod tun;
 pub mod tunnel_core;
 pub mod utils;
+pub mod virtual_ipv6;
 
 pub mod api;
 pub(crate) mod enhanced_tunnel;

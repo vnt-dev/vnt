@@ -3,6 +3,55 @@
 use crate::nat::NetInput;
 use route_manager::{Route, RouteManager};
 
+/// Own only routes actually added by VNT; connected/system routes are left untouched.
+pub(crate) struct VirtualIpv6Routes<B: RouteBackend = SystemRouteBackend> {
+    backend: B,
+    installed: Vec<Route>,
+    if_index: u32,
+}
+
+impl VirtualIpv6Routes<SystemRouteBackend> {
+    pub(crate) fn new(if_index: u32) -> std::io::Result<Self> {
+        Ok(Self {
+            backend: SystemRouteBackend(RouteManager::new()?),
+            installed: vec![],
+            if_index,
+        })
+    }
+}
+
+impl<B: RouteBackend> VirtualIpv6Routes<B> {
+    pub(crate) fn apply(&mut self) -> std::io::Result<()> {
+        for (address, prefix) in [
+            (crate::virtual_ipv6::PREFIX, 96),
+            ("ff00::".parse().unwrap(), 8),
+        ] {
+            let route = Route::new(address.into(), prefix).with_if_index(self.if_index);
+            if self.backend.list()?.iter().any(|v| {
+                v.destination() == route.destination()
+                    && v.prefix() == prefix
+                    && v.if_index() == Some(self.if_index)
+            }) {
+                continue;
+            }
+            match self.backend.add(&route) {
+                Ok(()) => self.installed.push(route),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<B: RouteBackend> Drop for VirtualIpv6Routes<B> {
+    fn drop(&mut self) {
+        for route in &self.installed {
+            let _ = self.backend.delete(route);
+        }
+    }
+}
+
 pub(crate) fn prepare(if_index: u32) -> std::io::Result<SystemRouteReconciler> {
     Ok(SystemRouteReconciler {
         inner: RouteReconciler::new(if_index)?,
@@ -19,14 +68,20 @@ impl SystemRouteReconciler {
     }
 }
 
-trait RouteBackend {
+pub(crate) trait RouteBackend {
     fn add(&mut self, route: &Route) -> std::io::Result<()>;
     fn delete(&mut self, route: &Route) -> std::io::Result<()>;
+    fn list(&mut self) -> std::io::Result<Vec<Route>> {
+        Ok(vec![])
+    }
 }
 
-struct SystemRouteBackend(RouteManager);
+pub(crate) struct SystemRouteBackend(RouteManager);
 
 impl RouteBackend for SystemRouteBackend {
+    fn list(&mut self) -> std::io::Result<Vec<Route>> {
+        self.0.list()
+    }
     fn add(&mut self, route: &Route) -> std::io::Result<()> {
         self.0.add(route)
     }
@@ -114,6 +169,50 @@ mod tests {
     use ipnet::Ipv4Net;
     use std::net::Ipv4Addr;
     use std::sync::{Arc, Mutex};
+
+    struct Ipv6Backend {
+        routes: Arc<Mutex<Vec<Route>>>,
+        fail_next_add: bool,
+    }
+    impl RouteBackend for Ipv6Backend {
+        fn list(&mut self) -> std::io::Result<Vec<Route>> {
+            Ok(self.routes.lock().unwrap().clone())
+        }
+        fn add(&mut self, route: &Route) -> std::io::Result<()> {
+            if std::mem::take(&mut self.fail_next_add) {
+                return Err(std::io::ErrorKind::PermissionDenied.into());
+            }
+            self.routes.lock().unwrap().push(route.clone());
+            Ok(())
+        }
+        fn delete(&mut self, route: &Route) -> std::io::Result<()> {
+            self.routes.lock().unwrap().retain(|v| v != route);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn ipv6_routes_are_idempotent_retry_errors_and_preserve_system_routes() {
+        let connected = Route::new(crate::virtual_ipv6::PREFIX.into(), 96).with_if_index(7);
+        let routes = Arc::new(Mutex::new(vec![connected.clone()]));
+        {
+            let mut reconciler = VirtualIpv6Routes {
+                backend: Ipv6Backend {
+                    routes: routes.clone(),
+                    fail_next_add: true,
+                },
+                installed: vec![],
+                if_index: 7,
+            };
+            assert!(reconciler.apply().is_err());
+            assert!(reconciler.installed.is_empty());
+            reconciler.apply().unwrap();
+            reconciler.apply().unwrap();
+            assert_eq!(reconciler.installed.len(), 1);
+            assert_eq!(routes.lock().unwrap().len(), 2);
+        }
+        assert_eq!(*routes.lock().unwrap(), vec![connected]);
+    }
 
     #[derive(Default)]
     struct MockBackend {

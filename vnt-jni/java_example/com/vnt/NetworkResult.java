@@ -73,6 +73,10 @@ public class NetworkResult {
         return ip;
     }
 
+    public String getVirtualIpv6() { return VirtualIpv6.address(ip); }
+    public int getVirtualIpv6PrefixLen() { return VirtualIpv6.PREFIX_LEN; }
+    public String getVirtualIpv6Route() { return VirtualIpv6.ROUTE; }
+
     /**
      * 获取前缀长度（掩码位数）
      */
@@ -104,6 +108,9 @@ public class NetworkResult {
         JSONObject obj = new JSONObject();
         obj.put("ip", ip);
         obj.put("prefix_len", prefixLen);
+        obj.put("virtual_ipv6", getVirtualIpv6());
+        obj.put("virtual_ipv6_prefix_len", getVirtualIpv6PrefixLen());
+        obj.put("virtual_ipv6_route", getVirtualIpv6Route());
         obj.put("gateway", gateway == null ? JSONObject.NULL : gateway);
         obj.put("routes", new JSONArray(routes));
         return obj;

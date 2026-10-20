@@ -275,6 +275,9 @@ public class VntApi {
         public int getPrefixLen() { return prefixLen; }
         public String getGateway() { return gateway; }
         public String getBroadcast() { return broadcast; }
+        public String getVirtualIpv6() { return VirtualIpv6.address(ip); }
+        public int getVirtualIpv6PrefixLen() { return VirtualIpv6.PREFIX_LEN; }
+        public String getVirtualIpv6Route() { return VirtualIpv6.ROUTE; }
 
         @Override
         public String toString() {

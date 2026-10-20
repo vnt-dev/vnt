@@ -54,6 +54,15 @@ struct EnhancedOutboundInner {
 }
 
 impl EnhancedOutbound {
+    pub async fn ip_outbound(&self, data: TransmissionBytes) {
+        if data.first().is_some_and(|v| v >> 4 == 6) {
+            if let Err(error) = self.inner.load().ipv6_outbound(data).await {
+                log::warn!("IPv6 outbound error: {error:#}");
+            }
+        } else {
+            self.ipv4_outbound(data).await;
+        }
+    }
     pub fn new(
         network: SharedNetworkAddr,
         enhanced_quic_outbound: EnhancedQuicOutbound,
@@ -86,6 +95,33 @@ impl EnhancedOutbound {
 }
 
 impl EnhancedOutboundInner {
+    async fn ipv6_outbound(&self, mut data: TransmissionBytes) -> anyhow::Result<()> {
+        let Some(ip) = crate::virtual_ipv6::packet(data.as_ref()) else {
+            return Ok(());
+        };
+        let Some(net) = self.network.get() else {
+            return Ok(());
+        };
+        let dest = ip.get_destination();
+        let length = 40 + usize::from(ip.get_payload_length());
+        data.set_len(length)?;
+        if dest.is_multicast() {
+            // NDP is a link control protocol, like ARP; no_broadcast applies to data multicast.
+            if !self.hybrid_outbound.no_broadcast() || crate::virtual_ipv6::is_ndp(data.as_ref()) {
+                self.hybrid_outbound
+                    .ipv4_broadcast_outbound(net, data)
+                    .await?;
+            }
+        } else if let Some(peer) = crate::virtual_ipv6::node_id(dest)
+            && peer != net.ip
+            && net.network().contains(&peer)
+            && peer != net.broadcast
+            && peer != net.network().network()
+        {
+            self.hybrid_outbound.ipv6_outbound(net, data, peer).await?;
+        }
+        Ok(())
+    }
     async fn ipv4_outbound(&self, data: TransmissionBytes) {
         if data.is_empty() || data[0] >> 4 != 4 {
             return;
@@ -119,6 +155,21 @@ impl EnhancedOutboundInner {
                 || self.hybrid_outbound.is_relay_client(&arp.target_ip))
         {
             return Ok(build_arp_reply(data.as_ref(), arp.target_ip));
+        }
+
+        if frame.ethertype == EtherTypes::Ipv6 {
+            let Some(ip) = crate::virtual_ipv6::packet(&data[frame.payload_offset..]) else {
+                return Ok(None);
+            };
+            let dest = ip.get_destination();
+            if dest.is_multicast()
+                && self.hybrid_outbound.no_broadcast()
+                && !crate::virtual_ipv6::is_ndp(&data[frame.payload_offset..])
+            {
+                return Ok(None);
+            }
+            // An IPv6 suffix does not identify the owner of a TAP frame. Even
+            // derived-looking addresses must use MAC learning/flooding below.
         }
 
         if frame.ethertype == EtherTypes::Ipv4 {

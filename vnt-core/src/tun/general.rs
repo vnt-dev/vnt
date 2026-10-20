@@ -35,6 +35,8 @@ struct DeviceState {
     network: Option<(Ipv4Addr, u8)>,
     mtu: Option<u16>,
     tun_name: Option<String>,
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    ipv6_routes: Option<crate::system_subnet_routes::VirtualIpv6Routes>,
 }
 
 /// 任务替换成功后提交到 [`DeviceState`] 的字段。
@@ -201,22 +203,72 @@ impl DeviceIOManager {
     #[cfg(not(target_os = "android"))]
     pub async fn set_network(&self, ip: Ipv4Addr, prefix_len: u8) -> anyhow::Result<()> {
         let mut guard = self.device.lock().await;
-        let Some(task) = guard
+        let Some(device) = guard
             .runtime
             .as_ref()
             .and_then(|runtime| runtime.task.as_ref())
+            .map(|task| task.device.clone())
         else {
             bail!("虚拟网卡尚未启动")
         };
-        if let Some(v) = guard.network.as_ref()
-            && v.0 == ip
-            && v.1 == prefix_len
-        {
-            return Ok(());
-        }
         // 虚拟网关（服务端下发的 10.26.x.1）是协议层概念，不设置到网卡
-        if let Err(error) = task.device.set_network_address(ip, prefix_len, None) {
-            return Err(error).context("设置IP失败");
+        if guard.network != Some((ip, prefix_len)) {
+            device
+                .set_network_address(ip, prefix_len, None)
+                .context("设置IP失败")?;
+        }
+        // Encapsulated packets use the deterministic node MAC. Keep a reused TAP
+        // consistent when its node ID changes without rebuilding the interface.
+        #[cfg(any(
+            windows,
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd"
+        ))]
+        if guard
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.device_mode == DeviceMode::Tap)
+            && guard.network.is_some_and(|(previous, _)| previous != ip)
+        {
+            device
+                .set_mac_address(crate::ethernet::mac_from_ip(ip).octets())
+                .context("更新TAP MAC失败")?;
+        }
+        let ipv6 = crate::virtual_ipv6::address(ip);
+        if !device.addresses()?.contains(&std::net::IpAddr::V6(ipv6)) {
+            device
+                .add_address_v6(ipv6, crate::virtual_ipv6::PREFIX_LEN)
+                .context("设置虚拟IPv6失败")?;
+        }
+        if let Some((old_ip, _)) = guard.network
+            && old_ip != ip
+        {
+            let old_ipv6 = crate::virtual_ipv6::address(old_ip);
+            if device
+                .addresses()?
+                .contains(&std::net::IpAddr::V6(old_ipv6))
+            {
+                device
+                    .remove_address(old_ipv6.into())
+                    .context("清理旧虚拟IPv6失败")?;
+            }
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+        {
+            if guard.ipv6_routes.is_none() {
+                guard.ipv6_routes = Some(crate::system_subnet_routes::VirtualIpv6Routes::new(
+                    device.if_index()?,
+                )?);
+            }
+            guard
+                .ipv6_routes
+                .as_mut()
+                .unwrap()
+                .apply()
+                .context("设置虚拟IPv6路由失败")?;
         }
         guard.network = Some((ip, prefix_len));
         Ok(())
@@ -378,6 +430,10 @@ impl DeviceIOManager {
             }
             runtime.task = Some(replacement);
             state.network = update.network;
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+            {
+                state.ipv6_routes = None;
+            }
             state.mtu = update.mtu;
             // Dropping the old task after the new one is live closes its fd.
             drop(old_task);
@@ -587,7 +643,7 @@ async fn out_device_loop(
                 device.send(reply.as_ref()).await?;
             }
         } else {
-            enhanced_outbound.ipv4_outbound(bytes_mut).await;
+            enhanced_outbound.ip_outbound(bytes_mut).await;
         }
     }
     Ok(())

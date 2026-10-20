@@ -79,11 +79,32 @@ NAS、跨地区协作等场景。
 配置已移除，程序会提示迁移而不会静默按 TUN 启动。
 
 - `no`：不创建虚拟网卡，只提供流量出口和端口映射。
-- `tun`：创建三层网卡，网卡收发 IPv4 包。
+- `tun`：创建三层网卡，网卡收发 IPv4 和虚拟 IPv6 包。
 - `tap`：创建二层网卡，完整透传 Ethernet 帧，并与 TUN/NO 节点转换 IPv4、兼容 ARP。
 
 Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装
 `tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
+
+### 虚拟 IPv6
+
+TUN/TAP 默认保留 IPv4 并自动配置 `fd76:6e74::/96` 中的 IPv6 地址。地址后 32 位是虚拟 IPv4（node ID），例如
+`10.26.0.2` 对应 `fd76:6e74::a1a:2`。地址随虚拟 IPv4 的注册、变更和网卡重建自动更新，可使用 `ping -6`、TCP、UDP 通信。
+只为该虚拟前缀和 IPv6 多播安装接口路由，不添加 IPv6 默认路由。
+
+- TUN↔TUN：从目标 IPv6 解析 node ID，复用 IPv4 的节点选路、加密及中继，IPv6 载荷保持原样。
+- TAP↔TUN：自动处理 Ethernet 头转换及 TUN 节点的 NDP 邻居响应，无需静态邻居表。
+- TAP↔TAP：系统 NDP 自动发现邻居；也可以手动配置其他同网段 IPv6，按二层帧透传。
+
+TAP 的 IPv6 单播统一按目标 MAC 查找所属节点，未知目标先泛洪，再从远端帧的源 MAC 学习位置；
+即使 IPv6 使用 `fd76:6e74::/96` 前缀，也不从地址后缀推断所属节点。仅 TUN 出口使用 IPv6 后缀解析 node ID。
+
+普通 IPv6 多播遵循 `no_broadcast`；NDP 链路控制报文与 ARP 一样不受该选项限制。
+IPv6 不进入 NAT、端口映射、外部子网出口、QUIC 流量代理及 IKEv2/WireGuard 客户端互通；无网卡模式不消费 IPv6。
+通信端点需要升级，旧端点仍可通过 IPv4 通信；服务端协议不变。
+
+Android/iOS 等由宿主提供 TUN 的平台需要宿主同时配置 IPv6 地址和路由。JNI 网络信息返回
+`virtual_ipv6`、`virtual_ipv6_prefix_len`、`virtual_ipv6_route`；Android 示例在首次建立和重建 VPN 时自动添加派生地址、
+`fd76:6e74::/96` 和 `ff00::/8` 路由。第三方宿主也需要执行这些配置，单独升级 native 库不会改变已有 VPN 接口。
 
 ## VNT2.0 新特性
 

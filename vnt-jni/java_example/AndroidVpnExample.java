@@ -177,6 +177,9 @@ public class AndroidVpnExample extends VpnService {
         VpnService.Builder builder = new Builder();
         builder.setMtu(mtu);
         builder.addAddress(ip, prefixLen);
+        builder.addAddress(VirtualIpv6.address(ip), VirtualIpv6.PREFIX_LEN);
+        builder.addRoute("fd76:6e74::", VirtualIpv6.PREFIX_LEN);
+        builder.addRoute("ff00::", 8);
         // Android 的 addAddress 不会自动生成路由，必须显式把虚拟网段指向 tun；
         // 不要加 0.0.0.0/0，否则会劫持整机流量，普通上网请求也会进入 tun。
         builder.addRoute(networkAddress(ip, prefixLen), prefixLen);

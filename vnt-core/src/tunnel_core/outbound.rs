@@ -1134,6 +1134,19 @@ impl HybridOutbound {
         Ok(())
     }
 
+    /// Raw IPv6 uses the same overlay envelope, crypto and route selection as IPv4.
+    pub async fn ipv6_outbound(
+        &self,
+        net: NetworkAddr,
+        data: TransmissionBytes,
+        dest: Ipv4Addr,
+    ) -> anyhow::Result<()> {
+        let len = data.len() as u64;
+        self.ipv4_outbound_to(net, data, dest).await?;
+        self.traffic_stats.record_tx(dest, len);
+        Ok(())
+    }
+
     async fn ipv4_outbound_to(
         &self,
         net: NetworkAddr,

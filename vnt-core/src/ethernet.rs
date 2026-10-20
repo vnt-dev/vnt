@@ -246,9 +246,286 @@ pub fn is_broadcast_or_multicast(mac: MacAddr) -> bool {
     mac.is_broadcast() || mac.is_multicast()
 }
 
+pub fn strip_ip(mut frame: TransmissionBytes) -> Option<TransmissionBytes> {
+    let info = parse_frame(frame.as_ref())?;
+    if !matches!(info.ethertype, EtherTypes::Ipv4 | EtherTypes::Ipv6) {
+        return None;
+    }
+    frame.advance_head(info.payload_offset).ok()?;
+    if info.ethertype == EtherTypes::Ipv6 {
+        let ip = crate::virtual_ipv6::packet(frame.as_ref())?;
+        let length = 40 + usize::from(ip.get_payload_length());
+        // Rebuild only when Ethernet padding is present.
+        frame.set_len(length).ok()?;
+    }
+    Some(frame)
+}
+
+pub fn ipv6_multicast_mac(ip: std::net::Ipv6Addr) -> MacAddr {
+    let bytes = ip.octets();
+    MacAddr::new(0x33, 0x33, bytes[12], bytes[13], bytes[14], bytes[15])
+}
+
+pub fn wrap_ipv6(
+    mut packet: TransmissionBytes,
+    src_node: Ipv4Addr,
+    net: &NetworkAddr,
+) -> Option<TransmissionBytes> {
+    let ip = crate::virtual_ipv6::packet(packet.as_ref())?;
+    let dest = ip.get_destination();
+    let destination = if dest.is_multicast() {
+        ipv6_multicast_mac(dest)
+    } else {
+        mac_from_ip(net.ip)
+    };
+    packet.retreat_head(ETHERNET_HEADER_LEN).ok()?;
+    let mut frame = MutableEthernetPacket::new(packet.as_mut())?;
+    frame.set_destination(destination);
+    frame.set_source(mac_from_ip(src_node));
+    frame.set_ethertype(EtherTypes::Ipv6);
+    Some(packet)
+}
+
+/// Reply to a TAP neighbor solicitation for this TUN node, including DAD probes.
+pub fn build_ndp_reply(request: &[u8], node: Ipv4Addr) -> Option<TransmissionBytes> {
+    use pnet_packet::{
+        Packet,
+        icmpv6::{Icmpv6Packet, checksum},
+    };
+    use std::net::Ipv6Addr;
+    let frame = parse_frame(request)?;
+    if frame.ethertype != EtherTypes::Ipv6 || frame.source.is_multicast() || frame.source.is_zero()
+    {
+        return None;
+    }
+    let data = request.get(frame.payload_offset..)?;
+    let ip = crate::virtual_ipv6::packet(data)?;
+    let (offset, fragmented) = crate::virtual_ipv6::icmp_offset(data)?;
+    let end = 40 + usize::from(ip.get_payload_length());
+    let ns = data.get(offset..end)?;
+    let own = crate::virtual_ipv6::address(node);
+    if fragmented
+        || ip.get_hop_limit() != 255
+        || ns.len() < 24
+        || ns[0] != 135
+        || ns[1] != 0
+        || ns[8..24] != own.octets()
+        || ip.get_source().is_multicast()
+    {
+        return None;
+    }
+    let icmp = Icmpv6Packet::new(ns)?;
+    if checksum(&icmp, &ip.get_source(), &ip.get_destination()) != icmp.get_checksum() {
+        return None;
+    }
+    let dad = ip.get_source().is_unspecified();
+    let target_bytes = own.octets();
+    let solicited = Ipv6Addr::new(
+        0xff02,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0xff00 | u16::from(target_bytes[13]),
+        u16::from_be_bytes([target_bytes[14], target_bytes[15]]),
+    );
+    if (dad && ip.get_destination() != solicited)
+        || (!dad && ip.get_destination() != solicited && ip.get_destination() != own)
+    {
+        return None;
+    }
+    let mut options = &ns[24..];
+    while !options.is_empty() {
+        if options.len() < 2 || options[1] == 0 {
+            return None;
+        }
+        let length = usize::from(options[1]) * 8;
+        if length > options.len() || (options[0] == 1 && (dad || length != 8)) {
+            return None;
+        }
+        options = &options[length..];
+    }
+    let dest = if dad {
+        "ff02::1".parse().ok()?
+    } else {
+        ip.get_source()
+    };
+    let mac = mac_from_ip(node);
+    let size = frame.payload_offset + 40 + 32;
+    let mut reply = TransmissionBytes::with_capacity(HEAD_LENGTH, HEAD_LENGTH + size);
+    reply.put(&vec![0; size]).ok()?;
+    reply[..frame.payload_offset].copy_from_slice(&request[..frame.payload_offset]);
+    let mut ethernet = MutableEthernetPacket::new(reply.as_mut())?;
+    ethernet.set_source(mac);
+    ethernet.set_destination(if dad {
+        ipv6_multicast_mac(dest)
+    } else {
+        frame.source
+    });
+    let mut ipv6 = pnet_packet::ipv6::MutableIpv6Packet::new(&mut reply[frame.payload_offset..])?;
+    ipv6.set_version(6);
+    ipv6.set_payload_length(32);
+    ipv6.set_next_header(pnet_packet::ip::IpNextHeaderProtocols::Icmpv6);
+    ipv6.set_hop_limit(255);
+    ipv6.set_source(own);
+    ipv6.set_destination(dest);
+    let start = frame.payload_offset + 40;
+    reply[start] = 136;
+    reply[start + 4] = if dad { 0x20 } else { 0x60 }; // Override, plus Solicited for normal NS.
+    reply[start + 8..start + 24].copy_from_slice(&own.octets());
+    reply[start + 24] = 2; // Target link-layer address.
+    reply[start + 25] = 1;
+    reply[start + 26..start + 32].copy_from_slice(&mac.octets());
+    let na = Icmpv6Packet::new(&reply[start..])?;
+    let sum = checksum(&na, &own, &dest);
+    reply[start + 2..start + 4].copy_from_slice(&sum.to_be_bytes());
+    debug_assert_eq!(Icmpv6Packet::new(&reply[start..])?.packet().len(), 32);
+    Some(reply)
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn ipv6_ns(node: Ipv4Addr, dad: bool, vlan: bool) -> Vec<u8> {
+        use pnet_packet::icmpv6::{Icmpv6Packet, checksum};
+        let target = crate::virtual_ipv6::address(node);
+        let bytes = target.octets();
+        let dest = std::net::Ipv6Addr::new(
+            0xff02,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0xff00 | u16::from(bytes[13]),
+            u16::from_be_bytes([bytes[14], bytes[15]]),
+        );
+        let source = if dad {
+            std::net::Ipv6Addr::UNSPECIFIED
+        } else {
+            "fe80::1234".parse().unwrap()
+        };
+        let offset = if vlan { 18 } else { 14 };
+        let mut data = vec![0u8; offset + 40 + 24];
+        data[..6].copy_from_slice(&ipv6_multicast_mac(dest).octets());
+        data[6..12].copy_from_slice(&[2, 0, 10, 26, 0, 8]);
+        if vlan {
+            data[12..18].copy_from_slice(&[0x81, 0, 0, 42, 0x86, 0xdd]);
+        } else {
+            data[12..14].copy_from_slice(&[0x86, 0xdd]);
+        }
+        data[offset] = 0x60;
+        data[offset + 5] = 24;
+        data[offset + 6] = 58;
+        data[offset + 7] = 255;
+        data[offset + 8..offset + 24].copy_from_slice(&source.octets());
+        data[offset + 24..offset + 40].copy_from_slice(&dest.octets());
+        data[offset + 40] = 135;
+        data[offset + 48..offset + 64].copy_from_slice(&target.octets());
+        let sum = checksum(
+            &Icmpv6Packet::new(&data[offset + 40..]).unwrap(),
+            &source,
+            &dest,
+        );
+        data[offset + 42..offset + 44].copy_from_slice(&sum.to_be_bytes());
+        data
+    }
+
+    #[test]
+    fn ipv6_neighbor_resolution_and_dad_preserve_vlan_and_checksum() {
+        use pnet_packet::icmpv6::{Icmpv6Packet, checksum};
+        let node = Ipv4Addr::new(10, 26, 0, 2);
+        for dad in [false, true] {
+            for vlan in [false, true] {
+                let request = ipv6_ns(node, dad, vlan);
+                let reply = build_ndp_reply(&request, node).unwrap();
+                let frame = parse_frame(&reply).unwrap();
+                assert_eq!(frame.payload_offset, if vlan { 18 } else { 14 });
+                assert_eq!(
+                    &reply[12..frame.payload_offset],
+                    &request[12..frame.payload_offset]
+                );
+                assert_eq!(frame.source, mac_from_ip(node));
+                let ip = crate::virtual_ipv6::packet(&reply[frame.payload_offset..]).unwrap();
+                assert_eq!(ip.get_hop_limit(), 255);
+                let na = Icmpv6Packet::new(&reply[frame.payload_offset + 40..]).unwrap();
+                assert_eq!(na.get_icmpv6_type().0, 136);
+                assert_eq!(
+                    checksum(&na, &ip.get_source(), &ip.get_destination()),
+                    na.get_checksum()
+                );
+                assert_eq!(
+                    reply[frame.payload_offset + 44],
+                    if dad { 0x20 } else { 0x60 }
+                );
+                assert_eq!(
+                    ip.get_destination(),
+                    if dad {
+                        "ff02::1".parse::<std::net::Ipv6Addr>().unwrap()
+                    } else {
+                        "fe80::1234".parse::<std::net::Ipv6Addr>().unwrap()
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ipv6_ndp_rejects_malformed_and_other_targets() {
+        let node = Ipv4Addr::new(10, 26, 0, 2);
+        let request = ipv6_ns(node, false, false);
+        assert!(build_ndp_reply(&request, Ipv4Addr::new(10, 26, 0, 3)).is_none());
+        for (offset, value) in [(21, 64), (54, 134), (55, 1), (56, 0xff)] {
+            let mut bad = request.clone();
+            bad[offset] = value;
+            assert!(build_ndp_reply(&bad, node).is_none());
+        }
+        for len in 0..request.len() {
+            assert!(build_ndp_reply(&request[..len], node).is_none());
+        }
+        let mut fragment = request.clone();
+        fragment[20] = 44;
+        fragment.splice(54..54, [58, 0, 0, 1, 0, 0, 0, 1]);
+        fragment[19] = 32;
+        assert!(build_ndp_reply(&fragment, node).is_none());
+    }
+
+    #[test]
+    fn ipv6_ndp_unicast_probe_and_option_validation() {
+        use pnet_packet::icmpv6::{Icmpv6Packet, checksum};
+        fn update_checksum(frame: &mut [u8]) {
+            frame[56..58].fill(0);
+            let ip = crate::virtual_ipv6::packet(&frame[14..]).unwrap();
+            let sum = checksum(
+                &Icmpv6Packet::new(&frame[54..]).unwrap(),
+                &ip.get_source(),
+                &ip.get_destination(),
+            );
+            frame[56..58].copy_from_slice(&sum.to_be_bytes());
+        }
+        let node = Ipv4Addr::new(10, 26, 0, 2);
+        let mut request = ipv6_ns(node, false, false);
+        request[38..54].copy_from_slice(&crate::virtual_ipv6::address(node).octets());
+        update_checksum(&mut request);
+        assert!(build_ndp_reply(&request, node).is_some());
+        request.extend_from_slice(&[1, 1, 2, 0, 10, 26, 0, 8]);
+        request[19] = 32;
+        update_checksum(&mut request);
+        assert!(build_ndp_reply(&request, node).is_some());
+        request[79] = 0;
+        update_checksum(&mut request);
+        assert!(build_ndp_reply(&request, node).is_none());
+        request[79] = 2;
+        update_checksum(&mut request);
+        assert!(build_ndp_reply(&request, node).is_none());
+        let mut dad = ipv6_ns(node, true, false);
+        dad.extend_from_slice(&[1, 1, 2, 0, 10, 26, 0, 8]);
+        dad[19] = 32;
+        update_checksum(&mut dad);
+        assert!(build_ndp_reply(&dad, node).is_none());
+    }
 
     #[test]
     fn node_mac_is_stable() {

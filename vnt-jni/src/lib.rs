@@ -273,6 +273,9 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeGetNetwork<'local>(
                 "success": true,
                 "ip": network.ip.to_string(),
                 "prefix_len": network.prefix_len,
+                "virtual_ipv6": vnt_core::virtual_ipv6::address(network.ip).to_string(),
+                "virtual_ipv6_prefix_len": vnt_core::virtual_ipv6::PREFIX_LEN,
+                "virtual_ipv6_route": vnt_core::virtual_ipv6::ROUTE,
                 "gateway": network.gateway.map(|gateway| gateway.to_string()),
                 "broadcast": network.broadcast.to_string(),
             });
@@ -863,6 +866,9 @@ pub extern "system" fn Java_com_vnt_VntApi_nativeGetNetwork<'local>(
                 let json = serde_json::json!({
                     "ip": network.ip.to_string(),
                     "prefix_len": network.prefix_len,
+                "virtual_ipv6": vnt_core::virtual_ipv6::address(network.ip).to_string(),
+                "virtual_ipv6_prefix_len": vnt_core::virtual_ipv6::PREFIX_LEN,
+                "virtual_ipv6_route": vnt_core::virtual_ipv6::ROUTE,
                     "gateway": network.gateway.map(|gateway| gateway.to_string()),
                     "broadcast": network.broadcast.to_string(),
                 });
