@@ -1416,6 +1416,15 @@ fn begin_vnt_start(state: &HttpAppState, file_name: &str) -> anyhow::Result<u64>
     Ok(generation)
 }
 
+/// 启动时等待「注册 + 创建虚拟网卡」完成的上限。
+///
+/// 加固过的企业机器上，创建 Wintun 网卡（PnP 安装 + NDIS 过滤器绑定 + 安全
+/// 软件扫描）实测可达 30~45 秒。旧的 30 秒上限会让**刚好完成**的启动被判超时
+/// 并回滚，日志表现为 `Network Started` 与 `启动网络实例超时` 几乎同时出现，
+/// 随后 `starting_to_running VNT is not starting` /
+/// `实例启动完成时 generation 已失效`。放宽到 120 秒，同时仍保留上限防止真卡死。
+const START_READY_TIMEOUT: Duration = Duration::from_secs(120);
+
 async fn start_vnt_internal_reserved(
     state: &HttpAppState,
     file_name: String,
@@ -1526,7 +1535,7 @@ async fn start_vnt_internal_reserved(
         drop(on_error_guard);
     });
     state.set_start_handle(&file_name, generation, start_handle);
-    match tokio::time::timeout(Duration::from_secs(30), ready_rx).await {
+    match tokio::time::timeout(START_READY_TIMEOUT, ready_rx).await {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(error))) => Err(anyhow!(error)),
         Ok(Err(_)) => Err(anyhow!("启动任务在返回结果前退出")),
@@ -1568,6 +1577,9 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         .context("配置管理器不可用")?;
 
     // 启动虚拟网卡（管理器内部等待注册完成）
+    // 建卡含 PnP 安装与过滤器绑定，加固机器上可能要几十秒：先落一条日志，
+    // 既让界面不是「一片空白」，也便于把慢启动与真正的卡死区分开。
+    state.record_log(&file_name, "等待注册并创建虚拟网卡");
     let (device_mode, vnt_api) = {
         let mut guard = manager.lock().await;
         let network_addr = match guard.start_device().await {
