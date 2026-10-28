@@ -37,6 +37,10 @@ struct DeviceState {
     tun_name: Option<String>,
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
     ipv6_routes: Option<crate::system_subnet_routes::VirtualIpv6Routes>,
+    /// 系统未启用 IPv6（网卡没有 IPv6 接口行）时置位，之后不再尝试配置虚拟
+    /// IPv6。虚拟 IPv6 只影响 IPv6 互通，不能阻断 IPv4 组网启动。
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    ipv6_unavailable: bool,
 }
 
 /// 任务替换成功后提交到 [`DeviceState`] 的字段。
@@ -237,38 +241,50 @@ impl DeviceIOManager {
                 .set_mac_address(crate::ethernet::mac_from_ip(ip).octets())
                 .context("更新TAP MAC失败")?;
         }
-        let ipv6 = crate::virtual_ipv6::address(ip);
-        if !device.addresses()?.contains(&std::net::IpAddr::V6(ipv6)) {
-            device
-                .add_address_v6(ipv6, crate::virtual_ipv6::PREFIX_LEN)
-                .context("设置虚拟IPv6失败")?;
+        // 虚拟 IPv6 只是组网内的 IPv6 互通增强。系统禁用 IPv6 的机器上，新建
+        // 网卡没有 IPv6 接口行，添加地址会以 ERROR_NOT_FOUND(1168) 失败；此时
+        // 跳过全部虚拟 IPv6 配置并记住该状态，不能因为缺少 IPv6 让组网启动失败。
+        if !guard.ipv6_unavailable {
+            let ipv6 = crate::virtual_ipv6::address(ip);
+            if !device.addresses()?.contains(&std::net::IpAddr::V6(ipv6)) {
+                match device.add_address_v6(ipv6, crate::virtual_ipv6::PREFIX_LEN) {
+                    Ok(()) => {}
+                    Err(error) if is_ipv6_unavailable(&error) => {
+                        guard.ipv6_unavailable = true;
+                        log::warn!("系统未启用 IPv6，跳过虚拟 IPv6 配置: {error}");
+                    }
+                    Err(error) => return Err(error).context("设置虚拟IPv6失败"),
+                }
+            }
         }
-        if let Some((old_ip, _)) = guard.network
-            && old_ip != ip
-        {
-            let old_ipv6 = crate::virtual_ipv6::address(old_ip);
-            if device
-                .addresses()?
-                .contains(&std::net::IpAddr::V6(old_ipv6))
+        if !guard.ipv6_unavailable {
+            if let Some((old_ip, _)) = guard.network
+                && old_ip != ip
             {
-                device
-                    .remove_address(old_ipv6.into())
-                    .context("清理旧虚拟IPv6失败")?;
+                let old_ipv6 = crate::virtual_ipv6::address(old_ip);
+                if device
+                    .addresses()?
+                    .contains(&std::net::IpAddr::V6(old_ipv6))
+                {
+                    device
+                        .remove_address(old_ipv6.into())
+                        .context("清理旧虚拟IPv6失败")?;
+                }
             }
-        }
-        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-        {
-            if guard.ipv6_routes.is_none() {
-                guard.ipv6_routes = Some(crate::system_subnet_routes::VirtualIpv6Routes::new(
-                    device.if_index()?,
-                )?);
+            #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+            {
+                if guard.ipv6_routes.is_none() {
+                    guard.ipv6_routes = Some(crate::system_subnet_routes::VirtualIpv6Routes::new(
+                        device.if_index()?,
+                    )?);
+                }
+                guard
+                    .ipv6_routes
+                    .as_mut()
+                    .unwrap()
+                    .apply()
+                    .context("设置虚拟IPv6路由失败")?;
             }
-            guard
-                .ipv6_routes
-                .as_mut()
-                .unwrap()
-                .apply()
-                .context("设置虚拟IPv6路由失败")?;
         }
         guard.network = Some((ip, prefix_len));
         Ok(())
@@ -495,10 +511,11 @@ fn create_device(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
         if let Some(mac_addr) = config.mac_addr {
             builder = builder.mac_addr(mac_addr);
         }
-        #[cfg(windows)]
-        {
-            builder = builder.metric(1);
-        }
+        // 路由跃点不随 builder 设置：tun-rs 的 builder.metric 会在 build 阶段
+        // 依次读取 IPv4、IPv6 的 IP 接口行，任一失败即整次建网卡失败。IPv6 被
+        // 策略关闭的机器（Tcpip6\Parameters\DisabledComponents）上不存在 IPv6
+        // 接口行，GetIpInterfaceEntry 返回 ERROR_NOT_FOUND(1168)，表现为
+        // “创建 TUN 失败: 找不到元素”。改为建网后尽力设置，见下方 set_metric。
         #[cfg(target_os = "linux")]
         if config.device_mode == DeviceMode::Tun {
             builder = builder.offload(true);
@@ -515,11 +532,42 @@ fn create_device(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
             dev.set_mtu(mtu)
                 .map_err(|error| anyhow::anyhow!("设置MTU失败: {error}"))?;
         }
+        // 跃点只影响路由优先级，失败不应拖垮组网：tun-rs 的 set_metric 先写
+        // IPv4 再写 IPv6，IPv6 接口行缺失（系统禁用 IPv6）时最后会返回
+        // ERROR_NOT_FOUND，此时 IPv4 跃点已经生效，忽略该错误即可。
+        #[cfg(windows)]
+        if let Err(error) = dev.set_metric(1) {
+            log::debug!("设置虚拟网卡跃点失败（忽略）: {error}");
+        }
         #[cfg(target_os = "linux")]
         {
             _ = dev.set_tx_queue_len(1000);
         }
         Ok(dev)
+    }
+}
+
+/// 判断添加 IPv6 地址失败是否因为该接口/系统没有可用的 IPv6。
+///
+/// Windows 禁用 IPv6（`Tcpip6\Parameters\DisabledComponents`）时，新建网卡
+/// 没有 IPv6 接口行，`CreateUnicastIpAddressEntry` 返回 ERROR_NOT_FOUND(1168)；
+/// 接口未绑定 IPv6 协议时还可能是 ERROR_NOT_SUPPORTED(50) / WSAEAFNOSUPPORT(10047)。
+/// Unix 上对应 `EAFNOSUPPORT`（内核未启用 IPv6）。各系统 errno 数值不同，
+/// 通过 `libc::EAFNOSUPPORT` 取平台值；标准库没有为它映射专门的 `ErrorKind`，
+/// 不能用 `AddrNotAvailable`（那是 `EADDRNOTAVAIL`，含义不同）。
+/// 这类情况下虚拟 IPv6 不可用，但 IPv4 组网完全正常，不应中止启动。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+fn is_ipv6_unavailable(error: &io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        const CODES: &[i32] = &[1168, 50, 10047];
+        error
+            .raw_os_error()
+            .is_some_and(|code| CODES.contains(&code))
+    }
+    #[cfg(unix)]
+    {
+        error.raw_os_error() == Some(libc::EAFNOSUPPORT)
     }
 }
 
@@ -715,5 +763,48 @@ mod tests {
             device_creation_error_context(DeviceMode::Tap, &error),
             "创建 TAP 失败：权限不足，请尝试以管理员身份运行程序"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_ipv6_disabled_codes_are_treated_as_unavailable() {
+        // ERROR_NOT_FOUND / ERROR_NOT_SUPPORTED / WSAEAFNOSUPPORT
+        for code in [1168, 50, 10047] {
+            let error = io::Error::from_raw_os_error(code);
+            assert!(is_ipv6_unavailable(&error), "os error {code} 应视为 IPv6 不可用");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_other_errors_are_not_treated_as_ipv6_unavailable() {
+        // ERROR_ACCESS_DENIED / ERROR_INVALID_PARAMETER 是真实故障，必须照常上报
+        for code in [5, 87] {
+            let error = io::Error::from_raw_os_error(code);
+            assert!(!is_ipv6_unavailable(&error), "os error {code} 不应被吞掉");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_eafnosupport_is_treated_as_unavailable() {
+        let error = io::Error::from_raw_os_error(libc::EAFNOSUPPORT);
+        assert!(is_ipv6_unavailable(&error));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_other_errors_are_not_treated_as_ipv6_unavailable() {
+        // EADDRNOTAVAIL 与 EAFNOSUPPORT 含义不同，权限错误也必须照常上报
+        for code in [libc::EADDRNOTAVAIL, libc::EPERM, libc::EINVAL] {
+            let error = io::Error::from_raw_os_error(code);
+            assert!(!is_ipv6_unavailable(&error), "errno {code} 不应被吞掉");
+        }
+    }
+
+    #[test]
+    fn errors_without_os_code_are_not_treated_as_ipv6_unavailable() {
+        let error = io::Error::other("synthetic");
+        assert!(!is_ipv6_unavailable(&error));
     }
 }
