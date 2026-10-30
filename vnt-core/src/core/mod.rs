@@ -128,6 +128,14 @@ pub struct NetworkManager {
     /// FEC 编码句柄：保留它使 `fec` 开关可以在运行期双向切换
     /// （policy 中是否引用该句柄决定编码是否生效）
     fec_encoder: FecEncoder,
+    /// 单实例锁：同一台机器、同一网络只允许一个客户端注册。
+    ///
+    /// device_id 由机器标识派生，因此 cli、Desktop 内核或重复启动的进程会
+    /// 派生出同一个 device_id；若它们同时加入同一网络，服务端会把后注册的
+    /// 连接当作"同一设备的新连接"并踢掉先注册的那条，双方随即互相替换、
+    /// 无限重连。该锁在实例创建时获取，随实例销毁释放。
+    #[allow(dead_code)]
+    instance_lock: std::sync::Arc<crate::utils::instance_lock::InstanceLock>,
 }
 
 pub type NetworkInstance = NetworkManager;
@@ -188,6 +196,20 @@ impl NetworkManager {
         app_state.nat_info.set_on_change(move || backoff.cap_all());
         config.normalize()?;
         config.check()?;
+        // 抢单实例锁要早于任何建网/注册动作：抢不到说明本机已有客户端在为
+        // 同一网络注册，继续下去只会与服务端互相替换会话。
+        let instance_lock = match crate::utils::instance_lock::InstanceLock::acquire(
+            &config.network_code,
+        ) {
+            Ok(lock) => lock,
+            // 保留 `LockHeld` 作为错误根源，调用方可以 downcast 出结构化信息。
+            Err(crate::utils::instance_lock::AcquireError::Held(held)) => {
+                return Err(anyhow::Error::new(held));
+            }
+            Err(crate::utils::instance_lock::AcquireError::Io(error)) => {
+                return Err(anyhow::Error::new(error).context("获取单实例锁失败"));
+            }
+        };
         // Install the route source before any server or gossip producer can
         // publish automatic routes. Every source is therefore observed even
         // when it changes during network task startup.
@@ -496,6 +518,7 @@ impl NetworkManager {
             registration_status: registration_status_rx,
             runtime_policy: runtime_policy.clone(),
             fec_encoder: shared_fec_encoder,
+            instance_lock,
         };
         // 连接服务器并注册：注册在实例任务组内后台进行，调用方无需关心注册
         // 动作，通过 current_network 获取网段信息即可
