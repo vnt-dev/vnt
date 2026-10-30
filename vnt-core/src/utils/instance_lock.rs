@@ -263,7 +263,14 @@ mod platform {
             let path = std::env::temp_dir().join(format!("{name}.lock"));
             // 锁文件可能由同一台机器的其他用户创建，此时写打开会 EACCES；
             // flock 只要求可读的 fd，因此退回只读，避免把启动整个打死。
-            let file = match OpenOptions::new().create(true).write(true).open(&path) {
+            // truncate(false)：锁语义与文件内容无关，不能把其他实例写进去的
+            // 内容清掉（clippy 也要求显式声明 truncate 行为）。
+            let file = match OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(&path)
+            {
                 Ok(file) => file,
                 Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
                     OpenOptions::new().read(true).open(&path)?
