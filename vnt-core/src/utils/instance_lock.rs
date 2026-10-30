@@ -95,25 +95,22 @@ impl InstanceLock {
     pub fn acquire(network_code: &str) -> Result<std::sync::Arc<Self>, AcquireError> {
         let name = lock_name(network_code);
         let registry = process_locks();
-        // 先查进程内是否已持有，顺带清理已失效的弱引用。
-        {
-            let mut guard = registry.lock().unwrap_or_else(|error| error.into_inner());
-            if let Some(existing) = guard.get(&name) {
-                if let Some(lock) = existing.upgrade() {
-                    return Ok(lock);
-                }
-                guard.remove(&name);
+        // "查注册表 → 抢平台锁 → 登记"必须在同一个临界区里完成：
+        // 否则另一个线程可能在本线程已抢到平台锁但还没登记时查不到条目，
+        // 转而再次抢平台锁失败，被误判成"被其它进程占用"。
+        let mut guard = registry.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(existing) = guard.get(&name) {
+            if let Some(lock) = existing.upgrade() {
+                return Ok(lock);
             }
+            guard.remove(&name);
         }
         let platform = match platform::PlatformLock::try_acquire(&name)? {
             Ok(platform) => platform,
             Err(()) => return Err(AcquireError::Held(LockHeld { name })),
         };
         let lock = std::sync::Arc::new(Self { name, platform });
-        registry
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .insert(lock.name.clone(), std::sync::Arc::downgrade(&lock));
+        guard.insert(lock.name.clone(), std::sync::Arc::downgrade(&lock));
         Ok(lock)
     }
 
@@ -264,7 +261,15 @@ mod platform {
     impl PlatformLock {
         pub fn try_acquire(name: &str) -> io::Result<Result<Self, ()>> {
             let path = std::env::temp_dir().join(format!("{name}.lock"));
-            let file = OpenOptions::new().create(true).write(true).open(path)?;
+            // 锁文件可能由同一台机器的其他用户创建，此时写打开会 EACCES；
+            // flock 只要求可读的 fd，因此退回只读，避免把启动整个打死。
+            let file = match OpenOptions::new().create(true).write(true).open(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                    OpenOptions::new().read(true).open(&path)?
+                }
+                Err(error) => return Err(error),
+            };
             // SAFETY: fd 来自上面打开的文件，在 `file` 生命周期内始终有效。
             let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
             if rc != 0 {
@@ -316,6 +321,52 @@ mod tests {
         assert!(
             std::sync::Arc::ptr_eq(&first, &second),
             "同进程应拿到同一个句柄"
+        );
+    }
+
+    /// 不同网络必须能同时持有各自的锁：一个内核管理多个网络
+    /// （Desktop 的多配置）时，不能因为单实例锁而互相阻塞。
+    #[test]
+    fn different_networks_do_not_block_each_other() {
+        let first_network = format!("lock-iso-a-{}", std::process::id());
+        let second_network = format!("lock-iso-b-{}", std::process::id());
+        let first = InstanceLock::acquire(&first_network).expect("网络 A 抢锁");
+        let second = InstanceLock::acquire(&second_network).expect("网络 B 抢锁");
+        assert_ne!(first.name(), second.name());
+    }
+
+    /// 并发获取同一个网络的锁必须全部成功并共享同一个句柄。
+    ///
+    /// 这条用例覆盖"查注册表与抢平台锁不在同一临界区"的竞态：修复前，
+    /// 后到的线程会查到空条目、再去抢已被占用的平台锁，被误判为外部占用。
+    /// 各线程必须持锁到齐后再统一释放，否则先返回的线程会把锁 drop 掉，
+    /// 后到的线程自然可以重新抢到，测不出真正的竞态。
+    #[test]
+    fn concurrent_acquires_share_the_same_lock() {
+        const THREADS: usize = 8;
+        let network = format!("lock-concurrent-{}", std::process::id());
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let network = network.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let lock = InstanceLock::acquire(&network).expect("并发抢锁都应成功");
+                    let name = lock.name().to_string();
+                    // 等所有线程都拿到锁，确保它们同时持有
+                    barrier.wait();
+                    name
+                })
+            })
+            .collect();
+        let mut names = Vec::new();
+        for handle in handles {
+            names.push(handle.join().expect("线程不应 panic"));
+        }
+        let first = &names[0];
+        assert!(
+            names.iter().all(|name| name == first),
+            "并发获取应共享同一把锁，实际得到 {names:?}"
         );
     }
 

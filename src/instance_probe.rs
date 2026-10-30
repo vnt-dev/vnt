@@ -18,6 +18,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const DEFAULT_KERNEL_PORT: u16 = 19099;
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1200);
 const READ_TIMEOUT: Duration = Duration::from_millis(1500);
+/// 探测响应只需要一小段 JSON，超过这个体积一律截断。
+const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
 
 /// VNT Desktop 内核记录下来的接入信息（字段与 `web_access.toml` 对应）。
 #[derive(Debug, serde::Deserialize)]
@@ -131,6 +133,10 @@ fn kernel_access_candidates() -> Vec<PathBuf> {
 /// 不用现成的 HTTP 客户端是刻意的——探测发生在启动失败路径上，不应引入
 /// TLS provider 之类的额外初始化负担；失败一律返回 `None` 由调用方降级。
 async fn http_get_body(addr: &str, path: &str, token: &str) -> Option<String> {
+    // 令牌直接拼进请求头，先排除 CR/LF，避免注入额外的头。
+    if token.bytes().any(|byte| byte == b'\r' || byte == b'\n') {
+        return None;
+    }
     let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(addr))
         .await
         .ok()?
@@ -140,8 +146,10 @@ async fn http_get_body(addr: &str, path: &str, token: &str) -> Option<String> {
          Connection: close\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).await.ok()?;
+    // 限制响应体积：探测只需要一小段 JSON，异常对端不该把内存打满。
+    let mut reader = stream.take(MAX_RESPONSE_BYTES);
     let mut buffer = Vec::new();
-    tokio::time::timeout(READ_TIMEOUT, stream.read_to_end(&mut buffer))
+    tokio::time::timeout(READ_TIMEOUT, reader.read_to_end(&mut buffer))
         .await
         .ok()?
         .ok()?;
