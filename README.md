@@ -177,3 +177,4 @@ vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
 4. 打洞通道处理（https://github.com/rustp2p/rustp2p/tree/master/rustp2p-core）
 5. VNT安卓端2.0已发布（https://github.com/vnt-dev/VntApp）
 6. VNT服务端（https://github.com/vnt-dev/vnts）
+7. [VNTC2.0-APP](https://github.com/luojiang419/VNTC2.0-APP)：基于 VNT 2.0 的第三方客户端，支持 Windows、macOS、Android、Linux WebUI 和 OpenWrt（[v4.8.41 发布下载](https://github.com/luojiang419/VNTC2.0-APP/releases/tag/v4.8.41)）。
