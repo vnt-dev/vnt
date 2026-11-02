@@ -20,6 +20,27 @@ const ICMP_NAT_GC_INTERVAL: Duration = Duration::from_secs(60);
 /// (对端地址, identifier, sequence) -> (内网客户端地址, 创建时间)
 type IcmpNatMap = HashMap<(Ipv4Addr, Identifier, SequenceNumber), (Ipv4Addr, Instant)>;
 
+/// 判断创建原始套接字失败是否只是"没有特权"。
+///
+/// 这类失败可以安全降级：ICMP NAT 只影响经由本机出口的 ping 转发，
+/// TCP/UDP 组网、虚拟网内互通都不依赖它。其它错误（资源耗尽、协议不支持）
+/// 必须照常上报，否则会掩盖真实故障。
+fn is_raw_socket_privilege_error(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        // Linux 缺 CAP_NET_RAW 报 EPERM；macOS 需要 root，同样可能是 EACCES。
+        matches!(error.raw_os_error(), Some(code) if code == libc::EPERM || code == libc::EACCES)
+    }
+    #[cfg(windows)]
+    {
+        // ERROR_ACCESS_DENIED
+        error.raw_os_error() == Some(5)
+    }
+}
+
 pub async fn start_icmp_nat(
     task_group: &TaskGroup,
     ip_stack: &IpStack,
@@ -27,12 +48,22 @@ pub async fn start_icmp_nat(
     network: SharedNetworkAddr,
     default_interface: Option<LocalInterface>,
 ) -> anyhow::Result<()> {
-    let net_icmp_socket = socket2::Socket::new(
+    let net_icmp_socket = match socket2::Socket::new(
         socket2::Domain::IPV4,
         socket2::Type::RAW,
         Some(socket2::Protocol::ICMPV4),
-    )
-    .context("new Socket RAW ICMPV4 failed")?;
+    ) {
+        Ok(socket) => socket,
+        // 原始套接字需要特权（Linux 的 CAP_NET_RAW、Windows 管理员）。
+        // 非特权环境（CI、容器、普通用户运行 no 模式）里 ICMP NAT 用不了，
+        // 但 TCP/UDP 组网与虚拟网互通不受影响，因此降级而不是让整个网络
+        // 启动失败；其它错误仍然原样上报，避免掩盖真实故障。
+        Err(error) if is_raw_socket_privilege_error(&error) => {
+            log::warn!("ICMP NAT 不可用（缺少原始套接字权限），已跳过: {error}");
+            return Ok(());
+        }
+        Err(error) => return Err(error).context("new Socket RAW ICMPV4 failed"),
+    };
     crate::utils::socket::bind_socket_to_interface(
         &net_icmp_socket,
         default_interface.as_ref(),
@@ -197,6 +228,43 @@ async fn inner_icmp_socket_recv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_denied_degrades_instead_of_failing() {
+        let error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        assert!(is_raw_socket_privilege_error(&error));
+    }
+
+    #[test]
+    fn other_errors_are_not_treated_as_degradation() {
+        // 资源耗尽之类必须照常上报，不能因为"降级"而悄悄吞掉
+        let error = std::io::Error::other("protocol family not supported");
+        assert!(!is_raw_socket_privilege_error(&error));
+        let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "no such device");
+        assert!(!is_raw_socket_privilege_error(&not_found));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_eperm_and_eacces_are_privilege_errors() {
+        for code in [libc::EPERM, libc::EACCES] {
+            let error = std::io::Error::from_raw_os_error(code);
+            assert!(
+                is_raw_socket_privilege_error(&error),
+                "errno {code} 应视为权限不足"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_access_denied_is_privilege_error() {
+        let error = std::io::Error::from_raw_os_error(5);
+        assert!(is_raw_socket_privilege_error(&error));
+        // ERROR_INVALID_FUNCTION 不代表权限问题
+        let error = std::io::Error::from_raw_os_error(1);
+        assert!(!is_raw_socket_privilege_error(&error));
+    }
 
     fn entry(
         ip: &str,

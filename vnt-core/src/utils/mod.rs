@@ -3,6 +3,7 @@ pub(crate) mod atomic64;
 pub mod device_id;
 pub(crate) mod dns_query;
 pub(crate) mod http_get;
+pub mod instance_lock;
 pub(crate) mod socket;
 pub mod task_control;
 pub(crate) mod time {

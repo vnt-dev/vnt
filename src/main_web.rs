@@ -82,6 +82,13 @@ impl DesktopKernelConfig {
 
 fn main() {
     if let Err(error) = run() {
+        // 已有实例在同一网络上注册属于正常情况（用户重复启动），
+        // 说明清楚后按成功退出，不把它当成程序故障。
+        if let Some(held) = error.downcast_ref::<vnt_core::utils::instance_lock::LockHeld>() {
+            eprintln!("本机已有 VNT 客户端在为同一网络运行（单实例锁：{}）。", held.name);
+            eprintln!("请先退出已有的客户端（VNT Desktop 或 vnt2_cli）再启动。");
+            return;
+        }
         eprintln!("{error:#}");
         std::process::exit(1);
     }

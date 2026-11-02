@@ -15,9 +15,44 @@ mod extract_wintun_dll;
 
 #[tokio::main]
 pub async fn main() {
-    if let Err(error) = main0().await {
-        log::error!("{error:?}");
+    match main0().await {
+        Ok(()) => {}
+        Err(error) => {
+            // 已有实例在跑属于正常情况（用户重复启动），不算失败：
+            // 输出它的状态后按成功退出，避免脚本把它当成错误。
+            if report_existing_client(&error).await {
+                return;
+            }
+            log::error!("{error:?}");
+        }
     }
+}
+
+/// 若错误是单实例锁被占用，输出本机已有客户端的状态并返回 `true`。
+///
+/// 优先询问 `vnt2_cli` 的 ctrl IPC（能给出完整的服务器/地址/节点信息），
+/// 拿不到再退到 VNT Desktop 内核的 HTTP API。
+async fn report_existing_client(error: &anyhow::Error) -> bool {
+    let Some(held) = error.downcast_ref::<vnt_core::utils::instance_lock::LockHeld>() else {
+        return false;
+    };
+    println!("本机已有 VNT 客户端在为同一网络运行，无需重复启动。");
+    println!("（单实例锁：{}）", held.name);
+    println!();
+    let ctrl_cmd = vnt_ipc::message::ipc_request::IpcCmd::AppInfo(Default::default());
+    if vnt_ipc::client::run_client(ctrl_cmd, None).await.is_ok() {
+        return true;
+    }
+    match vnt2::instance_probe::probe_desktop_kernel().await {
+        Some(status) => {
+            println!("{status}");
+        }
+        None => {
+            println!("未能查询到已有客户端的状态，请检查 VNT Desktop 是否在运行，");
+            println!("或本机是否有其它 vnt2_cli / vnt2_web 进程。");
+        }
+    }
+    true
 }
 
 async fn main0() -> anyhow::Result<()> {
