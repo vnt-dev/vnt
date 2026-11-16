@@ -148,6 +148,86 @@ pub(crate) fn bind_udp(
     tokio::net::UdpSocket::from_std(socket.into())
 }
 
+/// Query the kernel's current IP MTU for the selected route. UDP connect only
+/// selects a route; it does not send packets. Use a separate socket so Quinn's
+/// endpoint stays unconnected and can handle connection migration.
+pub(crate) fn udp_route_mtu(
+    peer: SocketAddr,
+    interface: Option<&LocalInterface>,
+) -> io::Result<u32> {
+    let socket = Socket::new(Domain::for_address(peer), Type::DGRAM, Some(Protocol::UDP))?;
+    if !peer.ip().is_loopback() {
+        bind_socket_to_interface(&socket, interface, peer.is_ipv6())?;
+    }
+    socket.connect(&peer.into())?;
+    connected_udp_mtu(&socket, peer.is_ipv6())
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", windows))]
+fn connected_udp_mtu(socket: &Socket, is_ipv6: bool) -> io::Result<u32> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use libc::{IP_MTU, IPPROTO_IP, IPPROTO_IPV6, IPV6_MTU};
+    #[cfg(windows)]
+    use windows_sys::Win32::Networking::WinSock::{IP_MTU, IPPROTO_IP, IPPROTO_IPV6, IPV6_MTU};
+
+    let (level, option) = if is_ipv6 {
+        (IPPROTO_IPV6, IPV6_MTU)
+    } else {
+        (IPPROTO_IP, IP_MTU)
+    };
+    let mut mtu: u32 = 0;
+    #[cfg(windows)]
+    let result = {
+        use std::os::windows::io::AsRawSocket;
+        let mut len = std::mem::size_of_val(&mtu) as i32;
+        // SAFETY: mtu and len are writable and have the sizes expected by Winsock.
+        unsafe {
+            windows_sys::Win32::Networking::WinSock::getsockopt(
+                socket.as_raw_socket() as _,
+                level,
+                option,
+                (&mut mtu as *mut u32).cast(),
+                &mut len,
+            )
+        }
+    };
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let result = {
+        use std::os::fd::AsRawFd;
+        let mut len = std::mem::size_of_val(&mtu) as libc::socklen_t;
+        // SAFETY: mtu and len are writable and have the sizes expected by getsockopt.
+        unsafe {
+            libc::getsockopt(
+                socket.as_raw_fd(),
+                level,
+                option,
+                (&mut mtu as *mut u32).cast(),
+                &mut len,
+            )
+        }
+    };
+    if result != 0 {
+        #[cfg(windows)]
+        return Err(io::Error::from_raw_os_error(unsafe {
+            windows_sys::Win32::Networking::WinSock::WSAGetLastError()
+        }));
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        return Err(io::Error::last_os_error());
+    }
+    if mtu == 0 {
+        return Err(io::Error::other("kernel returned a zero route MTU"));
+    }
+    Ok(mtu)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+fn connected_udp_mtu(_socket: &Socket, _is_ipv6: bool) -> io::Result<u32> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "route MTU query unavailable",
+    ))
+}
+
 pub(crate) async fn connect_tcp(
     addr: SocketAddr,
     interface: Option<&LocalInterface>,
@@ -253,6 +333,19 @@ pub(crate) async fn connect_tcp_resolved<A: tokio::net::ToSocketAddrs>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "android", windows))]
+    #[test]
+    fn route_mtu_query_supports_both_families_without_sending_packets() {
+        for addr in ["127.0.0.1:0", "[::1]:0"] {
+            let receiver = std::net::UdpSocket::bind(addr).unwrap();
+            let mtu = udp_route_mtu(receiver.local_addr().unwrap(), None).unwrap();
+            assert!(mtu >= 1280, "unexpected loopback MTU: {mtu}");
+            receiver.set_nonblocking(true).unwrap();
+            let error = receiver.recv_from(&mut [0; 1]).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        }
+    }
 
     #[tokio::test]
     async fn tcp_stun_connection_reuses_the_p2p_listener_port() {
