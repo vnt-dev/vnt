@@ -887,6 +887,38 @@ mod inspect_change_tests {
     }
 
     #[tokio::test]
+    async fn dns_only_changes_publish_current_config() {
+        let mut config = standalone_config();
+        let mut manager = RuntimeChangeManager::new(
+            config.clone(),
+            None,
+            Arc::new(InstanceLog::new("dns-change-test")),
+        )
+        .await
+        .unwrap();
+        for (enabled, addresses) in [
+            (true, vec!["10.26.0.3", "223.5.5.5"]),
+            (true, vec!["10.26.0.4"]),
+            (false, vec![]),
+        ] {
+            config.dns_tunnel = enabled;
+            config.dns = addresses
+                .iter()
+                .map(|address| address.parse().unwrap())
+                .collect();
+            let change = RuntimeChange {
+                config: config.clone(),
+                routes: Vec::new(),
+            };
+            manager.apply_change(&change).await.unwrap();
+            let published = manager.api().unwrap().get_config().unwrap();
+            assert_eq!(published.dns_tunnel, config.dns_tunnel);
+            assert_eq!(published.dns, config.dns);
+        }
+        manager.stop().await;
+    }
+
+    #[tokio::test]
     async fn identical_snapshot_needs_nothing_and_password_flags_rebuild() {
         let config = standalone_config();
         let manager = RuntimeChangeManager::new(

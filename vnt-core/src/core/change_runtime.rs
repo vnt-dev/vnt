@@ -245,13 +245,6 @@ impl NetworkManager {
         if change.config.tun_name != self.config.tun_name {
             self.config.tun_name = change.config.tun_name.clone();
         }
-        // 隧道 DNS 配置提交（桌面平台可热更新接口 DNS）
-        if change.config.dns_tunnel != self.config.dns_tunnel
-            || change.config.dns != self.config.dns
-        {
-            self.config.dns_tunnel = change.config.dns_tunnel;
-            self.config.dns = change.config.dns.clone();
-        }
         self.commit_runtime_snapshot(change);
         if let Some(address) = desired {
             // 网关是注册时确定的虚拟网络属性，不随快照重算，沿用当前注册值
@@ -629,7 +622,7 @@ impl NetworkManager {
         (desired, address)
     }
 
-    /// 提交路由快照，并把配置中影响路由的字段（`ip`、`input`）应用到实例。
+    /// 提交路由与 DNS 快照，并发布当前配置，供桌面和移动平台共用。
     fn commit_runtime_snapshot(&mut self, change: &RuntimeChange) {
         self.app_state
             .subnet_route
@@ -640,8 +633,11 @@ impl NetworkManager {
             self.app_state
                 .subnet_route
                 .set_route_table(change.config.input.clone());
-            self.app_state.set_config(self.config.clone());
         }
+        self.config.dns_tunnel = change.config.dns_tunnel;
+        self.config.dns = change.config.dns.clone();
+        // DNS 单独变化时也必须更新 API 读取的共享配置。
+        self.app_state.set_config(self.config.clone());
     }
 }
 
@@ -731,6 +727,44 @@ pub(crate) fn effective_dns(config: &Config) -> Vec<std::net::Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn committed_dns_snapshot_does_not_require_another_device_rebuild() {
+        let owner = crate::utils::task_control::TaskGroupManager::new();
+        let (group, _guard) = owner.create_task().unwrap();
+        let (routes, _receiver) = tokio::sync::watch::channel(Vec::new());
+        let mut manager = NetworkManager::create_network(
+            Box::new(Config {
+                network_code: "dns-snapshot-test".to_string(),
+                device_id: "dns-snapshot-device".to_string(),
+                device_mode: crate::context::config::DeviceMode::Tun,
+                ip: Some("10.26.0.2/24".parse().unwrap()),
+                ..Config::default()
+            }),
+            group,
+            std::sync::Arc::new(crate::log_manager::InstanceLog::new("dns-snapshot-test")),
+            routes,
+        )
+        .await
+        .unwrap();
+        let mut change = RuntimeChange {
+            config: (*manager.config).clone(),
+            routes: Vec::new(),
+        };
+        change.config.dns_tunnel = true;
+        change.config.dns = vec!["10.26.0.3".parse().unwrap()];
+        assert!(device_restart_fields_differ(
+            &manager.config,
+            &change.config
+        ));
+        manager.commit_runtime_snapshot(&change);
+        assert!(!device_restart_fields_differ(
+            &manager.config,
+            &change.config
+        ));
+        assert_eq!(effective_dns(&manager.config), change.config.dns);
+        manager.stop().await;
+    }
 
     #[test]
     fn policy_field_changes_are_detected() {

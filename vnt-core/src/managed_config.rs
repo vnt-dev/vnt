@@ -505,6 +505,8 @@ fn parse_envelope_config(update: &SubscriptionConfigEnvelope) -> EnvelopeConfig 
         server_addr: parse_envelope_servers(&table),
         mtu: parse_envelope_u16(&table, "mtu"),
         tun_name: parse_envelope_string(&table, "tun_name").filter(|name| !name.is_empty()),
+        dns_tunnel: parse_envelope_bool(&table, "dns_tunnel"),
+        dns: parse_typed_list(&table, "dns"),
         // 策略类字段：出现即可由 apply_policy_change 热应用
         compress: parse_envelope_bool(&table, "compress"),
         rtx: parse_envelope_bool(&table, "rtx"),
@@ -728,6 +730,47 @@ pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subscription_dns_fields_preserve_order_and_explicit_defaults() {
+        let local = Config {
+            dns_tunnel: true,
+            dns: vec!["192.168.1.1".parse().unwrap()],
+            ..Config::default()
+        };
+        for (toml, enabled, addresses) in [
+            (
+                "dns_tunnel=true\ndns=['10.26.0.3','223.5.5.5']",
+                true,
+                vec!["10.26.0.3", "223.5.5.5"],
+            ),
+            ("dns_tunnel=false\ndns=[]", false, vec![]),
+            ("", true, vec!["192.168.1.1"]),
+            (
+                "dns=['10.26.0.3','invalid','::1','223.5.5.5']",
+                true,
+                vec!["10.26.0.3", "223.5.5.5"],
+            ),
+        ] {
+            let mut update = envelope(1);
+            update.toml = toml.to_string();
+            let parsed = parse_envelope_config(&update);
+            let merged = crate::network_info::merge_present_config(
+                local.clone(),
+                &parsed.config,
+                &parsed.present,
+            );
+            assert_eq!(merged.dns_tunnel, enabled, "{toml}");
+            assert_eq!(
+                merged.dns,
+                addresses
+                    .iter()
+                    .map(|address| address.parse::<std::net::Ipv4Addr>().unwrap())
+                    .collect::<Vec<_>>(),
+                "{toml}"
+            );
+        }
+    }
 
     fn envelope(revision: u64) -> SubscriptionConfigEnvelope {
         SubscriptionConfigEnvelope {

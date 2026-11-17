@@ -375,7 +375,6 @@ impl DeviceIOManager {
         Ok(())
     }
 
-
     /// 专用：tun-rs 在该平台不支持 set_network_address，因此地址不通过
     /// set_network 应用，而是随新任务一并写入 [`DeviceState`]。
     #[cfg(target_os = "android")]
@@ -690,7 +689,7 @@ fn apply_interface_dns_windows(alias: &str, servers: &[Ipv4Addr]) -> anyhow::Res
             "dns",
             alias,
             &server.to_string(),
-            &format!("index={index}"),
+            &format!("index={}", index + 1),
         ])?;
     }
     // 刷新 DNS 缓存（失败仅记录，不影响接口建立）。
