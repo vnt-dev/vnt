@@ -20,13 +20,17 @@ use anyhow::Context;
 use pnet_packet::ipv4::Ipv4Packet;
 use quinn::congestion::BbrConfig;
 use quinn::crypto::rustls::QuicServerConfig;
-use quinn::{ClientConfig, Endpoint, EndpointConfig, TransportConfig, default_runtime};
+use quinn::{
+    ClientConfig, Endpoint, EndpointConfig, MtuDiscoveryConfig, TransportConfig, default_runtime,
+};
 use rustls::ServerConfig;
 use sha2::{Digest, Sha256};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tcp_ip::{IpStackConfig, IpStackRecv};
+
+const MAX_QUIC_PAYLOAD: u16 = 1300;
 
 pub(crate) struct QuicTunnelConfig {
     pub mtu: u16,
@@ -134,7 +138,10 @@ async fn create_quic_endpoint(
 
     let server_crypto = QuicServerConfig::try_from(server_config)
         .map_err(|e| anyhow::anyhow!("QUIC TLS config error: {:?}", e))?;
-    let server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+    let mut server_transport = TransportConfig::default();
+    server_transport.mtu_discovery_config(Some(mtu_discovery_config()));
+    server_config.transport_config(Arc::new(server_transport));
     // 替换运行时
     let runtime = default_runtime().ok_or_else(|| io::Error::other("no async runtime found"))?;
     let fingerprint_verifier = tls::verifier::FingerprintVerifier::new(calculated_hash);
@@ -149,7 +156,7 @@ async fn create_quic_endpoint(
     ));
     client_config.transport_config(build_transport_config()?);
     let mut endpoint_config = EndpointConfig::default();
-    endpoint_config.max_udp_payload_size(1300)?;
+    endpoint_config.max_udp_payload_size(MAX_QUIC_PAYLOAD)?;
     let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
         endpoint_config,
         Some(server_config),
@@ -161,8 +168,15 @@ async fn create_quic_endpoint(
     Ok((inbound, endpoint))
 }
 
+fn mtu_discovery_config() -> MtuDiscoveryConfig {
+    let mut discovery = MtuDiscoveryConfig::default();
+    discovery.upper_bound(MAX_QUIC_PAYLOAD);
+    discovery
+}
+
 fn build_transport_config() -> anyhow::Result<Arc<TransportConfig>> {
     let mut transport = TransportConfig::default();
+    transport.mtu_discovery_config(Some(mtu_discovery_config()));
     transport.congestion_controller_factory(Arc::new(BbrConfig::default()));
     transport.keep_alive_interval(Some(Duration::from_secs(5)));
 
