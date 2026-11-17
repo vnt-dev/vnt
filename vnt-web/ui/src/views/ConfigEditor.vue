@@ -260,7 +260,7 @@ const setDnsInputRef = (el, index) => {
 };
 const addDns = () => {
   if (!Array.isArray(formData.value.dns)) formData.value.dns = [];
-  if (!formData.value.dns_tunnel) formData.value.dns_tunnel = true;
+  formData.value.dns_explicit = true;
   formData.value.dns.push("");
   nextTick(() => {
     const el = dnsInputRefs.value[formData.value.dns.length - 1];
@@ -268,8 +268,12 @@ const addDns = () => {
   });
 };
 const removeDns = (index) => {
-  if (formData.value.dns.length <= 1) return;
-  formData.value.dns.splice(index, 1);
+  formData.value.dns_explicit = true;
+  if (formData.value.dns.length <= 1) {
+    formData.value.dns = [""];
+  } else {
+    formData.value.dns.splice(index, 1);
+  }
 };
 const sectionTitleClass = "text-md flex items-center font-bold text-slate-900 dark:text-white";
 const sectionChevronClass = (expanded) =>
@@ -624,17 +628,10 @@ const sectionChevronClass = (expanded) =>
                   <svg class="h-4 w-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18 15 15 0 010-18z" />
                   </svg>
-                  <span class="text-sm font-semibold text-slate-900 dark:text-white">隧道 DNS</span>
-                  <ConfigHelp :help="configHelp.dns_tunnel" />
+                  <span class="text-sm font-semibold text-slate-900 dark:text-white">网卡 DNS</span>
                 </div>
 
-                <label :class="toggleLabelClass">
-                  <div class="flex-1">
-                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">DNS 走隧道</div>
-                    <div class="mt-0.5 text-xs text-slate-400">开启后把下方 DNS 写入虚拟网卡；关闭则回退系统 DNS（默认关闭）。</div>
-                  </div>
-                  <input v-model="formData.dns_tunnel" type="checkbox" :class="checkboxClass" />
-                </label>
+                <p class="text-xs text-slate-400">填写后应用到虚拟网卡；清空全部地址则使用系统 DNS。</p>
 
                 <div class="mt-3">
                   <div class="mb-2 flex items-center justify-between">
@@ -653,17 +650,14 @@ const sectionChevronClass = (expanded) =>
                       >{{ index === 0 ? '主' : '备' }}</span>
                       <input
                         v-model="formData.dns[index]"
-                        :disabled="!formData.dns_tunnel"
                         placeholder="例如：10.26.0.3"
                         class="input flex-1"
-                        :class="{ 'opacity-60': !formData.dns_tunnel }"
+                        @input="formData.dns_explicit = true"
                         :ref="(el) => setDnsInputRef(el, index)"
                       />
                       <button
                         type="button"
-                        :disabled="formData.dns.length <= 1 || !formData.dns_tunnel"
                         :class="removeBtnClass"
-                        class="disabled:cursor-not-allowed disabled:opacity-40"
                         @click="removeDns(index)"
                       >✕</button>
                     </div>

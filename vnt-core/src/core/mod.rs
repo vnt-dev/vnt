@@ -720,7 +720,7 @@ impl NetworkManager {
             config = config.set_tun_name(tun_name);
         }
         // 隧道 DNS：建卡时按当前生效配置应用接口 DNS（桌面平台）。
-        config = config.set_dns(crate::core::change_runtime::effective_dns(&self.config));
+        config = config.set_dns(self.config.dns.clone());
         // 失败时 tun_receiver/enhanced_outbound 不会被消耗，可以重试
         if let Err(e) = self
             .device_io_manager
@@ -794,7 +794,7 @@ impl NetworkManager {
             #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
             if let Err(error) = self
                 .device_io_manager
-                .set_dns(&crate::core::change_runtime::effective_dns(&self.config))
+                .set_dns(&self.config.dns)
                 .await
             {
                 log::warn!("应用隧道 DNS 失败，保留待重试状态: {error:#}");
@@ -904,12 +904,11 @@ mod inspect_change_tests {
         )
         .await
         .unwrap();
-        for (enabled, addresses) in [
-            (true, vec!["10.26.0.3", "223.5.5.5"]),
-            (true, vec!["10.26.0.4"]),
-            (false, vec![]),
+        for addresses in [
+            vec!["10.26.0.3", "223.5.5.5"],
+            vec!["10.26.0.4"],
+            vec![],
         ] {
-            config.dns_tunnel = enabled;
             config.dns = addresses
                 .iter()
                 .map(|address| address.parse().unwrap())
@@ -920,7 +919,6 @@ mod inspect_change_tests {
             };
             manager.apply_change(&change).await.unwrap();
             let published = manager.api().unwrap().get_config().unwrap();
-            assert_eq!(published.dns_tunnel, config.dns_tunnel);
             assert_eq!(published.dns, config.dns);
         }
         manager.stop().await;

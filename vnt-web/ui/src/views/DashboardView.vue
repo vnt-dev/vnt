@@ -30,12 +30,11 @@ const tunnelListenAddresses = computed(() => {
   return [...new Set(addrs.map((item) => item.address))];
 });
 
-// 隧道 DNS 摘要：走隧道时按顺序列出（首条主用、其余备用）；关闭或为空显示系统 DNS
+// 按顺序列出网卡 DNS；空列表显示系统 DNS。
 const dnsSummary = computed(() => {
   const info = app.selectedInfo;
-  if (!info || !info.dns_tunnel) return "系统 DNS（未走隧道）";
-  const values = (info.dns || []).map((s) => String(s).trim()).filter(Boolean);
-  if (values.length === 0) return "系统 DNS（未配置隧道 DNS）";
+  const values = (info?.dns || []).map((s) => String(s).trim()).filter(Boolean);
+  if (values.length === 0) return "系统 DNS";
   return values.map((v, i) => v + (i === 0 ? "（主）" : "（备）")).join("\n");
 });
 
@@ -128,7 +127,7 @@ const dnsSummary = computed(() => {
             <span class="font-mono tabular-nums text-slate-900 dark:text-white">{{ app.selectedInfo.mtu || "" }}</span>
           </div>
           <div class="flex justify-between gap-4 border-b border-slate-100 pb-2 dark:border-slate-700">
-            <span class="muted">隧道 DNS</span>
+            <span class="muted">网卡 DNS</span>
             <span
               class="min-w-0 flex-1 whitespace-pre-line break-all text-right font-mono text-slate-900 dark:text-white"
               >{{ dnsSummary }}</span

@@ -60,8 +60,7 @@ impl NetworkManager {
         // 桌面平台隧道 DNS 可热更新（接口 DNS）；移动平台 DNS 由宿主 VPN
         // 接口决定，归 needs_device_restart/needs_vpn_rebuild 覆盖
         #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
-        let dns_change = change.config.dns_tunnel != self.config.dns_tunnel
-            || change.config.dns != self.config.dns
+        let dns_change = change.config.dns != self.config.dns
             || (self.device_mode().has_device() && self.device_io_manager.dns_update_pending());
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         let dns_change = false;
@@ -267,10 +266,8 @@ impl NetworkManager {
             // MTU 热更新：桌面平台 tun-rs 支持动态修改，无需重建设备
             let mtu = change.config.mtu.or(self.config.mtu).unwrap_or(DEFAULT_MTU);
             self.device_io_manager.set_mtu(mtu).await?;
-            // 隧道 DNS 热更新：写虚拟网卡接口 DNS。dns_tunnel 关闭时清空
-            // （恢复为空表示沿用系统/物理网卡 DNS）。
-            let desired_dns = effective_dns(&change.config);
-            if let Err(error) = self.device_io_manager.set_dns(&desired_dns).await {
+            // 列表为空时清空接口 DNS，恢复系统解析。
+            if let Err(error) = self.device_io_manager.set_dns(&change.config.dns).await {
                 log::warn!("应用隧道 DNS 失败，保留待重试状态: {error:#}");
             }
             // 网卡名热更新：Windows/Linux/FreeBSD 由 tun-rs 支持，无需重建
@@ -341,7 +338,7 @@ impl NetworkManager {
             config = config.set_tun_name(tun_name);
         }
         // 重建网卡同样按当前生效配置应用隧道 DNS。
-        config = config.set_dns(effective_dns(&change.config));
+        config = config.set_dns(change.config.dns.clone());
         Ok(config)
     }
 
@@ -591,7 +588,6 @@ impl NetworkManager {
         address.is_some()
             || (change.config.mtu.is_some() && change.config.mtu != self.config.mtu)
             || change.config.tun_name != self.config.tun_name
-            || change.config.dns_tunnel != self.config.dns_tunnel
             || change.config.dns != self.config.dns
             || normalized_routes(self.app_state.subnet_route.applied_routes())
                 != normalized_routes(change.routes.clone())
@@ -637,7 +633,6 @@ impl NetworkManager {
                 .subnet_route
                 .set_route_table(change.config.input.clone());
         }
-        self.config.dns_tunnel = change.config.dns_tunnel;
         self.config.dns = change.config.dns.clone();
         // DNS 单独变化时也必须更新 API 读取的共享配置。
         self.app_state.set_config(self.config.clone());
@@ -709,22 +704,7 @@ fn instance_rebuild_fields_differ(current: &Config, target: &Config) -> bool {
 fn device_restart_fields_differ(current: &Config, target: &Config) -> bool {
     current.mtu != target.mtu
         || current.tun_name != target.tun_name
-        || current.dns_tunnel != target.dns_tunnel
         || current.dns != target.dns
-}
-
-/// 依据配置计算需要应用到虚拟网卡接口的隧道 DNS 服务器列表。
-/// 仅当 `dns_tunnel=true` 时返回 `dns`（已为合法 IPv4）；关闭或为空返回空列表，
-/// 表示沿用物理网卡/系统 DNS。
-///
-/// 纯计算、无平台依赖：桌面平台用于建卡/热更新，移动平台由宿主 VPN 接口
-/// 自行决定 DNS（这里保留以便 `start_device` 等共用代码在所有平台编译）。
-pub(crate) fn effective_dns(config: &Config) -> Vec<std::net::Ipv4Addr> {
-    if config.dns_tunnel {
-        config.dns.clone()
-    } else {
-        Vec::new()
-    }
 }
 
 #[cfg(test)]
@@ -754,7 +734,6 @@ mod tests {
             config: (*manager.config).clone(),
             routes: Vec::new(),
         };
-        change.config.dns_tunnel = true;
         change.config.dns = vec!["10.26.0.3".parse().unwrap()];
         assert!(device_restart_fields_differ(
             &manager.config,
@@ -765,7 +744,7 @@ mod tests {
             &manager.config,
             &change.config
         ));
-        assert_eq!(effective_dns(&manager.config), change.config.dns);
+        assert_eq!(manager.config.dns, change.config.dns);
         manager.stop().await;
     }
 

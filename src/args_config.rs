@@ -37,8 +37,6 @@ pub struct FileConfig {
     #[serde(rename = "no_tun", skip_serializing)]
     pub legacy_no_tun: Option<bool>,
     pub mtu: Option<u16>,
-    /// 隧道 DNS：是否把 dns 应用到虚拟网卡接口 DNS（默认 false）
-    pub dns_tunnel: Option<bool>,
     /// 隧道 DNS 服务器地址列表（严格 IPv4，主备顺序）
     pub dns: Option<Vec<String>>,
     pub ctrl_port: Option<u16>,
@@ -102,7 +100,6 @@ impl FileConfig {
             device_mode,
             legacy_no_tun,
             mtu,
-            dns_tunnel,
             dns,
             ctrl_port,
             port_mapping,
@@ -277,9 +274,6 @@ pub struct Args {
     /// 设置mtu
     #[clap(long)]
     pub mtu: Option<u16>,
-    /// DNS 是否走隧道（把 dns 应用到虚拟网卡接口 DNS，默认关闭）
-    #[clap(long)]
-    pub dns_tunnel: bool,
     /// 隧道 DNS 服务器地址，可重复指定；第 1 条主用，其余备用（仅 IPv4）
     #[clap(long = "dns")]
     pub dns: Vec<String>,
@@ -448,7 +442,6 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         no_nat: args.no_nat || file.no_nat.unwrap_or(false),
         device_mode: args.device_mode.or(file.device_mode).unwrap_or_default(),
         mtu: args.mtu.or(file.mtu),
-        dns_tunnel: args.dns_tunnel || file.dns_tunnel.unwrap_or(false),
         dns: parse_dns_servers(
             if args.dns.is_empty() {
                 file.dns.clone().unwrap_or_default()
@@ -510,7 +503,6 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         no_nat: args.no_nat,
         device_mode: args.device_mode.unwrap_or_default(),
         mtu: args.mtu,
-        dns_tunnel: args.dns_tunnel,
         dns: parse_dns_servers(args.dns.clone())?,
         port_mapping: args.port_mapping,
         allow_port_mapping: args.allow_mapping,
@@ -591,7 +583,6 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         no_nat: file.no_nat.unwrap_or(false),
         device_mode: file.device_mode.unwrap_or_default(),
         mtu: file.mtu,
-        dns_tunnel: file.dns_tunnel.unwrap_or(false),
         dns: parse_dns_servers(file.dns.clone().unwrap_or_default())?,
         port_mapping,
         allow_port_mapping: file.allow_mapping.unwrap_or(false),
@@ -759,10 +750,9 @@ server = ["quic://1.2.3.4:29872"]
 # MTU 设置
 # mtu = 1400
 
-# 隧道 DNS：是否把 dns 应用到虚拟网卡接口 DNS（默认 false，关闭则沿用系统/物理网卡 DNS）
-# 开启后，下方 dns 列表会写入虚拟网卡接口 DNS：第 1 条主用，其余备用。
+# 网卡 DNS：非空列表会写入虚拟网卡接口 DNS，留空或省略则使用系统 DNS。
+# 第 1 条主用，其余备用。
 # 建议填 VNT 对端（路由器）的隧道 IP，例如 10.26.0.3；每条必须是合法 IPv4。
-# dns_tunnel = false
 # dns = ["10.26.0.3", "223.5.5.5"]
 
 # --- 设备配置 ---
@@ -822,6 +812,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dns_list_alone_configures_interface_dns() {
+        let args = Args::try_parse_from([
+            "vnt",
+            "-n",
+            "dns-test",
+            "--device-id",
+            "dns-test-device",
+            "--dns",
+            "10.26.0.3",
+            "--dns",
+            "223.5.5.5",
+        ])
+        .unwrap();
+        let (config, _) = build_from_args_only(args).unwrap();
+        assert_eq!(
+            config.dns,
+            vec![
+                "10.26.0.3".parse::<std::net::Ipv4Addr>().unwrap(),
+                "223.5.5.5".parse().unwrap(),
+            ]
+        );
+        let file: FileConfig = toml::from_str(
+            "network_code='dns-test'\ndevice_id='dns-test-device'\nip='10.26.0.2/24'\ndns=[]",
+        )
+        .unwrap();
+        assert!(build_from_file_only(file).unwrap().0.dns.is_empty());
+    }
+
+    #[test]
     fn dns_servers_parse_and_reject_invalid() {
         let ok = parse_dns_servers(vec!["10.26.0.3".into(), " 223.5.5.5 ".into(), "".into()]).unwrap();
         assert_eq!(ok, vec!["10.26.0.3".parse::<std::net::Ipv4Addr>().unwrap(), "223.5.5.5".parse().unwrap()]);
@@ -833,10 +852,9 @@ mod tests {
     #[test]
     fn dns_fields_parse_from_file_and_overlay() {
         let remote: FileConfig = toml::from_str(
-            "server=['tcp://remote:29872']\nnetwork_code='n'\ndns_tunnel=true\ndns=['10.26.0.3']",
+            "server=['tcp://remote:29872']\nnetwork_code='n'\ndns=['10.26.0.3']",
         )
         .unwrap();
-        assert_eq!(remote.dns_tunnel, Some(true));
         assert_eq!(remote.dns.as_deref(), Some(&["10.26.0.3".to_string()][..]));
         let local: FileConfig = toml::from_str(
             "network_code='n'\ndns=['1.1.1.1','8.8.8.8']",

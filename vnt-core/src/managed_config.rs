@@ -505,7 +505,6 @@ fn parse_envelope_config(update: &SubscriptionConfigEnvelope) -> EnvelopeConfig 
         server_addr: parse_envelope_servers(&table),
         mtu: parse_envelope_u16(&table, "mtu"),
         tun_name: parse_envelope_string(&table, "tun_name").filter(|name| !name.is_empty()),
-        dns_tunnel: parse_envelope_bool(&table, "dns_tunnel"),
         dns: parse_typed_list(&table, "dns"),
         // 策略类字段：出现即可由 apply_policy_change 热应用
         compress: parse_envelope_bool(&table, "compress"),
@@ -734,21 +733,18 @@ mod tests {
     #[test]
     fn subscription_dns_fields_preserve_order_and_explicit_defaults() {
         let local = Config {
-            dns_tunnel: true,
             dns: vec!["192.168.1.1".parse().unwrap()],
             ..Config::default()
         };
-        for (toml, enabled, addresses) in [
+        for (toml, addresses) in [
             (
-                "dns_tunnel=true\ndns=['10.26.0.3','223.5.5.5']",
-                true,
+                "dns=['10.26.0.3','223.5.5.5']",
                 vec!["10.26.0.3", "223.5.5.5"],
             ),
-            ("dns_tunnel=false\ndns=[]", false, vec![]),
-            ("", true, vec!["192.168.1.1"]),
+            ("dns=[]", vec![]),
+            ("", vec!["192.168.1.1"]),
             (
                 "dns=['10.26.0.3','invalid','::1','223.5.5.5']",
-                true,
                 vec!["10.26.0.3", "223.5.5.5"],
             ),
         ] {
@@ -760,7 +756,6 @@ mod tests {
                 &parsed.config,
                 &parsed.present,
             );
-            assert_eq!(merged.dns_tunnel, enabled, "{toml}");
             assert_eq!(
                 merged.dns,
                 addresses

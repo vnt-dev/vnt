@@ -486,9 +486,6 @@ pub struct StartConfig {
     #[serde(default, rename = "no_tun", skip_serializing)]
     pub legacy_no_tun: Option<bool>,
     pub mtu: Option<u16>,
-    /// 隧道 DNS：是否把 dns 应用到虚拟网卡接口 DNS（默认 false）
-    #[serde(default)]
-    pub dns_tunnel: bool,
     /// 隧道 DNS 服务器地址列表（严格 IPv4，主备顺序）
     #[serde(default)]
     pub dns: Vec<String>,
@@ -812,9 +809,7 @@ struct HttpAppInfo {
     public_ipv4s: Vec<Ipv4Addr>,
     network_code: Option<String>,
     mtu: Option<u16>,
-    /// 隧道 DNS 是否走隧道（当前生效配置）
-    dns_tunnel: bool,
-    /// 隧道 DNS 服务器列表（主备顺序）；dns_tunnel=false 时为空
+    /// 网卡 DNS 服务器列表（主备顺序），为空时使用系统 DNS。
     dns: Vec<Ipv4Addr>,
     fec: Option<bool>,
     compress: Option<bool>,
@@ -1989,10 +1984,8 @@ async fn get_info(
             public_ipv6: nat_info.as_ref().and_then(|v| v.ipv6),
             network_code: config.as_ref().map(|v| v.network_code.clone()),
             mtu: config.as_ref().map(|v| v.mtu.unwrap_or(DEFAULT_MTU)),
-            dns_tunnel: config.as_ref().is_some_and(|v| v.dns_tunnel),
             dns: config
                 .as_ref()
-                .filter(|v| v.dns_tunnel)
                 .map(|v| v.dns.clone())
                 .unwrap_or_default(),
             fec: config.as_ref().map(|v| v.fec),
@@ -2637,7 +2630,6 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
         mtu: cfg.mtu,
-        dns_tunnel: cfg.dns_tunnel,
         dns,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
@@ -2906,15 +2898,12 @@ async fn get_routes(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn dns_save_validation_matches_startup_with_or_without_tunnel() {
-        for enabled in [true, false] {
-            for value in ["invalid", "010.26.0.3", "256.0.0.1", "::1"] {
-                let mut config = new_test_config();
-                config.dns_tunnel = enabled;
-                config.dns = vec![value.to_string()];
-                assert!(config.validate().is_err(), "{value}");
-                assert!(convert_config(config).is_err(), "{value}");
-            }
+    fn dns_save_validation_matches_startup() {
+        for value in ["invalid", "010.26.0.3", "256.0.0.1", "::1"] {
+            let mut config = new_test_config();
+            config.dns = vec![value.to_string()];
+            assert!(config.validate().is_err(), "{value}");
+            assert!(convert_config(config).is_err(), "{value}");
         }
         let mut config = new_test_config();
         config.dns = vec![" 10.26.0.3 ".into(), "".into(), "223.5.5.5".into()];
@@ -3211,7 +3200,6 @@ config_name = "local-label"
             device_mode: DeviceMode::No,
             legacy_no_tun: None,
             mtu: None,
-            dns_tunnel: false,
             dns: Vec::new(),
             port_mapping: Vec::new(),
             allow_mapping: false,

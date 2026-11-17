@@ -416,7 +416,6 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeNextEvent<'local>(
                                     "device_name": change.config.device_name,
                                     "ip": change.config.ip.as_ref().map(ToString::to_string),
                                     "mtu": change.config.mtu,
-                                    "dns_tunnel": change.config.dns_tunnel,
                                     "dns": change.config.dns.iter().map(ToString::to_string).collect::<Vec<_>>(),
                                 },
                                 "routes": change.routes,
@@ -1379,8 +1378,6 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         #[serde(default)]
         mtu: Option<u16>,
         #[serde(default)]
-        dns_tunnel: bool,
-        #[serde(default)]
         dns: Vec<String>,
         #[serde(default)]
         port_mapping: Vec<String>,
@@ -1526,7 +1523,6 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
         mtu: cfg.mtu,
-        dns_tunnel: cfg.dns_tunnel,
         dns,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
