@@ -7,6 +7,7 @@ import { useUiStore } from "../stores/ui";
 import { getConfig, previewSubscription, saveConfig } from "../api";
 import { emptyFormData, parseTomlToForm, formToToml, NEW_CONFIG_TEMPLATE } from "../utils/toml";
 import { configHelp } from "../utils/configHelp";
+import { isValidIpv4 } from "../utils/ipv4";
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -60,6 +61,9 @@ const toggleSection = (key) => {
 // 打开编辑器时重置折叠状态；已有数据的分区自动展开，避免配置被藏起来
 const resetSections = (data) => {
   sectionExpanded.value = { ...DEFAULT_SECTIONS };
+  // 隧道 DNS：至少保留一行可编辑地址（列表为空时补一行空地址）
+  if (!Array.isArray(data.dns)) data.dns = [];
+  if (data.dns.length === 0) data.dns = [""];
   if (
     data.input.length ||
     data.output.length ||
@@ -219,6 +223,14 @@ const handleSave = async () => {
         ui.toast.error("配置多个服务器时必须填写虚拟 IP");
         return;
       }
+      // 与后端一致：保存的非空 DNS 地址都必须是严格 IPv4。
+      const invalid = (formData.value.dns || [])
+        .map((s) => (s || "").trim())
+        .filter((s) => s && !isValidIpv4(s));
+      if (invalid.length > 0) {
+        ui.toast.error("DNS 地址无效（需为 IPv4）：" + invalid.join(", "));
+        return;
+      }
       configContent = formToToml(formData.value);
     }
 
@@ -240,6 +252,29 @@ const removeBtnClass =
   "shrink-0 rounded-lg bg-red-50 px-3 py-2 text-red-500 transition-colors hover:bg-red-100 dark:bg-red-900/20 dark:text-red-500 dark:hover:bg-red-900/40";
 const addBtnClass =
   "flex w-full items-center justify-center gap-1 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-200 dark:bg-slate-700/50 dark:text-slate-300 dark:hover:bg-slate-700";
+
+// DNS 输入框引用，用于新增行后自动聚焦
+const dnsInputRefs = ref([]);
+const setDnsInputRef = (el, index) => {
+  if (el) dnsInputRefs.value[index] = el;
+};
+const addDns = () => {
+  if (!Array.isArray(formData.value.dns)) formData.value.dns = [];
+  formData.value.dns_explicit = true;
+  formData.value.dns.push("");
+  nextTick(() => {
+    const el = dnsInputRefs.value[formData.value.dns.length - 1];
+    if (el && el.focus) el.focus();
+  });
+};
+const removeDns = (index) => {
+  formData.value.dns_explicit = true;
+  if (formData.value.dns.length <= 1) {
+    formData.value.dns = [""];
+  } else {
+    formData.value.dns.splice(index, 1);
+  }
+};
 const sectionTitleClass = "text-md flex items-center font-bold text-slate-900 dark:text-white";
 const sectionChevronClass = (expanded) =>
   `h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`;
@@ -584,6 +619,58 @@ const sectionChevronClass = (expanded) =>
                     </div>
                   </div>
                   <AppSelect v-model="formData.device_mode" :options="deviceModeOptions" class="mt-2" aria-label="虚拟网卡模式" @update:model-value="formData.device_mode_explicit = true" />
+                </div>
+              </div>
+
+              <!-- 隧道 DNS -->
+              <div class="mt-5 rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+                <div class="mb-3 flex items-center gap-2">
+                  <svg class="h-4 w-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18 15 15 0 010-18z" />
+                  </svg>
+                  <span class="text-sm font-semibold text-slate-900 dark:text-white">网卡 DNS</span>
+                </div>
+
+                <p class="text-xs text-slate-400">填写后应用到虚拟网卡；清空全部地址则使用系统 DNS。</p>
+
+                <div class="mt-3">
+                  <div class="mb-2 flex items-center justify-between">
+                    <label class="flex items-center text-sm font-medium text-slate-600 dark:text-slate-300">
+                      DNS 服务器 <ConfigHelp :help="configHelp.dns" />
+                    </label>
+                    <span class="text-xs text-slate-400">第一行主用，其余备用</span>
+                  </div>
+                  <div class="space-y-2">
+                    <div v-for="(entry, index) in formData.dns" :key="index" class="flex items-center gap-2">
+                      <span
+                        class="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium"
+                        :class="index === 0
+                          ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400'
+                          : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'"
+                      >{{ index === 0 ? '主' : '备' }}</span>
+                      <input
+                        v-model="formData.dns[index]"
+                        placeholder="例如：10.26.0.3"
+                        class="input flex-1"
+                        @input="formData.dns_explicit = true"
+                        :ref="(el) => setDnsInputRef(el, index)"
+                      />
+                      <button
+                        type="button"
+                        :class="removeBtnClass"
+                        @click="removeDns(index)"
+                      >✕</button>
+                    </div>
+                  </div>
+                  <button type="button" :class="addBtnClass" class="mt-2" @click="addDns">
+                    <span class="text-base leading-none">＋</span> 添加 DNS 服务器
+                  </button>
+                  <p class="mt-2 flex items-start gap-1.5 text-xs text-slate-400">
+                    <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>建议填 VNT 对端（路由器）的隧道 IP，例如 <code class="rounded bg-slate-100 px-1 font-mono dark:bg-slate-800">10.26.0.3</code>；多条按顺序主备兜底。需为合法 IPv4 地址。</span>
+                  </p>
                 </div>
               </div>
             </div>

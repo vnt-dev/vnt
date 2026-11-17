@@ -57,6 +57,13 @@ impl NetworkManager {
         let mtu_change = change.config.mtu.is_some() && change.config.mtu != self.config.mtu;
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         let mtu_change = false;
+        // 桌面平台隧道 DNS 可热更新（接口 DNS）；移动平台 DNS 由宿主 VPN
+        // 接口决定，归 needs_device_restart/needs_vpn_rebuild 覆盖
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+        let dns_change = change.config.dns != self.config.dns
+            || (self.device_mode().has_device() && self.device_io_manager.dns_update_pending());
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
+        let dns_change = false;
         // Windows/Linux/FreeBSD 支持网卡名热变更（tun-rs set_name）；
         // 恢复默认名（None）无法热应用，归 needs_device_restart 走重建
         #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
@@ -64,7 +71,7 @@ impl NetworkManager {
             change.config.tun_name.is_some() && change.config.tun_name != self.config.tun_name;
         #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
         let name_change = false;
-        structural_change || mtu_change || name_change
+        structural_change || mtu_change || dns_change || name_change
     }
 
     /// 判断快照是否包含只能通过重建实例生效的字段：password/cert_mode、
@@ -259,6 +266,10 @@ impl NetworkManager {
             // MTU 热更新：桌面平台 tun-rs 支持动态修改，无需重建设备
             let mtu = change.config.mtu.or(self.config.mtu).unwrap_or(DEFAULT_MTU);
             self.device_io_manager.set_mtu(mtu).await?;
+            // 列表为空时清空接口 DNS，恢复系统解析。
+            if let Err(error) = self.device_io_manager.set_dns(&change.config.dns).await {
+                log::warn!("应用隧道 DNS 失败，保留待重试状态: {error:#}");
+            }
             // 网卡名热更新：Windows/Linux/FreeBSD 由 tun-rs 支持，无需重建
             #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
             if let Some(tun_name) = &change.config.tun_name {
@@ -326,6 +337,8 @@ impl NetworkManager {
         if let Some(tun_name) = change.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
         }
+        // 重建网卡同样按当前生效配置应用隧道 DNS。
+        config = config.set_dns(change.config.dns.clone());
         Ok(config)
     }
 
@@ -575,6 +588,7 @@ impl NetworkManager {
         address.is_some()
             || (change.config.mtu.is_some() && change.config.mtu != self.config.mtu)
             || change.config.tun_name != self.config.tun_name
+            || change.config.dns != self.config.dns
             || normalized_routes(self.app_state.subnet_route.applied_routes())
                 != normalized_routes(change.routes.clone())
     }
@@ -607,7 +621,7 @@ impl NetworkManager {
         (desired, address)
     }
 
-    /// 提交路由快照，并把配置中影响路由的字段（`ip`、`input`）应用到实例。
+    /// 提交路由与 DNS 快照，并发布当前配置，供桌面和移动平台共用。
     fn commit_runtime_snapshot(&mut self, change: &RuntimeChange) {
         self.app_state
             .subnet_route
@@ -618,8 +632,10 @@ impl NetworkManager {
             self.app_state
                 .subnet_route
                 .set_route_table(change.config.input.clone());
-            self.app_state.set_config(self.config.clone());
         }
+        self.config.dns = change.config.dns.clone();
+        // DNS 单独变化时也必须更新 API 读取的共享配置。
+        self.app_state.set_config(self.config.clone());
     }
 }
 
@@ -686,12 +702,51 @@ fn instance_rebuild_fields_differ(current: &Config, target: &Config) -> bool {
     allow(dead_code)
 )]
 fn device_restart_fields_differ(current: &Config, target: &Config) -> bool {
-    current.mtu != target.mtu || current.tun_name != target.tun_name
+    current.mtu != target.mtu
+        || current.tun_name != target.tun_name
+        || current.dns != target.dns
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn committed_dns_snapshot_does_not_require_another_device_rebuild() {
+        let owner = crate::utils::task_control::TaskGroupManager::new();
+        let (group, _guard) = owner.create_task().unwrap();
+        let (routes, _receiver) = tokio::sync::watch::channel(Vec::new());
+        let mut manager = NetworkManager::create_network(
+            Box::new(Config {
+                network_code: "dns-snapshot-test".to_string(),
+                device_id: "dns-snapshot-device".to_string(),
+                device_mode: crate::context::config::DeviceMode::Tun,
+                ip: Some("10.26.0.2/24".parse().unwrap()),
+                ..Config::default()
+            }),
+            group,
+            std::sync::Arc::new(crate::log_manager::InstanceLog::new("dns-snapshot-test")),
+            routes,
+        )
+        .await
+        .unwrap();
+        let mut change = RuntimeChange {
+            config: (*manager.config).clone(),
+            routes: Vec::new(),
+        };
+        change.config.dns = vec!["10.26.0.3".parse().unwrap()];
+        assert!(device_restart_fields_differ(
+            &manager.config,
+            &change.config
+        ));
+        manager.commit_runtime_snapshot(&change);
+        assert!(!device_restart_fields_differ(
+            &manager.config,
+            &change.config
+        ));
+        assert_eq!(manager.config.dns, change.config.dns);
+        manager.stop().await;
+    }
 
     #[test]
     fn policy_field_changes_are_detected() {

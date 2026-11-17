@@ -719,6 +719,8 @@ impl NetworkManager {
         if let Some(tun_name) = self.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
         }
+        // 隧道 DNS：建卡时按当前生效配置应用接口 DNS（桌面平台）。
+        config = config.set_dns(self.config.dns.clone());
         // 失败时 tun_receiver/enhanced_outbound 不会被消耗，可以重试
         if let Err(e) = self
             .device_io_manager
@@ -789,6 +791,14 @@ impl NetworkManager {
                 .await?;
             #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
             self.device_io_manager.apply_system_routes(routes).await;
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+            if let Err(error) = self
+                .device_io_manager
+                .set_dns(&self.config.dns)
+                .await
+            {
+                log::warn!("应用隧道 DNS 失败，保留待重试状态: {error:#}");
+            }
         }
         Ok(())
     }
@@ -882,6 +892,36 @@ mod inspect_change_tests {
             device_mode: DeviceMode::No,
             ..Config::default()
         }
+    }
+
+    #[tokio::test]
+    async fn dns_only_changes_publish_current_config() {
+        let mut config = standalone_config();
+        let mut manager = RuntimeChangeManager::new(
+            config.clone(),
+            None,
+            Arc::new(InstanceLog::new("dns-change-test")),
+        )
+        .await
+        .unwrap();
+        for addresses in [
+            vec!["10.26.0.3", "223.5.5.5"],
+            vec!["10.26.0.4"],
+            vec![],
+        ] {
+            config.dns = addresses
+                .iter()
+                .map(|address| address.parse().unwrap())
+                .collect();
+            let change = RuntimeChange {
+                config: config.clone(),
+                routes: Vec::new(),
+            };
+            manager.apply_change(&change).await.unwrap();
+            let published = manager.api().unwrap().get_config().unwrap();
+            assert_eq!(published.dns, config.dns);
+        }
+        manager.stop().await;
     }
 
     #[tokio::test]

@@ -68,6 +68,13 @@ export const configHelp = {
     format: "正整数，常用范围 1200–1500；留空使用默认值。",
     example: "1380",
   },
+  dns: {
+    param: "dns",
+    summary: "虚拟网卡 DNS 服务器地址列表（主备顺序）。",
+    usage: "填写后按顺序写入虚拟网卡接口 DNS，第 1 条主用、其余备用。清空列表使用系统 DNS。建议填 VNT 对端（路由器）的隧道 IP（如 10.26.0.3）。",
+    format: "IPv4 点分十进制地址数组；每条 0–255，非法地址保存时会被拒绝。",
+    example: '["10.26.0.3", "223.5.5.5"]',
+  },
   tunnel_addr: {
     param: "tunnel_addr / --tunnel-addr",
     summary: "指定本机监听 P2P 隧道的 IP 和端口。",

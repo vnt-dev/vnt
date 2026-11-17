@@ -10,6 +10,8 @@ export const emptyFormData = () => ({
   punch_model: [],
   ip: "",
   mtu: null,
+  dns: [],
+  dns_explicit: false,
   rtx: false,
   fec: false,
   compress: false,
@@ -85,6 +87,13 @@ export const parseTomlToForm = (toml) => {
     } else if (trimmed.includes("ip =")) {
       const match = trimmed.match(/ip\s*=\s*"([^"]*)"/);
       if (match) data.ip = match[1];
+    } else if (trimmed.match(/^dns\s*=/)) {
+      const match = trimmed.match(/dns\s*=\s*\[(.*)\]/);
+      if (match) {
+        data.dns_explicit = true;
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.dns = items.map((s) => s.replace(/"/g, ""));
+      }
     } else if (trimmed.includes("mtu =")) {
       const match = trimmed.match(/mtu\s*=\s*(\d+)/);
       if (match) data.mtu = parseInt(match[1]);
@@ -350,6 +359,13 @@ export const formToToml = (formData) => {
     toml += `mtu = ${formData.mtu}\n`;
   }
 
+  // 显式清空列表时保留 dns=[]，避免丢失清空意图。
+  const dnsServers = (formData.dns || []).map((s) => (s || "").trim()).filter(Boolean);
+  if (dnsServers.length > 0 || formData.dns_explicit) {
+    toml += `\n# 网卡 DNS（严格 IPv4，主备顺序）；空列表使用系统 DNS\n`;
+    toml += `dns = [${dnsServers.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
   toml += "\n# --- 设备配置 ---\n";
   if (formData.device_name) {
     toml += "\n# 设备名称 (可选，默认读取本机 hostname)\n";
@@ -488,6 +504,10 @@ device_mode = "tun"
 
 # MTU 设置
 # mtu = 1400
+
+# 网卡 DNS：非空列表写入虚拟网卡接口，空列表或省略则使用系统 DNS。
+# 第 1 条主用，其余备用；建议填 VNT 对端（路由器）隧道 IP。
+# dns = ["10.26.0.3", "223.5.5.5"]
 
 # --- 设备配置 ---
 

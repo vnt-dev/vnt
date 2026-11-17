@@ -30,6 +30,14 @@ const tunnelListenAddresses = computed(() => {
   return [...new Set(addrs.map((item) => item.address))];
 });
 
+// 按顺序列出网卡 DNS；空列表显示系统 DNS。
+const dnsSummary = computed(() => {
+  const info = app.selectedInfo;
+  const values = (info?.dns || []).map((s) => String(s).trim()).filter(Boolean);
+  if (values.length === 0) return "系统 DNS";
+  return values.map((v, i) => v + (i === 0 ? "（主）" : "（备）")).join("\n");
+});
+
 </script>
 
 <template>
@@ -117,6 +125,13 @@ const tunnelListenAddresses = computed(() => {
           <div class="flex justify-between border-b border-slate-100 pb-2 dark:border-slate-700">
             <span class="muted">MTU</span>
             <span class="font-mono tabular-nums text-slate-900 dark:text-white">{{ app.selectedInfo.mtu || "" }}</span>
+          </div>
+          <div class="flex justify-between gap-4 border-b border-slate-100 pb-2 dark:border-slate-700">
+            <span class="muted">网卡 DNS</span>
+            <span
+              class="min-w-0 flex-1 whitespace-pre-line break-all text-right font-mono text-slate-900 dark:text-white"
+              >{{ dnsSummary }}</span
+            >
           </div>
           <div class="flex justify-between border-b border-slate-100 pb-2 dark:border-slate-700">
             <span class="muted">NAT 类型</span>

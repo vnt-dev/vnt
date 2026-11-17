@@ -486,6 +486,9 @@ pub struct StartConfig {
     #[serde(default, rename = "no_tun", skip_serializing)]
     pub legacy_no_tun: Option<bool>,
     pub mtu: Option<u16>,
+    /// 隧道 DNS 服务器地址列表（严格 IPv4，主备顺序）
+    #[serde(default)]
+    pub dns: Vec<String>,
     #[serde(default)]
     pub port_mapping: Vec<String>,
     #[serde(default)]
@@ -508,6 +511,7 @@ impl StartConfig {
             bail!("configuration key 'no_tun' was removed; use device_mode = \"no|tun|tap\"")
         }
         validate_tunnel_binding(&self.tunnel_addr, self.tunnel_port)?;
+        parse_dns_servers(&self.dns)?;
         Ok(())
     }
 
@@ -805,6 +809,8 @@ struct HttpAppInfo {
     public_ipv4s: Vec<Ipv4Addr>,
     network_code: Option<String>,
     mtu: Option<u16>,
+    /// 网卡 DNS 服务器列表（主备顺序），为空时使用系统 DNS。
+    dns: Vec<Ipv4Addr>,
     fec: Option<bool>,
     compress: Option<bool>,
     encrypt: Option<bool>,
@@ -1978,6 +1984,10 @@ async fn get_info(
             public_ipv6: nat_info.as_ref().and_then(|v| v.ipv6),
             network_code: config.as_ref().map(|v| v.network_code.clone()),
             mtu: config.as_ref().map(|v| v.mtu.unwrap_or(DEFAULT_MTU)),
+            dns: config
+                .as_ref()
+                .map(|v| v.dns.clone())
+                .unwrap_or_default(),
             fec: config.as_ref().map(|v| v.fec),
             compress: config.as_ref().map(|v| v.compress),
             encrypt: config.as_ref().map(|v| v.password.is_some()),
@@ -2384,6 +2394,23 @@ async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
         }
     }
 
+    if subscription.is_some() {
+        // 订阅配置不要求本地提供身份/IP，但本地 DNS 仍需与启动时同样校验。
+        let dns = table
+            .get("dns")
+            .cloned()
+            .unwrap_or(toml::Value::Array(Vec::new()));
+        let validated = dns
+            .try_into::<Vec<String>>()
+            .map_err(anyhow::Error::from)
+            .and_then(|values| parse_dns_servers(&values));
+        if let Err(error) = validated {
+            return Json(ApiResponse::error(format!(
+                "Invalid DNS configuration: {error}"
+            )));
+        }
+    }
+
     let file_name = req
         .file_name
         .filter(|name| !name.is_empty())
@@ -2479,6 +2506,19 @@ async fn delete_config(
     }
 }
 
+fn parse_dns_servers(values: &[String]) -> anyhow::Result<Vec<Ipv4Addr>> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value
+                .parse::<Ipv4Addr>()
+                .map_err(|error| anyhow!("invalid DNS address '{}': {}", value, error))
+        })
+        .collect()
+}
+
 fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
     // 只做基础校验：服务器/虚拟 IP 的要求由调用方按订阅与否决定
     // （订阅模式下二者来自服务端首份配置），最终以合并后配置的
@@ -2563,6 +2603,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
             x.push_str(":3478");
         }
     }
+    let dns = parse_dns_servers(&cfg.dns)?;
     Ok(CoreConfig {
         server_addr: server_addrs,
         peer_address,
@@ -2589,6 +2630,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
         mtu: cfg.mtu,
+        dns,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
         udp_stun,
@@ -2855,6 +2897,39 @@ async fn get_routes(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dns_save_validation_matches_startup() {
+        for value in ["invalid", "010.26.0.3", "256.0.0.1", "::1"] {
+            let mut config = new_test_config();
+            config.dns = vec![value.to_string()];
+            assert!(config.validate().is_err(), "{value}");
+            assert!(convert_config(config).is_err(), "{value}");
+        }
+        let mut config = new_test_config();
+        config.dns = vec![" 10.26.0.3 ".into(), "".into(), "223.5.5.5".into()];
+        config.validate().unwrap();
+        assert_eq!(
+            convert_config(config).unwrap().dns,
+            vec![
+                "10.26.0.3".parse::<Ipv4Addr>().unwrap(),
+                "223.5.5.5".parse().unwrap()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn subscription_save_rejects_invalid_local_dns_before_writing() {
+        // Local fixture: a syntactically valid subscription using a dummy credential.
+        let link = "vnt2://join/2/eyJ2IjoyLCJzZXJ2ZXIiOiJ0Y3A6Ly8xMjcuMC4wLjE6Mjk4NzIiLCJjZXJ0X21vZGUiOiJzdGFuZGFyZCIsImpvaW5faWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJjcmVkZW50aWFsX2tleSI6IkJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2MifQ";
+        let response = save_config(Json(SaveConfigReq {
+            file_name: None,
+            config: format!("subscription = '{link}'\ndns = ['010.26.0.3']"),
+        }))
+        .await;
+        assert!(response.0.data.is_none());
+        assert!(response.0.msg.contains("invalid DNS address"));
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -3125,6 +3200,7 @@ config_name = "local-label"
             device_mode: DeviceMode::No,
             legacy_no_tun: None,
             mtu: None,
+            dns: Vec::new(),
             port_mapping: Vec::new(),
             allow_mapping: false,
             udp_stun: Vec::new(),
