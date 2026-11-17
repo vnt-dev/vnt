@@ -61,7 +61,8 @@ impl NetworkManager {
         // 接口决定，归 needs_device_restart/needs_vpn_rebuild 覆盖
         #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
         let dns_change = change.config.dns_tunnel != self.config.dns_tunnel
-            || change.config.dns != self.config.dns;
+            || change.config.dns != self.config.dns
+            || (self.device_mode().has_device() && self.device_io_manager.dns_update_pending());
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         let dns_change = false;
         // Windows/Linux/FreeBSD 支持网卡名热变更（tun-rs set_name）；
@@ -269,7 +270,9 @@ impl NetworkManager {
             // 隧道 DNS 热更新：写虚拟网卡接口 DNS。dns_tunnel 关闭时清空
             // （恢复为空表示沿用系统/物理网卡 DNS）。
             let desired_dns = effective_dns(&change.config);
-            self.device_io_manager.set_dns(&desired_dns).await?;
+            if let Err(error) = self.device_io_manager.set_dns(&desired_dns).await {
+                log::warn!("应用隧道 DNS 失败，保留待重试状态: {error:#}");
+            }
             // 网卡名热更新：Windows/Linux/FreeBSD 由 tun-rs 支持，无需重建
             #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
             if let Some(tun_name) = &change.config.tun_name {

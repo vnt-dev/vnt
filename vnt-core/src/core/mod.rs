@@ -791,6 +791,14 @@ impl NetworkManager {
                 .await?;
             #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
             self.device_io_manager.apply_system_routes(routes).await;
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+            if let Err(error) = self
+                .device_io_manager
+                .set_dns(&crate::core::change_runtime::effective_dns(&self.config))
+                .await
+            {
+                log::warn!("应用隧道 DNS 失败，保留待重试状态: {error:#}");
+            }
         }
         Ok(())
     }

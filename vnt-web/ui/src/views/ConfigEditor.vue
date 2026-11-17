@@ -7,6 +7,7 @@ import { useUiStore } from "../stores/ui";
 import { getConfig, previewSubscription, saveConfig } from "../api";
 import { emptyFormData, parseTomlToForm, formToToml, NEW_CONFIG_TEMPLATE } from "../utils/toml";
 import { configHelp } from "../utils/configHelp";
+import { isValidIpv4 } from "../utils/ipv4";
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -222,15 +223,13 @@ const handleSave = async () => {
         ui.toast.error("配置多个服务器时必须填写虚拟 IP");
         return;
       }
-      // 隧道 DNS 校验：开启总开关时，非空地址必须是合法 IPv4
-      if (formData.value.dns_tunnel) {
-        const invalid = (formData.value.dns || [])
-          .map((s) => (s || "").trim())
-          .filter((s) => s && !isValidIpv4(s));
-        if (invalid.length > 0) {
-          ui.toast.error("DNS 地址无效（需为 IPv4）：" + invalid.join(", "));
-          return;
-        }
+      // 与后端一致：保存的非空 DNS 地址都必须是严格 IPv4。
+      const invalid = (formData.value.dns || [])
+        .map((s) => (s || "").trim())
+        .filter((s) => s && !isValidIpv4(s));
+      if (invalid.length > 0) {
+        ui.toast.error("DNS 地址无效（需为 IPv4）：" + invalid.join(", "));
+        return;
       }
       configContent = formToToml(formData.value);
     }
@@ -254,15 +253,6 @@ const removeBtnClass =
 const addBtnClass =
   "flex w-full items-center justify-center gap-1 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-200 dark:bg-slate-700/50 dark:text-slate-300 dark:hover:bg-slate-700";
 
-// 隧道 DNS：严格的点分十进制 IPv4 校验（四段、每段 0-255、无前导空段）。
-const isValidIpv4 = (value) => {
-  if (typeof value !== "string") return false;
-  const parts = value.trim().split(".");
-  if (parts.length !== 4) return false;
-  return parts.every(
-    (p) => p.length >= 1 && p.length <= 3 && /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255,
-  );
-};
 // DNS 输入框引用，用于新增行后自动聚焦
 const dnsInputRefs = ref([]);
 const setDnsInputRef = (el, index) => {

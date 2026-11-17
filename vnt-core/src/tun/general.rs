@@ -23,6 +23,8 @@ pub struct DeviceIOManager {
     task_group: TaskGroup,
     device: DeviceMutex,
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    dns_update_pending: Arc<AtomicBool>,
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
     applied_system_routes:
         Arc<tokio::sync::Mutex<Option<crate::system_subnet_routes::SystemRouteReconciler>>>,
 }
@@ -36,7 +38,7 @@ struct DeviceState {
     mtu: Option<u16>,
     tun_name: Option<String>,
     /// 当前已应用到网卡接口的隧道 DNS 服务器（主备顺序）。
-    dns: Vec<Ipv4Addr>,
+    dns: Option<Vec<Ipv4Addr>>,
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
     ipv6_routes: Option<crate::system_subnet_routes::VirtualIpv6Routes>,
     /// 虚拟 IPv6 配置失败后跳过后续尝试，网卡重建后重新检测。
@@ -126,6 +128,8 @@ impl DeviceIOManager {
             task_group,
             device: Arc::new(Default::default()),
             #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+            dns_update_pending: Arc::new(AtomicBool::new(false)),
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
             applied_system_routes: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -147,6 +151,7 @@ impl DeviceIOManager {
         let device_mode = device_config.device_mode;
         let mtu = device_config.mtu;
         let tun_name = device_config.tun_name.clone();
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
         let dns = device_config.dns.clone();
         let device = Arc::new(create_device(device_config)?);
         let Some(receiver_value) = receiver.take() else {
@@ -174,7 +179,12 @@ impl DeviceIOManager {
         });
         state.mtu = mtu;
         state.tun_name = tun_name;
-        state.dns = dns;
+        state.dns = None;
+        drop(state);
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+        if let Err(error) = self.set_dns(&dns).await {
+            log::warn!("应用隧道 DNS 失败，将在网络状态应用时重试: {error:#}");
+        }
         Ok(())
     }
 
@@ -345,12 +355,16 @@ impl DeviceIOManager {
         Ok(())
     }
 
-    /// 动态修改运行中设备的隧道 DNS 服务器（接口 DNS）。Windows 通过
-    /// `netsh` 设置网卡接口 DNS；其他桌面平台为空实现（记录 debug 日志，
-    /// 不报错以免中断变更应用）。变更后尽力刷新 DNS 缓存。
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    pub(crate) fn dns_update_pending(&self) -> bool {
+        self.dns_update_pending.load(Ordering::Acquire)
+    }
+
+    /// 仅在 DNS 完整应用成功后更新缓存，失败时保留待重试状态。
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
     pub async fn set_dns(&self, servers: &[Ipv4Addr]) -> anyhow::Result<()> {
         let mut guard = self.device.lock().await;
+        self.dns_update_pending.store(true, Ordering::Release);
         let Some(task) = guard
             .runtime
             .as_ref()
@@ -358,20 +372,18 @@ impl DeviceIOManager {
         else {
             bail!("虚拟网卡尚未启动")
         };
-        if guard.dns == servers {
-            return Ok(());
-        }
         #[cfg(windows)]
-        {
-            let alias = task.device.name()?;
-            apply_interface_dns(&alias, servers)?;
-        }
+        let alias = task.device.name()?;
         #[cfg(not(windows))]
-        {
-            let _ = task;
+        let _ = task;
+        apply_dns_update(&mut guard.dns, servers, || {
+            #[cfg(windows)]
+            apply_interface_dns(&alias, servers)?;
+            #[cfg(not(windows))]
             log::debug!("当前平台暂不支持设置虚拟网卡接口 DNS，跳过（仅 Windows）");
-        }
-        guard.dns = servers.to_vec();
+            Ok(())
+        })?;
+        self.dns_update_pending.store(false, Ordering::Release);
         Ok(())
     }
 
@@ -410,6 +422,8 @@ impl DeviceIOManager {
             bail!("无虚拟网卡模式没有可重启的任务");
         }
         let mtu = device_config.mtu;
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+        let dns = device_config.dns.clone();
         // 先创建新设备：创建失败时不影响当前任务
         let replacement_device = Arc::new(create_device(device_config)?);
         self.swap_running_device(replacement_device, DeviceStateUpdate { network: None, mtu })
@@ -418,6 +432,10 @@ impl DeviceIOManager {
         // 清理旧接口路由），下次应用路由时按新接口重建。
         #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
         self.clear_applied_system_routes().await;
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+        if let Err(error) = self.set_dns(&dns).await {
+            log::warn!("重建网卡后应用隧道 DNS 失败，保留待重试状态: {error:#}");
+        }
         Ok(())
     }
 
@@ -492,6 +510,9 @@ impl DeviceIOManager {
                 state.ipv6_routes = None;
             }
             state.mtu = update.mtu;
+            state.dns = None;
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+            self.dns_update_pending.store(true, Ordering::Release);
             // Dropping the old task after the new one is live closes its fd.
             drop(old_task);
             return Ok(());
@@ -584,19 +605,6 @@ fn create_device(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
         {
             _ = dev.set_tx_queue_len(1000);
         }
-        // 隧道 DNS：建卡后把配置的 DNS 应用到本网卡接口。失败仅记录日志，
-        // 不影响网卡建立（与安卓版「非法地址跳过、不影响接口」一致）。
-        #[cfg(windows)]
-        if !config.dns.is_empty() {
-            match dev.name() {
-                Ok(alias) => {
-                    if let Err(error) = apply_interface_dns(&alias, &config.dns) {
-                        log::warn!("应用隧道 DNS 失败（忽略，沿用系统 DNS）: {error:#}");
-                    }
-                }
-                Err(error) => log::warn!("读取虚拟网卡名失败，跳过隧道 DNS: {error:#}"),
-            }
-        }
         Ok(dev)
     }
 }
@@ -630,6 +638,22 @@ fn device_creation_error_context(mode: DeviceMode, error: &io::Error) -> &'stati
         DeviceMode::Tun | DeviceMode::No => "创建 TUN 失败",
     }
 }
+/// 仅缓存完整成功的 DNS 更新；失败可能已部分修改网卡，必须使旧缓存失效。
+#[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+fn apply_dns_update(
+    applied: &mut Option<Vec<Ipv4Addr>>,
+    servers: &[Ipv4Addr],
+    apply: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if applied.as_deref() == Some(servers) {
+        return Ok(());
+    }
+    *applied = None;
+    apply()?;
+    *applied = Some(servers.to_vec());
+    Ok(())
+}
+
 /// 向指定虚拟网卡应用隧道 DNS 服务器。按接口别名（网卡名）通过 `netsh`
 /// 设置该接口的静态 DNS 服务器列表：第 1 条为主用（`primary`），其余依次
 /// `add` 为备用。`servers` 为空表示清空接口 DNS（恢复按 DHCP/系统解析）。
@@ -669,6 +693,7 @@ fn apply_interface_dns_windows(alias: &str, servers: &[Ipv4Addr]) -> anyhow::Res
         run(&["interface", "ip", "set", "dns", alias, "dhcp"])?;
         return Ok(());
     }
+    // 不进行联网校验：DNS 对端可能尚未上线，地址格式已由配置层校验。
     // 第一条：主用（会覆盖旧静态配置）。
     run(&[
         "interface",
@@ -679,6 +704,7 @@ fn apply_interface_dns_windows(alias: &str, servers: &[Ipv4Addr]) -> anyhow::Res
         "static",
         &servers[0].to_string(),
         "primary",
+        "validate=no",
     ])?;
     // 其余：追加为备用（index 递增）。
     for (index, server) in servers.iter().enumerate().skip(1) {
@@ -690,6 +716,7 @@ fn apply_interface_dns_windows(alias: &str, servers: &[Ipv4Addr]) -> anyhow::Res
             alias,
             &server.to_string(),
             &format!("index={}", index + 1),
+            "validate=no",
         ])?;
     }
     // 刷新 DNS 缓存（失败仅记录，不影响接口建立）。
@@ -830,6 +857,49 @@ impl Encoder<TransmissionBytes> for BytesCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    #[tokio::test]
+    async fn dns_failure_remains_pending_for_a_later_network_snapshot() {
+        let owner = crate::utils::task_control::TaskGroupManager::new();
+        let (group, _guard) = owner.create_task().unwrap();
+        let manager = DeviceIOManager::new(group);
+        assert!(!manager.dns_update_pending());
+        assert!(
+            manager
+                .set_dns(&[Ipv4Addr::new(10, 26, 0, 3)])
+                .await
+                .is_err()
+        );
+        assert!(manager.dns_update_pending());
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    #[test]
+    fn failed_dns_update_can_retry_or_restore_previous_servers() {
+        let first = vec![Ipv4Addr::new(10, 26, 0, 3)];
+        let second = vec![Ipv4Addr::new(10, 26, 0, 4)];
+        let mut applied = None;
+        // A failed startup attempt must not suppress an identical retry.
+        assert!(apply_dns_update(&mut applied, &first, || anyhow::bail!("netsh failed")).is_err());
+        assert!(applied.is_none());
+        apply_dns_update(&mut applied, &first, || Ok(())).unwrap();
+        apply_dns_update(&mut applied, &first, || panic!("already applied")).unwrap();
+        // A partial update can invalidate even the previously successful list.
+        assert!(
+            apply_dns_update(&mut applied, &second, || anyhow::bail!("partial update")).is_err()
+        );
+        assert!(applied.is_none());
+        let mut restored = false;
+        apply_dns_update(&mut applied, &first, || {
+            restored = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(restored);
+        apply_dns_update(&mut applied, &[], || Ok(())).unwrap();
+        assert_eq!(applied, Some(Vec::new()));
+    }
 
     #[test]
     fn permission_denied_suggests_running_as_administrator() {
