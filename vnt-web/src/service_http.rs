@@ -486,6 +486,12 @@ pub struct StartConfig {
     #[serde(default, rename = "no_tun", skip_serializing)]
     pub legacy_no_tun: Option<bool>,
     pub mtu: Option<u16>,
+    /// 隧道 DNS：是否把 dns 应用到虚拟网卡接口 DNS（默认 false）
+    #[serde(default)]
+    pub dns_tunnel: bool,
+    /// 隧道 DNS 服务器地址列表（严格 IPv4，主备顺序）
+    #[serde(default)]
+    pub dns: Vec<String>,
     #[serde(default)]
     pub port_mapping: Vec<String>,
     #[serde(default)]
@@ -805,6 +811,10 @@ struct HttpAppInfo {
     public_ipv4s: Vec<Ipv4Addr>,
     network_code: Option<String>,
     mtu: Option<u16>,
+    /// 隧道 DNS 是否走隧道（当前生效配置）
+    dns_tunnel: bool,
+    /// 隧道 DNS 服务器列表（主备顺序）；dns_tunnel=false 时为空
+    dns: Vec<Ipv4Addr>,
     fec: Option<bool>,
     compress: Option<bool>,
     encrypt: Option<bool>,
@@ -1978,6 +1988,12 @@ async fn get_info(
             public_ipv6: nat_info.as_ref().and_then(|v| v.ipv6),
             network_code: config.as_ref().map(|v| v.network_code.clone()),
             mtu: config.as_ref().map(|v| v.mtu.unwrap_or(DEFAULT_MTU)),
+            dns_tunnel: config.as_ref().is_some_and(|v| v.dns_tunnel),
+            dns: config
+                .as_ref()
+                .filter(|v| v.dns_tunnel)
+                .map(|v| v.dns.clone())
+                .unwrap_or_default(),
             fec: config.as_ref().map(|v| v.fec),
             compress: config.as_ref().map(|v| v.compress),
             encrypt: config.as_ref().map(|v| v.password.is_some()),
@@ -2563,6 +2579,19 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
             x.push_str(":3478");
         }
     }
+    // 隧道 DNS：解析并校验为合法 IPv4，保持主备顺序；非法地址直接报错。
+    let mut dns = Vec::with_capacity(cfg.dns.len());
+    for raw in &cfg.dns {
+        let value = raw.trim();
+        if value.is_empty() {
+            continue;
+        }
+        dns.push(
+            value
+                .parse::<Ipv4Addr>()
+                .map_err(|error| anyhow!("invalid DNS address '{}': {}", value, error))?,
+        );
+    }
     Ok(CoreConfig {
         server_addr: server_addrs,
         peer_address,
@@ -2589,6 +2618,8 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
         mtu: cfg.mtu,
+        dns_tunnel: cfg.dns_tunnel,
+        dns,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
         udp_stun,
@@ -3125,6 +3156,8 @@ config_name = "local-label"
             device_mode: DeviceMode::No,
             legacy_no_tun: None,
             mtu: None,
+            dns_tunnel: false,
+            dns: Vec::new(),
             port_mapping: Vec::new(),
             allow_mapping: false,
             udp_stun: Vec::new(),

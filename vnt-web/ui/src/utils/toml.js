@@ -10,6 +10,8 @@ export const emptyFormData = () => ({
   punch_model: [],
   ip: "",
   mtu: null,
+  dns_tunnel: false,
+  dns: [],
   rtx: false,
   fec: false,
   compress: false,
@@ -85,6 +87,14 @@ export const parseTomlToForm = (toml) => {
     } else if (trimmed.includes("ip =")) {
       const match = trimmed.match(/ip\s*=\s*"([^"]*)"/);
       if (match) data.ip = match[1];
+    } else if (trimmed.match(/^dns_tunnel\s*=/)) {
+      data.dns_tunnel = trimmed.includes("true");
+    } else if (trimmed.startsWith("dns")) {
+      const match = trimmed.match(/dns\s*=\s*\[(.*)\]/);
+      if (match) {
+        const items = match[1].match(/"([^"]*)"/g);
+        if (items) data.dns = items.map((s) => s.replace(/"/g, ""));
+      }
     } else if (trimmed.includes("mtu =")) {
       const match = trimmed.match(/mtu\s*=\s*(\d+)/);
       if (match) data.mtu = parseInt(match[1]);
@@ -350,6 +360,18 @@ export const formToToml = (formData) => {
     toml += `mtu = ${formData.mtu}\n`;
   }
 
+  // 隧道 DNS：仅在非默认时写入（dns_tunnel 默认 false、dns 默认空）。
+  const dnsServers = (formData.dns || []).map((s) => (s || "").trim()).filter(Boolean);
+  if (formData.dns_tunnel) {
+    toml += "\n# 隧道 DNS：是否把下方 dns 应用到虚拟网卡接口 DNS（默认 false）\n";
+    toml += "# 第 1 条主用，其余备用；建议填 VNT 对端（路由器）隧道 IP，例如 10.26.0.3\n";
+    toml += "dns_tunnel = true\n";
+  }
+  if (dnsServers.length > 0) {
+    toml += `\n# 隧道 DNS 服务器列表（严格 IPv4，主备顺序）\n`;
+    toml += `dns = [${dnsServers.map((s) => `"${s}"`).join(", ")}]\n`;
+  }
+
   toml += "\n# --- 设备配置 ---\n";
   if (formData.device_name) {
     toml += "\n# 设备名称 (可选，默认读取本机 hostname)\n";
@@ -488,6 +510,11 @@ device_mode = "tun"
 
 # MTU 设置
 # mtu = 1400
+
+# 隧道 DNS：是否把下方 dns 应用到虚拟网卡接口 DNS（默认 false，关闭则沿用系统 DNS）
+# 开启后 dns 列表写入虚拟网卡接口：第 1 条主用，其余备用；建议填 VNT 对端（路由器）隧道 IP
+# dns_tunnel = false
+# dns = ["10.26.0.3", "223.5.5.5"]
 
 # --- 设备配置 ---
 

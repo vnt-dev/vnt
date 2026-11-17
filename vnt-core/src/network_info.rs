@@ -52,6 +52,8 @@ pub fn merge_present_config(
     // 网卡类（桌面热应用 / 移动重建）
     overlay!("mtu", mtu);
     overlay!("tun_name", tun_name);
+    overlay!("dns", dns);
+    overlay!("dns_tunnel", dns_tunnel);
     // 策略类（apply_policy_change 热应用）
     overlay!("peer_address", peer_address);
     overlay!("turn", turn);

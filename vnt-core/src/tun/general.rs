@@ -35,6 +35,8 @@ struct DeviceState {
     network: Option<(Ipv4Addr, u8)>,
     mtu: Option<u16>,
     tun_name: Option<String>,
+    /// 当前已应用到网卡接口的隧道 DNS 服务器（主备顺序）。
+    dns: Vec<Ipv4Addr>,
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
     ipv6_routes: Option<crate::system_subnet_routes::VirtualIpv6Routes>,
     /// 虚拟 IPv6 配置失败后跳过后续尝试，网卡重建后重新检测。
@@ -71,6 +73,9 @@ pub struct DeviceConfig {
     pub tun_fd: Option<std::os::fd::OwnedFd>,
     pub mtu: Option<u16>,
     pub mac_addr: Option<[u8; 6]>,
+    /// 建卡时需应用到本网卡接口的隧道 DNS 服务器（已过滤为合法 IPv4）。
+    /// 为空表示不设置接口 DNS，沿用物理网卡/系统 DNS。
+    pub dns: Vec<Ipv4Addr>,
 }
 
 impl DeviceConfig {
@@ -95,7 +100,13 @@ impl DeviceConfig {
         self.mac_addr = Some(mac_addr);
         self
     }
+    /// 设置建卡时应用的隧道 DNS 服务器列表（主备顺序）。
+    pub fn set_dns(mut self, dns: Vec<Ipv4Addr>) -> Self {
+        self.dns = dns;
+        self
+    }
 }
+
 #[derive(Clone)]
 pub struct TunInbound {
     pub(crate) sender: Sender<TransmissionBytes>,
@@ -136,6 +147,7 @@ impl DeviceIOManager {
         let device_mode = device_config.device_mode;
         let mtu = device_config.mtu;
         let tun_name = device_config.tun_name.clone();
+        let dns = device_config.dns.clone();
         let device = Arc::new(create_device(device_config)?);
         let Some(receiver_value) = receiver.take() else {
             bail!("device task already started");
@@ -162,6 +174,7 @@ impl DeviceIOManager {
         });
         state.mtu = mtu;
         state.tun_name = tun_name;
+        state.dns = dns;
         Ok(())
     }
 
@@ -332,7 +345,37 @@ impl DeviceIOManager {
         Ok(())
     }
 
-    /// 用宿主（VpnService）提供的 fd 替换运行中的虚拟网卡任务。Android
+    /// 动态修改运行中设备的隧道 DNS 服务器（接口 DNS）。Windows 通过
+    /// `netsh` 设置网卡接口 DNS；其他桌面平台为空实现（记录 debug 日志，
+    /// 不报错以免中断变更应用）。变更后尽力刷新 DNS 缓存。
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    pub async fn set_dns(&self, servers: &[Ipv4Addr]) -> anyhow::Result<()> {
+        let mut guard = self.device.lock().await;
+        let Some(task) = guard
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.task.as_ref())
+        else {
+            bail!("虚拟网卡尚未启动")
+        };
+        if guard.dns == servers {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            let alias = task.device.name()?;
+            apply_interface_dns(&alias, servers)?;
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = task;
+            log::debug!("当前平台暂不支持设置虚拟网卡接口 DNS，跳过（仅 Windows）");
+        }
+        guard.dns = servers.to_vec();
+        Ok(())
+    }
+
+
     /// 专用：tun-rs 在该平台不支持 set_network_address，因此地址不通过
     /// set_network 应用，而是随新任务一并写入 [`DeviceState`]。
     #[cfg(target_os = "android")]
@@ -542,6 +585,19 @@ fn create_device(config: DeviceConfig) -> anyhow::Result<AsyncDevice> {
         {
             _ = dev.set_tx_queue_len(1000);
         }
+        // 隧道 DNS：建卡后把配置的 DNS 应用到本网卡接口。失败仅记录日志，
+        // 不影响网卡建立（与安卓版「非法地址跳过、不影响接口」一致）。
+        #[cfg(windows)]
+        if !config.dns.is_empty() {
+            match dev.name() {
+                Ok(alias) => {
+                    if let Err(error) = apply_interface_dns(&alias, &config.dns) {
+                        log::warn!("应用隧道 DNS 失败（忽略，沿用系统 DNS）: {error:#}");
+                    }
+                }
+                Err(error) => log::warn!("读取虚拟网卡名失败，跳过隧道 DNS: {error:#}"),
+            }
+        }
         Ok(dev)
     }
 }
@@ -575,6 +631,73 @@ fn device_creation_error_context(mode: DeviceMode, error: &io::Error) -> &'stati
         DeviceMode::Tun | DeviceMode::No => "创建 TUN 失败",
     }
 }
+/// 向指定虚拟网卡应用隧道 DNS 服务器。按接口别名（网卡名）通过 `netsh`
+/// 设置该接口的静态 DNS 服务器列表：第 1 条为主用（`primary`），其余依次
+/// `add` 为备用。`servers` 为空表示清空接口 DNS（恢复按 DHCP/系统解析）。
+///
+/// 仅 Windows 实现（采用 netsh 而非 IP Helper API：winapi 0.3 未导出
+/// `SetInterfaceDnsSettings`，netsh 语义等价、随系统自带，无需额外依赖）。
+/// 其他平台不调用本函数：移动平台由宿主 VPN 接口（VpnService）配置 DNS，
+/// 其他桌面平台为无操作。
+#[cfg(windows)]
+fn apply_interface_dns(alias: &str, servers: &[Ipv4Addr]) -> anyhow::Result<()> {
+    if alias.trim().is_empty() {
+        anyhow::bail!("虚拟网卡名为空，无法设置接口 DNS");
+    }
+    apply_interface_dns_windows(alias, servers)
+}
+
+#[cfg(windows)]
+fn apply_interface_dns_windows(alias: &str, servers: &[Ipv4Addr]) -> anyhow::Result<()> {
+    use std::process::Command;
+
+    // 清空接口 DNS（无服务器时也走这里，恢复系统解析）。
+    let run = |args: &[&str]| -> anyhow::Result<()> {
+        let output = Command::new("netsh")
+            .args(args)
+            .output()
+            .map_err(|error| anyhow::anyhow!("执行 netsh 失败: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            anyhow::bail!("netsh {args:?} 失败: {stdout}{stderr}");
+        }
+        Ok(())
+    };
+
+    if servers.is_empty() {
+        // 恢复为 DHCP 自动获取的 DNS（清空静态配置）。
+        run(&["interface", "ip", "set", "dns", alias, "dhcp"])?;
+        return Ok(());
+    }
+    // 第一条：主用（会覆盖旧静态配置）。
+    run(&[
+        "interface",
+        "ip",
+        "set",
+        "dns",
+        alias,
+        "static",
+        &servers[0].to_string(),
+        "primary",
+    ])?;
+    // 其余：追加为备用（index 递增）。
+    for (index, server) in servers.iter().enumerate().skip(1) {
+        run(&[
+            "interface",
+            "ip",
+            "add",
+            "dns",
+            alias,
+            &server.to_string(),
+            &format!("index={index}"),
+        ])?;
+    }
+    // 刷新 DNS 缓存（失败仅记录，不影响接口建立）。
+    let _ = Command::new("ipconfig").arg("/flushdns").output();
+    Ok(())
+}
+
 fn create(
     task_group: &TaskGroup,
     device: Arc<AsyncDevice>,

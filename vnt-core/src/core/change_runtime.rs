@@ -57,6 +57,13 @@ impl NetworkManager {
         let mtu_change = change.config.mtu.is_some() && change.config.mtu != self.config.mtu;
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         let mtu_change = false;
+        // 桌面平台隧道 DNS 可热更新（接口 DNS）；移动平台 DNS 由宿主 VPN
+        // 接口决定，归 needs_device_restart/needs_vpn_rebuild 覆盖
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+        let dns_change = change.config.dns_tunnel != self.config.dns_tunnel
+            || change.config.dns != self.config.dns;
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
+        let dns_change = false;
         // Windows/Linux/FreeBSD 支持网卡名热变更（tun-rs set_name）；
         // 恢复默认名（None）无法热应用，归 needs_device_restart 走重建
         #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
@@ -64,7 +71,7 @@ impl NetworkManager {
             change.config.tun_name.is_some() && change.config.tun_name != self.config.tun_name;
         #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
         let name_change = false;
-        structural_change || mtu_change || name_change
+        structural_change || mtu_change || dns_change || name_change
     }
 
     /// 判断快照是否包含只能通过重建实例生效的字段：password/cert_mode、
@@ -238,6 +245,13 @@ impl NetworkManager {
         if change.config.tun_name != self.config.tun_name {
             self.config.tun_name = change.config.tun_name.clone();
         }
+        // 隧道 DNS 配置提交（桌面平台可热更新接口 DNS）
+        if change.config.dns_tunnel != self.config.dns_tunnel
+            || change.config.dns != self.config.dns
+        {
+            self.config.dns_tunnel = change.config.dns_tunnel;
+            self.config.dns = change.config.dns.clone();
+        }
         self.commit_runtime_snapshot(change);
         if let Some(address) = desired {
             // 网关是注册时确定的虚拟网络属性，不随快照重算，沿用当前注册值
@@ -259,6 +273,10 @@ impl NetworkManager {
             // MTU 热更新：桌面平台 tun-rs 支持动态修改，无需重建设备
             let mtu = change.config.mtu.or(self.config.mtu).unwrap_or(DEFAULT_MTU);
             self.device_io_manager.set_mtu(mtu).await?;
+            // 隧道 DNS 热更新：写虚拟网卡接口 DNS。dns_tunnel 关闭时清空
+            // （恢复为空表示沿用系统/物理网卡 DNS）。
+            let desired_dns = effective_dns(&change.config);
+            self.device_io_manager.set_dns(&desired_dns).await?;
             // 网卡名热更新：Windows/Linux/FreeBSD 由 tun-rs 支持，无需重建
             #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
             if let Some(tun_name) = &change.config.tun_name {
@@ -326,6 +344,8 @@ impl NetworkManager {
         if let Some(tun_name) = change.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
         }
+        // 重建网卡同样按当前生效配置应用隧道 DNS。
+        config = config.set_dns(effective_dns(&change.config));
         Ok(config)
     }
 
@@ -575,6 +595,8 @@ impl NetworkManager {
         address.is_some()
             || (change.config.mtu.is_some() && change.config.mtu != self.config.mtu)
             || change.config.tun_name != self.config.tun_name
+            || change.config.dns_tunnel != self.config.dns_tunnel
+            || change.config.dns != self.config.dns
             || normalized_routes(self.app_state.subnet_route.applied_routes())
                 != normalized_routes(change.routes.clone())
     }
@@ -686,7 +708,24 @@ fn instance_rebuild_fields_differ(current: &Config, target: &Config) -> bool {
     allow(dead_code)
 )]
 fn device_restart_fields_differ(current: &Config, target: &Config) -> bool {
-    current.mtu != target.mtu || current.tun_name != target.tun_name
+    current.mtu != target.mtu
+        || current.tun_name != target.tun_name
+        || current.dns_tunnel != target.dns_tunnel
+        || current.dns != target.dns
+}
+
+/// 依据配置计算需要应用到虚拟网卡接口的隧道 DNS 服务器列表。
+/// 仅当 `dns_tunnel=true` 时返回 `dns`（已为合法 IPv4）；关闭或为空返回空列表，
+/// 表示沿用物理网卡/系统 DNS。
+///
+/// 纯计算、无平台依赖：桌面平台用于建卡/热更新，移动平台由宿主 VPN 接口
+/// 自行决定 DNS（这里保留以便 `start_device` 等共用代码在所有平台编译）。
+pub(crate) fn effective_dns(config: &Config) -> Vec<std::net::Ipv4Addr> {
+    if config.dns_tunnel {
+        config.dns.clone()
+    } else {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

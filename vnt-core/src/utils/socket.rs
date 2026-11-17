@@ -30,16 +30,14 @@ pub(crate) fn resolve_interface(name: Option<&str>) -> anyhow::Result<Option<Res
             let interface = getifaddrs::getifaddrs()
                 .context("读取本机网卡列表失败")?
                 .find(|interface| {
-                    if interface.name.eq_ignore_ascii_case(name) {
-                        return true;
-                    }
                     #[cfg(windows)]
                     {
-                        interface.description.eq_ignore_ascii_case(name)
+                        interface.name.eq_ignore_ascii_case(name)
+                            || interface.description.eq_ignore_ascii_case(name)
                     }
                     #[cfg(not(windows))]
                     {
-                        false
+                        interface.name.eq_ignore_ascii_case(name)
                     }
                 })
                 .ok_or_else(|| anyhow::anyhow!("找不到出口网卡 '{name}'"))?;

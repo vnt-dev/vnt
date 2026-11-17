@@ -68,6 +68,19 @@ export const configHelp = {
     format: "正整数，常用范围 1200–1500；留空使用默认值。",
     example: "1380",
   },
+  dns_tunnel: {
+    param: "dns_tunnel",
+    summary: "是否把下方 dns 服务器应用到虚拟网卡接口 DNS（隧道 DNS 总开关）。",
+    usage: "开启后，隧道内走系统 DNS 的应用统一使用下方 DNS：可规避运营商 DNS 污染，或统一走 VNT 对端（如路由器）的 DNS。关闭则沿用物理网卡/系统 DNS（默认关闭）。",
+    format: "布尔开关；默认关闭。",
+  },
+  dns: {
+    param: "dns",
+    summary: "隧道 DNS 服务器地址列表（主备顺序）。",
+    usage: "仅在 dns_tunnel=true 时生效：按顺序写入虚拟网卡接口 DNS，第 1 条主用、其余备用。建议填 VNT 对端（路由器）的隧道 IP（如 10.26.0.3）；多条实现主备兜底。",
+    format: "IPv4 点分十进制地址数组；每条 0–255，非法地址保存时会被拒绝。",
+    example: '["10.26.0.3", "223.5.5.5"]',
+  },
   tunnel_addr: {
     param: "tunnel_addr / --tunnel-addr",
     summary: "指定本机监听 P2P 隧道的 IP 和端口。",

@@ -557,6 +557,12 @@ pub struct Config {
     pub no_nat: bool,
     pub device_mode: DeviceMode,
     pub mtu: Option<u16>,
+    /// 隧道 DNS：是否把 `dns` 中的服务器应用到虚拟网卡接口 DNS。默认关闭，
+    /// 关闭时不注入任何隧道 DNS，沿用物理网卡/系统 DNS。
+    pub dns_tunnel: bool,
+    /// 隧道 DNS 服务器地址列表（严格 IPv4 点分十进制），按顺序即主备顺序，
+    /// 第 1 条为主用，其余为备用。仅在 `dns_tunnel=true` 时生效。
+    pub dns: Vec<Ipv4Addr>,
     pub port_mapping: Vec<PortMapping>,
     pub allow_port_mapping: bool,
     pub udp_stun: Vec<String>,
@@ -707,6 +713,12 @@ impl Config {
         if let Some(mtu) = self.mtu {
             table.insert("mtu".into(), i64::from(mtu).into());
         }
+        // 隧道 DNS：仅在非默认时写入（dns_tunnel 默认 false，dns 默认空），
+        // 保持旧配置结构向后兼容。
+        if self.dns_tunnel {
+            table.insert("dns_tunnel".into(), true.into());
+        }
+        insert_string_array(&mut table, "dns", &self.dns);
         if let Some(tunnel_port) = self.tunnel_port {
             table.insert("tunnel_port".into(), i64::from(tunnel_port).into());
         }
@@ -1304,7 +1316,38 @@ mod tests {
         assert!(!text.contains("rtx"), "{text}");
         assert!(!text.contains("no_punch"), "{text}");
         assert!(!text.contains("password"), "{text}");
+        // 隧道 DNS 默认不输出
+        assert!(!text.contains("dns_tunnel"), "{text}");
+        assert!(!text.contains("dns ="), "{text}");
         // 输出本身是合法 TOML
         assert!(toml::from_str::<toml::Table>(&text).is_ok(), "{text}");
+    }
+
+    #[test]
+    fn to_toml_string_emits_tunnel_dns_when_enabled() {
+        let config = Config {
+            network_code: "net".to_string(),
+            device_id: "dev".to_string(),
+            dns_tunnel: true,
+            dns: vec![
+                Ipv4Addr::new(10, 26, 0, 3),
+                Ipv4Addr::new(223, 5, 5, 5),
+            ],
+            ..Config::default()
+        };
+        let text = config.to_toml_string();
+        assert!(text.contains("dns_tunnel = true"), "{text}");
+        assert!(
+            text.contains("dns = [\"10.26.0.3\", \"223.5.5.5\"]"),
+            "{text}"
+        );
+        assert!(toml::from_str::<toml::Table>(&text).is_ok(), "{text}");
+    }
+
+    #[test]
+    fn tunnel_dns_defaults_are_off_and_empty() {
+        let config = Config::default();
+        assert!(!config.dns_tunnel);
+        assert!(config.dns.is_empty());
     }
 }

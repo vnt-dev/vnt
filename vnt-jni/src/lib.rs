@@ -416,6 +416,8 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeNextEvent<'local>(
                                     "device_name": change.config.device_name,
                                     "ip": change.config.ip.as_ref().map(ToString::to_string),
                                     "mtu": change.config.mtu,
+                                    "dns_tunnel": change.config.dns_tunnel,
+                                    "dns": change.config.dns.iter().map(ToString::to_string).collect::<Vec<_>>(),
                                 },
                                 "routes": change.routes,
                                 "needs_vpn_rebuild": plan.vpn_rebuild,
@@ -1377,6 +1379,10 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         #[serde(default)]
         mtu: Option<u16>,
         #[serde(default)]
+        dns_tunnel: bool,
+        #[serde(default)]
+        dns: Vec<String>,
+        #[serde(default)]
         port_mapping: Vec<String>,
         #[serde(default)]
         allow_mapping: bool,
@@ -1482,6 +1488,18 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         }
     }
 
+    // 隧道 DNS：解析并校验为合法 IPv4，保持主备顺序；非法地址直接报错。
+    let mut dns = Vec::with_capacity(cfg.dns.len());
+    for raw in &cfg.dns {
+        let value = raw.trim();
+        if value.is_empty() {
+            continue;
+        }
+        dns.push(value.parse::<std::net::Ipv4Addr>().map_err(|error| {
+            anyhow::anyhow!("invalid DNS address '{}': {}", value, error)
+        })?);
+    }
+
     let config = Config {
         server_addr: server_addrs,
         peer_address,
@@ -1508,6 +1526,8 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         no_nat: cfg.no_nat,
         device_mode: cfg.device_mode,
         mtu: cfg.mtu,
+        dns_tunnel: cfg.dns_tunnel,
+        dns,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
         udp_stun,

@@ -719,6 +719,8 @@ impl NetworkManager {
         if let Some(tun_name) = self.config.tun_name.clone() {
             config = config.set_tun_name(tun_name);
         }
+        // 隧道 DNS：建卡时按当前生效配置应用接口 DNS（桌面平台）。
+        config = config.set_dns(crate::core::change_runtime::effective_dns(&self.config));
         // 失败时 tun_receiver/enhanced_outbound 不会被消耗，可以重试
         if let Err(e) = self
             .device_io_manager
