@@ -1,113 +1,154 @@
-# VNT
+<p align="center">
+  <img src="logo.png" alt="VNT 虚拟网络" width="960">
+</p>
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/vnt-dev/vnt)
+<h1 align="center">VNT: 一个简单、高效、能快速组建虚拟局域网的工具</h1>
 
-一个简单、高效、能快速组建虚拟局域网的工具。无论设备身在何处，只要接入同一个虚拟网络，即可像在同一局域网内一样互相访问，适用于远程桌面、联机游戏、访问家中
-NAS、跨地区协作等场景。
+<p align="center">
+  <a href="https://github.com/vnt-dev/vnt/stargazers">
+    <img src="https://img.shields.io/github/stars/vnt-dev/vnt?style=social" alt="GitHub Stars">
+  </a>
+  <a href="https://github.com/vnt-dev/vnt/forks">
+    <img src="https://img.shields.io/github/forks/vnt-dev/vnt?style=social" alt="GitHub Forks">
+  </a>
+  <a href="https://github.com/vnt-dev/vnt/releases">
+    <img src="https://img.shields.io/github/v/release/vnt-dev/vnt?style=flat&amp;label=release&amp;color=6450e8" alt="GitHub Release">
+  </a>
+  <a href="Cargo.toml">
+    <img src="https://img.shields.io/badge/Made_with-Rust-e88735?style=flat&amp;logo=rust" alt="Made with Rust">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache--2.0-78a82a?style=flat" alt="License Apache-2.0">
+  </a>
+  <a href="https://deepwiki.com/vnt-dev/vnt">
+    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
+  </a>
+</p>
 
-# 快速开始
+<p align="center">
+  无论设备身在何处，只要接入同一个虚拟网络，即可像在同一局域网内一样互相访问，适用于远程桌面、联机游戏、访问家中 NAS、跨地区协作等场景。
+</p>
 
-## 第一步：选择适合的程序
+---
 
-| 程序                       | 适用对象      | 特点                         |
-|--------------------------|-----------|----------------------------|
-| **VNT 桌面客户端**            | 一般用户（推荐）  | 图形化界面，操作简单，Windows 安装包开箱即用 |
-| **vnt2_web**             | 偏好网页管理的用户 | 启动后通过浏览器操作，适合无桌面环境的服务器/NAS |
-| **vnt2_cli + vnt2_ctrl** | 进阶用户      | 纯命令行，适合脚本化、自动化部署           |
+## 快速开始
+
+### 第一步：选择适合的程序
+
+| 程序 | 适用对象 | 特点 |
+| :--- | :--- | :--- |
+| **VNT 桌面客户端** | 一般用户（推荐） | 图形化界面，操作简单，Windows 安装包开箱即用 |
+| **vnt2_web** | 偏好网页管理的用户 | 启动后通过浏览器操作，适合无桌面环境的服务器/NAS |
+| **vnt2_cli + vnt2_ctrl** | 进阶用户 | 纯命令行，适合脚本化、自动化部署 |
 
 各平台的安装包请到 [GitHub Releases](https://github.com/vnt-dev/vnt/releases) 下载。
 
-## 第二步：组网（以桌面客户端为例）
+### 第二步：组网（以桌面客户端为例）
 
 1. 安装并打开 VNT 桌面客户端。
 2. 新建一个组网配置，只需填写两项：
     - **组网编号（-k）**：用于标识虚拟网络的编号，需要互联的设备须填写相同的编号，例如 `123456`；
-    - **服务端地址（-s）**：可使用公共服务端`vnt2.rustvnt.com:29872`，也可填写自行部署的服务端。
+    - **服务端地址（-s）**：可使用公共服务端 `vnt2.rustvnt.com:29872`，也可填写自行部署的服务端。
 3. 点击启动。所有使用**相同组网编号 + 相同服务端**的设备会自动组成一个虚拟局域网，每台设备会分配到虚拟 IP（网段由服务端设置）。
 4. 验证：在设备 A 上 `ping` 设备 B 的虚拟 IP，能 ping 通即表示组网成功。
 
 > 其他设备（电脑、服务器、手机）使用同样的组网编号和服务端地址加入即可，设备数量不限。
 
-## 用 vnt2_web 组网
+### 用 vnt2_web 组网
 
 1. 启动程序：
-   ```
+
+   ```bash
    ./vnt2_web
    ```
+
 2. 从启动日志复制带 `?token=...` 的访问地址（默认监听 `127.0.0.1:19099`）；也可以通过 `--token` 或 `VNT_WEB_TOKEN` 指定固定令牌。
 3. 在网页上添加组网配置（同样只需组网编号和服务端地址），再点击启动组网。
 
-## 用 vnt2_cli 组网
+- 界面展示:
+![](web.png)
 
-```
+### 用 vnt2_cli 组网
+
+```bash
 # 启动组网
 ./vnt2_cli -k 123456 -s vnt2.rustvnt.com:29872
 ```
 
-```
+```bash
 # vnt2_cli 后台运行时，使用 vnt2_ctrl 查看组网状态
 ./vnt2_ctrl info
 ```
 
 更多参数请查看 `./vnt2_cli -h`。
 
-## 常见问题
+### 常见问题
 
-- **Windows 上提示需要管理员权限？** 创建虚拟网卡需要以管理员身份运行程序，右键选择"以管理员身份运行"即可。
-- **ping 不通对方？** 请确认两边组网编号、服务端地址完全一致，且均已启动组网；防火墙可能拦截 ICMP，可使用共享文件夹等实际业务进行验证。
-- **没有公网服务器？** 可先使用公共服务端 `vnt2.rustvnt.com:29872` 体验；正式使用建议自建服务端，以获得更好的稳定性和私密性。
-- **不希望修改系统网络设置？** 可将设备模式设为 `no`（无网卡模式），仅提供流量出口和端口映射，无需管理员权限。
-- **同时装了桌面端和命令行，虚拟网里所有设备都 ping 不通？** 同一台机器、同一个组网编号只允许一个客户端运行。设备标识取自机器标识（`machine_uid`），两个客户端会算出同一个设备 ID，服务端因此把后连上的当成"同一设备的新连接"而踢掉先连上的，双方随即互相重连、无限循环——表现为全网都不通，而对端本身完全正常。现在第二个实例会被直接拒绝并打印已有客户端的状态（退出码 0），按提示退出多余的那个即可。不同组网编号互不影响。
+#### Windows 上提示需要管理员权限？
 
-## 安全说明
+创建虚拟网卡需要以管理员身份运行程序，右键选择"以管理员身份运行"即可。
 
-- **建议设置组网密码**。设置密码后（命令行 `-p` / `--password`，或配置文件中的 `password`
-  ），节点之间的数据采用端到端加密（ChaCha20-Poly1305），**服务端仅负责转发密文，无法解密通信内容**。即使使用公共服务端，通信内容也不会泄露给服务端。
-- 如需与服务端接入的 IKEv2/IPsec 客户端通信，使用 `--allow-ikev2`（配置文件中为 `allow_ikev2 = true`）。该功能会信任已认证服务端注入的
-  IKEv2 明文 IPv4 数据，并让发往 IKEv2 类型设备的流量固定走服务端；默认关闭，且该路径不受 VNT 节点间密码的端到端加密保护。
-- 如需与服务端接入的 WireGuard 客户端通信，使用 `--allow-wireguard`（配置文件中为 `allow_wireguard = true`）。该功能与
-  `allow_ikev2` 相互独立，会信任已认证服务端注入的 WireGuard 明文 IPv4 数据，并让发往 WireGuard 类型设备的流量固定走服务端；默认关闭，且该路径不受
-  VNT 节点间密码的端到端加密保护。
+#### ping 不通对方？
+
+请确认两边组网编号、服务端地址完全一致，且均已启动组网；防火墙可能拦截 ICMP，可使用共享文件夹等实际业务进行验证。
+
+#### 没有公网服务器？
+
+可先使用公共服务端 `vnt2.rustvnt.com:29872` 体验；正式使用建议自建服务端，以获得更好的稳定性和私密性。
+
+#### 不希望修改系统网络设置？
+
+可将设备模式设为 `no`（无网卡模式），仅提供流量出口和端口映射，无需管理员权限。
+
+#### 同时装了桌面端和命令行，虚拟网里所有设备都 ping 不通？
+
+同一台机器、同一个组网编号只允许一个客户端运行。设备标识取自机器标识（`machine_uid`），两个客户端会算出同一个设备 ID，服务端因此把后连上的当成"同一设备的新连接"而踢掉先连上的，双方随即互相重连、无限循环——表现为全网都不通，而对端本身完全正常。现在第二个实例会被直接拒绝并打印已有客户端的状态（退出码 0），按提示退出多余的那个即可。不同组网编号互不影响。
+
+### 安全说明
+
+- **建议设置组网密码**。设置密码后（命令行 `-p` / `--password`，或配置文件中的 `password`），节点之间的数据采用端到端加密（ChaCha20-Poly1305），**服务端仅负责转发密文，无法解密通信内容**。即使使用公共服务端，通信内容也不会泄露给服务端。
+
+- 如需与服务端接入的 IKEv2/IPsec 客户端通信，使用 `--allow-ikev2`（配置文件中为 `allow_ikev2 = true`）。该功能会信任已认证服务端注入的 IKEv2 明文 IPv4 数据，并让发往 IKEv2 类型设备的流量固定走服务端；默认关闭，且该路径不受 VNT 节点间密码的端到端加密保护。
+
+- 如需与服务端接入的 WireGuard 客户端通信，使用 `--allow-wireguard`（配置文件中为 `allow_wireguard = true`）。该功能与 `allow_ikev2` 相互独立，会信任已认证服务端注入的 WireGuard 明文 IPv4 数据，并让发往 WireGuard 类型设备的流量固定走服务端；默认关闭，且该路径不受 VNT 节点间密码的端到端加密保护。
+
 - 同一虚拟网络内的所有设备必须使用**相同的密码**，否则无法互相通信。
+
 - 未设置密码时，节点间数据不加密，经过服务端中继的流量理论上可被服务端查看，请仅在可信网络环境下省略密码。
+
 - 此外，客户端与服务端之间的连接本身支持 tcp-tls、quic、wss 等加密传输协议，并可绑定服务端证书，防止伪造服务端攻击。
 
-# 进阶说明
+## 进阶说明
 
-## 虚拟网卡模式
+### 虚拟网卡模式
 
-配置文件使用 `device_mode = "no|tun|tap"`，默认值为 `tun`；命令行可用 `--device-mode` 覆盖。旧的 `no_tun`
-配置已移除，程序会提示迁移而不会静默按 TUN 启动。
+配置文件使用 `device_mode = "no|tun|tap"`，默认值为 `tun`；命令行可用 `--device-mode` 覆盖。旧的 `no_tun` 配置已移除，程序会提示迁移而不会静默按 TUN 启动。
 
 - `no`：不创建虚拟网卡，只提供流量出口和端口映射。
 - `tun`：创建三层网卡，网卡收发 IPv4 和虚拟 IPv6 包。
 - `tap`：创建二层网卡，完整透传 Ethernet 帧，并与 TUN/NO 节点转换 IPv4、兼容 ARP。
 
-Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装
-`tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
+Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装 `tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
 
-### 虚拟 IPv6
+#### 虚拟 IPv6
 
-TUN/TAP 默认保留 IPv4 并自动配置 `fd76:6e74::/96` 中的 IPv6 地址。地址后 32 位是虚拟 IPv4（node ID），例如
-`10.26.0.2` 对应 `fd76:6e74::a1a:2`。地址随虚拟 IPv4 的注册、变更和网卡重建自动更新，可使用 `ping -6`、TCP、UDP 通信。
-只为该虚拟前缀和 IPv6 多播安装接口路由，不添加 IPv6 默认路由。
+TUN/TAP 默认保留 IPv4 并自动配置 `fd76:6e74::/96` 中的 IPv6 地址。地址后 32 位是虚拟 IPv4（node ID），例如 `10.26.0.2` 对应 `fd76:6e74::a1a:2`。地址随虚拟 IPv4 的注册、变更和网卡重建自动更新，可使用 `ping -6`、TCP、UDP 通信。只为该虚拟前缀和 IPv6 多播安装接口路由，不添加 IPv6 默认路由。
 
 - TUN↔TUN：从目标 IPv6 解析 node ID，复用 IPv4 的节点选路、加密及中继，IPv6 载荷保持原样。
 - TAP↔TUN：自动处理 Ethernet 头转换及 TUN 节点的 NDP 邻居响应，无需静态邻居表。
 - TAP↔TAP：系统 NDP 自动发现邻居；也可以手动配置其他同网段 IPv6，按二层帧透传。
 
-TAP 的 IPv6 单播统一按目标 MAC 查找所属节点，未知目标先泛洪，再从远端帧的源 MAC 学习位置；
-即使 IPv6 使用 `fd76:6e74::/96` 前缀，也不从地址后缀推断所属节点。仅 TUN 出口使用 IPv6 后缀解析 node ID。
+TAP 的 IPv6 单播统一按目标 MAC 查找所属节点，未知目标先泛洪，再从远端帧的源 MAC 学习位置；即使 IPv6 使用 `fd76:6e74::/96` 前缀，也不从地址后缀推断所属节点。仅 TUN 出口使用 IPv6 后缀解析 node ID。
 
 普通 IPv6 多播遵循 `no_broadcast`；NDP 链路控制报文与 ARP 一样不受该选项限制。
+
 IPv6 不进入 NAT、端口映射、外部子网出口、QUIC 流量代理及 IKEv2/WireGuard 客户端互通；无网卡模式不消费 IPv6。
+
 通信端点需要升级，旧端点仍可通过 IPv4 通信；服务端协议不变。
 
-Android/iOS 等由宿主提供 TUN 的平台需要宿主同时配置 IPv6 地址和路由。JNI 网络信息返回
-`virtual_ipv6`、`virtual_ipv6_prefix_len`、`virtual_ipv6_route`；Android 示例在首次建立和重建 VPN 时自动添加派生地址、
-`fd76:6e74::/96` 和 `ff00::/8` 路由。第三方宿主也需要执行这些配置，单独升级 native 库不会改变已有 VPN 接口。
+Android/iOS 等由宿主提供 TUN 的平台需要宿主同时配置 IPv6 地址和路由。JNI 网络信息返回 `virtual_ipv6`、`virtual_ipv6_prefix_len`、`virtual_ipv6_route`；Android 示例在首次建立和重建 VPN 时自动添加派生地址、`fd76:6e74::/96` 和 `ff00::/8` 路由。第三方宿主也需要执行这些配置，单独升级 native 库不会改变已有 VPN 接口。
 
-## VNT2.0 新特性
+### VNT2.0 新特性
 
 1. 提升安全性，支持 tcp-tls、quic、wss 协议连接服务器，和服务端强制使用 tls 加密，并支持证书绑定，防止伪造服务端攻击
 2. 提升流量稳定性，支持使用 quic 代理流量，支持 FEC 冗余传输
@@ -120,36 +161,33 @@ Android/iOS 等由宿主提供 TUN 的平台需要宿主同时配置 IPv6 地址
 9. 支持同时连接多个服务端，可以容灾和负载均衡；固定虚拟 IP（支持 CIDR，纯 IP 默认 `/24`）时本地网络立即启动，服务端在后台连接
 10. 支持完全无服务器组网：配置固定虚拟 IP 和至少一个 `peer_address` 种子后，节点通过带身份的直连握手和 Gossip 公告形成多跳连通图
 
-# 开发者
+## 开发者
 
-## 前端构建
+### 前端构建
 
-web 前端源码位于 `vnt-web/ui/`（Vite + Vue 3 + Pinia + Tailwind CSS v4），构建产物输出到 `vnt-web/static/`，由 RustEmbed
-嵌入二进制。
+web 前端源码位于 `vnt-web/ui/`（Vite + Vue 3 + Pinia + Tailwind CSS v4），构建产物输出到 `vnt-web/static/`，由 RustEmbed 嵌入二进制。
 
 项目使用根级 pnpm workspace 统一管理 Web 与桌面前端依赖：
 
-```
+```bash
 pnpm install
 pnpm build:web
 ```
 
 开发调试使用 `pnpm dev:web`，Vite dev server 会将 `/api` 代理到 `127.0.0.1:19099`。启动 `vnt2_web` 时应指定令牌，并在浏览器登录页输入相同令牌。
 
-## PC 客户端开发
+### PC 客户端开发
 
-桌面客户端源码位于 `vnt-desktop/`（Tauri 2 + Vue 3）。桌面工作台通过 Tauri IPC 直接调用进程内 `vnt-core`
-；需要浏览器访问时，可在"Web 访问"中按需启用同进程 HTTP 服务，无需单独运行 `vnt2_web`。Tauri 与 Web 端统一使用
-`vnt-web/ui/src/` 下的同一套响应式前端代码。
+桌面客户端源码位于 `vnt-desktop/`（Tauri 2 + Vue 3）。桌面工作台通过 Tauri IPC 直接调用进程内 `vnt-core`；需要浏览器访问时，可在"Web 访问"中按需启用同进程 HTTP 服务，无需单独运行 `vnt2_web`。Tauri 与 Web 端统一使用 `vnt-web/ui/src/` 下的同一套响应式前端代码。
 
-```
+```bash
 pnpm install
 pnpm dev:desktop
 ```
 
 构建安装包使用 `pnpm build:desktop`。更多说明见 `vnt-desktop/README.md`。
 
-# 交流群
+## 交流群
 
 对 VNT 有任何问题均可以加群联系作者。
 
@@ -157,15 +195,15 @@ pnpm dev:desktop
 - QQ 群 2：950473757（满员）
 - QQ 群 3：1060550456
 
-# 赞助
+## 赞助
 
 如果 VNT 对你有帮助，欢迎打赏作者。
 
 <img width="300" alt="赞助二维码" src="https://github.com/vnt-dev/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
 
-# 说明
+## 说明
 
-vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
+> vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
 
 更多平台后续再推出。
 
@@ -178,3 +216,15 @@ vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
 5. VNT安卓端2.0已发布（https://github.com/vnt-dev/VntApp）
 6. VNT服务端（https://github.com/vnt-dev/vnts）
 7. [VNTC2.0-APP](https://github.com/luojiang419/VNTC2.0-APP)：基于 VNT 2.0 的第三方客户端，支持 Windows、macOS、Android、Linux WebUI 和 OpenWrt（[v4.8.41 发布下载](https://github.com/luojiang419/VNTC2.0-APP/releases/tag/v4.8.41)）。
+
+## Star 趋势
+
+<p align="center">
+  <a href="https://www.star-history.com/?repos=vnt-dev%2Fvnt&amp;type=date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=vnt-dev/vnt&amp;type=Date&amp;theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=vnt-dev/vnt&amp;type=Date">
+      <img src="https://api.star-history.com/svg?repos=vnt-dev/vnt&amp;type=Date" alt="VNT Star 增长趋势" width="960">
+    </picture>
+  </a>
+</p>
