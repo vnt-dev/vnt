@@ -50,8 +50,9 @@ pub(crate) async fn run(
                                 // 实例可能被内部重建，刷新 IPC 对外 API
                                 ipc.publish(manager.api());
                             }
-                            // 桌面平台的 rebuild/need_fd 均由 apply_change 内部处理
-                            Ok(ChangeOutcome::Rebuild) | Ok(ChangeOutcome::NeedFd(_)) => {}
+                            Ok(outcome @ (ChangeOutcome::Rebuild | ChangeOutcome::NeedFd(_))) => {
+                                log::warn!("运行期变化未应用: {outcome:?}");
+                            }
                             Err(error) => {
                                 log::warn!("应用运行期变化失败: {error:#}");
                             }
