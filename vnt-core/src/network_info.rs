@@ -84,6 +84,21 @@ pub fn merge_present_config(
     local
 }
 
+// Desktop Unix creates its own interface; mobile VPN hosts supply an open fd.
+const HOST_PROVIDES_TUN_FD: bool = cfg!(any(
+    target_os = "android",
+    target_os = "ios",
+    target_os = "tvos"
+));
+
+fn rebuild_waits_for_tun_fd(
+    host_provides_tun_fd: bool,
+    target_mode: DeviceMode,
+    has_fd: bool,
+) -> bool {
+    host_provides_tun_fd && target_mode.has_device() && !has_fd
+}
+
 /// 一次运行期变化应用的结果。
 #[derive(Clone, Debug)]
 pub enum ChangeOutcome {
@@ -379,13 +394,11 @@ impl RuntimeChangeManager {
             );
         }
         if self.with_manager()?.needs_instance_rebuild(change) {
-            // 重建需要新的虚拟网卡 fd（有设备的平台）；桌面平台无此要求
-            let needs_fd = self.with_manager()?.device_mode().has_device();
             #[cfg(unix)]
             let has_fd = tun_fd.is_some();
             #[cfg(not(unix))]
             let has_fd = true;
-            if needs_fd && !has_fd {
+            if rebuild_waits_for_tun_fd(HOST_PROVIDES_TUN_FD, change.config.device_mode, has_fd) {
                 return Ok(ChangeOutcome::Rebuild);
             }
             self.rebuild_impl(
@@ -631,5 +644,27 @@ mod merge_present_tests {
         ];
         let merged = merge_present_config(local, &base, &present(&[]));
         assert_eq!(merged.server_addr.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod rebuild_fd_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
+    fn desktop_rebuilds_tun_and_tap_without_a_host_fd() {
+        for mode in [DeviceMode::Tun, DeviceMode::Tap] {
+            assert!(!rebuild_waits_for_tun_fd(HOST_PROVIDES_TUN_FD, mode, false));
+        }
+    }
+
+    #[test]
+    fn mobile_waits_only_when_the_rebuilt_instance_needs_a_device() {
+        for mode in [DeviceMode::Tun, DeviceMode::Tap] {
+            assert!(rebuild_waits_for_tun_fd(true, mode, false));
+            assert!(!rebuild_waits_for_tun_fd(true, mode, true));
+        }
+        assert!(!rebuild_waits_for_tun_fd(true, DeviceMode::No, false));
     }
 }
