@@ -4,6 +4,15 @@ pub mod server;
 
 pub use vnt_core::*;
 const DEFAULT_PORT: u16 = 11233;
+pub const STOP_TOKEN_ENV: &str = "VNT_IPC_STOP_TOKEN";
+
+pub fn stop_token() -> anyhow::Result<Option<String>> {
+    match std::env::var(STOP_TOKEN_ENV) {
+        Ok(token) if token.len() >= 16 => Ok(Some(token)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        _ => anyhow::bail!("{STOP_TOKEN_ENV} must contain at least 16 bytes of UTF-8"),
+    }
+}
 
 const PORT_FILE: &str = "PORT";
 

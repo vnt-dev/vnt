@@ -8,6 +8,7 @@ message IpcRequest{
     ClientIpsCMD client_ips = 2;
     ClientListCMD client_list = 3;
     AllRouteCMD all_route = 4;
+    StopCMD stop = 5;
   }
 }
 message AppInfoCMD{
@@ -24,12 +25,21 @@ message AllRouteCMD{
 }
 
 
+message StopCMD {
+  string token = 1;
+}
+
+message StopResult {
+  bool accepted = 1;
+}
+
 message IpcResponse{
   oneof response_payload{
     AppInfo app_info = 1;
     ClientIpList client_ips = 2;
     ClientInfoList client_list = 3;
     ClientRouteList all_route = 4;
+    StopResult stop = 5;
   }
 }
 

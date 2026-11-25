@@ -18,6 +18,7 @@ use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub async fn run_client(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<()> {
+    let stop_requested = matches!(cmd, IpcCmd::Stop(_));
     let path = get_port_file_path();
     let port = if let Some(port) = port {
         port
@@ -47,10 +48,13 @@ pub async fn run_client(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<()> {
         .context("Response timed out")?
         .context("Unexpected end of stream")??;
     let response = IpcResponse::decode(response).context("decode response error")?;
-    match response
+    let payload = response
         .response_payload
-        .context("response payload is empty")?
-    {
+        .context("response payload is empty")?;
+    if stop_requested != matches!(payload, ResponsePayload::Stop(_)) {
+        anyhow::bail!("Unexpected response to the control command");
+    }
+    match payload {
         ResponsePayload::AppInfo(info) => {
             print_app_info(info);
         }
@@ -60,6 +64,12 @@ pub async fn run_client(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<()> {
         }
         ResponsePayload::AllRoute(route_list) => {
             print_route_list(route_list)?;
+        }
+        ResponsePayload::Stop(result) if result.accepted => {
+            println!("Stop requested.");
+        }
+        ResponsePayload::Stop(_) => {
+            anyhow::bail!("Stop denied: the instance has no stop token or the token is invalid");
         }
     };
     Ok(())

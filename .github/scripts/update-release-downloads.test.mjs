@@ -23,6 +23,21 @@ test("builds links for desktop installers and target tool bundles", () => {
   assert.doesNotMatch(section, /VNT\.Desktop_2\.0\.0_windows_x64\.msi/);
 });
 
+test("lists the Windows 7 preview ZIP when present", () => {
+  const args = {
+    version: "2.0.0",
+    tag: "v2.0.0",
+    releaseUrl: "https://github.com/vnt-dev/vnt/releases/download/v2.0.0",
+  };
+  const filename = "vnt2-x86_64-win7-windows-msvc-v2.0.0.zip";
+  assert.equal(buildDownloadSection({ ...args, assetNames: new Set() }), undefined);
+  assert.ok(
+    buildDownloadSection({ ...args, assetNames: new Set([filename]) }).includes(
+      `| Windows 7 SP1（预览） | x86_64 | [ZIP](${args.releaseUrl}/${filename}) |`,
+    ),
+  );
+});
+
 test("replaces an existing release download section", () => {
   const oldSection = [
     "<!-- vnt-downloads:start -->",

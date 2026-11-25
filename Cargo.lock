@@ -6418,6 +6418,7 @@ dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+ "subtle",
  "time",
  "tokio",
  "tokio-util",

@@ -1,6 +1,7 @@
 use super::{Args, FileConfig, resolve_configuration};
 use anyhow::Context;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use vnt_core::api::VntApi;
 use vnt_core::log_manager::InstanceLog;
 use vnt_core::managed_config::Subscription;
@@ -14,6 +15,8 @@ pub(crate) async fn run(
     log: Arc<InstanceLog>,
     ctrl_port: Option<u16>,
 ) -> anyhow::Result<()> {
+    let shutdown = CancellationToken::new();
+    let ipc_shutdown = vnt_ipc::stop_token()?.map(|token| (token, shutdown.clone()));
     // 配置管理器：持有订阅连接与组网实例；托管模式在此等待服务端首份配置
     // （本地配置的身份字段已剥离，resolved 时 network_code 仅为占位符，
     // 首份信封到达后由 merge_present_config 以信封身份覆盖）
@@ -27,10 +30,11 @@ pub(crate) async fn run(
         network.prefix_len,
         manager.device_mode()
     );
-    let mut ipc = IpcPublisher::new(ctrl_port);
+    let mut ipc = IpcPublisher::new(ctrl_port, ipc_shutdown);
     ipc.publish(manager.api());
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => break,
             result = tokio::signal::ctrl_c() => {
                 result.context("install Ctrl+C handler")?;
                 log::info!("Ctrl+c received!");
@@ -69,13 +73,15 @@ pub(crate) async fn run(
 struct IpcPublisher {
     ctrl_port: Option<u16>,
     sender: Option<tokio::sync::watch::Sender<VntApi>>,
+    shutdown: Option<(String, CancellationToken)>,
 }
 
 impl IpcPublisher {
-    fn new(ctrl_port: Option<u16>) -> Self {
+    fn new(ctrl_port: Option<u16>, shutdown: Option<(String, CancellationToken)>) -> Self {
         Self {
             ctrl_port,
             sender: None,
+            shutdown,
         }
     }
 
@@ -93,8 +99,11 @@ impl IpcPublisher {
         let (sender, receiver) = tokio::sync::watch::channel(api);
         self.sender = Some(sender);
         let ctrl_port = self.ctrl_port;
+        let shutdown = self.shutdown.take();
         tokio::spawn(async move {
-            if let Err(error) = vnt_ipc::server::run_server_dynamic(ctrl_port, receiver).await {
+            if let Err(error) =
+                vnt_ipc::server::run_server_with_shutdown(ctrl_port, receiver, shutdown).await
+            {
                 log::error!("ipc:{error:?}");
             }
         });

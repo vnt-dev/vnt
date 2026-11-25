@@ -79,6 +79,10 @@ VNT组网可使用VNT桌面客户端、`vnt2_web`和`vnt2_cli`。
 
 ## 常见问题
 
+### Win7 安装虚拟网卡时提示无法验证驱动签名怎么办？
+
+在「控制面板 → 程序和功能 → 查看已安装的更新」中检查 KB4490628 和 KB4474419。若缺少相关更新，按微软说明补装，重启后再试。 [Microsoft 更新说明](https://support.microsoft.com/en-gb/servicing/os/windows/2020/09/2019-sha-2-code-signing-support-requirement-for-windows-and-wsus)
+
 ### Windows 上提示需要管理员权限？
 
 创建虚拟网卡需要以管理员身份运行程序，右键选择"以管理员身份运行"即可。

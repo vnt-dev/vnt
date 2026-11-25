@@ -4,20 +4,29 @@ use crate::message::ipc_request::IpcCmd;
 use crate::message::ipc_response::ResponsePayload;
 use crate::message::{
     AppInfo, ClientInfoItem, ClientInfoList, ClientIpItem, ClientIpList, ClientRouteItem,
-    ClientRouteList, IpcRequest, IpcResponse, PacketLoss, Route, ServerInfo,
+    ClientRouteList, IpcRequest, IpcResponse, PacketLoss, Route, ServerInfo, StopResult,
 };
 use anyhow::bail;
 use futures::{SinkExt, StreamExt};
 use prost::Message;
 use std::fs;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::Duration;
+use subtle::ConstantTimeEq;
 use tokio::io::{self};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::sync::CancellationToken;
 use vnt_core::api::VntApi;
 
-async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result<()> {
+type ShutdownControl = (String, CancellationToken);
+
+async fn handle_connection(
+    stream: TcpStream,
+    vnt_api: VntApi,
+    shutdown: Option<&ShutdownControl>,
+) -> anyhow::Result<()> {
     let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
     // 读请求加超时：空闲连接不能永久占用任务
@@ -32,6 +41,7 @@ async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result
         let Some(cmd) = request.ipc_cmd else {
             bail!("Received an IpcRequest but it was None");
         };
+        let mut stop = None;
         let rs = match cmd {
             IpcCmd::AppInfo(_) => {
                 let info = app_info(&vnt_api);
@@ -107,13 +117,27 @@ async fn handle_connection(stream: TcpStream, vnt_api: VntApi) -> anyhow::Result
                 let route_list = all_route(&vnt_api);
                 ResponsePayload::AllRoute(route_list)
             }
+            IpcCmd::Stop(request) => {
+                stop = shutdown
+                    .filter(|(token, _)| {
+                        bool::from(token.as_bytes().ct_eq(request.token.as_bytes()))
+                    })
+                    .map(|(_, cancellation)| cancellation);
+                ResponsePayload::Stop(StopResult {
+                    accepted: stop.is_some(),
+                })
+            }
         };
         let rs = IpcResponse {
             response_payload: Some(rs),
         };
-        framed
+        let response = framed
             .send(prost::bytes::Bytes::from(rs.encode_to_vec()))
-            .await?;
+            .await;
+        if let Some(cancellation) = stop {
+            cancellation.cancel();
+        }
+        response?;
     }
 
     Ok(())
@@ -192,6 +216,15 @@ pub async fn run_server_dynamic(
     bind_port: Option<u16>,
     vnt_api: tokio::sync::watch::Receiver<VntApi>,
 ) -> anyhow::Result<()> {
+    run_server_with_shutdown(bind_port, vnt_api, None).await
+}
+
+pub async fn run_server_with_shutdown(
+    bind_port: Option<u16>,
+    vnt_api: tokio::sync::watch::Receiver<VntApi>,
+    shutdown: Option<(String, CancellationToken)>,
+) -> anyhow::Result<()> {
+    let shutdown = shutdown.map(Arc::new);
     let mut port = bind_port.unwrap_or(DEFAULT_PORT);
     let listener;
 
@@ -226,10 +259,67 @@ pub async fn run_server_dynamic(
         let (stream, peer_addr) = listener.accept().await?;
         log::info!("IPC Connection from {}", peer_addr);
         let vnt_api = vnt_api.borrow().clone();
+        let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, vnt_api).await {
+            if let Err(e) = handle_connection(stream, vnt_api, shutdown.as_deref()).await {
                 log::warn!("IPC Error handling client: {:?},peer_addr={peer_addr}", e);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::StopCmd;
+    use vnt_core::context::config::{Config, DeviceMode};
+    use vnt_core::log_manager::InstanceLog;
+    use vnt_core::network_info::RuntimeChangeManager;
+
+    #[tokio::test]
+    async fn stop_requires_an_enabled_matching_token() {
+        let config = Config {
+            network_code: "ipc-shutdown-test".into(),
+            device_id: "ipc-shutdown-test".into(),
+            ip: Some("10.26.0.2/24".parse().unwrap()),
+            device_mode: DeviceMode::No,
+            no_punch: true,
+            tunnel_addr: vec!["127.0.0.1:0".parse().unwrap()],
+            ..Default::default()
+        };
+        let mut manager = RuntimeChangeManager::new(
+            config,
+            None,
+            Arc::new(InstanceLog::new("ipc-shutdown-test")),
+        )
+        .await
+        .unwrap();
+        let api = manager.api().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let cancellation = CancellationToken::new();
+        let valid = "valid-shutdown-token";
+        let shutdown = (valid.into(), cancellation.clone());
+
+        for (control, token, should_stop) in [
+            (None, valid, false),
+            (Some(&shutdown), "fake-shutdown-token", false),
+            (Some(&shutdown), valid, true),
+        ] {
+            let server = async {
+                let (stream, _) = listener.accept().await.unwrap();
+                handle_connection(stream, api.clone(), control).await
+            };
+            let request = IpcCmd::Stop(StopCmd {
+                token: token.into(),
+            });
+            let (server, client) =
+                tokio::join!(server, crate::client::run_client(request, Some(port)));
+            server.unwrap();
+            assert_eq!(client.is_ok(), should_stop);
+            assert_eq!(cancellation.is_cancelled(), should_stop);
+        }
+        drop(api);
+        manager.stop().await;
     }
 }

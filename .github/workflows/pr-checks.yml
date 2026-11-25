@@ -37,6 +37,14 @@ jobs:
       - name: Build shared Web frontend
         run: pnpm build:web
 
+      - name: Upload Web static files
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnt-web-static
+          path: vnt-web/static
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Build Tauri frontend
         run: pnpm build:desktop-ui
 
@@ -84,3 +92,31 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --all-targets
+
+  win7:
+    name: Windows 7 x64 build and PE checks
+    needs: frontend
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Download Web static files
+        uses: actions/download-artifact@v4
+        with:
+          name: vnt-web-static
+          path: vnt-web/static
+
+      - name: Build and inspect Windows 7 binaries
+        shell: pwsh
+        run: ./.github/scripts/build-win7.ps1
+
+      - name: Upload Windows 7 binaries for runtime testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vnt-x86_64-win7-windows-msvc
+          path: |
+            target/x86_64-win7-windows-msvc/release/vnt2_cli.exe
+            target/x86_64-win7-windows-msvc/release/vnt2_ctrl.exe
+            target/x86_64-win7-windows-msvc/release/vnt2_web.exe
+          if-no-files-found: error

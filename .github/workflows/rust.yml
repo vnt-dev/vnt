@@ -71,6 +71,8 @@ jobs:
             OS: windows-latest
           - TARGET: x86_64-pc-windows-msvc
             OS: windows-latest
+          - TARGET: x86_64-win7-windows-msvc
+            OS: windows-latest
           - TARGET: aarch64-pc-windows-msvc
             OS: windows-latest
           - TARGET: mipsel-unknown-linux-musl
@@ -108,7 +110,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install protobuf
       - name: Install Protobuf (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && !contains(matrix.TARGET, '-win7-')
         run: choco install protoc
       - name: Use strawberry perl
         if: startsWith(matrix.os, 'windows')
@@ -248,10 +250,14 @@ jobs:
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols"]   
           EOF
       - name: Install rust target
-        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') &&  ! startsWith(matrix.TARGET, 'mips') }}
+        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') && ! startsWith(matrix.TARGET, 'mips') && ! contains(matrix.TARGET, '-win7-') }}
         run: rustup target add $TARGET
+      - name: Build and inspect Windows 7 binaries
+        if: contains(matrix.TARGET, '-win7-')
+        shell: pwsh
+        run: ./.github/scripts/build-win7.ps1
       - name: Run build Vnt
-        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') }}
+        if: ${{ ! endsWith(matrix.TARGET, 'freebsd') && ! contains(matrix.TARGET, '-win7-') }}
         run: |
           if [[ $TARGET =~ ^mips.*$ ]]; then
             cargo +nightly build --release --verbose --target $TARGET -Z build-std=std,panic_abort --bin vnt2_web --features vnt-web

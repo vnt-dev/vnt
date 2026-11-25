@@ -18,6 +18,7 @@ const TOOL_TARGETS = [
   ["Windows", "x86_64", "x86_64-pc-windows-msvc"],
   ["Windows", "x86", "i686-pc-windows-msvc"],
   ["Windows", "ARM64", "aarch64-pc-windows-msvc"],
+  ["Windows 7 SP1（预览）", "x86_64", "x86_64-win7-windows-msvc"],
   ["Linux", "x86_64", "x86_64-unknown-linux-musl"],
   ["Linux", "ARM64", "aarch64-unknown-linux-musl"],
   ["Linux", "ARMv7 hard-float", "armv7-unknown-linux-musleabihf"],

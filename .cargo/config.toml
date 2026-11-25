@@ -13,6 +13,9 @@
 linker = "aarch64-linux-musl-gcc"
 rustflags = ["-C", "target-feature=+crt-static", "-C", "strip=symbols"]
 
+[target.x86_64-win7-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/SUBSYSTEM:CONSOLE,6.01"]
+
 [target.mipsel-unknown-linux-musl]
 linker = "mipsel-linux-muslsf-gcc"
 rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
