@@ -11,6 +11,20 @@ use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
 use vnt_ipc as vnt_core;
 use vnt_ipc::port_mapping::PortMapping;
 
+#[derive(Debug)]
+pub(crate) struct InvalidCertMode {
+    value: String,
+    reason: String,
+}
+
+impl std::fmt::Display for InvalidCertMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid cert_mode '{}': {}", self.value, self.reason)
+    }
+}
+
+impl std::error::Error for InvalidCertMode {}
+
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct FileConfig {
     /// 服务端签发的配置源；启动时先拉取远端配置，本文件中的字段覆盖远端值。
@@ -65,6 +79,21 @@ impl FileConfig {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    fn parse_cert_mode(&self) -> anyhow::Result<Option<CertValidationMode>> {
+        self.cert_mode
+            .as_deref()
+            .map(|value| {
+                value
+                    .parse()
+                    .map_err(|reason| InvalidCertMode {
+                        value: value.to_owned(),
+                        reason,
+                    })
+                    .map_err(anyhow::Error::from)
+            })
+            .transpose()
     }
 
     /// Merge a higher-priority local configuration over a lower-priority
@@ -373,7 +402,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
 
     let cert_mode = args
         .cert_mode
-        .or_else(|| file.cert_mode.as_deref().and_then(|s| s.parse().ok()))
+        .or(file.parse_cert_mode()?)
         .unwrap_or(CertValidationMode::InsecureSkipVerification);
 
     let device_id = match args.device_id.or_else(|| file.device_id.clone()) {
@@ -532,9 +561,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         resolve_tunnel_binding(&[], None, file.tunnel_addr.clone(), file.tunnel_port)?;
 
     let cert_mode = file
-        .cert_mode
-        .as_deref()
-        .and_then(|s| s.parse().ok())
+        .parse_cert_mode()?
         .unwrap_or(CertValidationMode::InsecureSkipVerification);
 
     let device_id = match file.device_id.clone() {
@@ -810,6 +837,52 @@ server = ["quic://1.2.3.4:29872"]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cert_mode_file(value: Option<&str>) -> FileConfig {
+        FileConfig {
+            network_code: Some("cert-mode-test".into()),
+            device_id: Some("cert-mode-test-device".into()),
+            cert_mode: value.map(str::to_owned),
+            ..FileConfig::default()
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_toml_cert_mode() {
+        let args = Args::try_parse_from(["vnt"]).unwrap();
+        let override_args = Args::try_parse_from(["vnt", "--cert-mode", "standard"]).unwrap();
+        for value in ["invalid", "finger:00"] {
+            for args in [None, Some(args.clone()), Some(override_args.clone())] {
+                let error =
+                    build_config_from_args_and_file(args, Some(cert_mode_file(Some(value))))
+                        .err()
+                        .expect("invalid cert_mode must be rejected");
+                assert!(error.is::<InvalidCertMode>());
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_cert_mode_default_and_cli_precedence() {
+        for (value, expected) in [
+            (None, CertValidationMode::InsecureSkipVerification),
+            (Some("skip"), CertValidationMode::InsecureSkipVerification),
+            (Some("standard"), CertValidationMode::Standard),
+        ] {
+            let args = Args::try_parse_from(["vnt"]).unwrap();
+            for args in [None, Some(args)] {
+                let (config, _) =
+                    build_config_from_args_and_file(args, Some(cert_mode_file(value))).unwrap();
+                assert_eq!(config.cert_mode, expected);
+            }
+        }
+
+        let args = Args::try_parse_from(["vnt", "--cert-mode", "standard"]).unwrap();
+        let (config, _) =
+            build_config_from_args_and_file(Some(args), Some(cert_mode_file(Some("skip"))))
+                .unwrap();
+        assert_eq!(config.cert_mode, CertValidationMode::Standard);
+    }
 
     #[test]
     fn dns_list_alone_configures_interface_dns() {

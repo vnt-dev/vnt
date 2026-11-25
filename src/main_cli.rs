@@ -1,5 +1,5 @@
 use anyhow::Context;
-use args_config::{Args, CtrlConfig, FileConfig, build_config_from_args_and_file};
+use args_config::{Args, CtrlConfig, FileConfig, InvalidCertMode, build_config_from_args_and_file};
 use std::path::Path;
 use vnt_ipc as vnt_core;
 
@@ -24,6 +24,9 @@ pub async fn main() {
                 return;
             }
             log::error!("{error:?}");
+            if error.is::<InvalidCertMode>() {
+                std::process::exit(1);
+            }
         }
     }
 }
