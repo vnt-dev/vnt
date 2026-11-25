@@ -8,6 +8,7 @@ license = "Apache-2.0"
 vnt-core = { path = "vnt-core" }
 vnt-ipc = { path = "vnt-ipc", optional = true }
 vnt-web = { path = "vnt-web", optional = true }
+form_urlencoded = { version = "1", optional = true }
 clap = { version = "4.5", features = ["derive", "env"] }
 
 tokio = { workspace = true, features = ["full"] }
@@ -31,7 +32,7 @@ windows-service.workspace = true
 [features]
 default = []
 vnt-ipc = ["dep:vnt-ipc"]
-vnt-web = ["dep:vnt-web"]
+vnt-web = ["dep:vnt-web", "dep:form_urlencoded"]
 
 [[bin]]
 name = "vnt2_cli"

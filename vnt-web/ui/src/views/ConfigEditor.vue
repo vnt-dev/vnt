@@ -23,10 +23,7 @@ const editorContent = ref("");
 const editorFileName = ref("");
 const editorMode = ref("new"); // 'new' 或 'edit'
 const editMode = ref("form"); // 'form'、'subscription' 或 'toml'
-const originalToml = ref(""); // 保存原始TOML内容(包含用户注释)
-const hasTomlChanges = ref(false);
-const hasFormChanges = ref(false);
-const isParsingToml = ref(false);
+const sourceToml = ref(""); // 表单编辑基于最近加载或手工编辑的 TOML
 const formData = ref(emptyFormData());
 const subscriptionPreview = ref(null);
 const subscriptionTesting = ref(false);
@@ -89,8 +86,7 @@ watch(
     editorFileName.value = props.fileName || "";
     editorMode.value = props.fileName ? "edit" : "new";
     editMode.value = "form"; // 默认表单模式
-    hasTomlChanges.value = false;
-    hasFormChanges.value = false;
+    sourceToml.value = "";
     subscriptionPreview.value = null;
     subscriptionTesting.value = false;
 
@@ -98,20 +94,22 @@ watch(
       try {
         const data = await getConfig(props.fileName);
         editorContent.value = data;
-        originalToml.value = data; // 保存原始TOML
-        isParsingToml.value = true;
-        formData.value = parseTomlToForm(data);
-        resetSections(formData.value);
-        nextTick(() => {
-          isParsingToml.value = false;
-        });
+        sourceToml.value = data;
+        try {
+          formData.value = parseTomlToForm(data);
+          resetSections(formData.value);
+        } catch (error) {
+          // Invalid or unsupported input can still be corrected in the raw editor.
+          formData.value = emptyFormData();
+          editMode.value = "toml";
+          ui.toast.error("配置无法用表单打开: " + error.message);
+        }
       } catch (e) {
         ui.toast.error("获取配置失败: " + e.message);
         emit("close");
       }
     } else {
       // 新建配置,初始化表单
-      originalToml.value = "";
       formData.value = emptyFormData();
       resetSections(formData.value);
       editorContent.value = NEW_CONFIG_TEMPLATE;
@@ -125,13 +123,10 @@ watch(
 const switchToStructuredMode = (mode) => {
   if (editMode.value === "toml") {
     try {
-      const parsed = parseTomlToForm(editorContent.value);
+      formData.value = parseTomlToForm(editorContent.value);
+      sourceToml.value = editorContent.value;
+      resetSections(formData.value);
       editMode.value = mode;
-      isParsingToml.value = true;
-      formData.value = parsed;
-      nextTick(() => {
-        isParsingToml.value = false;
-      });
     } catch (e) {
       ui.toast.error("配置解析失败: " + e.message);
     }
@@ -143,40 +138,16 @@ const switchToStructuredMode = (mode) => {
 const switchToFormMode = () => switchToStructuredMode("form");
 const switchToSubscriptionMode = () => switchToStructuredMode("subscription");
 
-// 切换到TOML模式
 const switchToTomlMode = () => {
-  if (editMode.value !== "toml") {
-    // 如果表单被修改过,生成新的TOML
-    if (hasFormChanges.value) {
-      editorContent.value = formToToml(formData.value);
-      hasFormChanges.value = false;
-    } else if (originalToml.value && !hasTomlChanges.value) {
-      // 表单未修改且TOML未修改,使用原始TOML(保留用户注释)
-      editorContent.value = originalToml.value;
-    } else {
-      editorContent.value = formToToml(formData.value);
-    }
+  if (editMode.value === "toml") return;
+  try {
+    const merged = formToToml(formData.value, sourceToml.value);
+    editorContent.value = merged || (editorMode.value === "new" ? NEW_CONFIG_TEMPLATE : "");
+    editMode.value = "toml";
+  } catch (error) {
+    ui.toast.error("配置转换失败: " + error.message);
   }
-  editMode.value = "toml";
 };
-
-// 监听TOML内容变化(只在TOML模式下)
-watch(editorContent, (newVal, oldVal) => {
-  if (editMode.value === "toml" && oldVal !== undefined) {
-    hasTomlChanges.value = true;
-  }
-});
-
-// 监听表单数据变化
-watch(
-  formData,
-  () => {
-    if (editMode.value !== "toml" && props.show && !isParsingToml.value) {
-      hasFormChanges.value = true;
-    }
-  },
-  { deep: true },
-);
 
 watch(
   () => formData.value.subscription,
@@ -231,7 +202,7 @@ const handleSave = async () => {
         ui.toast.error("DNS 地址无效（需为 IPv4）：" + invalid.join(", "));
         return;
       }
-      configContent = formToToml(formData.value);
+      configContent = formToToml(formData.value, sourceToml.value);
     }
 
     await saveConfig(editorFileName.value || null, configContent);
