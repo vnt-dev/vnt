@@ -5,24 +5,12 @@
 <h1 align="center">VNT: 一个简单、高效、能快速组建虚拟局域网的工具</h1>
 
 <p align="center">
-  <a href="https://github.com/vnt-dev/vnt/stargazers">
-    <img src="https://img.shields.io/github/stars/vnt-dev/vnt?style=social" alt="GitHub Stars">
-  </a>
-  <a href="https://github.com/vnt-dev/vnt/forks">
-    <img src="https://img.shields.io/github/forks/vnt-dev/vnt?style=social" alt="GitHub Forks">
-  </a>
-  <a href="https://github.com/vnt-dev/vnt/releases">
-    <img src="https://img.shields.io/github/v/release/vnt-dev/vnt?style=flat&amp;label=release&amp;color=6450e8" alt="GitHub Release">
-  </a>
-  <a href="Cargo.toml">
-    <img src="https://img.shields.io/badge/Made_with-Rust-e88735?style=flat&amp;logo=rust" alt="Made with Rust">
-  </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-Apache--2.0-78a82a?style=flat" alt="License Apache-2.0">
-  </a>
-  <a href="https://deepwiki.com/vnt-dev/vnt">
-    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
-  </a>
+  <img src="https://img.shields.io/github/stars/vnt-dev/vnt?style=social" alt="GitHub Stars">
+  <img src="https://img.shields.io/github/forks/vnt-dev/vnt?style=social" alt="GitHub Forks">
+  <img src="https://img.shields.io/github/v/release/vnt-dev/vnt?style=flat&amp;label=release&amp;color=6450e8" alt="GitHub Release">
+  <img src="https://img.shields.io/badge/Made_with-Rust-e88735?style=flat&amp;logo=rust" alt="Made with Rust">
+  <img src="https://img.shields.io/badge/license-Apache--2.0-78a82a?style=flat" alt="License Apache-2.0">
+  <a href="https://deepwiki.com/vnt-dev/vnt">Ask DeepWiki</a>
 </p>
 
 <p align="center">
@@ -41,8 +29,13 @@
 | **vnt2_web** | 偏好网页管理的用户 | 启动后通过浏览器操作，适合无桌面环境的服务器/NAS |
 | **vnt2_cli + vnt2_ctrl** | 进阶用户 | 纯命令行，适合脚本化、自动化部署 |
 
-各平台的安装包请到 [GitHub Releases](https://github.com/vnt-dev/vnt/releases) 下载。
+各平台的安装包请到 [GitHub Releases](https://github.com/vnt-dev/vnt/releases) 下载。  
 
+使用AOSC OS的用户，可直接使用以下命令安装vnt。  
+该命令将同时安装`vnt2_web`、`vnt2_cli`和`vnt2_ctrl`，方便同时进行可视化管理和进阶操作：
+```
+oma install vnt
+```
 ### 第二步：组网（以桌面客户端为例）
 
 1. 安装并打开 VNT 桌面客户端。
@@ -54,7 +47,7 @@
 
 > 其他设备（电脑、服务器、手机）使用同样的组网编号和服务端地址加入即可，设备数量不限。
 
-### 用 vnt2_web 组网
+#### 用 vnt2_web 组网
 
 1. 启动程序：
 
@@ -68,7 +61,7 @@
 - 界面展示:
 ![](web.png)
 
-### 用 vnt2_cli 组网
+#### 用 vnt2_cli 组网
 
 ```bash
 # 启动组网
@@ -82,29 +75,29 @@
 
 更多参数请查看 `./vnt2_cli -h`。
 
-### 常见问题
+## 常见问题
 
-#### Windows 上提示需要管理员权限？
+### Windows 上提示需要管理员权限？
 
 创建虚拟网卡需要以管理员身份运行程序，右键选择"以管理员身份运行"即可。
 
-#### ping 不通对方？
+### ping 不通对方？
 
 请确认两边组网编号、服务端地址完全一致，且均已启动组网；防火墙可能拦截 ICMP，可使用共享文件夹等实际业务进行验证。
 
-#### 没有公网服务器？
+### 没有公网服务器？
 
 可先使用公共服务端 `vnt2.rustvnt.com:29872` 体验；正式使用建议自建服务端，以获得更好的稳定性和私密性。
 
-#### 不希望修改系统网络设置？
+### 不希望修改系统网络设置？
 
 可将设备模式设为 `no`（无网卡模式），仅提供流量出口和端口映射，无需管理员权限。
 
-#### 同时装了桌面端和命令行，虚拟网里所有设备都 ping 不通？
+### 同时装了桌面端和命令行，虚拟网里所有设备都 ping 不通？
 
 同一台机器、同一个组网编号只允许一个客户端运行。设备标识取自机器标识（`machine_uid`），两个客户端会算出同一个设备 ID，服务端因此把后连上的当成"同一设备的新连接"而踢掉先连上的，双方随即互相重连、无限循环——表现为全网都不通，而对端本身完全正常。现在第二个实例会被直接拒绝并打印已有客户端的状态（退出码 0），按提示退出多余的那个即可。不同组网编号互不影响。
 
-### 安全说明
+## 安全说明
 
 - **建议设置组网密码**。设置密码后（命令行 `-p` / `--password`，或配置文件中的 `password`），节点之间的数据采用端到端加密（ChaCha20-Poly1305），**服务端仅负责转发密文，无法解密通信内容**。即使使用公共服务端，通信内容也不会泄露给服务端。
 
@@ -130,7 +123,7 @@
 
 Linux 和 macOS 使用系统提供的 TUN/TAP 能力。Windows 的 TUN 模式使用随程序提供的 `wintun.dll`；TAP 模式需要管理员权限并预先安装 `tap-windows`（硬件 ID `tap0901`）。Android VpnService 仅支持 TUN。
 
-#### 虚拟 IPv6
+### 虚拟 IPv6
 
 TUN/TAP 默认保留 IPv4 并自动配置 `fd76:6e74::/96` 中的 IPv6 地址。地址后 32 位是虚拟 IPv4（node ID），例如 `10.26.0.2` 对应 `fd76:6e74::a1a:2`。地址随虚拟 IPv4 的注册、变更和网卡重建自动更新，可使用 `ping -6`、TCP、UDP 通信。只为该虚拟前缀和 IPv6 多播安装接口路由，不添加 IPv6 默认路由。
 
@@ -201,13 +194,13 @@ pnpm dev:desktop
 
 <img width="300" alt="赞助二维码" src="https://github.com/vnt-dev/vnt/assets/49143209/0d3a7311-43fc-4ed7-9507-863b5d69b6b2">
 
-## 说明
+## 兼容性说明
 
 > vnt2.0 整体重构了一遍，和 1.0 不兼容，欢迎反馈。
 
 更多平台后续再推出。
 
-### 相关项目
+## 相关项目
 
 1. tun 虚拟网卡（https://github.com/tun-rs/tun-rs）
 2. 路由设置（https://github.com/tun-rs/route_manager）
@@ -217,7 +210,7 @@ pnpm dev:desktop
 6. VNT服务端（https://github.com/vnt-dev/vnts）
 7. [VNTC2.0-APP](https://github.com/luojiang419/VNTC2.0-APP)：基于 VNT 2.0 的第三方客户端，支持 Windows、macOS、Android、Linux WebUI 和 OpenWrt（[v4.8.41 发布下载](https://github.com/luojiang419/VNTC2.0-APP/releases/tag/v4.8.41)）。
 
-## Star 趋势
+## Star History
 
 <p align="center">
   <a href="https://www.star-history.com/?repos=vnt-dev%2Fvnt&amp;type=date">
