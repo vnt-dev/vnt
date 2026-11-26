@@ -654,10 +654,11 @@ async fn resolve_subscription_config_with_retry(
     // 等待期间可取消
     let manager = tokio::select! {
         _ = cancellation.cancelled() => return Err(anyhow!("启动已取消")),
-        result = RuntimeChangeManager::new(
+        result = RuntimeChangeManager::new_with_shutdown(
             local_core,
             subscription,
             state.logs.instance(file_name),
+            cancellation.child_token(),
         ) => result?,
     };
     state.install_runtime_manager(
@@ -1708,11 +1709,13 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
                 Ok(RuntimeEvent::Changed(change)) => {
                     let outcome = {
                         let mut guard = manager.lock().await;
-                        let result = tokio::select! {
-                            biased;
-                            _ = cancellation.cancelled() => break,
-                            result = guard.apply_change(&change) => result,
-                        };
+                        // Shutdown is cooperative: a cancelled registration
+                        // wakes via the manager's token, but an in-flight
+                        // retirement keeps its join handles until tasks exit.
+                        let result = guard.apply_change(&change).await;
+                        if cancellation.is_cancelled() {
+                            break;
+                        }
                         // Recovery replaces the API; a failed rebuild must not
                         // expose the stopped instance.
                         state.publish_runtime_api(&file_name_for_wait, generation, guard.api());
@@ -1745,7 +1748,7 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
                 }
             }
         }
-        // Explicitly stop tasks even if a cancellation interrupted a rebuild.
+        // Publish completion only after both retirement and final cleanup.
         manager.lock().await.stop().await;
         drop(state.take_runtime_manager(&file_name_for_wait));
         drop(manager);

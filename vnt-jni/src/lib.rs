@@ -662,7 +662,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
                 (manager, state.runtime.clone())
             };
             if let Some(manager) = manager {
-                // next_event 先被唤醒并释放锁。显式断开订阅，不依赖其他 JNI 调用
+                // 注册等待与 next_event 先被唤醒并释放锁。显式断开订阅，不依赖其他 JNI 调用
                 // 何时放下 Arc；等待超时也不取消后台清理。
                 let cleanup = runtime.spawn(async move { manager.lock().await.stop().await });
                 runtime

@@ -171,6 +171,18 @@ impl RuntimeChangeManager {
         subscription: Option<Subscription>,
         log: Arc<InstanceLog>,
     ) -> anyhow::Result<Self> {
+        Self::new_with_shutdown(local_config, subscription, log, CancellationToken::new()).await
+    }
+
+    /// Create a manager whose final shutdown can be requested by its supervisor.
+    /// The token wakes event and registration waits; the supervisor must still
+    /// await `stop` to finish releasing resources.
+    pub async fn new_with_shutdown(
+        local_config: Config,
+        subscription: Option<Subscription>,
+        log: Arc<InstanceLog>,
+        shutdown: CancellationToken,
+    ) -> anyhow::Result<Self> {
         let (routes_tx, routes_rx) = watch::channel(Vec::new());
         let subscription_listener = subscription.map(SubscriptionListener::new);
         let mut manager = Self {
@@ -179,7 +191,7 @@ impl RuntimeChangeManager {
             routes_tx,
             routes_rx,
             groups: TaskGroupManager::new(),
-            shutdown: CancellationToken::new(),
+            shutdown,
             log,
             instance: None,
         };
@@ -227,8 +239,8 @@ impl RuntimeChangeManager {
         #[cfg(unix)] tun_fd: Option<std::os::fd::OwnedFd>,
         #[cfg(not(unix))] _tun_fd: (),
     ) -> anyhow::Result<NetworkAddr> {
+        let network = self.current_network().await?;
         let manager = self.with_manager()?;
-        let network = manager.current_network().await?;
         if manager.device_mode().has_device() {
             #[cfg(unix)]
             manager.start_device_fd(tun_fd).await?;
@@ -322,14 +334,20 @@ impl RuntimeChangeManager {
         }
     }
 
-    /// 当前组网实例的网段信息（未注册完成时等待注册结果）。
+    /// 当前组网实例的网段信息（等待注册结果，主动停止时立即返回错误）。
     pub async fn current_network(&self) -> anyhow::Result<NetworkAddr> {
-        self.instance
-            .as_ref()
-            .context("组网实例未启动")?
-            .manager
-            .current_network()
-            .await
+        tokio::select! {
+            biased;
+            _ = self.shutdown.cancelled() => anyhow::bail!("网络注册在完成前被停止"),
+            network = async {
+                self.instance
+                    .as_ref()
+                    .context("组网实例未启动")?
+                    .manager
+                    .current_network()
+                    .await
+            } => network,
+        }
     }
 
     /// 当前虚拟网卡模式。
@@ -394,6 +412,7 @@ impl RuntimeChangeManager {
         #[cfg(unix)] tun_fd: Option<std::os::fd::OwnedFd>,
         #[cfg(not(unix))] tun_fd: (),
     ) -> anyhow::Result<ChangeOutcome> {
+        anyhow::ensure!(!self.shutdown.is_cancelled(), "组网实例正在停止");
         let result = self.apply_change_inner(change, tun_fd).await;
         if let Some(instance) = &self.instance {
             // Publish the actual committed config, not the requested snapshot.
@@ -512,6 +531,8 @@ impl RuntimeChangeManager {
         #[cfg(not(unix))] _tun_fd: (),
     ) -> anyhow::Result<()> {
         self.stop_instance().await;
+        // Never start a replacement after a stop requested during retirement.
+        anyhow::ensure!(!self.shutdown.is_cancelled(), "已取消组网实例重建");
         self.log.info("重建组网实例");
         self.start_instance(config).await?;
         let start_device = self.start_device_impl(
@@ -795,6 +816,144 @@ mod rebuild_recovery_tests {
         let published = manager.api().unwrap().get_config().unwrap();
         assert_eq!(published.device_name, "corrected");
         manager.stop().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_wakes_network_lookup_and_device_start_during_registration() {
+        use std::time::Duration;
+        // The server can accept a connection but never answers registration.
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        for start_device in [false, true] {
+            let name = if start_device {
+                "stop-register-device"
+            } else {
+                "stop-register-get"
+            };
+            let mut config = standalone_config(name);
+            config.ip = None;
+            config.server_addr = vec![
+                format!("tcp://{}", server.local_addr().unwrap())
+                    .parse()
+                    .unwrap(),
+            ];
+            let manager = RuntimeChangeManager::new(config, None, Arc::new(InstanceLog::new(name)))
+                .await
+                .unwrap();
+            let shutdown = manager.shutdown_token();
+            let manager = tokio::sync::Mutex::new(manager);
+            let operation = async {
+                let mut guard = manager.lock().await;
+                if start_device {
+                    guard.start_device().await
+                } else {
+                    guard.current_network().await
+                }
+            };
+            tokio::pin!(operation);
+            assert!(futures::poll!(&mut operation).is_pending());
+
+            shutdown.cancel();
+            let error = tokio::time::timeout(Duration::from_secs(2), &mut operation)
+                .await
+                .expect("shutdown must release the registration wait")
+                .unwrap_err();
+            assert!(error.to_string().contains("网络注册在完成前被停止"));
+            tokio::time::timeout(Duration::from_secs(2), async {
+                manager.lock().await.stop().await;
+            })
+            .await
+            .expect("shutdown must be able to acquire the manager lock");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_during_rebuild_waits_for_retiring_listener() {
+        use std::time::Duration;
+        use tokio::sync::oneshot;
+
+        // Keep a listening socket in an old instance task. Its Drop marks the
+        // exact point where stop has begun joining, but delays socket release.
+        struct SlowListener {
+            _listener: tokio::net::TcpListener,
+            retiring: Option<oneshot::Sender<()>>,
+            release: std::sync::mpsc::Receiver<()>,
+        }
+        impl Drop for SlowListener {
+            fn drop(&mut self) {
+                if let Some(retiring) = self.retiring.take() {
+                    let _ = retiring.send(());
+                }
+                let _ = self.release.recv_timeout(Duration::from_secs(10));
+            }
+        }
+
+        let config = standalone_config("stop-during-retirement");
+        let shutdown = CancellationToken::new();
+        let mut manager = RuntimeChangeManager::new_with_shutdown(
+            config.clone(),
+            None,
+            Arc::new(InstanceLog::new("stop-during-retirement")),
+            shutdown.child_token(),
+        )
+        .await
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (retiring_tx, retiring_rx) = oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        manager
+            .instance
+            .as_ref()
+            .unwrap()
+            .manager
+            .task_group_for_test()
+            .spawn(async move {
+                let _listener = SlowListener {
+                    _listener: listener,
+                    retiring: Some(retiring_tx),
+                    release: release_rx,
+                };
+                let _ = ready_tx.send(());
+                std::future::pending::<()>().await;
+            });
+        ready_rx.await.unwrap();
+
+        let mut change = RuntimeChange {
+            config,
+            routes: Vec::new(),
+        };
+        change.config.device_name = "replacement".into();
+        // This is the Web supervisor's ordering: finish the in-flight apply
+        // under cancellation, then stop; do not race and drop the apply.
+        let mut worker = tokio::spawn(async move {
+            let result = manager.apply_change(&change).await;
+            assert!(manager.api().is_none());
+            manager.stop().await;
+            result
+        });
+        tokio::time::timeout(Duration::from_secs(2), retiring_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        shutdown.cancel();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut worker)
+                .await
+                .is_err()
+        );
+        release_tx.send(()).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("已取消组网实例重建")
+        );
+        assert!(tokio::net::TcpListener::bind(addr).await.is_ok());
     }
 
     #[tokio::test]

@@ -157,6 +157,11 @@ enum RegistrationStatus {
 }
 
 impl NetworkManager {
+    #[cfg(test)]
+    pub(crate) fn task_group_for_test(&self) -> &TaskGroup {
+        &self.task_group
+    }
+
     pub async fn stop(self) {
         self.server_task_group.stop_and_join().await;
         self.task_group.stop_and_join().await;
