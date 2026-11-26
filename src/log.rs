@@ -35,12 +35,12 @@ appenders:
       kind: compound
       trigger:
         kind: size
-        limit: 10 mb
+        limit: 128 kb
       roller:
         kind: fixed_window
         pattern: {}
         base: 1
-        count: 5
+        count: 2
   console:
     kind: console
     encoder:
