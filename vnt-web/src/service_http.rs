@@ -77,7 +77,7 @@ struct InstanceState {
     generation: u64,
     vnt: Option<VntHandler>,
     status: VntStatus,
-    /// Cancels subscription fetching before the network startup task exists.
+    /// Cancels initial subscription fetch and the running subscription loop.
     start_cancellation: CancellationToken,
     /// 启动任务句柄，用于在 Starting 状态中断注册重试循环
     start_handle: Option<tokio::task::JoinHandle<()>>,
@@ -285,7 +285,22 @@ impl HttpAppState {
             .instances
             .get(file_name)
             .and_then(|instance| instance.vnt.as_ref())
-            .map(|handler| handler.api.clone())
+            .and_then(|handler| handler.api.clone())
+    }
+
+    fn publish_runtime_api(&self, file_name: &str, generation: u64, api: Option<VntApi>) {
+        let config_text = api
+            .as_ref()
+            .and_then(VntApi::get_config)
+            .map(|config| config.to_toml_string());
+        let mut inner = self.inner.lock();
+        if let Some(instance) = inner.instances.get_mut(file_name)
+            && instance.generation == generation
+            && let Some(handler) = instance.vnt.as_mut()
+        {
+            handler.api = api;
+            instance.config_text = config_text;
+        }
     }
 
     fn config_apply_lock(&self, file_name: &str) -> Option<Arc<tokio::sync::Mutex<()>>> {
@@ -297,13 +312,6 @@ impl HttpAppState {
     }
 
     /// 启动解析出配置后写入展示名和配置快照（供实例列表与冲突检测使用）
-    /// 发布实例当前生效配置的文本快照（启动与每次应用变更后调用）。
-    fn set_instance_config_text(&self, file_name: &str, text: String) {
-        if let Some(inst) = self.inner.lock().instances.get_mut(file_name) {
-            inst.config_text = Some(text);
-        }
-    }
-
     fn instance_config_text(&self, file_name: &str) -> Option<String> {
         self.inner
             .lock()
@@ -402,7 +410,7 @@ impl HttpAppState {
 }
 
 struct VntHandler {
-    api: VntApi,
+    api: Option<VntApi>,
     config_name: String,
     config_file_name: String,
     /// 启动时的配置快照，用于多实例冲突检测
@@ -1582,6 +1590,10 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         .runtime_manager(&file_name)
         .context("配置管理器不可用")?;
 
+    let cancellation = state
+        .start_cancellation(&file_name, generation)
+        .context("实例启动已取消")?;
+
     // 启动虚拟网卡（管理器内部等待注册完成）
     // 建卡含 PnP 安装与过滤器绑定，加固机器上可能要几十秒：先落一条日志，
     // 既让界面不是「一片空白」，也便于把慢启动与真正的卡死区分开。
@@ -1633,7 +1645,7 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
             return Err(anyhow!("VNT is already running"));
         }
         inst.vnt = Some(VntHandler {
-            api: vnt_api,
+            api: Some(vnt_api),
             config_name: config_display_name,
             config_file_name: file_name.clone(),
             start_config: start_config.clone(),
@@ -1650,18 +1662,7 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         bail!("实例启动完成时 generation 已失效");
     }
 
-    // 发布初始生效配置文本（本地配置与服务端下发的合并结果）
-    let config_text = {
-        let mut guard = manager.lock().await;
-        guard
-            .current_config()
-            .await
-            .ok()
-            .map(|config| config.to_toml_string())
-    };
-    if let Some(text) = config_text {
-        state.set_instance_config_text(&file_name, text);
-    }
+    state.publish_runtime_api(&file_name, generation, manager.lock().await.api());
 
     // 启动成功后记录到自启列表
     record_add_running(&file_name).await;
@@ -1673,14 +1674,26 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         loop {
             let event = {
                 let mut guard = manager.lock().await;
-                guard.next_event().await
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => break,
+                    event = guard.next_event() => event,
+                }
             };
             match event {
                 Ok(RuntimeEvent::InstanceStopped) => break,
                 Ok(RuntimeEvent::Changed(change)) => {
                     let outcome = {
                         let mut guard = manager.lock().await;
-                        guard.apply_change(&change).await
+                        let result = tokio::select! {
+                            biased;
+                            _ = cancellation.cancelled() => break,
+                            result = guard.apply_change(&change) => result,
+                        };
+                        // Recovery replaces the API; a failed rebuild must not
+                        // expose the stopped instance.
+                        state.publish_runtime_api(&file_name_for_wait, generation, guard.api());
+                        result
                     };
                     match outcome {
                         Ok(ChangeOutcome::Applied) => {
@@ -1688,18 +1701,6 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
                                 &file_name_for_wait,
                                 format!("已应用运行期变化（入栈路由 {} 条）", change.routes.len()),
                             );
-                            // 刷新生效配置文本快照
-                            let config_text = {
-                                let mut guard = manager.lock().await;
-                                guard
-                                    .current_config()
-                                    .await
-                                    .ok()
-                                    .map(|config| config.to_toml_string())
-                            };
-                            if let Some(text) = config_text {
-                                state.set_instance_config_text(&file_name_for_wait, text);
-                            }
                         }
                         Ok(outcome @ (ChangeOutcome::Rebuild | ChangeOutcome::NeedFd(_))) => {
                             let message = format!("运行期变化未应用: {outcome:?}");
@@ -1721,7 +1722,8 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
                 }
             }
         }
-        // 事件循环结束：摘除管理器（停止组网实例并断开订阅连接）
+        // Explicitly stop tasks even if a cancellation interrupted a rebuild.
+        manager.lock().await.stop().await;
         drop(state.take_runtime_manager(&file_name_for_wait));
         drop(manager);
         drop(vnt_cleanup_guard);
@@ -1943,8 +1945,9 @@ async fn get_info(
             (None, _) => false,
         };
 
-    let info = if let Some(handler) = inst.vnt.as_ref() {
-        let api = &handler.api;
+    let info = if let Some(handler) = inst.vnt.as_ref()
+        && let Some(api) = &handler.api
+    {
         let config = api.get_config();
         let ips = api.client_ips();
         let server_node_list = api.server_node_list();
@@ -2675,15 +2678,7 @@ async fn get_peers(
     State(state): State<HttpAppState>,
     Query(req): Query<FileReq>,
 ) -> Json<ApiResponse<Vec<HttpClientItem>>> {
-    let api = state
-        .inner
-        .lock()
-        .instances
-        .get(&req.file_name)
-        .and_then(|inst| inst.vnt.as_ref())
-        .map(|v| v.api.clone());
-
-    let Some(api) = api else {
+    let Some(api) = state.api(&req.file_name) else {
         return Json(ApiResponse::error("VNT not running"));
     };
 
@@ -2867,17 +2862,11 @@ async fn get_routes(
     State(state): State<HttpAppState>,
     Query(req): Query<FileReq>,
 ) -> Json<ApiResponse<Vec<HttpRouteItem>>> {
-    let lock = state.inner.lock();
-
-    let Some(handler) = lock
-        .instances
-        .get(&req.file_name)
-        .and_then(|inst| inst.vnt.as_ref())
-    else {
+    let Some(api) = state.api(&req.file_name) else {
         return Json(ApiResponse::error("VNT not running"));
     };
 
-    let table = handler.api.route_table();
+    let table = api.route_table();
     let items: Vec<HttpRouteItem> = table
         .into_iter()
         .map(|(ip, route_list)| HttpRouteItem {

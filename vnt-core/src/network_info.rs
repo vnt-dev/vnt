@@ -265,7 +265,9 @@ impl RuntimeChangeManager {
     /// 启动虚拟网卡。订阅连接与路由通道在重建过程中保持不断。桌面平台
     /// 使用。
     pub async fn rebuild(&mut self) -> anyhow::Result<()> {
+        let config = self.effective_config().await?;
         self.rebuild_impl(
+            config,
             #[cfg(unix)]
             None,
             #[cfg(not(unix))]
@@ -277,7 +279,8 @@ impl RuntimeChangeManager {
     /// unix 专用：重建组网实例，可传入宿主新建的 TUN fd（移动平台）。
     #[cfg(unix)]
     pub async fn rebuild_fd(&mut self, tun_fd: Option<std::os::fd::OwnedFd>) -> anyhow::Result<()> {
-        self.rebuild_impl(tun_fd).await
+        let config = self.effective_config().await?;
+        self.rebuild_impl(config, tun_fd).await
     }
 
     /// 实例任务组句柄的克隆。停止它即可让当前实例停机（监测方的
@@ -289,10 +292,7 @@ impl RuntimeChangeManager {
 
     /// 停止组网实例与订阅连接。
     pub async fn stop(&mut self) {
-        if let Some(instance) = self.instance.take() {
-            instance.manager.stop().await;
-        }
-        self.groups.stop_and_wait().await;
+        self.stop_instance().await;
         // 订阅连接随 SubscriptionListener 的 Drop 断开
         self.subscription_listener = None;
     }
@@ -358,7 +358,7 @@ impl RuntimeChangeManager {
         let (task_group, guard) = self.groups.create_task().context("创建任务组失败")?;
         let started = NetworkManager::create_network(
             Box::new(config),
-            task_group,
+            task_group.clone(),
             self.log.clone(),
             self.routes_tx.clone(),
         )
@@ -372,6 +372,7 @@ impl RuntimeChangeManager {
                 Ok(())
             }
             Err(error) => {
+                task_group.stop_and_join().await;
                 drop(guard);
                 Err(error)
             }
@@ -393,7 +394,13 @@ impl RuntimeChangeManager {
                 crate::core::MIN_MTU
             );
         }
-        if self.with_manager()?.needs_instance_rebuild(change) {
+        // A prior replacement can fail with no instance left. In that case the
+        // next subscription snapshot is a fresh startup, not an in-place update.
+        if self
+            .instance
+            .as_ref()
+            .is_none_or(|instance| instance.manager.needs_instance_rebuild(change))
+        {
             #[cfg(unix)]
             let has_fd = tun_fd.is_some();
             #[cfg(not(unix))]
@@ -402,6 +409,7 @@ impl RuntimeChangeManager {
                 return Ok(ChangeOutcome::Rebuild);
             }
             self.rebuild_impl(
+                change.config.clone(),
                 #[cfg(unix)]
                 tun_fd,
                 #[cfg(not(unix))]
@@ -466,27 +474,43 @@ impl RuntimeChangeManager {
         Ok(ChangeOutcome::Applied)
     }
 
-    async fn rebuild_impl(
-        &mut self,
-        #[cfg(unix)] tun_fd: Option<std::os::fd::OwnedFd>,
-        #[cfg(not(unix))] _tun_fd: (),
-    ) -> anyhow::Result<()> {
-        let config = self.effective_config().await?;
+    async fn stop_instance(&mut self) {
         if let Some(instance) = self.instance.take() {
             instance.manager.stop().await;
         }
-        // 等待旧实例任务组完全停止并释放槽位，再创建新的一代
         self.groups.stop_and_wait().await;
+    }
+
+    async fn rebuild_impl(
+        &mut self,
+        config: Config,
+        #[cfg(unix)] tun_fd: Option<std::os::fd::OwnedFd>,
+        #[cfg(not(unix))] _tun_fd: (),
+    ) -> anyhow::Result<()> {
+        self.stop_instance().await;
         self.log.info("重建组网实例");
         self.start_instance(config).await?;
-        self.start_device_impl(
+        let start_device = self.start_device_impl(
             #[cfg(unix)]
             tun_fd,
             #[cfg(not(unix))]
             _tun_fd,
-        )
-        .await?;
-        Ok(())
+        );
+        let result = if HOST_PROVIDES_TUN_FD {
+            start_device.await
+        } else {
+            // A stalled registration should not block newer snapshots forever.
+            tokio::time::timeout(std::time::Duration::from_secs(120), start_device)
+                .await
+                .context("等待重建后的网络注册和网卡启动超时")
+                .flatten()
+        };
+        if result.is_err() {
+            // The replacement may already own sockets and a task slot. Drop it
+            // but keep the subscription alive for the next received snapshot.
+            self.stop_instance().await;
+        }
+        result.map(|_| ())
     }
 
     /// 等待下一次运行期事件：组网实例停止或新的完整快照。前端的主循环
@@ -494,6 +518,7 @@ impl RuntimeChangeManager {
     pub async fn next_event(&mut self) -> anyhow::Result<RuntimeEvent> {
         // 字段级分离借用：instance 与 (subscription_listener, routes_rx,
         // local_config) 不相交，两个等待 future 可以同时存在
+        let has_instance = self.instance.is_some();
         let instance = &mut self.instance;
         let subscription_listener = &mut self.subscription_listener;
         let routes_rx = &mut self.routes_rx;
@@ -504,7 +529,8 @@ impl RuntimeChangeManager {
                 None => std::future::pending().await,
             }
         };
-        let changed = Self::changed_with(subscription_listener, routes_rx, local_config);
+        let changed =
+            Self::changed_with(subscription_listener, routes_rx, local_config, has_instance);
         tokio::select! {
             _ = stopped => Ok(RuntimeEvent::InstanceStopped),
             result = changed => result.map(|change| RuntimeEvent::Changed(Box::new(change))),
@@ -513,10 +539,12 @@ impl RuntimeChangeManager {
 
     /// Waits until the latest complete snapshot changes.
     pub async fn changed(&mut self) -> anyhow::Result<RuntimeChange> {
+        let has_instance = self.instance.is_some();
         Self::changed_with(
             &mut self.subscription_listener,
             &mut self.routes_rx,
             &self.local_config,
+            has_instance,
         )
         .await
     }
@@ -531,7 +559,10 @@ impl RuntimeChangeManager {
     /// apply 内部的重新判断为准。
     pub fn inspect_change(&self, change: &RuntimeChange) -> ChangePlan {
         let Some(instance) = self.instance.as_ref() else {
-            return ChangePlan::default();
+            return ChangePlan {
+                instance_rebuild: true,
+                vpn_rebuild: false,
+            };
         };
         let manager = &instance.manager;
         let instance_rebuild = manager.needs_instance_rebuild(change);
@@ -550,26 +581,30 @@ impl RuntimeChangeManager {
         subscription_listener: &mut Option<SubscriptionListener>,
         routes_rx: &mut watch::Receiver<Vec<NetInput>>,
         local_config: &Config,
+        has_instance: bool,
     ) -> anyhow::Result<RuntimeChange> {
-        let (base, present) = match subscription_listener.as_mut() {
+        let config = match subscription_listener.as_mut() {
             Some(listener) => tokio::select! {
+                biased;
+                // A new subscription revision is the only recovery trigger
+                // when there is no running generation (not a stale route event).
                 result = listener.changed() => {
                     let envelope = result?;
-                    (envelope.config, envelope.present)
+                    merge_present_config(local_config.clone(), &envelope.config, &envelope.present)
                 }
-                result = routes_rx.changed() => {
+                result = routes_rx.changed(), if has_instance => {
                     result.context("route source closed")?;
                     let envelope = listener.current_config().await?;
-                    (envelope.config, envelope.present)
+                    merge_present_config(local_config.clone(), &envelope.config, &envelope.present)
                 }
             },
             None => {
                 routes_rx.changed().await.context("route source closed")?;
-                (local_config.clone(), std::collections::HashSet::new())
+                local_config.clone()
             }
         };
         Ok(RuntimeChange {
-            config: merge_present_config(local_config.clone(), &base, &present),
+            config,
             routes: routes_rx.borrow_and_update().clone(),
         })
     }
@@ -666,5 +701,104 @@ mod rebuild_fd_tests {
             assert!(!rebuild_waits_for_tun_fd(true, mode, true));
         }
         assert!(!rebuild_waits_for_tun_fd(true, DeviceMode::No, false));
+    }
+}
+
+#[cfg(all(
+    test,
+    not(any(target_os = "android", target_os = "ios", target_os = "tvos"))
+))]
+mod rebuild_recovery_tests {
+    use super::*;
+    use crate::managed_config::EnvelopeConfig;
+
+    fn standalone_config(name: &str) -> Config {
+        Config {
+            network_code: name.into(),
+            device_id: name.into(),
+            device_name: name.into(),
+            ip: Some("10.26.0.2/24".parse().unwrap()),
+            tunnel_addr: vec!["127.0.0.1:0".parse().unwrap()],
+            device_mode: DeviceMode::No,
+            no_punch: true,
+            ..Config::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_subscription_rebuild_accepts_next_snapshot_without_rollback() {
+        let mut config = standalone_config("subscription-recovery-test");
+        // Reuse a fixed loopback port to exercise resource release during rebuild.
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        config.tunnel_addr = vec![probe.local_addr().unwrap()];
+        drop(probe);
+        let mut manager = RuntimeChangeManager::new(
+            config.clone(),
+            None,
+            Arc::new(InstanceLog::new("subscription-recovery-test")),
+        )
+        .await
+        .unwrap();
+        manager.start_device().await.unwrap();
+
+        let (updates, receiver) = watch::channel(None);
+        manager.subscription_listener = Some(SubscriptionListener::from_test_receiver(receiver));
+        let mut bad = config.clone();
+        bad.outbound_interface = Some("vnt-missing-if".into());
+        updates.send_replace(Some(EnvelopeConfig {
+            config: bad,
+            present: ["outbound_interface".into()].into_iter().collect(),
+        }));
+        let change = manager.changed().await.unwrap();
+        let error = manager.apply_change(&change).await.unwrap_err();
+        assert!(format!("{error:#}").contains("找不到出口网卡"));
+        assert!(manager.api().is_none());
+        assert!(manager.groups.is_stopped());
+
+        config.device_name = "corrected".into();
+        updates.send_replace(Some(EnvelopeConfig {
+            config,
+            present: Default::default(),
+        }));
+        let change = manager.changed().await.unwrap();
+        assert!(manager.inspect_change(&change).instance_rebuild);
+        assert!(matches!(
+            manager.apply_change(&change).await.unwrap(),
+            ChangeOutcome::Applied
+        ));
+        let published = manager.api().unwrap().get_config().unwrap();
+        assert_eq!(published.device_name, "corrected");
+        manager.stop().await;
+    }
+
+    #[tokio::test]
+    async fn without_an_instance_route_updates_do_not_replay_rejected_subscription() {
+        let config = standalone_config("subscription-route-test");
+        let mut bad = config.clone();
+        bad.device_name = "rejected".into();
+        let (updates, mut receiver) = watch::channel(Some(EnvelopeConfig {
+            config: bad,
+            present: Default::default(),
+        }));
+        drop(receiver.borrow_and_update());
+        let mut listener = Some(SubscriptionListener::from_test_receiver(receiver));
+        let (routes, mut routes_rx) = watch::channel(Vec::new());
+        routes.send_replace(Vec::new());
+
+        let pending_change =
+            RuntimeChangeManager::changed_with(&mut listener, &mut routes_rx, &config, false);
+        tokio::pin!(pending_change);
+        assert!(futures::poll!(&mut pending_change).is_pending());
+
+        let mut corrected = config.clone();
+        corrected.device_name = "corrected".into();
+        updates.send_replace(Some(EnvelopeConfig {
+            config: corrected,
+            present: Default::default(),
+        }));
+        assert_eq!(
+            pending_change.await.unwrap().config.device_name,
+            "corrected"
+        );
     }
 }

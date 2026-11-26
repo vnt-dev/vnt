@@ -157,9 +157,9 @@ enum RegistrationStatus {
 }
 
 impl NetworkManager {
-    pub async fn stop(mut self) {
-        self.task_group.stop();
-        self.wait_all_stopped().await;
+    pub async fn stop(self) {
+        self.server_task_group.stop_and_join().await;
+        self.task_group.stop_and_join().await;
     }
 
     /// 创建网络实例，并在实例任务组内后台连接服务器注册。
@@ -864,7 +864,7 @@ mod network_route_change_tests {
         // 独立模式（无订阅）下 changed_with 等待路由源变更并返回完整快照
         let change = tokio::time::timeout(
             Duration::from_secs(1),
-            RuntimeChangeManager::changed_with(&mut None, &mut routes_rx, &Config::default()),
+            RuntimeChangeManager::changed_with(&mut None, &mut routes_rx, &Config::default(), true),
         )
         .await
         .unwrap()

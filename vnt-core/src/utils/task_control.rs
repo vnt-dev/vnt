@@ -86,17 +86,23 @@ impl TaskGroupInner {
         Some(task_id)
     }
 
-    fn stop(&self) {
-        {
+    fn abort_all(&self) -> HashMap<Id, JoinHandle<()>> {
+        let tasks = {
             let mut state = self.state.lock();
             state.stopped = true;
-            for (_, handle) in state.tasks.drain() {
-                handle.abort();
-            }
+            std::mem::take(&mut state.tasks)
+        };
+        for handle in tasks.values() {
+            handle.abort();
         }
         // `spawn_restartable` 允许任务组在暂停期暂时为空，此时没有 TaskGuard
         // 会负责发送通知，因此 stop 本身必须唤醒等待者。
         self.all_stopped_notify.notify_waiters();
+        tasks
+    }
+
+    fn stop(&self) {
+        self.abort_all();
     }
 
     fn is_stopped(&self) -> bool {
@@ -179,6 +185,13 @@ impl TaskGroup {
 
     pub fn stop(&self) {
         self.inner.stop();
+    }
+
+    /// Cancel tasks and wait for their futures to release owned resources.
+    pub(crate) async fn stop_and_join(&self) {
+        for (_, handle) in self.inner.abort_all() {
+            let _ = handle.await;
+        }
     }
 
     pub fn is_stopped(&self) -> bool {
@@ -379,6 +392,25 @@ impl Drop for TaskGroupGuard {
 mod tests {
     use super::*;
     use std::future::pending;
+
+    #[tokio::test]
+    async fn stop_and_join_drops_task_resources_before_returning() {
+        let group = TaskGroup::new();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (resource, mut released) = tokio::sync::oneshot::channel::<()>();
+        group.spawn(async move {
+            let _resource = resource;
+            let _ = ready_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.unwrap();
+
+        group.stop_and_join().await;
+        assert!(matches!(
+            released.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+    }
 
     /// 所有任务自然结束后 wait_all_stopped 必须返回。
     /// 覆盖两个关键点：任务自然耗尽时 remove_task 置 stopped 并唤醒；
