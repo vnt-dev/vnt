@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick } from "vue";
+import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import AppModal from "../components/AppModal.vue";
 import AppSelect from "../components/AppSelect.vue";
 import ConfigHelp from "../components/ConfigHelp.vue";
@@ -20,8 +20,14 @@ const emit = defineEmits(["close", "saved"]);
 const ui = useUiStore();
 
 const editorContent = ref("");
-const editorFileName = ref("");
-const editorMode = ref("new"); // 'new' 或 'edit'
+const editorSession = shallowRef(null);
+const editorReady = ref(false);
+const saving = ref(false);
+const editorFileName = computed(() => props.fileName || "");
+const isCurrentSession = (session) =>
+  session !== null && session === editorSession.value &&
+  props.show && session.fileName === props.fileName;
+const canEdit = computed(() => editorReady.value && isCurrentSession(editorSession.value));
 const editMode = ref("form"); // 'form'、'subscription' 或 'toml'
 const sourceToml = ref(""); // 表单编辑基于最近加载或手工编辑的 TOML
 const formData = ref(emptyFormData());
@@ -78,42 +84,51 @@ const resetSections = (data) => {
   }
 };
 
-// 打开时加载内容;immediate 保证带着 show=true 首次挂载(如从总览页跳转打开)时也能加载
+// 文件或弹窗状态改变时开启新会话，旧请求不能写入新会话。
 watch(
-  () => props.show,
-  async (val) => {
-    if (!val) return;
-    editorFileName.value = props.fileName || "";
-    editorMode.value = props.fileName ? "edit" : "new";
-    editMode.value = "form"; // 默认表单模式
+  [() => props.show, () => props.fileName],
+  async ([show, fileName], _, onCleanup) => {
+    if (!show) return;
+    const session = { fileName };
+    editorSession.value = session;
+    editorReady.value = false;
+    saving.value = false;
+    onCleanup(() => { editorSession.value = null; });
+
+    editMode.value = "form";
+    editorContent.value = "";
     sourceToml.value = "";
+    formData.value = emptyFormData();
+    resetSections(formData.value);
     subscriptionPreview.value = null;
     subscriptionTesting.value = false;
 
-    if (props.fileName) {
+    if (fileName) {
+      let data;
       try {
-        const data = await getConfig(props.fileName);
-        editorContent.value = data;
-        sourceToml.value = data;
-        try {
-          formData.value = parseTomlToForm(data);
-          resetSections(formData.value);
-        } catch (error) {
-          // Invalid or unsupported input can still be corrected in the raw editor.
-          formData.value = emptyFormData();
-          editMode.value = "toml";
-          ui.toast.error("配置无法用表单打开: " + error.message);
+        data = await getConfig(fileName);
+      } catch (error) {
+        if (isCurrentSession(session)) {
+          ui.toast.error("获取配置失败: " + error.message);
+          emit("close");
         }
-      } catch (e) {
-        ui.toast.error("获取配置失败: " + e.message);
-        emit("close");
+        return;
+      }
+      if (!isCurrentSession(session)) return;
+      editorContent.value = data;
+      sourceToml.value = data;
+      try {
+        formData.value = parseTomlToForm(data);
+        resetSections(formData.value);
+      } catch (error) {
+        // Invalid or unsupported input can still be corrected in the raw editor.
+        editMode.value = "toml";
+        ui.toast.error("配置无法用表单打开: " + error.message);
       }
     } else {
-      // 新建配置,初始化表单
-      formData.value = emptyFormData();
-      resetSections(formData.value);
       editorContent.value = NEW_CONFIG_TEMPLATE;
     }
+    editorReady.value = true;
   },
   { immediate: true },
 );
@@ -121,6 +136,7 @@ watch(
 // 表单和订阅页签共用同一份结构化配置。从 TOML 模式切回时先解析，
 // 避免订阅页签修改的是旧数据。
 const switchToStructuredMode = (mode) => {
+  if (!canEdit.value) return;
   if (editMode.value === "toml") {
     try {
       formData.value = parseTomlToForm(editorContent.value);
@@ -139,10 +155,10 @@ const switchToFormMode = () => switchToStructuredMode("form");
 const switchToSubscriptionMode = () => switchToStructuredMode("subscription");
 
 const switchToTomlMode = () => {
-  if (editMode.value === "toml") return;
+  if (!canEdit.value || editMode.value === "toml") return;
   try {
     const merged = formToToml(formData.value, sourceToml.value);
-    editorContent.value = merged || (editorMode.value === "new" ? NEW_CONFIG_TEMPLATE : "");
+    editorContent.value = merged || (!editorFileName.value ? NEW_CONFIG_TEMPLATE : "");
     editMode.value = "toml";
   } catch (error) {
     ui.toast.error("配置转换失败: " + error.message);
@@ -157,6 +173,8 @@ watch(
 );
 
 const testSubscription = async () => {
+  if (!canEdit.value || subscriptionTesting.value) return;
+  const session = editorSession.value;
   const subscription = formData.value.subscription.trim();
   if (!subscription) {
     ui.toast.error("请先填写订阅链接");
@@ -165,16 +183,22 @@ const testSubscription = async () => {
   subscriptionTesting.value = true;
   subscriptionPreview.value = null;
   try {
-    subscriptionPreview.value = await previewSubscription(subscription);
+    const preview = await previewSubscription(subscription);
+    if (!isCurrentSession(session) || formData.value.subscription.trim() !== subscription) return;
+    subscriptionPreview.value = preview;
     ui.toast.success("订阅链接测试成功");
   } catch (error) {
-    ui.toast.error("订阅链接测试失败: " + error.message);
+    if (isCurrentSession(session) && formData.value.subscription.trim() === subscription) {
+      ui.toast.error("订阅链接测试失败: " + error.message);
+    }
   } finally {
-    subscriptionTesting.value = false;
+    if (isCurrentSession(session)) subscriptionTesting.value = false;
   }
 };
 
 const handleSave = async () => {
+  if (!canEdit.value || saving.value) return;
+  const session = editorSession.value;
   try {
     // 表单模式先转换为TOML
     let configContent = editorContent.value;
@@ -205,12 +229,17 @@ const handleSave = async () => {
       configContent = formToToml(formData.value, sourceToml.value);
     }
 
-    await saveConfig(editorFileName.value || null, configContent);
-    ui.toast.success("配置已保存");
-    emit("close");
+    saving.value = true;
+    await saveConfig(session.fileName || null, configContent);
+    if (isCurrentSession(session)) {
+      ui.toast.success("配置已保存");
+      emit("close");
+    }
     emit("saved");
   } catch (e) {
-    ui.toast.error("保存失败: " + e.message);
+    if (isCurrentSession(session)) ui.toast.error("保存失败: " + e.message);
+  } finally {
+    if (isCurrentSession(session)) saving.value = false;
   }
 };
 
@@ -266,6 +295,7 @@ const sectionChevronClass = (expanded) =>
         <!-- 模式切换按钮 -->
         <div class="flex rounded-lg border border-slate-300 bg-slate-100 p-1 dark:border-slate-600 dark:bg-slate-800">
           <button
+            :disabled="!canEdit"
             @click="switchToFormMode"
             :class="editMode === 'form' ? 'bg-white text-slate-900 shadow-sm dark:bg-indigo-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'"
             class="px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center"
@@ -281,6 +311,7 @@ const sectionChevronClass = (expanded) =>
             表单模式
           </button>
           <button
+            :disabled="!canEdit"
             @click="switchToSubscriptionMode"
             :class="editMode === 'subscription' ? 'bg-white text-slate-900 shadow-sm dark:bg-indigo-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'"
             class="px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center"
@@ -296,6 +327,7 @@ const sectionChevronClass = (expanded) =>
             订阅配置
           </button>
           <button
+            :disabled="!canEdit"
             @click="switchToTomlMode"
             :class="editMode === 'toml' ? 'bg-white text-slate-900 shadow-sm dark:bg-indigo-600 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'"
             class="px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center"
@@ -318,8 +350,9 @@ const sectionChevronClass = (expanded) =>
     </template>
 
     <template #body>
+      <div v-if="!canEdit" class="p-6 text-slate-500" role="status">正在加载配置…</div>
       <!-- 表单模式 -->
-      <div v-show="editMode === 'form'" class="h-full overflow-y-auto scrollbar-hide p-6">
+      <div v-if="canEdit" v-show="editMode === 'form'" class="h-full overflow-y-auto scrollbar-hide p-6">
         <div class="max-w-4xl mx-auto space-y-6">
           <!-- 基础配置 -->
           <div class="card">
@@ -1097,7 +1130,7 @@ const sectionChevronClass = (expanded) =>
       </div>
 
       <!-- 订阅配置 -->
-      <div v-show="editMode === 'subscription'" class="h-full overflow-y-auto scrollbar-hide p-6">
+      <div v-if="canEdit" v-show="editMode === 'subscription'" class="h-full overflow-y-auto scrollbar-hide p-6">
         <div class="mx-auto max-w-4xl">
           <div class="card">
             <div class="mb-5 flex items-start gap-3">
@@ -1173,7 +1206,7 @@ const sectionChevronClass = (expanded) =>
       </div>
 
       <!-- TOML模式 -->
-      <div v-show="editMode === 'toml'" class="h-full">
+      <div v-if="canEdit" v-show="editMode === 'toml'" class="h-full">
         <textarea
           v-model="editorContent"
           class="h-full w-full resize-none bg-slate-50 p-4 font-mono text-sm text-slate-800 focus:outline-none dark:bg-slate-950 dark:text-slate-200"
@@ -1196,7 +1229,7 @@ const sectionChevronClass = (expanded) =>
         <span v-else>* 请使用标准 TOML 格式</span>
       </div>
       <button class="btn-ghost" @click="emit('close')">取消</button>
-      <button class="btn-primary" @click="handleSave">保存配置</button>
+      <button class="btn-primary" :disabled="!canEdit || saving" @click="handleSave">保存配置</button>
     </template>
   </AppModal>
 </template>
