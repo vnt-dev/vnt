@@ -1,7 +1,7 @@
 use anyhow::{Context, bail};
 use clap::Parser;
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
 
@@ -134,18 +134,8 @@ pub(crate) async fn run_server(
 
     let addr = args.addr.unwrap_or("127.0.0.1:19099".parse()?);
     let token = args.token.unwrap_or_else(vnt_web::generate_access_token);
-    let browser_host = if addr.ip().is_unspecified() {
-        "127.0.0.1".to_string()
-    } else {
-        addr.ip().to_string()
-    };
     log::info!("Web access token: {}", token);
-    log::info!(
-        "Web access URL: http://{}:{}/?token={}",
-        browser_host,
-        addr.port(),
-        token
-    );
+    log::info!("Web access URL: {}", web_access_url(addr, &token));
 
     let service = vnt_web::VntService::new(args.conf).await?;
     let cancellation = CancellationToken::new();
@@ -161,6 +151,19 @@ pub(crate) async fn run_server(
     cancellation.cancel();
     handle.await??;
     Ok(())
+}
+
+fn web_access_url(mut addr: SocketAddr, token: &str) -> String {
+    match addr.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => addr.set_ip(Ipv4Addr::LOCALHOST.into()),
+        IpAddr::V6(ip) if ip.is_unspecified() => addr.set_ip(Ipv6Addr::LOCALHOST.into()),
+        _ => {}
+    }
+
+    let query = form_urlencoded::Serializer::new(String::new())
+        .append_pair("token", token)
+        .finish();
+    format!("http://{addr}/?{query}")
 }
 
 async fn shutdown_signal() -> anyhow::Result<()> {
@@ -186,4 +189,36 @@ async fn shutdown_signal() -> anyhow::Result<()> {
         result = terminate => result?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_access_url_formats_both_address_families() {
+        for (listen, expected) in [
+            ("127.0.0.1:19099", "127.0.0.1:19099"),
+            ("[2001:db8::1]:19099", "[2001:db8::1]:19099"),
+            ("0.0.0.0:19099", "127.0.0.1:19099"),
+            ("[::]:19099", "[::1]:19099"),
+        ] {
+            assert_eq!(
+                web_access_url(listen.parse().unwrap(), "abc"),
+                format!("http://{expected}/?token=abc")
+            );
+        }
+    }
+
+    #[test]
+    fn web_access_url_encodes_the_token_as_one_query_value() {
+        let token = "a+b &?#=%中";
+        let url = web_access_url("[::1]:19099".parse().unwrap(), token);
+        let (_, query) = url.split_once('?').unwrap();
+        assert_eq!(
+            form_urlencoded::parse(query.as_bytes()).collect::<Vec<_>>(),
+            vec![("token".into(), token.into())]
+        );
+        assert!(!url.contains('#'));
+    }
 }
