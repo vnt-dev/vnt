@@ -270,6 +270,12 @@ pub struct Args {
     /// 关闭自动 P2P 打洞；显式 peer-address 仍可直连
     #[clap(long)]
     pub no_punch: bool,
+    /// UDP 打洞使用的 STUN 服务器，可重复指定；未指定端口的域名默认使用 3478
+    #[clap(long, value_name = "SERVER")]
+    pub udp_stun: Option<Vec<String>>,
+    /// TCP 打洞使用的 STUN 服务器，可重复指定；未指定端口的域名默认使用 3478
+    #[clap(long, value_name = "SERVER")]
+    pub tcp_stun: Option<Vec<String>>,
     /// 关闭虚拟网络内的 IPv4 广播和组播转发
     #[clap(long)]
     pub no_broadcast: bool,
@@ -426,19 +432,6 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
     } else {
         args.subnet_mapping
     };
-    let mut udp_stun = file.udp_stun.unwrap_or_default();
-    for x in udp_stun.iter_mut() {
-        if !x.contains(':') {
-            x.push_str(":3478");
-        }
-    }
-    let mut tcp_stun = file.tcp_stun.unwrap_or_default();
-    for x in tcp_stun.iter_mut() {
-        if !x.contains(':') {
-            x.push_str(":3478");
-        }
-    }
-
     let config = Config {
         server_addr,
         peer_address,
@@ -480,8 +473,8 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         )?,
         port_mapping,
         allow_port_mapping: args.allow_mapping || file.allow_mapping.unwrap_or(false),
-        udp_stun,
-        tcp_stun,
+        udp_stun: normalize_stun_servers(args.udp_stun.or(file.udp_stun).unwrap_or_default()),
+        tcp_stun: normalize_stun_servers(args.tcp_stun.or(file.tcp_stun).unwrap_or_default()),
         tunnel_addr,
         tunnel_port,
         event_script: args.event_script.or_else(|| file.event_script.clone()),
@@ -535,6 +528,8 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         dns: parse_dns_servers(args.dns.clone())?,
         port_mapping: args.port_mapping,
         allow_port_mapping: args.allow_mapping,
+        udp_stun: normalize_stun_servers(args.udp_stun.unwrap_or_default()),
+        tcp_stun: normalize_stun_servers(args.tcp_stun.unwrap_or_default()),
         tunnel_addr,
         tunnel_port,
         event_script: args.event_script,
@@ -568,19 +563,6 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         Some(id) => id,
         None => vnt_core::utils::device_id::get_device_id()?,
     };
-    let mut udp_stun = file.udp_stun.unwrap_or_default();
-    for x in udp_stun.iter_mut() {
-        if !x.contains(':') {
-            x.push_str(":3478");
-        }
-    }
-    let mut tcp_stun = file.tcp_stun.unwrap_or_default();
-    for x in tcp_stun.iter_mut() {
-        if !x.contains(':') {
-            x.push_str(":3478");
-        }
-    }
-
     let config = Config {
         server_addr,
         peer_address,
@@ -613,8 +595,8 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         dns: parse_dns_servers(file.dns.clone().unwrap_or_default())?,
         port_mapping,
         allow_port_mapping: file.allow_mapping.unwrap_or(false),
-        udp_stun,
-        tcp_stun,
+        udp_stun: normalize_stun_servers(file.udp_stun.unwrap_or_default()),
+        tcp_stun: normalize_stun_servers(file.tcp_stun.unwrap_or_default()),
         tunnel_addr,
         tunnel_port,
         event_script: file.event_script.clone(),
@@ -624,6 +606,15 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         ctrl_port: file.ctrl_port,
     };
     Ok((config, ctrl_config))
+}
+
+fn normalize_stun_servers(mut servers: Vec<String>) -> Vec<String> {
+    for server in &mut servers {
+        if !server.contains(':') {
+            server.push_str(":3478");
+        }
+    }
+    servers
 }
 
 /// 解析并校验隧道 DNS 服务器列表：每条必须是合法 IPv4 点分十进制，
@@ -1119,6 +1110,67 @@ mod tests {
             config.peer_address[1].to_string(),
             "dynamic://peers.example.com"
         );
+    }
+
+    #[test]
+    fn stun_servers_from_cli_preserve_order_and_explicit_ports() {
+        let args = Args::try_parse_from([
+            "vnt",
+            "-n",
+            "test-net",
+            "--device-id",
+            "test-device",
+            "--udp-stun",
+            "udp.example.com",
+            "--udp-stun",
+            "udp-backup.example.com:5349",
+            "--tcp-stun",
+            "tcp.example.com:443",
+            "--tcp-stun",
+            "[2001:db8::1]:3478",
+        ])
+        .unwrap();
+        let (config, _) = build_config_from_args_and_file(Some(args), None).unwrap();
+        assert_eq!(
+            config.udp_stun,
+            ["udp.example.com:3478", "udp-backup.example.com:5349"]
+        );
+        assert_eq!(
+            config.tcp_stun,
+            ["tcp.example.com:443", "[2001:db8::1]:3478"]
+        );
+    }
+
+    #[test]
+    fn stun_cli_options_override_their_own_toml_lists() {
+        let file: FileConfig = toml::from_str(
+            r#"
+            network_code = "test-net"
+            device_id = "test-device"
+            udp_stun = ["file-udp.example.com"]
+            tcp_stun = ["file-tcp.example.com:443"]
+            "#,
+        )
+        .unwrap();
+
+        for (flag, udp, tcp) in [
+            (
+                "--udp-stun",
+                "cli.example.com:3478",
+                "file-tcp.example.com:443",
+            ),
+            (
+                "--tcp-stun",
+                "file-udp.example.com:3478",
+                "cli.example.com:3478",
+            ),
+        ] {
+            let args = Args::try_parse_from(["vnt", flag, "cli.example.com"]).unwrap();
+            let (config, _) =
+                build_config_from_args_and_file(Some(args), Some(file.clone())).unwrap();
+            assert_eq!(config.udp_stun, [udp]);
+            assert_eq!(config.tcp_stun, [tcp]);
+        }
     }
 
     #[test]
