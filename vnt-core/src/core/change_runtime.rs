@@ -621,7 +621,7 @@ impl NetworkManager {
         (desired, address)
     }
 
-    /// 提交路由与 DNS 快照，并发布当前配置，供桌面和移动平台共用。
+    /// 提交路由与 DNS 快照，供桌面和移动平台共用。
     fn commit_runtime_snapshot(&mut self, change: &RuntimeChange) {
         self.app_state
             .subnet_route
@@ -634,7 +634,9 @@ impl NetworkManager {
                 .set_route_table(change.config.input.clone());
         }
         self.config.dns = change.config.dns.clone();
-        // DNS 单独变化时也必须更新 API 读取的共享配置。
+    }
+
+    pub(crate) fn publish_runtime_config(&self) {
         self.app_state.set_config(self.config.clone());
     }
 }

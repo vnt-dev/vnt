@@ -12,6 +12,7 @@ vnt-core.workspace = true
 
 jni = "0.21"
 tokio = { workspace = true, features = ["full"] }
+tokio-util.workspace = true
 parking_lot.workspace = true
 log.workspace = true
 anyhow.workspace = true

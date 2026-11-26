@@ -40,7 +40,6 @@ use vnt_core::network_info::{ChangeOutcome, RuntimeChangeManager, RuntimeEvent};
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
-use vnt_core::utils::task_control::TaskGroupManager;
 
 const CONFIG_DIR: &str = "vnt_config";
 const CURRENT_CONFIG_RECORD: &str = "vnt_current_config.txt";
@@ -63,6 +62,7 @@ struct HttpAppState {
 
 #[derive(Default)]
 struct HttpAppStateInner {
+    last_generation: u64,
     /// 组网实例表，key = 配置文件名，同一配置最多一个实例
     instances: HashMap<String, InstanceState>,
     /// Stable for this desktop process, including managed in-process restarts.
@@ -79,6 +79,10 @@ struct InstanceState {
     status: VntStatus,
     /// Cancels initial subscription fetch and the running subscription loop.
     start_cancellation: CancellationToken,
+    /// Signals that this generation has finished runtime cleanup.
+    runtime_stopped: CancellationToken,
+    /// Startup cleanup has been handed off to a stop request.
+    stopping_startup: bool,
     /// 启动任务句柄，用于在 Starting 状态中断注册重试循环
     start_handle: Option<tokio::task::JoinHandle<()>>,
     /// 启动时解析出的配置快照，用于多实例启动前冲突检测
@@ -93,9 +97,6 @@ struct InstanceState {
     /// 当前生效配置的 TOML 文本快照，由启动与监测循环发布。管理器锁在
     /// 等待运行期事件时被监测循环持有，读取方不能直接去锁管理器。
     config_text: Option<String>,
-    /// 实例任务组句柄：停止它即可让实例停机，供不能锁管理器的停止流程
-    /// 使用（监测循环在 next_event 等待期间持有管理器锁）。
-    task_groups: Option<TaskGroupManager>,
 }
 
 impl HttpAppState {
@@ -109,12 +110,22 @@ impl HttpAppState {
     fn install_runtime_manager(
         &self,
         file_name: &str,
+        generation: u64,
         manager: Arc<tokio::sync::Mutex<RuntimeChangeManager>>,
-    ) {
-        self.inner
-            .lock()
+    ) -> anyhow::Result<()> {
+        let mut inner = self.inner.lock();
+        anyhow::ensure!(
+            inner.instances.get(file_name).is_some_and(|inst| {
+                inst.generation == generation
+                    && inst.status == VntStatus::Starting
+                    && !inst.start_cancellation.is_cancelled()
+            }),
+            "实例启动已取消"
+        );
+        inner
             .runtime_managers
             .insert(file_name.to_string(), manager);
+        Ok(())
     }
 
     fn take_runtime_manager(
@@ -138,21 +149,27 @@ impl HttpAppState {
     }
     fn starting(&self, file_name: &str) -> anyhow::Result<u64> {
         let mut inner = self.inner.lock();
-        let inst = inner.instances.entry(file_name.to_string()).or_default();
-        if inst.status != VntStatus::Stopped {
+        let inst = inner.instances.get(file_name);
+        if inst.is_some_and(|inst| inst.status != VntStatus::Stopped) {
             return Err(anyhow!("配置 {} 正在启动或已运行", file_name));
         }
-        if inst.vnt.is_some() {
+        if inst.is_some_and(|inst| inst.vnt.is_some()) {
             return Err(anyhow!("配置 {} 已在运行", file_name));
         }
-        inst.generation = inst
-            .generation
+        let generation = inner
+            .last_generation
             .checked_add(1)
             .context("实例 generation 已耗尽")?;
+        inner.last_generation = generation;
+        let inst = inner.instances.entry(file_name.to_string()).or_default();
+        inst.generation = generation;
         inst.status = VntStatus::Starting;
         // 每次启动重置实例日志，保证日志只反映当前这次运行
         self.logs.instance(file_name).clear();
         inst.start_cancellation = CancellationToken::new();
+        inst.runtime_stopped = CancellationToken::new();
+        inst.stopping_startup = false;
+        inst.config_text = None;
         inst.start_config = None;
         inst.local_config = None;
         inst.config_name = file_name.to_string();
@@ -173,6 +190,8 @@ impl HttpAppState {
             return;
         }
         inst.status = VntStatus::Stopped;
+        inst.config_text = None;
+        inst.runtime_stopped.cancel();
         inst.start_config = None;
         inst.local_config = None;
         // 已完成任务的句柄只是残留，不算运行内容
@@ -194,22 +213,26 @@ impl HttpAppState {
         let Some(inst) = inner.instances.get_mut(file_name) else {
             return;
         };
-        if inst.generation != generation {
-            return;
-        }
-        if inst.status != VntStatus::Starting {
+        if inst.generation != generation
+            || inst.status != VntStatus::Starting
+            || inst.stopping_startup
+        {
             return;
         }
         inst.vnt.take();
         inst.status = VntStatus::Stopped;
         self.logs.instance(file_name).warn("启动中断");
+        inner.runtime_managers.remove(file_name);
     }
     fn starting_to_running(&self, file_name: &str, generation: u64) -> bool {
         let mut inner = self.inner.lock();
         let Some(inst) = inner.instances.get_mut(file_name) else {
             return false;
         };
-        if inst.generation != generation || inst.status != VntStatus::Starting {
+        if inst.generation != generation
+            || inst.status != VntStatus::Starting
+            || inst.start_cancellation.is_cancelled()
+        {
             log::error!("starting_to_running VNT is not starting");
             return false;
         }
@@ -258,9 +281,13 @@ impl HttpAppState {
             return;
         }
         self.logs.instance(file_name).error(msg);
-        inst.status = VntStatus::Stopped;
+        if !inst.stopping_startup {
+            inst.status = VntStatus::Stopped;
+            inner.runtime_managers.remove(file_name);
+        }
     }
 
+    #[cfg(test)]
     fn status(&self, file_name: &str) -> VntStatus {
         self.inner
             .lock()
@@ -320,20 +347,6 @@ impl HttpAppState {
             .and_then(|inst| inst.config_text.clone())
     }
 
-    fn set_instance_task_groups(&self, file_name: &str, groups: TaskGroupManager) {
-        if let Some(inst) = self.inner.lock().instances.get_mut(file_name) {
-            inst.task_groups = Some(groups);
-        }
-    }
-
-    fn instance_task_groups(&self, file_name: &str) -> Option<TaskGroupManager> {
-        self.inner
-            .lock()
-            .instances
-            .get(file_name)
-            .and_then(|inst| inst.task_groups.clone())
-    }
-
     fn set_starting_config(
         &self,
         file_name: &str,
@@ -366,7 +379,9 @@ impl HttpAppState {
             .lock()
             .instances
             .get_mut(file_name)
-            .filter(|instance| instance.generation == generation)
+            .filter(|instance| {
+                instance.generation == generation && !instance.start_cancellation.is_cancelled()
+            })
         {
             inst.start_handle = Some(handle);
         } else {
@@ -374,38 +389,54 @@ impl HttpAppState {
         }
     }
 
-    /// 中断启动任务（如注册重试循环）。任务已完成时为空操作。
-    fn abort_start_task(&self, file_name: &str) {
-        let handle = self
-            .inner
-            .lock()
-            .instances
-            .get_mut(file_name)
-            .and_then(|inst| {
-                inst.start_cancellation.cancel();
-                inst.start_handle.take()
-            });
-        if let Some(handle) = handle {
-            handle.abort();
+    /// Capture and cancel under the same lock so a replacement cannot be stopped
+    /// by a request already waiting for an earlier generation.
+    fn request_stop(
+        &self,
+        file_name: &str,
+        expected_generation: Option<u64>,
+    ) -> Option<CancellationToken> {
+        let mut inner = self.inner.lock();
+        let inst = inner.instances.get_mut(file_name)?;
+        if inst.status == VntStatus::Stopped
+            || expected_generation.is_some_and(|generation| inst.generation != generation)
+        {
+            return None;
         }
-    }
+        inst.start_cancellation.cancel();
+        let stopped = inst.runtime_stopped.clone();
+        if inst.status == VntStatus::Running || inst.stopping_startup {
+            return Some(stopped);
+        }
 
-    fn abort_start_task_if_generation(&self, file_name: &str, generation: u64) -> bool {
-        let handle = {
-            let mut inner = self.inner.lock();
-            let Some(instance) = inner.instances.get_mut(file_name) else {
-                return false;
-            };
-            if instance.generation != generation {
-                return false;
+        inst.stopping_startup = true;
+        let generation = inst.generation;
+        let handle = inst.start_handle.take();
+        let manager = inner.runtime_managers.remove(file_name);
+        let state = self.clone();
+        let file_name = file_name.to_string();
+        // A timed-out or disconnected HTTP request must not drop cleanup.
+        tokio::spawn(async move {
+            if let Some(handle) = handle {
+                handle.abort();
+                let _ = handle.await;
             }
-            instance.start_cancellation.cancel();
-            instance.start_handle.take()
-        };
-        if let Some(handle) = handle {
-            handle.abort();
-        }
-        true
+            if let Some(manager) = manager {
+                manager.lock().await.stop().await;
+            }
+            record_remove_running(&file_name).await;
+            let mut inner = state.inner.lock();
+            if let Some(inst) = inner.instances.get_mut(&file_name)
+                && inst.generation == generation
+            {
+                inst.vnt = None;
+                inst.status = VntStatus::Stopped;
+                inst.config_text = None;
+                state.logs.instance(&file_name).warn("启动中断");
+                inst.runtime_stopped.cancel();
+            }
+        });
+        Some(stopped)
     }
 }
 
@@ -600,17 +631,13 @@ async fn resolve_subscription_config_with_retry(
     state: &HttpAppState,
     file_name: &str,
     local_content: &str,
+    generation: u64,
     cancellation: &CancellationToken,
 ) -> anyhow::Result<StartConfig> {
     let local: toml::Value = toml::from_str(local_content).context("本地配置 TOML 无效")?;
     let local_table = local.as_table().context("本地配置 TOML 根节点必须是表")?;
     let start_config: StartConfig = toml::from_str(local_content)?;
     let local_core = convert_config(start_config.clone())?;
-
-    // 旧的配置管理器先摘除（Drop 会停止组网实例并断开订阅控制连接）
-    if let Some(old) = state.take_runtime_manager(file_name) {
-        drop(old);
-    }
 
     let subscription = match local_table.get("subscription") {
         None => None,
@@ -633,7 +660,11 @@ async fn resolve_subscription_config_with_retry(
             state.logs.instance(file_name),
         ) => result?,
     };
-    state.install_runtime_manager(file_name, Arc::new(tokio::sync::Mutex::new(manager)));
+    state.install_runtime_manager(
+        file_name,
+        generation,
+        Arc::new(tokio::sync::Mutex::new(manager)),
+    )?;
     Ok(start_config)
 }
 
@@ -1475,6 +1506,7 @@ async fn start_vnt_internal_reserved(
         state,
         &file_name,
         &local_content,
+        generation,
         &start_cancellation,
     )
     .await?;
@@ -1554,16 +1586,11 @@ async fn start_vnt_internal_reserved(
         Ok(Ok(Err(error))) => Err(anyhow!(error)),
         Ok(Err(_)) => Err(anyhow!("启动任务在返回结果前退出")),
         Err(_) => {
-            state.abort_start_task_if_generation(&file_name, generation);
-            // 中止启动任务会丢弃其中持有的管理器；兜底再摘除并停止一次
-            if let Some(manager) = state.take_runtime_manager(&file_name)
-                && let Ok(mut guard) =
-                    tokio::time::timeout(Duration::from_secs(10), manager.lock()).await
-            {
-                guard.stop().await;
-            }
             let error = "启动网络实例超时";
-            state.record_log_and_stopped(&file_name, generation, error);
+            if let Some(stopped) = state.request_stop(&file_name, Some(generation)) {
+                state.logs.instance(&file_name).error(error);
+                let _ = wait_for_runtime_cleanup(stopped).await;
+            }
             Err(anyhow!(error))
         }
     }
@@ -1610,9 +1637,7 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         };
         let device_mode = guard.device_mode();
         let vnt_api = guard.api().context("配置管理器 API 不可用")?;
-        let task_groups = guard.task_groups();
         drop(guard);
-        state.set_instance_task_groups(&file_name, task_groups);
         state.record_log(
             &file_name,
             format!("注册成功 {}/{}", network_addr.ip, network_addr.prefix_len),
@@ -1633,6 +1658,7 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         state.record_log(&file_name, "device_mode=no，不创建虚拟网卡");
     }
 
+    let config_text = vnt_api.get_config().map(|config| config.to_toml_string());
     {
         let mut lock = state.inner.lock();
         let Some(inst) = lock.instances.get_mut(&file_name) else {
@@ -1644,6 +1670,7 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         if inst.vnt.is_some() {
             return Err(anyhow!("VNT is already running"));
         }
+        inst.config_text = config_text;
         inst.vnt = Some(VntHandler {
             api: Some(vnt_api),
             config_name: config_display_name,
@@ -1662,15 +1689,11 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         bail!("实例启动完成时 generation 已失效");
     }
 
-    state.publish_runtime_api(&file_name, generation, manager.lock().await.api());
-
-    // 启动成功后记录到自启列表
-    record_add_running(&file_name).await;
-
     // 启动运行期事件循环。管理器持有订阅连接与组网实例，事件循环只通过
     // 它获取/应用变化；组网实例重建（apply_change 内部）不经过这里。
     let file_name_for_wait = file_name.clone();
     tokio::spawn(async move {
+        record_add_running(&file_name_for_wait).await;
         loop {
             let event = {
                 let mut guard = manager.lock().await;
@@ -1726,8 +1749,8 @@ async fn start_vnt_network(context: StartNetworkContext) -> anyhow::Result<()> {
         manager.lock().await.stop().await;
         drop(state.take_runtime_manager(&file_name_for_wait));
         drop(manager);
-        drop(vnt_cleanup_guard);
         record_remove_running(&file_name_for_wait).await;
+        drop(vnt_cleanup_guard);
         log::info!("Network manager stopped.");
     });
 
@@ -1781,70 +1804,21 @@ async fn start_vnt_handler(
     Json(ApiResponse::success(()))
 }
 
-/// 停止运行中的实例。
-///
-/// 不能直接锁管理器再 `stop()`：监测循环在 `next_event` 等待期间持有
-/// 管理器锁，停止流程去锁会死锁到超时（且管理器已被摘除，实例失控）。
-/// 改为停止实例任务组——监测循环的 `wait_all_stopped` 随即唤醒，由其
-/// 清理路径摘除管理器并把状态置为 Stopped。
-async fn stop_running_instance(state: &HttpAppState, file_name: &str) -> anyhow::Result<()> {
-    if let Some(groups) = state.instance_task_groups(file_name) {
-        if tokio::time::timeout(Duration::from_secs(10), groups.stop_and_wait())
-            .await
-            .is_err()
-        {
-            anyhow::bail!("停止网络实例超时");
-        }
-    } else if let Some(manager) = state.runtime_manager(file_name) {
-        // 启动早期还没有任务组句柄：退回直接停止管理器
-        if tokio::time::timeout(Duration::from_secs(10), async {
-            manager.lock().await.stop().await;
-        })
+async fn wait_for_runtime_cleanup(stopped: CancellationToken) -> anyhow::Result<()> {
+    tokio::time::timeout(Duration::from_secs(10), stopped.cancelled())
         .await
-        .is_err()
-        {
-            anyhow::bail!("停止网络实例超时");
-        }
-    }
-    // 兜底摘除：监测循环通常已自行摘除
-    drop(state.take_runtime_manager(file_name));
-    // 等待状态落到 Stopped（监测循环清理或启动 guard 触发）
-    for _ in 0..100 {
-        if state.status(file_name) == VntStatus::Stopped {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    Ok(())
+        .context("停止网络实例超时")
 }
 
 async fn stop_vnt_handler(
     State(state): State<HttpAppState>,
     Json(req): Json<FileReq>,
 ) -> Json<ApiResponse<()>> {
-    if state.status(&req.file_name) == VntStatus::Stopped {
-        // 摘除管理器（停止组网实例并断开订阅控制连接）
-        drop(state.take_runtime_manager(&req.file_name));
-        return Json(ApiResponse::error("Vnt stopped"));
-    }
-    // 先中断可能处于注册重试循环中的启动任务，再停止实例
-    let apply_lock = state.config_apply_lock(&req.file_name);
-    let _apply_guard = if let Some(lock) = apply_lock.as_ref() {
-        Some(lock.lock().await)
-    } else {
-        None
-    };
-    state.abort_start_task(&req.file_name);
-    if state.runtime_manager(&req.file_name).is_none()
-        && state.status(&req.file_name) != VntStatus::Starting
+    if let Some(stopped) = state.request_stop(&req.file_name, None)
+        && let Err(error) = wait_for_runtime_cleanup(stopped).await
     {
-        return Json(ApiResponse::error("实例不存在"));
-    }
-    if let Err(error) = stop_running_instance(&state, &req.file_name).await {
         return Json(ApiResponse::error(error.to_string()));
     }
-
-    record_remove_running(&req.file_name).await;
     Json(ApiResponse::success(()))
 }
 
@@ -1853,10 +1827,6 @@ async fn dismiss_instance_handler(
     State(state): State<HttpAppState>,
     Query(req): Query<FileReq>,
 ) -> Json<ApiResponse<()>> {
-    if state.status(&req.file_name) == VntStatus::Stopped {
-        // Drop 停止组网实例并断开订阅控制连接
-        drop(state.take_runtime_manager(&req.file_name));
-    }
     let mut lock = state.inner.lock();
     match lock.instances.get(&req.file_name) {
         None => Json(ApiResponse::error("实例不存在")),
@@ -1864,6 +1834,7 @@ async fn dismiss_instance_handler(
             Json(ApiResponse::error("实例正在运行，不能移除"))
         }
         Some(_) => {
+            lock.runtime_managers.remove(&req.file_name);
             lock.instances.remove(&req.file_name);
             state.logs.remove(&req.file_name);
             Json(ApiResponse::success(()))
@@ -1884,18 +1855,11 @@ async fn restart_vnt_handler(
         return Json(ApiResponse::error("Config file not found"));
     }
 
-    // 先停止（如果正在运行则停止，否则忽略）
-    if state.status(&req.file_name) != VntStatus::Stopped {
-        let apply_lock = state.config_apply_lock(&req.file_name);
-        let _apply_guard = if let Some(lock) = apply_lock.as_ref() {
-            Some(lock.lock().await)
-        } else {
-            None
-        };
-        state.abort_start_task(&req.file_name);
-        if let Err(error) = stop_running_instance(&state, &req.file_name).await {
-            return Json(ApiResponse::error(format!("停止旧网络实例失败: {error}")));
-        }
+    // 先等旧实例完成清理，再启动新的 generation。
+    if let Some(stopped) = state.request_stop(&req.file_name, None)
+        && let Err(error) = wait_for_runtime_cleanup(stopped).await
+    {
+        return Json(ApiResponse::error(format!("停止旧网络实例失败: {error}")));
     }
 
     // 再启动；订阅拉取可能长期重试，不能让 HTTP 请求的超时取消后台启动。
@@ -1990,10 +1954,7 @@ async fn get_info(
             public_ipv6: nat_info.as_ref().and_then(|v| v.ipv6),
             network_code: config.as_ref().map(|v| v.network_code.clone()),
             mtu: config.as_ref().map(|v| v.mtu.unwrap_or(DEFAULT_MTU)),
-            dns: config
-                .as_ref()
-                .map(|v| v.dns.clone())
-                .unwrap_or_default(),
+            dns: config.as_ref().map(|v| v.dns.clone()).unwrap_or_default(),
             fec: config.as_ref().map(|v| v.fec),
             compress: config.as_ref().map(|v| v.compress),
             encrypt: config.as_ref().map(|v| v.password.is_some()),
@@ -3619,6 +3580,112 @@ ip = "10.26.0.2"
         assert!(distinct.validate().is_err());
     }
 
+    #[tokio::test]
+    async fn policy_only_updates_are_visible_in_effective_config_endpoint() {
+        let state = new_test_state();
+        let file_name = "policy.toml";
+        let generation = state.starting(file_name).unwrap();
+        let config = CoreConfig {
+            network_code: "web-policy-snapshot".into(),
+            device_id: "web-policy-snapshot".into(),
+            device_mode: DeviceMode::No,
+            ip: Some("10.26.0.2/24".parse().unwrap()),
+            tunnel_addr: vec!["127.0.0.1:0".parse().unwrap()],
+            ..CoreConfig::default()
+        };
+        let mut manager = RuntimeChangeManager::new(config, None, state.logs.instance(file_name))
+            .await
+            .unwrap();
+        manager.start_device().await.unwrap();
+        let api = manager.api().unwrap();
+        let mut config = *api.get_config().unwrap();
+        config.compress = true;
+        let rule = "10.26.1.9,10.26.0.3";
+        config.turn = vec![rule.parse().unwrap()];
+        state.inner.lock().instances.get_mut(file_name).unwrap().vnt = Some(VntHandler {
+            api: Some(api),
+            config_name: file_name.into(),
+            config_file_name: file_name.into(),
+            start_config: new_test_config(),
+        });
+        assert!(state.starting_to_running(file_name, generation));
+        let change = vnt_core::network_info::RuntimeChange {
+            config,
+            routes: vec![],
+        };
+        assert!(matches!(
+            manager.apply_change(&change).await.unwrap(),
+            ChangeOutcome::Applied
+        ));
+
+        state.publish_runtime_api(file_name, generation, manager.api());
+        let Json(response) = get_instance_config(
+            State(state),
+            Query(FileReq {
+                file_name: file_name.into(),
+            }),
+        )
+        .await;
+        let effective: StartConfig = toml::from_str(&response.data.unwrap()).unwrap();
+        assert!(effective.compress);
+        assert_eq!(effective.turn, vec![rule.to_string()]);
+        manager.stop().await;
+    }
+
+    #[tokio::test]
+    async fn stop_waits_for_current_generation_after_manager_is_removed() {
+        let state = new_test_state();
+        let file_name = "recovering.toml";
+        let generation = state.starting(file_name).unwrap();
+        let cancel = state.start_cancellation(file_name, generation).unwrap();
+        assert!(state.starting_to_running(file_name, generation));
+
+        let request = stop_vnt_handler(
+            State(state.clone()),
+            Json(FileReq {
+                file_name: file_name.into(),
+            }),
+        );
+        tokio::pin!(request);
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(
+                request.as_mut().poll(cx).is_pending()
+            ))
+            .await
+        );
+        assert!(cancel.is_cancelled());
+        assert!(state.runtime_manager(file_name).is_none());
+        assert_eq!(state.status(file_name), VntStatus::Running);
+
+        // The running loop, not the request, publishes completion. Start a
+        // replacement before the old response resumes to exercise that race.
+        state.cleanup_generation(file_name, generation);
+        let replacement = state.starting(file_name).unwrap();
+        assert_ne!(generation, replacement);
+        let Json(response) = request.await;
+        assert_eq!(response.code, 0);
+        assert_eq!(state.current_generation(file_name), Some(replacement));
+        assert!(
+            !state
+                .start_cancellation(file_name, replacement)
+                .unwrap()
+                .is_cancelled()
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_an_already_cleaned_up_instance_succeeds() {
+        let state = new_test_state();
+        let Json(response) = stop_vnt_handler(
+            State(state),
+            Json(FileReq {
+                file_name: "stopped.toml".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.code, 0);
+    }
+
     /// Starting 状态下执行停止：必须中断注册重试循环并迁移到 Stopped。
     /// 复现 bug 场景——服务器不可达时启动任务陷在无限重试里，
     /// 不中断启动任务则状态永远卡在 Starting。
@@ -3643,7 +3710,14 @@ ip = "10.26.0.2"
         state.set_start_handle(file_name, generation, handle);
 
         assert_eq!(state.status(file_name), VntStatus::Starting);
-        state.abort_start_task(file_name);
+        let response = stop_vnt_handler(
+            State(state.clone()),
+            Json(FileReq {
+                file_name: file_name.into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.0.code, 0);
 
         // abort 生效后 defer 触发，状态应迁移到 Stopped
         for _ in 0..100 {

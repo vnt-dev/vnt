@@ -9,6 +9,7 @@ use crate::utils::task_control::{TaskGroupGuard, TaskGroupManager};
 use anyhow::Context;
 use std::sync::Arc;
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 /// The latest complete runtime snapshot exposed to callers.
 ///
@@ -150,6 +151,7 @@ pub struct RuntimeChangeManager {
     routes_tx: watch::Sender<Vec<NetInput>>,
     routes_rx: watch::Receiver<Vec<NetInput>>,
     groups: TaskGroupManager,
+    shutdown: CancellationToken,
     log: Arc<InstanceLog>,
     instance: Option<ManagedInstance>,
 }
@@ -177,6 +179,7 @@ impl RuntimeChangeManager {
             routes_tx,
             routes_rx,
             groups: TaskGroupManager::new(),
+            shutdown: CancellationToken::new(),
             log,
             instance: None,
         };
@@ -290,11 +293,18 @@ impl RuntimeChangeManager {
         self.groups.clone()
     }
 
+    /// Signal a final shutdown without acquiring the manager lock held by
+    /// `next_event`. Instance replacement does not cancel this token.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
+
     /// 停止组网实例与订阅连接。
     pub async fn stop(&mut self) {
-        self.stop_instance().await;
+        self.shutdown.cancel();
         // 订阅连接随 SubscriptionListener 的 Drop 断开
         self.subscription_listener = None;
+        self.stop_instance().await;
     }
 
     /// 当前组网实例的查询 API（实例未启动时为 None）。
@@ -304,8 +314,7 @@ impl RuntimeChangeManager {
             .map(|instance| instance.manager.vnt_api())
     }
 
-    /// 等待当前组网实例停止。没有实例时永久等待（实例只能由
-    /// [`RuntimeChangeManager::rebuild`] 替换，不会消失）。
+    /// 等待当前组网实例停止。没有实例时永久等待；需支持主动取消时使用 next_event。
     pub async fn wait_instance_stopped(&mut self) {
         match self.instance.as_mut() {
             Some(instance) => instance.manager.wait_all_stopped().await,
@@ -380,6 +389,21 @@ impl RuntimeChangeManager {
     }
 
     async fn apply_change_impl(
+        &mut self,
+        change: &RuntimeChange,
+        #[cfg(unix)] tun_fd: Option<std::os::fd::OwnedFd>,
+        #[cfg(not(unix))] tun_fd: (),
+    ) -> anyhow::Result<ChangeOutcome> {
+        let result = self.apply_change_inner(change, tun_fd).await;
+        if let Some(instance) = &self.instance {
+            // Publish the actual committed config, not the requested snapshot.
+            // Operations that failed after a partial commit do not roll it back.
+            instance.manager.publish_runtime_config();
+        }
+        result
+    }
+
+    async fn apply_change_inner(
         &mut self,
         change: &RuntimeChange,
         #[cfg(unix)] tun_fd: Option<std::os::fd::OwnedFd>,
@@ -513,7 +537,7 @@ impl RuntimeChangeManager {
         result.map(|_| ())
     }
 
-    /// 等待下一次运行期事件：组网实例停止或新的完整快照。前端的主循环
+    /// 等待下一次运行期事件：主动停止、组网实例停止或新的完整快照。前端的主循环
     /// 应优先使用本方法（同时覆盖两种事件，且不与 manager 的其它借用冲突）。
     pub async fn next_event(&mut self) -> anyhow::Result<RuntimeEvent> {
         // 字段级分离借用：instance 与 (subscription_listener, routes_rx,
@@ -532,6 +556,8 @@ impl RuntimeChangeManager {
         let changed =
             Self::changed_with(subscription_listener, routes_rx, local_config, has_instance);
         tokio::select! {
+            biased;
+            _ = self.shutdown.cancelled() => Ok(RuntimeEvent::InstanceStopped),
             _ = stopped => Ok(RuntimeEvent::InstanceStopped),
             result = changed => result.map(|change| RuntimeEvent::Changed(Box::new(change))),
         }
@@ -769,6 +795,42 @@ mod rebuild_recovery_tests {
         let published = manager.api().unwrap().get_config().unwrap();
         assert_eq!(published.device_name, "corrected");
         manager.stop().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_wakes_subscription_wait_and_drops_listener_without_instance() {
+        let (updates, receiver) = watch::channel(None);
+        let (routes_tx, routes_rx) = watch::channel(Vec::new());
+        let shutdown = CancellationToken::new();
+        let manager = Arc::new(tokio::sync::Mutex::new(RuntimeChangeManager {
+            local_config: Config::default(),
+            subscription_listener: Some(SubscriptionListener::from_test_receiver(receiver)),
+            routes_tx,
+            routes_rx,
+            groups: TaskGroupManager::new(),
+            shutdown: shutdown.clone(),
+            log: Arc::new(InstanceLog::new("subscription-stop-test")),
+            instance: None,
+        }));
+        // JNI waits with the manager lock held. Stop must wake the waiter
+        // before taking that same lock to close the subscription.
+        let mut listener = manager.lock().await;
+        {
+            let event = listener.next_event();
+            tokio::pin!(event);
+            assert!(futures::poll!(&mut event).is_pending());
+            shutdown.cancel();
+            assert!(matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), event)
+                    .await
+                    .expect("shutdown must wake the subscription waiter")
+                    .unwrap(),
+                RuntimeEvent::InstanceStopped
+            ));
+        }
+        drop(listener);
+        manager.lock().await.stop().await;
+        assert!(updates.is_closed());
     }
 
     #[tokio::test]
