@@ -48,6 +48,9 @@ jobs:
       - name: Build Tauri frontend
         run: pnpm build:desktop-ui
 
+      - name: Test shared Web frontend
+        run: node --test vnt-web/ui/src/utils/*.test.js vnt-web/ui/src/views/*.test.js
+
       - name: Test release metadata scripts
         run: node --test .github/scripts/*.test.mjs
 
