@@ -75,6 +75,13 @@ VNT组网可使用VNT桌面客户端、`vnt2_web`和`vnt2_cli`。
 ./vnt2_ctrl info
 ```
 
+可以用 `--udp-stun` 和 `--tcp-stun` 分别指定 UDP 和 TCP 打洞使用的 STUN 服务器。
+每个参数可重复传入，域名省略端口时默认使用 `3478`。搭配 `--conf` 使用时，传入的参数会覆盖对应的 TOML 列表。
+
+```sh
+./vnt2_cli --conf config.toml --udp-stun stun.chat.bilibili.com --tcp-stun stun.nextcloud.com:443
+```
+
 更多参数请查看 `./vnt2_cli -h`。
 
 ## 常见问题
