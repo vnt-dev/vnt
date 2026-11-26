@@ -65,6 +65,15 @@ pub(crate) struct SubscriptionListener {
 }
 
 impl SubscriptionListener {
+    #[cfg(all(test, not(any(target_os = "android", target_os = "ios", target_os = "tvos"))))]
+    pub(crate) fn from_test_receiver(config_rx: watch::Receiver<Option<EnvelopeConfig>>) -> Self {
+        Self {
+            config_rx,
+            cancellation: CancellationToken::new(),
+            worker: None,
+        }
+    }
+
     pub(crate) fn new(subscription: Subscription) -> Self {
         let (config_tx, config_rx) = watch::channel(None);
         let cancellation = CancellationToken::new();

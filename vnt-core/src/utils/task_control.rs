@@ -1,19 +1,23 @@
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::Future;
-use std::future::pending;
+use std::future::{pending, poll_fn};
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
+use std::task::Poll;
 use tokio::sync::Notify;
 use tokio::task::{Id, JoinHandle};
 
 struct TaskGroupState {
     stopped: bool,
     tasks: HashMap<Id, JoinHandle<()>>,
+    stopping_tasks: HashMap<Id, JoinHandle<()>>,
 }
 
 struct TaskGroupInner {
     state: Mutex<TaskGroupState>,
     all_stopped_notify: Notify,
+    join_lock: tokio::sync::Mutex<()>,
 }
 
 impl TaskGroupInner {
@@ -22,8 +26,10 @@ impl TaskGroupInner {
             state: Mutex::new(TaskGroupState {
                 stopped: false,
                 tasks: HashMap::new(),
+                stopping_tasks: HashMap::new(),
             }),
             all_stopped_notify: Notify::new(),
+            join_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -90,12 +96,15 @@ impl TaskGroupInner {
         {
             let mut state = self.state.lock();
             state.stopped = true;
-            for (_, handle) in state.tasks.drain() {
+            let tasks = std::mem::take(&mut state.tasks);
+            for handle in tasks.values() {
                 handle.abort();
             }
+            // A parent scope may signal stop before anyone explicitly joins
+            // the child. Keep the handles until their futures have dropped.
+            state.stopping_tasks.extend(tasks);
         }
-        // `spawn_restartable` 允许任务组在暂停期暂时为空，此时没有 TaskGuard
-        // 会负责发送通知，因此 stop 本身必须唤醒等待者。
+        // A group of restartable tasks may be empty when stop is requested.
         self.all_stopped_notify.notify_waiters();
     }
 
@@ -179,6 +188,27 @@ impl TaskGroup {
 
     pub fn stop(&self) {
         self.inner.stop();
+    }
+
+    /// Cancel all tasks and wait until their resources have been dropped.
+    /// Retain unfinished handles if this wait is cancelled.
+    pub(crate) async fn stop_and_join(&self) {
+        self.inner.stop();
+        // JoinHandle tracks one waker. Serialize joiners and leave the handles
+        // in the group so a later waiter can resume a cancelled join.
+        let _join = self.inner.join_lock.lock().await;
+        poll_fn(|cx| {
+            let mut state = self.inner.state.lock();
+            state
+                .stopping_tasks
+                .retain(|_, handle| Pin::new(handle).poll(cx).is_pending());
+            if state.stopping_tasks.is_empty() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
     }
 
     pub fn is_stopped(&self) -> bool {
@@ -379,6 +409,71 @@ impl Drop for TaskGroupGuard {
 mod tests {
     use super::*;
     use std::future::pending;
+
+    #[tokio::test]
+    async fn stop_and_join_drops_task_resources_before_returning() {
+        let group = TaskGroup::new();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (resource, mut released) = tokio::sync::oneshot::channel::<()>();
+        group.spawn(async move {
+            let _resource = resource;
+            let _ = ready_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.unwrap();
+
+        group.stop_and_join().await;
+        assert!(matches!(
+            released.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn join_after_stop_releases_child_udp_port() {
+        let parent = TaskGroup::new();
+        let child = parent.child_scope();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = socket.local_addr().unwrap();
+        child.spawn(async move {
+            let _socket = socket;
+            let _ = ready_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.unwrap();
+
+        // Run the same non-awaiting stop the parent link uses, then join
+        // before the current-thread runtime can drop the aborted future.
+        child.stop();
+        assert!(child.is_stopped());
+        child.stop_and_join().await;
+        let _rebound = std::net::UdpSocket::bind(addr).unwrap();
+        parent.stop_and_join().await;
+    }
+
+    #[tokio::test]
+    async fn interrupted_join_retains_pending_task_handles() {
+        let group = TaskGroup::new();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (resource, mut released) = tokio::sync::oneshot::channel::<()>();
+        group.spawn(async move {
+            let _resource = resource;
+            let _ = ready_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.unwrap();
+        {
+            let wait = group.stop_and_join();
+            tokio::pin!(wait);
+            assert!(futures::poll!(&mut wait).is_pending());
+        }
+        group.stop_and_join().await;
+        assert!(matches!(
+            released.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+    }
 
     /// 所有任务自然结束后 wait_all_stopped 必须返回。
     /// 覆盖两个关键点：任务自然耗尽时 remove_task 置 stopped 并唤醒；

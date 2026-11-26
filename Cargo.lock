@@ -6440,6 +6440,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
  "toml 0.9.12+spec-1.1.0",
  "vnt-core",
 ]

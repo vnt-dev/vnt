@@ -10,6 +10,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use tokio_util::sync::CancellationToken;
 use vnt_core::api::VntApi;
 use vnt_core::context::config::{Config, DeviceMode, PeerAddress, PunchRule, TurnRule, VirtualIp};
 use vnt_core::log_manager::LogManager;
@@ -19,7 +20,6 @@ use vnt_core::network_info::{ChangeOutcome, RuntimeChange, RuntimeChangeManager,
 use vnt_core::port_mapping::PortMapping;
 use vnt_core::tls::verifier::CertValidationMode;
 use vnt_core::tunnel_core::server::transport::config::ProtocolAddress;
-use vnt_core::utils::task_control::TaskGroupManager;
 
 /// 全局状态管理
 struct GlobalState {
@@ -27,9 +27,8 @@ struct GlobalState {
     runtime: Arc<Runtime>,
     /// 配置管理器：订阅连接与组网实例的生命周期持有者
     managers: HashMap<i64, Arc<tokio::sync::Mutex<RuntimeChangeManager>>>,
-    /// 按 handle 管理的实例任务组句柄：停止流程经它停机，避免与
-    /// next_event 监听线程争抢管理器锁（见 nativeStop）
-    task_groups: HashMap<i64, TaskGroupManager>,
+    /// 不持有管理器锁即可取消 next_event，包括没有组网实例的订阅等待。
+    shutdown_tokens: HashMap<i64, CancellationToken>,
     /// API实例
     vnt_apis: HashMap<i64, VntApi>,
     /// 按 handle 管理的实例日志（每个实例保留最近 50 条）
@@ -45,7 +44,7 @@ impl GlobalState {
         Ok(Self {
             runtime: Arc::new(Runtime::new()?),
             managers: HashMap::new(),
-            task_groups: HashMap::new(),
+            shutdown_tokens: HashMap::new(),
             vnt_apis: HashMap::new(),
             logs: Arc::new(LogManager::new()),
             pending_changes: HashMap::new(),
@@ -187,12 +186,10 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
                 subscription,
                 instance_log,
             ))?;
-            let manager = Arc::new(tokio::sync::Mutex::new(manager));
-            // 任务组句柄随管理器一并登记：停止流程经它停机，避免与
-            // next_event 监听线程争抢管理器锁（见 nativeStop）
-            let task_groups = runtime.block_on(async { manager.lock().await.task_groups() });
-            state.managers.insert(id, manager);
-            state.task_groups.insert(id, task_groups);
+            state.shutdown_tokens.insert(id, manager.shutdown_token());
+            state
+                .managers
+                .insert(id, Arc::new(tokio::sync::Mutex::new(manager)));
 
             Ok(id)
         })();
@@ -430,7 +427,11 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeNextEvent<'local>(
             if let Some(change) = pending {
                 let mut global_state = GLOBAL_STATE.lock();
                 let state = global_state.as_mut().context("VNT not initialized")?;
-                state.pending_changes.insert(handle, change);
+                if state.managers.contains_key(&handle) {
+                    state.pending_changes.insert(handle, change);
+                } else {
+                    return Ok(serde_json::json!({"event": "instance_stopped"}).to_string());
+                }
             }
             Ok(response.to_string())
         })();
@@ -585,6 +586,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeGetApi(
 
             let mut global_state = GLOBAL_STATE.lock();
             let state = global_state.as_mut().context("VNT not initialized")?;
+            anyhow::ensure!(state.managers.contains_key(&handle), "Invalid handle");
             state.vnt_apis.insert(handle, api);
             Ok(handle)
         })();
@@ -647,44 +649,28 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
 ) -> jboolean {
     jni_guard!(env, 0, {
         let result: anyhow::Result<()> = (|| {
-            let (manager, task_groups, runtime) = {
+            let (manager, runtime) = {
                 let mut global_state = GLOBAL_STATE.lock();
                 let state = global_state.as_mut().context("VNT not initialized")?;
                 let manager = state.managers.remove(&handle);
-                let task_groups = state.task_groups.remove(&handle);
+                if let Some(shutdown) = state.shutdown_tokens.remove(&handle) {
+                    shutdown.cancel();
+                }
                 state.vnt_apis.remove(&handle);
                 state.pending_changes.remove(&handle);
                 state.logs.remove(&handle.to_string());
-                (manager, task_groups, state.runtime.clone())
+                (manager, state.runtime.clone())
             };
-            // 停止组网实例并断开订阅控制连接。
-            // 不能直接 block_on(manager.lock().await.stop())：运行期监听
-            // 线程在 next_event 等待期间持有管理器锁，停止流程去锁会死锁
-            // （与 vnt-web stop_running_instance 同因）。改为停实例任务组：
-            // 监听线程的 wait_all_stopped 随即唤醒 next_event，其退出后
-            // 释放锁并 drop 管理器，订阅连接随 SubscriptionListener 的
-            // Drop 断开。
             if let Some(manager) = manager {
-                // 监听线程未持锁时（启动早期或已退出）从管理器现取句柄；
-                // 持锁时用创建时登记的句柄，避免与它争锁
-                let groups = match manager.try_lock() {
-                    Ok(guard) => Some(guard.task_groups()),
-                    Err(_) => task_groups,
-                };
-                // 释放本地引用：仅剩监听线程的引用时，其退出即 drop 管理器
-                drop(manager);
-                if let Some(groups) = groups {
-                    let stopped = runtime.block_on(async {
-                        tokio::time::timeout(Duration::from_secs(10), groups.stop_and_wait())
-                            .await
-                            .is_ok()
-                    });
-                    if !stopped {
-                        // 监听线程异常驻留：不再等待，其退出后仍会
-                        // drop 管理器完成清理
-                        log::warn!("停止网络实例超时（handle {handle}）");
-                    }
-                }
+                // 注册等待与 next_event 先被唤醒并释放锁。显式断开订阅，不依赖其他 JNI 调用
+                // 何时放下 Arc；等待超时也不取消后台清理。
+                let cleanup = runtime.spawn(async move { manager.lock().await.stop().await });
+                runtime
+                    .block_on(async {
+                        tokio::time::timeout(Duration::from_secs(10), cleanup).await
+                    })
+                    .context("停止网络实例超时")?
+                    .context("停止网络实例失败")?;
             }
 
             Ok(())
@@ -1492,9 +1478,11 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         if value.is_empty() {
             continue;
         }
-        dns.push(value.parse::<std::net::Ipv4Addr>().map_err(|error| {
-            anyhow::anyhow!("invalid DNS address '{}': {}", value, error)
-        })?);
+        dns.push(
+            value
+                .parse::<std::net::Ipv4Addr>()
+                .map_err(|error| anyhow::anyhow!("invalid DNS address '{}': {}", value, error))?,
+        );
     }
 
     let config = Config {
