@@ -113,6 +113,7 @@ pub struct NetworkManager {
     app_state: AppState,
     log: Arc<InstanceLog>,
     task_group: TaskGroup,
+    mtu_task_group: TaskGroup,
     device_io_manager: DeviceIOManager,
     ip_update: IpUpdateContext,
     /// 运行期事件脚本句柄：网卡被（重新）应用时触发 device_applied
@@ -164,6 +165,9 @@ impl NetworkManager {
 
     pub async fn stop(self) {
         self.server_task_group.stop_and_join().await;
+        // MTU-scoped NAT workers can own the P2P UDP socket pool. Wait
+        // for them before allowing a replacement to reuse tunnel_port.
+        self.mtu_task_group.stop_and_join().await;
         self.task_group.stop_and_join().await;
     }
 
@@ -512,6 +516,7 @@ impl NetworkManager {
             app_state: app_state.clone(),
             log: log.clone(),
             task_group: task_group.clone(),
+            mtu_task_group,
             device_io_manager,
             ip_update,
             event_script,
@@ -984,6 +989,48 @@ mod decentralized_loopback_tests {
             .collect();
         drop(listeners);
         ports
+    }
+
+    #[tokio::test]
+    async fn stop_releases_fixed_p2p_udp_port_immediately() {
+        let port = reserve_loopback_ports(1)[0];
+        let config = Config {
+            network_code: "fixed-udp-shutdown".into(),
+            device_id: "fixed-udp-shutdown".into(),
+            ip: Some("10.26.0.2/24".parse().unwrap()),
+            device_mode: DeviceMode::No,
+            tunnel_port: Some(port),
+            ..Config::default()
+        };
+        let mut manager = RuntimeChangeManager::new(
+            config.clone(),
+            None,
+            std::sync::Arc::new(InstanceLog::new("fixed-udp-shutdown")),
+        )
+        .await
+        .unwrap();
+        manager.start_device().await.unwrap();
+        assert!(
+            manager
+                .api()
+                .unwrap()
+                .p2p_listen_addrs()
+                .iter()
+                .any(|listen| listen.protocol == "UDP" && listen.addr.port() == port)
+        );
+
+        manager.stop().await;
+        // No sleep or retry: stop must be a resource-release boundary.
+        let rebound = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).unwrap();
+        drop(rebound);
+        let mut replacement = RuntimeChangeManager::new(
+            config,
+            None,
+            std::sync::Arc::new(InstanceLog::new("fixed-udp-shutdown")),
+        )
+        .await
+        .unwrap();
+        replacement.stop().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
