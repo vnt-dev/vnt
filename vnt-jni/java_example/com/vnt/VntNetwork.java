@@ -13,7 +13,7 @@ import org.json.JSONObject;
 public class VntNetwork {
 
     private long nativeHandle;
-    private boolean closed = false;
+    private volatile boolean closed = false;
 
     // 包内构造，只能通过VntManager创建
     VntNetwork(long handle) {
@@ -58,12 +58,15 @@ public class VntNetwork {
      * 启动TUN设备。
      * Android 传入 VpnService.Builder.establish() 返回的 fd；传 -1 表示由
      * VNT 自动创建（仅非 Android 平台支持）。
+     * 非负 fd 必须是已 detach 的描述符，调用后由 native 接管，即使启动失败。
      * @param tunFd TUN设备文件描述符
      * @throws VntException 启动失败时抛出异常
      */
     public void startTun(int tunFd) throws VntException {
-        checkClosed();
-        if (!nativeStartTun(nativeHandle, tunFd)) {
+        // Even after a concurrent stop, let native consume the detached fd
+        // and reject the request without targeting another live handle.
+        long handle = closed ? -1L : nativeHandle;
+        if (!nativeStartTun(handle, tunFd)) {
             throw new VntException("Failed to start TUN device");
         }
     }
@@ -101,13 +104,14 @@ public class VntNetwork {
      * 且有虚拟网卡时整体重建 fd 型设备（虚拟地址/MTU 以快照为准）；组网
      * 实例由 native 内部重建，订阅连接保持不断。
      *
+     * 非负 fd 必须是已 detach 的描述符，调用后由 native 接管，即使应用失败。
      * @param tunFd 宿主新建的 TUN fd
      * @return 应用结果：applied / need_fd / rebuild
      * @throws VntException 应用失败时抛出异常
      */
     public ChangeApplyResult applyRuntimeChange(int tunFd) throws VntException {
-        checkClosed();
-        String resultJson = nativeApplyRuntimeChangeFd(nativeHandle, tunFd);
+        long handle = closed ? -1L : nativeHandle;
+        String resultJson = nativeApplyRuntimeChangeFd(handle, tunFd);
         return ChangeApplyResult.fromJson(resultJson);
     }
 

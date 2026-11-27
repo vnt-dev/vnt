@@ -298,6 +298,54 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeGetNetwork<'local>(
     })
 }
 
+// Non-Unix hosts do not accept a detached TUN descriptor.
+#[cfg(unix)]
+type TunFd = OwnedFd;
+#[cfg(not(unix))]
+type TunFd = ();
+
+/// # Safety
+/// A nonnegative descriptor must have been detached and transferred exactly once.
+unsafe fn take_tun_fd(raw: jint) -> Option<TunFd> {
+    #[cfg(unix)]
+    {
+        (raw >= 0).then(|| unsafe { OwnedFd::from_raw_fd(raw) })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = raw;
+        None
+    }
+}
+
+fn start_tun(handle: jlong, tun_fd: Option<TunFd>) -> anyhow::Result<()> {
+    let (manager, runtime) = {
+        let global_state = GLOBAL_STATE.lock();
+        let state = global_state.as_ref().context("VNT not initialized")?;
+        let manager = state
+            .managers
+            .get(&handle)
+            .context("Invalid handle")?
+            .clone();
+        (manager, state.runtime.clone())
+    };
+
+    #[cfg(unix)]
+    runtime.block_on(async {
+        let mut guard = manager.lock().await;
+        guard.start_device_fd(tun_fd).await
+    })?;
+    #[cfg(not(unix))]
+    {
+        let _ = tun_fd;
+        runtime.block_on(async {
+            let mut guard = manager.lock().await;
+            guard.start_device().await
+        })?;
+    }
+    Ok(())
+}
+
 /// 启动TUN设备（Android使用，需要传入fd）
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntNetwork_nativeStartTun<'local>(
@@ -306,45 +354,12 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStartTun<'local>(
     handle: jlong,
     tun_fd: jint,
 ) -> jboolean {
-    #[cfg(not(unix))]
-    let _ = tun_fd;
     jni_guard!(env, 0, {
-        let result: anyhow::Result<()> = (|| {
-            let (manager, runtime) = {
-                let global_state = GLOBAL_STATE.lock();
-                let state = global_state.as_ref().context("VNT not initialized")?;
-                let manager = state
-                    .managers
-                    .get(&handle)
-                    .context("Invalid handle")?
-                    .clone();
-                (manager, state.runtime.clone())
-            };
-
-            #[cfg(unix)]
-            let tun_fd = if tun_fd < 0 {
-                None
-            } else {
-                // SAFETY: Java transfers a detached descriptor exactly once.
-                Some(unsafe { OwnedFd::from_raw_fd(tun_fd) })
-            };
-            // 无设备模式下 fd 没有消费者，start_device_fd 内部会关闭它
-            #[cfg(unix)]
-            runtime.block_on(async {
-                let mut guard = manager.lock().await;
-                guard.start_device_fd(tun_fd).await
-            })?;
-            #[cfg(not(unix))]
-            runtime.block_on(async {
-                let mut guard = manager.lock().await;
-                guard.start_device().await
-            })?;
-
-            Ok(())
-        })();
-
-        match result {
-            Ok(_) => 1,
+        // SAFETY: The Java caller transfers a detached fd on entry, even
+        // when the handle has already stopped or initialization fails.
+        let tun_fd = unsafe { take_tun_fd(tun_fd) };
+        match start_tun(handle, tun_fd) {
+            Ok(()) => 1,
             Err(e) => {
                 let _ = env.throw(format!("Failed to start TUN: {:?}", e));
                 0
@@ -452,67 +467,59 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeNextEvent<'local>(
 /// TUN fd（None 表示未携带）：携带 fd 且有虚拟网卡时整体重建 fd 型设备；
 /// 未携带 fd 时网卡相关变更无法应用（返回 need_fd/rebuild，提示宿主忽略
 /// 了 nextEvent 携带的标志，应改用携带 fd 的入口）。
-fn apply_pending_change(env: &mut JNIEnv, handle: jlong, tun_fd: Option<jint>) -> jstring {
-    let result: anyhow::Result<String> = (|| {
-        let (manager, runtime) = {
-            let global_state = GLOBAL_STATE.lock();
-            let state = global_state.as_ref().context("VNT not initialized")?;
-            let manager = state
-                .managers
-                .get(&handle)
-                .context("Invalid handle")?
-                .clone();
-            (manager, state.runtime.clone())
-        };
-        let change = {
-            let mut global_state = GLOBAL_STATE.lock();
-            let state = global_state.as_mut().context("VNT not initialized")?;
-            state.pending_changes.remove(&handle)
-        }
-        .context("没有待应用的运行期变更，请先调用 nextEvent")?;
+fn apply_pending_change(handle: jlong, tun_fd: Option<TunFd>) -> anyhow::Result<String> {
+    let (manager, runtime, change) = {
+        let mut global_state = GLOBAL_STATE.lock();
+        let state = global_state.as_mut().context("VNT not initialized")?;
+        let manager = state
+            .managers
+            .get(&handle)
+            .context("Invalid handle")?
+            .clone();
+        let change = state
+            .pending_changes
+            .remove(&handle)
+            .context("没有待应用的运行期变更，请先调用 nextEvent")?;
+        (manager, state.runtime.clone(), change)
+    };
 
-        #[cfg(unix)]
-        let tun_fd = tun_fd.map(|tun_fd| {
-            // SAFETY: Java transfers a detached descriptor exactly once; this
-            // native entry takes ownership from here on. 无设备模式下 fd
-            // 没有消费者，由管理器内部关闭。
-            unsafe { OwnedFd::from_raw_fd(tun_fd) }
-        });
-        #[cfg(not(unix))]
-        let _ = tun_fd;
-        #[cfg(unix)]
-        let outcome = runtime.block_on(async {
-            let mut guard = manager.lock().await;
-            guard.apply_change_fd(&change, tun_fd).await
-        });
-        #[cfg(not(unix))]
-        let outcome = runtime.block_on(async {
-            let mut guard = manager.lock().await;
-            guard.apply_change(&change).await
-        });
-        match outcome? {
-            ChangeOutcome::Applied => {}
-            // 宿主未按 nextEvent 的标志提供新 fd：需要先重建 VPN 接口
-            ChangeOutcome::Rebuild => {
-                return Ok(serde_json::json!({
-                    "action": "rebuild",
-                    "config_ip": change.config.ip.as_ref().map(ToString::to_string),
-                })
-                .to_string());
-            }
-            ChangeOutcome::NeedFd(error) => {
-                return Ok(serde_json::json!({
-                    "action": "need_fd",
-                    "error": error,
-                })
-                .to_string());
-            }
+    #[cfg(not(unix))]
+    let _ = tun_fd;
+    #[cfg(unix)]
+    let outcome = runtime.block_on(async {
+        let mut guard = manager.lock().await;
+        guard.apply_change_fd(&change, tun_fd).await
+    });
+    #[cfg(not(unix))]
+    let outcome = runtime.block_on(async {
+        let mut guard = manager.lock().await;
+        guard.apply_change(&change).await
+    });
+    match outcome? {
+        ChangeOutcome::Applied => {}
+        // 宿主未按 nextEvent 的标志提供新 fd：需要先重建 VPN 接口
+        ChangeOutcome::Rebuild => {
+            return Ok(serde_json::json!({
+                "action": "rebuild",
+                "config_ip": change.config.ip.as_ref().map(ToString::to_string),
+            })
+            .to_string());
         }
-        Ok(serde_json::json!({
-            "action": "applied",
-        })
-        .to_string())
-    })();
+        ChangeOutcome::NeedFd(error) => {
+            return Ok(serde_json::json!({
+                "action": "need_fd",
+                "error": error,
+            })
+            .to_string());
+        }
+    }
+    Ok(serde_json::json!({
+        "action": "applied",
+    })
+    .to_string())
+}
+
+fn runtime_change_result(env: &mut JNIEnv, result: anyhow::Result<String>) -> jstring {
     match result {
         Ok(value) => env
             .new_string(value)
@@ -538,7 +545,7 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeApplyRuntimeChange<'local>(
     handle: jlong,
 ) -> jstring {
     jni_guard!(env, std::ptr::null_mut(), {
-        apply_pending_change(&mut env, handle, None)
+        runtime_change_result(&mut env, apply_pending_change(handle, None))
     })
 }
 
@@ -556,8 +563,10 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeApplyRuntimeChangeFd<'local
     tun_fd: jint,
 ) -> jstring {
     jni_guard!(env, std::ptr::null_mut(), {
-        let tun_fd = if tun_fd < 0 { None } else { Some(tun_fd) };
-        apply_pending_change(&mut env, handle, tun_fd)
+        // SAFETY: The Java caller transfers a detached fd on entry, even
+        // when the handle or pending snapshot is no longer available.
+        let tun_fd = unsafe { take_tun_fd(tun_fd) };
+        runtime_change_result(&mut env, apply_pending_change(handle, tun_fd))
     })
 }
 
@@ -1552,6 +1561,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn rejected_tun_requests_close_the_transferred_descriptor() {
+        use std::io::Read;
+        use std::os::fd::IntoRawFd;
+        use std::os::unix::net::UnixStream;
+
+        let (mut peer, tun) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        // SAFETY: The test transfers its only ownership of this descriptor.
+        let tun_fd = unsafe { take_tun_fd(tun.into_raw_fd()) };
+        assert!(start_tun(-1, tun_fd).is_err());
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+
+        let (mut peer, tun) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        // SAFETY: The test transfers its only ownership of this descriptor.
+        let tun_fd = unsafe { take_tun_fd(tun.into_raw_fd()) };
+        assert!(apply_pending_change(-1, tun_fd).is_err());
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+    }
 
     const SUBSCRIPTION: &str = "vnt2://join/2/eyJ2IjoyLCJzZXJ2ZXIiOiJ0Y3A6Ly8xMjcuMC4wLjE6Mjk4NzIiLCJjZXJ0X21vZGUiOiJzdGFuZGFyZCIsImpvaW5faWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJjcmVkZW50aWFsX2tleSI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEifQ";
 

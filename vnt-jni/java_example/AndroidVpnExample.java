@@ -135,33 +135,45 @@ public class AndroidVpnExample extends VpnService {
             RuntimeChange change = event.getChange();
             System.out.println("Runtime change received: " + change);
 
-            // 按快照标志决定调用方式：需要新接口时先建立再携带 fd 应用
-            ChangeApplyResult result;
-            if (change.isVpnRebuild() || change.isInstanceRebuild()) {
-                // 快照未携带固定 IP（服务端动态分配）时保持当前接口地址
-                String cidr = change.getIp() != null ? change.getIp() : establishedCidr;
-                int mtu = change.getMtu() != null ? change.getMtu() : DEFAULT_MTU;
-                int tunFd = establishVpnInterface(cidr, mtu, change.getRoutes());
-                establishedCidr = cidr;
-                result = network.applyRuntimeChange(tunFd);
-            } else {
-                result = network.applyRuntimeChange();
+            try {
+                applyRuntimeSnapshot(network, change);
+            } catch (Exception error) {
+                // A bad snapshot or a failed replacement is not a lost
+                // subscription. Wait for the next snapshot without restoring
+                // the old instance. Failures in nextEvent still end the loop.
+                System.err.println("Runtime change failed; waiting for the next snapshot: " + error);
             }
-            if (!result.isApplied()) {
-                // 按标志提供 fd 后必定 applied；其余结果仅作防御，结束循环
-                System.out.println("Runtime change not applied: " + result);
-                break;
-            }
-            System.out.println("Runtime change applied: " + result);
-            // 实例可能被内部重建，刷新对外查询接口（对应 cli 的 ipc.publish）
-            refreshApi(network);
         }
     }
 
-    /** 实例可能被内部重建，重新取查询接口（对应 cli 的 ipc.publish）。 */
-    private void refreshApi(VntNetwork network) throws VntException {
+    private void applyRuntimeSnapshot(VntNetwork network, RuntimeChange change) throws Exception {
+        ChangeApplyResult result;
+        String cidr = establishedCidr;
+        if (change.isVpnRebuild() || change.isInstanceRebuild()) {
+            // 没有固定 IP 时沿用上次成功应用的接口地址。
+            if (change.getIp() != null) {
+                cidr = change.getIp();
+            }
+            int mtu = change.getMtu() != null ? change.getMtu() : DEFAULT_MTU;
+            int tunFd = establishVpnInterface(cidr, mtu, change.getRoutes());
+            if (change.isInstanceRebuild()) {
+                // Avoid exposing an API for a generation which may be retired
+                // without a replacement when applying this snapshot fails.
+                api = null;
+            }
+            result = network.applyRuntimeChange(tunFd);
+        } else {
+            result = network.applyRuntimeChange();
+        }
+        if (!result.isApplied()) {
+            System.out.println("Runtime change not applied; waiting for the next snapshot: " + result);
+            return;
+        }
+        establishedCidr = cidr;
+        System.out.println("Runtime change applied: " + result);
         api = network.getApi();
     }
+
 
     /** 当前实例的查询 API；组网线程在实例重建时自动切换，可能为 null。 */
     public VntApi getApi() {
