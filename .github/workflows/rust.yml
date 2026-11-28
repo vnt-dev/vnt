@@ -227,13 +227,15 @@ jobs:
           [target.mipsel-unknown-linux-musl]
           linker = "mipsel-linux-muslsf-gcc"
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
-          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","-C", "force-unwind-tables=no",
+          "--cfg", "compiler_builtins_no_debug",
           "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/mipsel-linux-muslsf/lib",
           "-L", "/opt/musl_gcc/mipsel-linux-muslsf-cross/lib/gcc/mipsel-linux-muslsf/11.2.1"]
           [target.mips-unknown-linux-musl]
           linker = "mips-linux-muslsf-gcc"
           rustflags = ["-C", "target-feature=+crt-static","-C", "strip=symbols","-C", "link-arg=-static",
-          "-C", "relocation-model=static","-C", "link-arg=-no-pie","--cfg", "compiler_builtins_no_debug",
+          "-C", "relocation-model=static","-C", "link-arg=-no-pie","-C", "force-unwind-tables=no",
+          "--cfg", "compiler_builtins_no_debug",
           "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/mips-linux-muslsf/lib",
           "-L", "/opt/musl_gcc/mips-linux-muslsf-cross/lib/gcc/mips-linux-muslsf/11.2.1"]
           [target.x86_64-pc-windows-msvc]
@@ -259,10 +261,12 @@ jobs:
       - name: Run build Vnt
         if: ${{ ! endsWith(matrix.TARGET, 'freebsd') && ! contains(matrix.TARGET, '-win7-') }}
         run: |
-          if [[ $TARGET =~ ^mips.*$ ]]; then
-            cargo +nightly build --release --verbose --target $TARGET -Z build-std=std,panic_abort --bin vnt2_web --features vnt-web
-            cargo +nightly build --release --verbose --target $TARGET -Z build-std=std,panic_abort --bin vnt2_cli --features vnt-ipc
-            cargo +nightly build --release --verbose --target $TARGET -Z build-std=std,panic_abort --bin vnt2_ctrl --features vnt-ipc
+          if [[ "$TARGET" == mips-unknown-linux-musl || "$TARGET" == mipsel-unknown-linux-musl ]]; then
+            export CARGO_PROFILE_RELEASE_PANIC=immediate-abort
+            mips_build_args=(--release --verbose --target "$TARGET" -Z build-std=std,panic_abort -Z panic-immediate-abort)
+            cargo +nightly build "${mips_build_args[@]}" --bin vnt2_web --features vnt-web
+            cargo +nightly build "${mips_build_args[@]}" --bin vnt2_cli --features vnt-ipc
+            cargo +nightly build "${mips_build_args[@]}" --bin vnt2_ctrl --features vnt-ipc
           else
             cargo build --release --verbose --target $TARGET --bin vnt2_web --features vnt-web
             cargo build --release --verbose --target $TARGET --bin vnt2_cli --features vnt-ipc
