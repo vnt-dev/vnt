@@ -2,8 +2,11 @@ use crate::crypto::PacketCrypto;
 use crate::nat::{NetInput, SubnetMapping};
 use crate::port_mapping::PortMapping;
 use crate::tls::verifier::CertValidationMode;
+#[cfg(not(feature = "dynamic-http"))]
+use crate::tunnel_core::server::transport::config::ProtocolType;
 use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAddress};
 use crate::utils::atomic64::AtomicU64;
+use crate::utils::http_get;
 use anyhow::{anyhow, bail};
 use ipnet::Ipv4Net;
 use rustp2p_core::punch::{PunchPolicy, PunchPolicySet};
@@ -341,30 +344,28 @@ impl PeerAddress {
         let PeerAddressKind::Dynamic { source } = &self.kind else {
             return Ok(vec![self.clone()]);
         };
-        let lower_source = source.to_ascii_lowercase();
-        let entries: Vec<String> =
-            if lower_source.starts_with("http://") || lower_source.starts_with("https://") {
-                crate::utils::http_get::http_get_text(source)
-                    .await?
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned)
-                    .collect()
-            } else {
-                crate::utils::dns_query::dns_query_txt(source, vec![], default_interface)
-                    .await?
-                    .into_iter()
-                    .flat_map(|entry| {
-                        entry
-                            .lines()
-                            .map(str::trim)
-                            .filter(|line| !line.is_empty())
-                            .map(str::to_owned)
-                            .collect::<Vec<_>>()
-                    })
-                    .collect()
-            };
+        let entries: Vec<String> = if http_get::is_http_url(source) {
+            http_get::http_get_text(source)
+                .await?
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        } else {
+            crate::utils::dns_query::dns_query_txt(source, vec![], default_interface)
+                .await?
+                .into_iter()
+                .flat_map(|entry| {
+                    entry
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
 
         let mut peers = Vec::new();
         for entry in entries {
@@ -826,6 +827,19 @@ impl Config {
             if let Some(protocol) = addr.protocol_type.disabled_protocol() {
                 bail!("{protocol} is disabled in this build; use a tcp:// server");
             }
+            #[cfg(not(feature = "dynamic-http"))]
+            if addr.protocol_type == ProtocolType::Dynamic && http_get::is_http_url(&addr.address)
+            {
+                bail!(http_get::DISABLED);
+            }
+        }
+        #[cfg(not(feature = "dynamic-http"))]
+        for peer in &self.peer_address {
+            if let PeerAddressKind::Dynamic { source } = &peer.kind
+                && http_get::is_http_url(source)
+            {
+                bail!(http_get::DISABLED);
+            }
         }
         #[cfg(not(feature = "quic"))]
         if self.rtx || !self.port_mapping.is_empty() || self.allow_port_mapping {
@@ -940,8 +954,10 @@ fn toml_string_array<I: IntoIterator<Item = String>>(values: I) -> toml::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "dynamic-http")]
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    #[cfg(feature = "dynamic-http")]
     async fn spawn_http_server(response: String) -> SocketAddr {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1202,6 +1218,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "dynamic-http")]
     #[tokio::test]
     async fn dynamic_peer_address_http_skips_invalid_entries() {
         let body = "127.0.0.1:30001\ntcp://127.0.0.1:30002\nudp://[::1]:30003\nquic://127.0.0.1:30004\ndynamic://nested.example\n";
@@ -1222,6 +1239,28 @@ mod tests {
                 "udp://[::1]:30003",
             ]
         );
+    }
+
+    #[cfg(not(feature = "dynamic-http"))]
+    #[tokio::test]
+    async fn dns_only_build_rejects_dynamic_http_sources() {
+        let mut config = Config {
+            server_addr: vec!["dynamic://HTTPS://example.com/servers".parse().unwrap()],
+            ..Default::default()
+        };
+        assert_eq!(config.check().unwrap_err().to_string(), http_get::DISABLED);
+
+        config.server_addr = vec!["dynamic://servers.example.com".parse().unwrap()];
+        config.ip = Some("10.26.0.2".parse().unwrap());
+        let peer: PeerAddress = "dynamic://http://example.com/peers".parse().unwrap();
+        config.peer_address = vec![peer.clone()];
+        assert_eq!(config.check().unwrap_err().to_string(), http_get::DISABLED);
+        assert_eq!(
+            peer.resolve_dynamic(&None).await.unwrap_err().to_string(),
+            http_get::DISABLED
+        );
+        config.peer_address = vec!["dynamic://peers.example.com".parse().unwrap()];
+        assert!(config.check().is_ok());
     }
 
     #[test]

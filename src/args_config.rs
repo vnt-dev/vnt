@@ -219,11 +219,23 @@ impl FileConfig {
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// 服务器地址 例如 `-s quic://127.0.0.1:29872`, 支持quic/tcp/wss/dynamic；dynamic 默认解析dns txt记录，也可填入http(s)接口如 dynamic://https://xxx
+    /// 服务器地址，例如 tcp://127.0.0.1:29872。dynamic://域名使用 DNS TXT。
     #[clap(short, long)]
+    #[cfg_attr(
+        feature = "dynamic-http",
+        clap(
+            help = "服务器地址，例如 tcp://127.0.0.1:29872。动态列表支持 DNS TXT 或 dynamic://https://…"
+        )
+    )]
     pub server: Vec<ProtocolAddress>,
-    /// 可直连节点地址，可重复指定；支持 ip:端口、tcp://、udp://，以及 dynamic:// 域名或 HTTP(S) 地址列表
+    /// 可直连节点地址，可重复指定。支持 ip:端口、tcp://、udp:// 或 dynamic://域名。
     #[clap(long)]
+    #[cfg_attr(
+        feature = "dynamic-http",
+        clap(
+            help = "可直连节点地址，可重复指定。支持静态地址、dynamic://域名或 dynamic://https://…"
+        )
+    )]
     pub peer_address: Vec<PeerAddress>,
     /// 指定目标 IP/网段的优先中转节点，可重复指定，格式为 target,turn_ip
     #[clap(long)]
@@ -690,12 +702,12 @@ impl FileConfig {
 network_code = "your_network_code"
 
 # 服务器地址列表 (支持 {server_protocols}) (必填)
-# dynamic 协议默认使用dns txt解析记录值，也支持填入http(s)接口如 dynamic://https://example.com/servers，接口返回换行符分隔的服务器地址列表
+# dynamic://域名 使用 DNS TXT{dynamic_http_hint}
 server = ["{example_protocol}://1.2.3.4:29872"]
 
 # 可直连节点地址列表
 # 不带协议时同时尝试 TCP 和 UDP；也可用 tcp:// 或 udp:// 指定协议
-# dynamic://域名 读取 DNS TXT；dynamic://http(s)://接口读取换行分隔的直连节点地址列表
+# dynamic://域名 读取 DNS TXT{dynamic_http_hint}
 # 地址端口应为对端 tunnel_addr 中配置的监听端口
 # peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873", "udp://[::1]:29873", "dynamic://peers.example.com"]
 
@@ -830,6 +842,11 @@ server = ["{example_protocol}://1.2.3.4:29872"]
                 (false, false) => "tcp / dynamic",
             },
             example_protocol = if cfg!(feature = "quic") { "quic" } else { "tcp" },
+            dynamic_http_hint = if cfg!(feature = "dynamic-http") {
+                "，也支持 dynamic://http(s)://接口 返回的换行分隔地址列表"
+            } else {
+                ""
+            },
         );
         println!("--- 示例配置文件内容 ---\n{}", example);
         if let Some(p) = path {

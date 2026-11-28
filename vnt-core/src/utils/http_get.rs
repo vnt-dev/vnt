@@ -1,13 +1,22 @@
-use anyhow::{Context, bail};
-use futures::StreamExt;
-use std::time::Duration;
-
-/// 响应体最大长度，地址列表一般远小于此值
-const MAX_BODY: usize = 1024 * 1024;
+pub(crate) fn is_http_url(source: &str) -> bool {
+    ["http://", "https://"].iter().any(|prefix| {
+        source
+            .get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+    })
+}
 
 /// 请求 dynamic://http(s)://xxx 接口，返回文本响应体（换行分隔的服务器地址列表）。
 /// HTTPS 使用系统根证书做标准校验。
+#[cfg(feature = "dynamic-http")]
 pub(crate) async fn http_get_text(url: &str) -> anyhow::Result<String> {
+    use anyhow::{Context, bail};
+    use futures::StreamExt;
+    use std::time::Duration;
+
+    // 响应体最大长度，地址列表一般远小于此值。
+    const MAX_BODY: usize = 1024 * 1024;
+
     // reqwest 以 rustls-no-provider 模式集成：本 crate 的 rustls 启用 ring 特性，
     // 构建 client 前确保进程内已安装默认 CryptoProvider（已安装则忽略冲突）
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -53,7 +62,16 @@ pub(crate) async fn http_get_text(url: &str) -> anyhow::Result<String> {
     String::from_utf8(body).context("dynamic server list is not valid utf-8")
 }
 
-#[cfg(test)]
+#[cfg(not(feature = "dynamic-http"))]
+pub(crate) const DISABLED: &str =
+    "dynamic HTTP(S) discovery is disabled in this build; use dynamic://<domain> with DNS TXT";
+
+#[cfg(not(feature = "dynamic-http"))]
+pub(crate) async fn http_get_text(_url: &str) -> anyhow::Result<String> {
+    anyhow::bail!(DISABLED)
+}
+
+#[cfg(all(test, feature = "dynamic-http"))]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

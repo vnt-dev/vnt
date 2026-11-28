@@ -5,9 +5,10 @@ edition = "2024"
 license = "Apache-2.0"
 
 [features]
-default = ["quic", "wss"]
+default = ["quic", "wss", "dynamic-http"]
 quic = ["vnt-core/quic"]
 wss = ["vnt-core/wss"]
+dynamic-http = ["vnt-core/dynamic-http"]
 
 [dependencies]
 

@@ -2,6 +2,7 @@ use crate::context::SharedNetworkAddr;
 use crate::protocol::client_message::SharedNodeIdentity;
 use crate::protocol::control_message::{RegRequestMsg, RegistrationMode};
 use crate::tls::verifier::CertValidationMode;
+use crate::utils::http_get;
 use anyhow::bail;
 use rand::seq::SliceRandom;
 use rustp2p_core::socket::LocalInterface;
@@ -149,12 +150,9 @@ impl ConnectRegConfig {
                 // 如 dynamic://https://example.com/servers，响应为换行分隔的
                 // 服务器地址列表（每行同样支持 tcp:// quic:// wss:// 前缀）
                 let address = &self.server_addr.address;
-                let lower_address = address.to_lowercase();
-                let entries: Vec<String> = if lower_address.starts_with("http://")
-                    || lower_address.starts_with("https://")
-                {
+                let entries: Vec<String> = if http_get::is_http_url(address) {
                     // HTTP(S) 接口：按返回顺序连接，服务端可自行控制优先级
-                    let body = crate::utils::http_get::http_get_text(address).await?;
+                    let body = http_get::http_get_text(address).await?;
                     body.lines()
                         .map(str::trim)
                         .filter(|line| !line.is_empty())
