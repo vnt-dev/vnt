@@ -5,10 +5,11 @@ edition = "2024"
 license = "Apache-2.0"
 
 [features]
-default = ["quic", "wss", "dynamic-http"]
+default = ["quic", "wss", "dynamic-http", "route-manager"]
 quic = ["dep:quinn", "dep:rcgen"]
 wss = ["dep:tokio-tungstenite", "dep:tungstenite"]
 dynamic-http = ["dep:reqwest", "dep:webpki-roots"]
+route-manager = ["dep:route_manager"]
 internal-bench = []
 
 [dependencies]
@@ -62,7 +63,10 @@ toml.workspace = true
 base64 = "0.22"
 rcgen = { version = "0.14.6", optional = true }
 
-[target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
+route_manager = { workspace = true, optional = true }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "android", target_os = "ios", target_os = "tvos")))'.dependencies]
 route_manager.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

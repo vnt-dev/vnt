@@ -1,7 +1,13 @@
 #![cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))]
 
 use crate::nat::NetInput;
+#[cfg(any(not(target_os = "linux"), feature = "route-manager"))]
 use route_manager::{Route, RouteManager};
+
+#[cfg(all(target_os = "linux", not(feature = "route-manager")))]
+mod ip_command;
+#[cfg(all(target_os = "linux", not(feature = "route-manager")))]
+use ip_command::{Route, SystemRouteBackend};
 
 /// Own only routes actually added by VNT; connected/system routes are left untouched.
 pub(crate) struct VirtualIpv6Routes<B: RouteBackend = SystemRouteBackend> {
@@ -13,7 +19,7 @@ pub(crate) struct VirtualIpv6Routes<B: RouteBackend = SystemRouteBackend> {
 impl VirtualIpv6Routes<SystemRouteBackend> {
     pub(crate) fn new(if_index: u32) -> std::io::Result<Self> {
         Ok(Self {
-            backend: SystemRouteBackend(RouteManager::new()?),
+            backend: SystemRouteBackend::new()?,
             installed: vec![],
             if_index,
         })
@@ -27,11 +33,7 @@ impl<B: RouteBackend> VirtualIpv6Routes<B> {
             ("ff00::".parse().unwrap(), 8),
         ] {
             let route = Route::new(address.into(), prefix).with_if_index(self.if_index);
-            if self.backend.list()?.iter().any(|v| {
-                v.destination() == route.destination()
-                    && v.prefix() == prefix
-                    && v.if_index() == Some(self.if_index)
-            }) {
+            if self.backend.contains(&route)? {
                 continue;
             }
             match self.backend.add(&route) {
@@ -71,16 +73,27 @@ impl SystemRouteReconciler {
 pub(crate) trait RouteBackend {
     fn add(&mut self, route: &Route) -> std::io::Result<()>;
     fn delete(&mut self, route: &Route) -> std::io::Result<()>;
-    fn list(&mut self) -> std::io::Result<Vec<Route>> {
-        Ok(vec![])
+    fn contains(&mut self, route: &Route) -> std::io::Result<bool>;
+}
+
+#[cfg(any(not(target_os = "linux"), feature = "route-manager"))]
+pub(crate) struct SystemRouteBackend(RouteManager);
+
+#[cfg(any(not(target_os = "linux"), feature = "route-manager"))]
+impl SystemRouteBackend {
+    fn new() -> std::io::Result<Self> {
+        Ok(Self(RouteManager::new()?))
     }
 }
 
-pub(crate) struct SystemRouteBackend(RouteManager);
-
+#[cfg(any(not(target_os = "linux"), feature = "route-manager"))]
 impl RouteBackend for SystemRouteBackend {
-    fn list(&mut self) -> std::io::Result<Vec<Route>> {
-        self.0.list()
+    fn contains(&mut self, route: &Route) -> std::io::Result<bool> {
+        Ok(self.0.list()?.iter().any(|existing| {
+            existing.destination() == route.destination()
+                && existing.prefix() == route.prefix()
+                && existing.if_index() == route.if_index()
+        }))
     }
     fn add(&mut self, route: &Route) -> std::io::Result<()> {
         self.0.add(route)
@@ -100,7 +113,7 @@ struct RouteReconciler<B: RouteBackend> {
 impl RouteReconciler<SystemRouteBackend> {
     fn new(if_index: u32) -> std::io::Result<Self> {
         Ok(Self {
-            backend: SystemRouteBackend(RouteManager::new()?),
+            backend: SystemRouteBackend::new()?,
             if_index,
             installed: Vec::new(),
         })
@@ -175,8 +188,8 @@ mod tests {
         fail_next_add: bool,
     }
     impl RouteBackend for Ipv6Backend {
-        fn list(&mut self) -> std::io::Result<Vec<Route>> {
-            Ok(self.routes.lock().unwrap().clone())
+        fn contains(&mut self, route: &Route) -> std::io::Result<bool> {
+            Ok(self.routes.lock().unwrap().contains(route))
         }
         fn add(&mut self, route: &Route) -> std::io::Result<()> {
             if std::mem::take(&mut self.fail_next_add) {
@@ -221,6 +234,10 @@ mod tests {
     }
 
     impl RouteBackend for MockBackend {
+        fn contains(&mut self, _route: &Route) -> std::io::Result<bool> {
+            Ok(false)
+        }
+
         fn add(&mut self, route: &Route) -> std::io::Result<()> {
             self.events.lock().unwrap().push(format!("add {route}"));
             if std::mem::take(&mut self.fail_next_add) {
