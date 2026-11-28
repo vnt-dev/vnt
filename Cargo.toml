@@ -16,7 +16,7 @@ tokio-util.workspace = true
 
 
 log.workspace = true
-log4rs = "1.4"
+log4rs = { version = "1.4", optional = true }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -30,7 +30,9 @@ sha2 = "0.11"
 windows-service.workspace = true
 
 [features]
-default = []
+default = ["rolling-logs"]
+rolling-logs = ["dep:log4rs"]
+mini = []
 vnt-ipc = ["dep:vnt-ipc"]
 vnt-web = ["dep:vnt-web", "dep:form_urlencoded"]
 

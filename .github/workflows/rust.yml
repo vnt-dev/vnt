@@ -146,6 +146,8 @@ jobs:
             cargo build --release --verbose --bin vnt2_web --features vnt-web --target $TARGET
             cargo build --release --verbose --bin vnt2_cli --features vnt-ipc --target $TARGET
             cargo build --release --verbose --bin vnt2_ctrl --features vnt-ipc --target $TARGET
+            cargo build --release --verbose --target "$TARGET" --target-dir target/mini --no-default-features --bin vnt2_web --features vnt-web,mini
+            cargo build --release --verbose --target "$TARGET" --target-dir target/mini --no-default-features --bin vnt2_cli --features vnt-ipc,mini
       - name: Install and configure dependencies
         if: ${{ ! endsWith(matrix.TARGET, 'freebsd') }}
         run: |
@@ -263,14 +265,17 @@ jobs:
         run: |
           if [[ "$TARGET" == mips-unknown-linux-musl || "$TARGET" == mipsel-unknown-linux-musl ]]; then
             export CARGO_PROFILE_RELEASE_PANIC=immediate-abort
-            mips_build_args=(--release --verbose --target "$TARGET" -Z build-std=std,panic_abort -Z panic-immediate-abort)
-            cargo +nightly build "${mips_build_args[@]}" --bin vnt2_web --features vnt-web
-            cargo +nightly build "${mips_build_args[@]}" --bin vnt2_cli --features vnt-ipc
-            cargo +nightly build "${mips_build_args[@]}" --bin vnt2_ctrl --features vnt-ipc
+            build=(cargo +nightly build -Z build-std=std,panic_abort -Z panic-immediate-abort)
           else
-            cargo build --release --verbose --target $TARGET --bin vnt2_web --features vnt-web
-            cargo build --release --verbose --target $TARGET --bin vnt2_cli --features vnt-ipc
-            cargo build --release --verbose --target $TARGET --bin vnt2_ctrl --features vnt-ipc
+            build=(cargo build)
+          fi
+          build+=(--release --verbose --target "$TARGET")
+          "${build[@]}" --bin vnt2_web --features vnt-web
+          "${build[@]}" --bin vnt2_cli --features vnt-ipc
+          "${build[@]}" --bin vnt2_ctrl --features vnt-ipc
+          if [[ "$TARGET" == *-linux-* ]]; then
+            "${build[@]}" --target-dir target/mini --no-default-features --bin vnt2_web --features vnt-web,mini
+            "${build[@]}" --target-dir target/mini --no-default-features --bin vnt2_cli --features vnt-ipc,mini
           fi
           ldd ./target/$TARGET/release/vnt2_web || true
           file ./target/$TARGET/release/vnt2_web || true
@@ -297,6 +302,10 @@ jobs:
               cp ./target/$TARGET/release/vnt2_web ./package/
               cp ./target/$TARGET/release/vnt2_cli ./package/
               cp ./target/$TARGET/release/vnt2_ctrl ./package/
+              if [[ "$TARGET" == *-linux-* || "$TARGET" == *-freebsd ]]; then
+                  cp "./target/mini/$TARGET/release/vnt2_web" ./package/vnt2_web_mini
+                  cp "./target/mini/$TARGET/release/vnt2_cli" ./package/vnt2_cli_mini
+              fi
               cd ./package
               zip "../artifacts/$ZIP_NAME" ./*
           fi

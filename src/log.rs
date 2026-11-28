@@ -1,8 +1,12 @@
 use std::io::Write;
+#[cfg(all(feature = "rolling-logs", not(feature = "mini")))]
 use std::path::PathBuf;
+
 pub fn log_init(log_name: &str) {
     log_init0(log_name, None);
 }
+
+#[cfg(all(feature = "rolling-logs", not(feature = "mini")))]
 pub fn log_init0(log_name: &str, yaml: Option<&str>) {
     let path = PathBuf::from("logs");
 
@@ -58,4 +62,32 @@ root:
     }
 
     let _ = log4rs::init_file(log_config, Default::default());
+}
+
+#[cfg(any(feature = "mini", not(feature = "rolling-logs")))]
+pub fn log_init0(_log_name: &str, _yaml: Option<&str>) {
+    struct ConsoleLogger;
+
+    impl log::Log for ConsoleLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Info
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "{} {}",
+                    record.level(),
+                    record.args()
+                );
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    if log::set_logger(&ConsoleLogger).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
 }
