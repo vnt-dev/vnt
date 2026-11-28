@@ -49,7 +49,7 @@ ipnet.workspace = true
 getifaddrs = "0.6.0"
 dns-parser = "0.8"
 
-lz4_flex = "0.14"
+lz4rip = { version = "0.12.10", default-features = false, features = ["std"] }
 reed-solomon-erasure = "6.0"
 
 serde.workspace = true
