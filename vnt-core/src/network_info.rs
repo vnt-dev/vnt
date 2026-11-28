@@ -66,6 +66,7 @@ pub fn merge_present_config(
     overlay!("no_broadcast", no_broadcast);
     overlay!("auto_sync_subnet", auto_sync_subnet);
     overlay!("allow_port_mapping", allow_port_mapping);
+    // Reverse proxy permission is owned by the local client configuration.
     overlay!("allow_ikev2", allow_ikev2);
     overlay!("allow_wireguard", allow_wireguard);
     overlay!("udp_stun", udp_stun);
@@ -147,6 +148,8 @@ pub struct ChangePlan {
 /// 连接与路由通道保持不断。
 pub struct RuntimeChangeManager {
     local_config: Config,
+    reverse_proxy_tx: watch::Sender<bool>,
+    reverse_proxy_rx: watch::Receiver<bool>,
     subscription_listener: Option<SubscriptionListener>,
     routes_tx: watch::Sender<Vec<NetInput>>,
     routes_rx: watch::Receiver<Vec<NetInput>>,
@@ -184,9 +187,12 @@ impl RuntimeChangeManager {
         shutdown: CancellationToken,
     ) -> anyhow::Result<Self> {
         let (routes_tx, routes_rx) = watch::channel(Vec::new());
+        let (reverse_proxy_tx, reverse_proxy_rx) = watch::channel(local_config.allow_reverse_proxy);
         let subscription_listener = subscription.map(SubscriptionListener::new);
         let mut manager = Self {
             local_config,
+            reverse_proxy_tx,
+            reverse_proxy_rx,
             subscription_listener,
             routes_tx,
             routes_rx,
@@ -203,6 +209,11 @@ impl RuntimeChangeManager {
         };
         manager.start_instance(config).await?;
         Ok(manager)
+    }
+
+    /// Updates the permission owned by the local client on the next runtime event.
+    pub fn reverse_proxy_control(&self) -> watch::Sender<bool> {
+        self.reverse_proxy_tx.clone()
     }
 
     /// 当前订阅信封携带的受管身份（network_code, device_id）。非阻塞：
@@ -372,17 +383,19 @@ impl RuntimeChangeManager {
 
     /// 有效配置：订阅信封（出现的键）与本地设置的合并。
     async fn effective_config(&mut self) -> anyhow::Result<Config> {
-        match self.subscription_listener.as_mut() {
+        let mut config = match self.subscription_listener.as_mut() {
             Some(listener) => {
                 let envelope = listener.current_config().await?;
-                Ok(merge_present_config(
+                merge_present_config(
                     self.local_config.clone(),
                     &envelope.config,
                     &envelope.present,
-                ))
+                )
             }
-            None => Ok(self.local_config.clone()),
-        }
+            None => self.local_config.clone(),
+        };
+        config.allow_reverse_proxy = *self.reverse_proxy_rx.borrow();
+        Ok(config)
     }
 
     /// 启动一个组网实例（不含虚拟网卡启动）。
@@ -579,8 +592,13 @@ impl RuntimeChangeManager {
                 None => std::future::pending().await,
             }
         };
-        let changed =
-            Self::changed_with(subscription_listener, routes_rx, local_config, has_instance);
+        let changed = Self::changed_with(
+            subscription_listener,
+            routes_rx,
+            &mut self.reverse_proxy_rx,
+            local_config,
+            has_instance,
+        );
         tokio::select! {
             biased;
             _ = self.shutdown.cancelled() => Ok(RuntimeEvent::InstanceStopped),
@@ -595,6 +613,7 @@ impl RuntimeChangeManager {
         Self::changed_with(
             &mut self.subscription_listener,
             &mut self.routes_rx,
+            &mut self.reverse_proxy_rx,
             &self.local_config,
             has_instance,
         )
@@ -632,29 +651,36 @@ impl RuntimeChangeManager {
     pub(crate) async fn changed_with(
         subscription_listener: &mut Option<SubscriptionListener>,
         routes_rx: &mut watch::Receiver<Vec<NetInput>>,
+        reverse_proxy_rx: &mut watch::Receiver<bool>,
         local_config: &Config,
         has_instance: bool,
     ) -> anyhow::Result<RuntimeChange> {
-        let config = match subscription_listener.as_mut() {
-            Some(listener) => tokio::select! {
-                biased;
-                // A new subscription revision is the only recovery trigger
-                // when there is no running generation (not a stale route event).
-                result = listener.changed() => {
-                    let envelope = result?;
-                    merge_present_config(local_config.clone(), &envelope.config, &envelope.present)
-                }
-                result = routes_rx.changed(), if has_instance => {
-                    result.context("route source closed")?;
-                    let envelope = listener.current_config().await?;
-                    merge_present_config(local_config.clone(), &envelope.config, &envelope.present)
-                }
-            },
+        let mut config = match subscription_listener.as_mut() {
+            Some(listener) => {
+                let envelope = tokio::select! {
+                    biased;
+                    // A subscription revision can recover a stopped managed instance.
+                    result = listener.changed() => result?,
+                    result = routes_rx.changed(), if has_instance => {
+                        result.context("route source closed")?;
+                        listener.current_config().await?
+                    }
+                    result = reverse_proxy_rx.changed(), if has_instance => {
+                        result.context("local reverse proxy setting closed")?;
+                        listener.current_config().await?
+                    }
+                };
+                merge_present_config(local_config.clone(), &envelope.config, &envelope.present)
+            }
             None => {
-                routes_rx.changed().await.context("route source closed")?;
+                tokio::select! {
+                    result = routes_rx.changed() => result.context("route source closed")?,
+                    result = reverse_proxy_rx.changed() => result.context("local reverse proxy setting closed")?,
+                }
                 local_config.clone()
             }
         };
+        config.allow_reverse_proxy = *reverse_proxy_rx.borrow_and_update();
         Ok(RuntimeChange {
             config,
             routes: routes_rx.borrow_and_update().clone(),
@@ -678,6 +704,22 @@ mod merge_present_tests {
             device_name: "managed-name".to_string(),
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn reverse_proxy_permission_is_local() {
+        let local = Config::default();
+        let remote = Config {
+            allow_reverse_proxy: true,
+            ..Config::default()
+        };
+        let fields = present(&["allow_reverse_proxy"]);
+        assert!(!merge_present_config(local, &remote, &fields).allow_reverse_proxy);
+        let local = Config {
+            allow_reverse_proxy: true,
+            ..Config::default()
+        };
+        assert!(merge_present_config(local, &Config::default(), &fields).allow_reverse_proxy);
     }
 
     #[test]
@@ -966,8 +1008,11 @@ mod rebuild_recovery_tests {
         let (updates, receiver) = watch::channel(None);
         let (routes_tx, routes_rx) = watch::channel(Vec::new());
         let shutdown = CancellationToken::new();
+        let (reverse_proxy_tx, reverse_proxy_rx) = watch::channel(false);
         let manager = Arc::new(tokio::sync::Mutex::new(RuntimeChangeManager {
             local_config: Config::default(),
+            reverse_proxy_tx,
+            reverse_proxy_rx,
             subscription_listener: Some(SubscriptionListener::from_test_receiver(receiver)),
             routes_tx,
             routes_rx,
@@ -1011,8 +1056,14 @@ mod rebuild_recovery_tests {
         let (routes, mut routes_rx) = watch::channel(Vec::new());
         routes.send_replace(Vec::new());
 
-        let pending_change =
-            RuntimeChangeManager::changed_with(&mut listener, &mut routes_rx, &config, false);
+        let (_proxy_tx, mut proxy_rx) = watch::channel(false);
+        let pending_change = RuntimeChangeManager::changed_with(
+            &mut listener,
+            &mut routes_rx,
+            &mut proxy_rx,
+            &config,
+            false,
+        );
         tokio::pin!(pending_change);
         assert!(futures::poll!(&mut pending_change).is_pending());
 

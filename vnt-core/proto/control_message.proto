@@ -32,6 +32,7 @@ message RegRequestMsg {
 
 
 message RegResponseMsg {
+  bool reverse_proxy_supported = 12;
   fixed32 ip = 1;
   uint32 prefix_len = 2;
   fixed32 gateway = 3;

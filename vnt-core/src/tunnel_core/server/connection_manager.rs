@@ -7,6 +7,7 @@ use crate::event_script::{EventScript, EventScriptType};
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::SharedNodeIdentity;
 use crate::protocol::control_message::{RegistrationMode, RequestMessage, ResponseMessage};
+use crate::protocol::ip_packet_protocol::{MsgType, NetPacket};
 use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::outbound::BasicOutbound;
 use crate::tunnel_core::p2p::transport::punch::NatPuncher;
@@ -54,6 +55,7 @@ pub struct ServerTurnManager {
     transport_client: TransportClient,
     event_script: EventScript,
     subnet_sync_supported: bool,
+    reverse_proxy_config: Option<ConnectConfig>,
     subscription_verified: Arc<AtomicBool>,
 }
 pub(crate) fn create_server_tunnel(
@@ -308,11 +310,13 @@ impl ServerTurnManager {
             notifier,
             event_script,
             subnet_sync_supported: false,
+            reverse_proxy_config: None,
             subscription_verified: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn disconnect(&mut self) {
         self.transport_client.disconnect();
+        self.reverse_proxy_config = None;
     }
 
     pub async fn connect_and_reg(
@@ -368,6 +372,11 @@ impl ServerTurnManager {
             .next_timeout(Duration::from_secs(10))
             .await?;
         let response = ResponseMessage::from_slice(&buf)?;
+        self.reverse_proxy_config = matches!(
+            &response,
+            ResponseMessage::Reg(reg) if reg.reverse_proxy_supported
+        )
+        .then(|| connect_config.clone());
         self.subnet_sync_supported = matches!(
             &response,
             ResponseMessage::Reg(reg) if reg.subnet_sync_supported
@@ -554,6 +563,13 @@ impl ServerTurnManager {
         receiver: &mut Receiver<(Bytes, Instant)>,
         data_handler: &ServerTurnInboundHandler,
     ) -> anyhow::Result<()> {
+        let mut reverse_proxy = super::reverse_proxy::ReverseProxyClient::new(
+            self.reverse_proxy_config.clone(),
+            data_handler.subscribe_reverse_proxy(),
+        );
+        reverse_proxy
+            .sync(&mut self.transport_client, data_handler.network_addr())
+            .await?;
         let mut time = crate::utils::time::now_ts_ms();
         let mut ping_interval = tokio::time::interval(Duration::from_secs(5));
         let mut subnet_sync_interval = tokio::time::interval_at(
@@ -572,11 +588,21 @@ impl ServerTurnManager {
                 rs = self.transport_client.next() => {
                     time = crate::utils::time::now_ts_ms();
                     let data = rs?;
+                    if let Ok(packet) = NetPacket::new(&data)
+                        && matches!(packet.msg_type(), Ok(MsgType::ReverseProxy))
+                    {
+                        reverse_proxy.handle(&packet, data_handler.network_addr());
+                        continue;
+                    }
                     if let Err(e) = data_handler.handle(&mut self.transport_client,data, &self.notifier,time).await{
                         log::warn!("Error handling data: {:?}", e);
                     }
                 }
+                _ = reverse_proxy.changed() => {
+                    reverse_proxy.sync(&mut self.transport_client, data_handler.network_addr()).await?;
+                }
                 _ = ping_interval.tick() => {
+                    reverse_proxy.sync(&mut self.transport_client, data_handler.network_addr()).await?;
                     let now = crate::utils::time::now_ts_ms();
                     if now > time + Duration::from_secs(20).as_millis() as i64 {
                         bail!("timeout")
@@ -678,6 +704,7 @@ mod tests {
 
     fn registration(ip: [u8; 4]) -> ResponseMessage {
         ResponseMessage::Reg(RegResponseMsg {
+            reverse_proxy_supported: false,
             ip: ip.into(),
             prefix_len: 24,
             gateway: [ip[0], ip[1], ip[2], 1].into(),

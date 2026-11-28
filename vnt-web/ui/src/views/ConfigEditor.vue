@@ -76,7 +76,7 @@ const resetSections = (data) => {
   ) {
     sectionExpanded.value.subnet = true;
   }
-  if (data.port_mapping.length || data.allow_mapping) {
+  if (data.port_mapping.length || data.allow_mapping || data.allow_reverse_proxy) {
     sectionExpanded.value.portmap = true;
   }
   if (data.udp_stun.length || data.tcp_stun.length) {
@@ -982,6 +982,15 @@ const sectionChevronClass = (expanded) =>
                     <div class="text-xs text-slate-400 mt-0.5">允许其他设备使用本机作跳板来进行端口映射</div>
                   </div>
                   <input v-model="formData.allow_mapping" type="checkbox" :class="checkboxClass" />
+                </label>
+                <label :class="toggleLabelClass">
+                  <div class="flex-1">
+                    <div class="flex items-center text-sm font-medium text-slate-800 dark:text-white">
+                      允许服务端反代 <ConfigHelp :help="configHelp.allow_reverse_proxy" />
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">允许接入的 VNT 服务端将流量转发到本机或内网服务</div>
+                  </div>
+                  <input v-model="formData.allow_reverse_proxy" type="checkbox" :class="checkboxClass" />
                 </label>
               </div>
             </div>

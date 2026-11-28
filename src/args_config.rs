@@ -56,6 +56,7 @@ pub struct FileConfig {
     pub ctrl_port: Option<u16>,
     pub port_mapping: Option<Vec<String>>,
     pub allow_mapping: Option<bool>,
+    pub allow_reverse_proxy: Option<bool>,
     pub device_id: Option<String>,
     pub device_name: Option<String>,
     pub tun_name: Option<String>,
@@ -133,6 +134,7 @@ impl FileConfig {
             ctrl_port,
             port_mapping,
             allow_mapping,
+            allow_reverse_proxy,
             device_id,
             device_name,
             tun_name,
@@ -306,6 +308,9 @@ pub struct Args {
     /// 是否允许作为端口映射出口，开启后其他设备才可使用本设备的ip为"目标虚拟IP"
     #[clap(long)]
     pub allow_mapping: bool,
+    /// 允许当前接入的 VNT 服务端通过本机反代 TCP 和 UDP
+    #[clap(long)]
+    pub allow_reverse_proxy: bool,
     /// 设置mtu
     #[clap(long)]
     pub mtu: Option<u16>,
@@ -473,6 +478,7 @@ fn build_from_args_and_file(args: Args, file: FileConfig) -> anyhow::Result<(Con
         )?,
         port_mapping,
         allow_port_mapping: args.allow_mapping || file.allow_mapping.unwrap_or(false),
+        allow_reverse_proxy: args.allow_reverse_proxy || file.allow_reverse_proxy.unwrap_or(false),
         udp_stun: normalize_stun_servers(args.udp_stun.or(file.udp_stun).unwrap_or_default()),
         tcp_stun: normalize_stun_servers(args.tcp_stun.or(file.tcp_stun).unwrap_or_default()),
         tunnel_addr,
@@ -528,6 +534,7 @@ fn build_from_args_only(args: Args) -> anyhow::Result<(Config, CtrlConfig)> {
         dns: parse_dns_servers(args.dns.clone())?,
         port_mapping: args.port_mapping,
         allow_port_mapping: args.allow_mapping,
+        allow_reverse_proxy: args.allow_reverse_proxy,
         udp_stun: normalize_stun_servers(args.udp_stun.unwrap_or_default()),
         tcp_stun: normalize_stun_servers(args.tcp_stun.unwrap_or_default()),
         tunnel_addr,
@@ -595,6 +602,7 @@ fn build_from_file_only(file: FileConfig) -> anyhow::Result<(Config, CtrlConfig)
         dns: parse_dns_servers(file.dns.clone().unwrap_or_default())?,
         port_mapping,
         allow_port_mapping: file.allow_mapping.unwrap_or(false),
+        allow_reverse_proxy: file.allow_reverse_proxy.unwrap_or(false),
         udp_stun: normalize_stun_servers(file.udp_stun.unwrap_or_default()),
         tcp_stun: normalize_stun_servers(file.tcp_stun.unwrap_or_default()),
         tunnel_addr,
@@ -756,6 +764,7 @@ server = ["quic://1.2.3.4:29872"]
 # 是否允许作为端口映射出口，开启(设置为true)后其他设备才可使用本设备的ip为"目标虚拟IP"
 # 开启后虚拟网络其他设备可以使用此设备当跳板访问其他网络
 # allow_mapping = false
+# allow_reverse_proxy = false
 
 # 控制服务的 tcp 端口
 # ctrl_port = 11233

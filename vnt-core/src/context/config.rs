@@ -562,6 +562,7 @@ pub struct Config {
     pub dns: Vec<Ipv4Addr>,
     pub port_mapping: Vec<PortMapping>,
     pub allow_port_mapping: bool,
+    pub allow_reverse_proxy: bool,
     pub udp_stun: Vec<String>,
     pub tcp_stun: Vec<String>,
     /// P2P 隧道监听地址；每个地址族最多一个地址，且必须使用同一端口。
@@ -734,6 +735,7 @@ impl Config {
             ("no_nat", self.no_nat),
             // 配置文件里的键名是 allow_mapping
             ("allow_mapping", self.allow_port_mapping),
+            ("allow_reverse_proxy", self.allow_reverse_proxy),
         ] {
             if value {
                 table.insert(key.into(), value.into());

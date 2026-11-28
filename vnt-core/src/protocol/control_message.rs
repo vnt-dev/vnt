@@ -132,6 +132,7 @@ impl RegRequestMsg {
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RegResponseMsg {
+    pub reverse_proxy_supported: bool,
     pub ip: Ipv4Addr,
     pub prefix_len: u8,
     pub gateway: Ipv4Addr,
@@ -148,6 +149,7 @@ impl RegResponseMsg {
             bail!("server_instance_id must contain 32 bytes");
         }
         Ok(Self {
+            reverse_proxy_supported: msg.reverse_proxy_supported,
             ip: msg.ip.into(),
             prefix_len: (msg.prefix_len & 0xFF) as u8,
             gateway: msg.gateway.into(),
@@ -161,6 +163,7 @@ impl RegResponseMsg {
     }
     pub fn to(self) -> proto::RegResponseMsg {
         proto::RegResponseMsg {
+            reverse_proxy_supported: self.reverse_proxy_supported,
             ip: self.ip.into(),
             prefix_len: self.prefix_len as _,
             gateway: self.gateway.into(),
@@ -794,6 +797,7 @@ mod tests {
         );
 
         let encoded = ResponseMessage::Reg(RegResponseMsg {
+            reverse_proxy_supported: false,
             ip: Ipv4Addr::new(10, 26, 0, 2),
             prefix_len: 24,
             gateway: Ipv4Addr::new(10, 26, 0, 1),

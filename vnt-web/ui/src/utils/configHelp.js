@@ -204,6 +204,11 @@ export const configHelp = {
     usage: "开启后，其他节点可在 port_mapping 的“出口虚拟 IP”位置填写本机地址，再由本机连接最终目标。只应在受信任的虚拟网络中开启。",
     format: "开关；默认关闭。",
   },
+  allow_reverse_proxy: {
+    param: "allow_reverse_proxy",
+    summary: "允许接入的 VNT 服务端将其监听端口的流量转发到本机或本机可达的内网服务。",
+    format: "本地开关；默认关闭。",
+  },
   device_name: {
     param: "device_name",
     summary: "设置其他节点和管理页面看到的设备名称。",

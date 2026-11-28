@@ -180,6 +180,7 @@ impl NetworkManager {
         self.config.no_broadcast = change.config.no_broadcast;
         self.config.auto_sync_subnet = change.config.auto_sync_subnet;
         self.config.allow_port_mapping = change.config.allow_port_mapping;
+        self.config.allow_reverse_proxy = change.config.allow_reverse_proxy;
         self.config.allow_ikev2 = change.config.allow_ikev2;
         self.config.allow_wireguard = change.config.allow_wireguard;
         self.config.udp_stun = change.config.udp_stun.clone();
@@ -672,6 +673,7 @@ fn policy_fields_differ(current: &Config, target: &Config) -> bool {
         || current.no_broadcast != target.no_broadcast
         || current.auto_sync_subnet != target.auto_sync_subnet
         || current.allow_port_mapping != target.allow_port_mapping
+        || current.allow_reverse_proxy != target.allow_reverse_proxy
         || current.allow_ikev2 != target.allow_ikev2
         || current.allow_wireguard != target.allow_wireguard
         || current.udp_stun != target.udp_stun

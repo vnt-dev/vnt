@@ -1433,6 +1433,8 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         #[serde(default)]
         allow_mapping: bool,
         #[serde(default)]
+        allow_reverse_proxy: bool,
+        #[serde(default)]
         udp_stun: Vec<String>,
         #[serde(default)]
         tcp_stun: Vec<String>,
@@ -1577,6 +1579,7 @@ fn parse_config_from_json(json_str: &str, managed: bool) -> anyhow::Result<Confi
         dns,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
+        allow_reverse_proxy: cfg.allow_reverse_proxy,
         udp_stun,
         tcp_stun,
         fec: cfg.fec,

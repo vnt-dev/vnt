@@ -524,6 +524,7 @@ fn parse_envelope_config(update: &SubscriptionConfigEnvelope) -> EnvelopeConfig 
         no_broadcast: parse_envelope_bool(&table, "no_broadcast"),
         auto_sync_subnet: parse_envelope_bool(&table, "auto_sync_subnet"),
         allow_port_mapping: parse_envelope_bool(&table, "allow_port_mapping"),
+        allow_reverse_proxy: false,
         allow_ikev2: parse_envelope_bool(&table, "allow_ikev2"),
         allow_wireguard: parse_envelope_bool(&table, "allow_wireguard"),
         peer_address: parse_typed_list(&table, "peer_address"),

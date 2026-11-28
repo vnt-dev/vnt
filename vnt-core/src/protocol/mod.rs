@@ -4,6 +4,7 @@ use prost::Message;
 pub(crate) mod client_message;
 pub mod control_message;
 pub(crate) mod ip_packet_protocol;
+pub(crate) mod reverse_proxy;
 pub(crate) mod rpc_message;
 pub(crate) mod transmission;
 

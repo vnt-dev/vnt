@@ -21,6 +21,7 @@ pub(crate) struct RuntimePolicy {
     pub allow_ikev2: bool,
     pub allow_wireguard: bool,
     pub allow_mapping: bool,
+    pub allow_reverse_proxy: bool,
     pub no_punch: bool,
     pub no_nat: bool,
     pub rtx: bool,
@@ -49,6 +50,7 @@ impl RuntimePolicy {
             allow_ikev2: config.allow_ikev2,
             allow_wireguard: config.allow_wireguard,
             allow_mapping: config.allow_port_mapping,
+            allow_reverse_proxy: config.allow_reverse_proxy,
             no_punch: config.no_punch,
             no_nat: config.no_nat,
             rtx: config.rtx,
@@ -64,6 +66,7 @@ pub(crate) struct RuntimePolicyStore {
     peer_revision: Arc<tokio::sync::watch::Sender<u64>>,
     stun_revision: Arc<tokio::sync::watch::Sender<u64>>,
     punch_revision: Arc<tokio::sync::watch::Sender<u64>>,
+    reverse_proxy: Arc<tokio::sync::watch::Sender<bool>>,
 }
 
 impl RuntimePolicyStore {
@@ -71,11 +74,13 @@ impl RuntimePolicyStore {
         let (peer_revision, _) = tokio::sync::watch::channel(0);
         let (stun_revision, _) = tokio::sync::watch::channel(0);
         let (punch_revision, _) = tokio::sync::watch::channel(0);
+        let (reverse_proxy, _) = tokio::sync::watch::channel(policy.allow_reverse_proxy);
         Self {
             policy: Arc::new(ArcSwap::from_pointee(policy)),
             peer_revision: Arc::new(peer_revision),
             stun_revision: Arc::new(stun_revision),
             punch_revision: Arc::new(punch_revision),
+            reverse_proxy: Arc::new(reverse_proxy),
         }
     }
 
@@ -91,7 +96,13 @@ impl RuntimePolicyStore {
             current.udp_stun != policy.udp_stun || current.tcp_stun != policy.tcp_stun;
         let punch_changed = current.no_punch != policy.no_punch;
         drop(current);
+        let allow_reverse_proxy = policy.allow_reverse_proxy;
         self.policy.store(Arc::new(policy));
+        self.reverse_proxy.send_if_modified(|previous| {
+            let changed = *previous != allow_reverse_proxy;
+            *previous = allow_reverse_proxy;
+            changed
+        });
         if peer_changed {
             self.peer_revision
                 .send_modify(|revision| *revision = revision.wrapping_add(1));
@@ -104,6 +115,10 @@ impl RuntimePolicyStore {
             self.punch_revision
                 .send_modify(|revision| *revision = revision.wrapping_add(1));
         }
+    }
+
+    pub fn subscribe_reverse_proxy(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.reverse_proxy.subscribe()
     }
 
     pub fn subscribe_peer(&self) -> tokio::sync::watch::Receiver<u64> {

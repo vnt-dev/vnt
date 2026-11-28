@@ -40,6 +40,7 @@ public class VntConfig {
     private final String deviceMode;
     private final Integer mtu;
     private final boolean allowMapping;
+    private final boolean allowReverseProxy;
     private final List<String> portMapping;
     private final List<String> udpStun;
     private final List<String> tcpStun;
@@ -75,6 +76,7 @@ public class VntConfig {
         this.deviceMode = builder.deviceMode;
         this.mtu = builder.mtu;
         this.allowMapping = builder.allowMapping;
+        this.allowReverseProxy = builder.allowReverseProxy;
         this.portMapping = builder.portMapping;
         this.udpStun = builder.udpStun;
         this.tcpStun = builder.tcpStun;
@@ -144,6 +146,7 @@ public class VntConfig {
         json.put("no_nat", noNat);
         json.put("device_mode", deviceMode);
         json.put("allow_mapping", allowMapping);
+        json.put("allow_reverse_proxy", allowReverseProxy);
         json.put("auto_sync_subnet", autoSyncSubnet);
 
         // 数组
@@ -212,6 +215,7 @@ public class VntConfig {
         private String deviceMode = "tun";
         private Integer mtu;
         private boolean allowMapping = false;
+        private boolean allowReverseProxy = false;
         private List<String> portMapping = new ArrayList<>();
         private List<String> udpStun = new ArrayList<>();
         private List<String> tcpStun = new ArrayList<>();
@@ -449,6 +453,14 @@ public class VntConfig {
          */
         public Builder setMtu(int mtu) {
             this.mtu = mtu;
+            return this;
+        }
+
+        /**
+         * 允许当前接入的 VNT 服务端通过本机反代 TCP 和 UDP（默认关闭）。
+         */
+        public Builder setAllowReverseProxy(boolean allowReverseProxy) {
+            this.allowReverseProxy = allowReverseProxy;
             return this;
         }
 

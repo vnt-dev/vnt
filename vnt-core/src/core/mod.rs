@@ -872,9 +872,16 @@ mod network_route_change_tests {
         let route: crate::nat::NetInput = "192.168.50.0/24,10.26.0.3".parse().unwrap();
         routes.set_automatic_routes(vec![route.clone()]);
         // 独立模式（无订阅）下 changed_with 等待路由源变更并返回完整快照
+        let (_proxy_tx, mut proxy_rx) = tokio::sync::watch::channel(false);
         let change = tokio::time::timeout(
             Duration::from_secs(1),
-            RuntimeChangeManager::changed_with(&mut None, &mut routes_rx, &Config::default(), true),
+            RuntimeChangeManager::changed_with(
+                &mut None,
+                &mut routes_rx,
+                &mut proxy_rx,
+                &Config::default(),
+                true,
+            ),
         )
         .await
         .unwrap()

@@ -97,6 +97,8 @@ struct InstanceState {
     /// 当前生效配置的 TOML 文本快照，由启动与监测循环发布。管理器锁在
     /// 等待运行期事件时被监测循环持有，读取方不能直接去锁管理器。
     config_text: Option<String>,
+    reverse_proxy_control: Option<tokio::sync::watch::Sender<bool>>,
+    saved_reverse_proxy: Option<bool>,
 }
 
 impl HttpAppState {
@@ -111,21 +113,43 @@ impl HttpAppState {
         &self,
         file_name: &str,
         generation: u64,
-        manager: Arc<tokio::sync::Mutex<RuntimeChangeManager>>,
+        manager: RuntimeChangeManager,
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.lock();
-        anyhow::ensure!(
-            inner.instances.get(file_name).is_some_and(|inst| {
-                inst.generation == generation
-                    && inst.status == VntStatus::Starting
-                    && !inst.start_cancellation.is_cancelled()
-            }),
-            "实例启动已取消"
+        let instance = inner
+            .instances
+            .get_mut(file_name)
+            .filter(|instance| {
+                instance.generation == generation
+                    && instance.status == VntStatus::Starting
+                    && !instance.start_cancellation.is_cancelled()
+            })
+            .context("实例启动已取消")?;
+        let control = manager.reverse_proxy_control();
+        if let Some(allowed) = instance.saved_reverse_proxy.take() {
+            control.send_replace(allowed);
+        }
+        instance.reverse_proxy_control = Some(control);
+        inner.runtime_managers.insert(
+            file_name.to_string(),
+            Arc::new(tokio::sync::Mutex::new(manager)),
         );
-        inner
-            .runtime_managers
-            .insert(file_name.to_string(), manager);
         Ok(())
+    }
+
+    fn set_local_reverse_proxy(&self, file_name: &str, allowed: bool) {
+        let mut inner = self.inner.lock();
+        if let Some(instance) = inner.instances.get_mut(file_name) {
+            if let Some(control) = &instance.reverse_proxy_control {
+                control.send_if_modified(|previous| {
+                    let changed = *previous != allowed;
+                    *previous = allowed;
+                    changed
+                });
+            } else if instance.status == VntStatus::Starting {
+                instance.saved_reverse_proxy = Some(allowed);
+            }
+        }
     }
 
     fn take_runtime_manager(
@@ -170,6 +194,8 @@ impl HttpAppState {
         inst.runtime_stopped = CancellationToken::new();
         inst.stopping_startup = false;
         inst.config_text = None;
+        inst.reverse_proxy_control = None;
+        inst.saved_reverse_proxy = None;
         inst.start_config = None;
         inst.local_config = None;
         inst.config_name = file_name.to_string();
@@ -191,6 +217,8 @@ impl HttpAppState {
         }
         inst.status = VntStatus::Stopped;
         inst.config_text = None;
+        inst.reverse_proxy_control = None;
+        inst.saved_reverse_proxy = None;
         inst.runtime_stopped.cancel();
         inst.start_config = None;
         inst.local_config = None;
@@ -533,6 +561,8 @@ pub struct StartConfig {
     #[serde(default)]
     pub allow_mapping: bool,
     #[serde(default)]
+    pub allow_reverse_proxy: bool,
+    #[serde(default)]
     pub udp_stun: Vec<String>,
     #[serde(default)]
     pub tcp_stun: Vec<String>,
@@ -661,11 +691,7 @@ async fn resolve_subscription_config_with_retry(
             cancellation.child_token(),
         ) => result?,
     };
-    state.install_runtime_manager(
-        file_name,
-        generation,
-        Arc::new(tokio::sync::Mutex::new(manager)),
-    )?;
+    state.install_runtime_manager(file_name, generation, manager)?;
     Ok(start_config)
 }
 
@@ -2316,7 +2342,10 @@ async fn detach_subscription(Json(request): Json<FileReq>) -> Json<ApiResponse<(
     })
 }
 
-async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
+async fn save_config(
+    State(state): State<HttpAppState>,
+    Json(req): Json<SaveConfigReq>,
+) -> Json<ApiResponse<()>> {
     // 订阅配置在保存时只校验 TOML 和订阅链接本身，不连接远端。
     // 完整的远端拉取、合并和运行配置校验统一放在启动流程中执行。
     let value = match toml::from_str::<toml::Value>(&req.config) {
@@ -2333,6 +2362,11 @@ async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
         return Json(ApiResponse::error(
             "Invalid TOML format: root must be a table",
         ));
+    };
+    let allow_reverse_proxy = match table.get("allow_reverse_proxy") {
+        None => false,
+        Some(toml::Value::Boolean(allowed)) => *allowed,
+        Some(_) => return Json(ApiResponse::error("allow_reverse_proxy 必须是布尔值")),
     };
     let subscription = match table.get("subscription") {
         Some(value) => match value.as_str() {
@@ -2401,6 +2435,12 @@ async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
         Err(msg) => return Json(ApiResponse::error(msg)),
     };
 
+    let apply_lock = state.config_apply_lock(&file_name);
+    let _apply_guard = if let Some(lock) = &apply_lock {
+        Some(lock.lock().await)
+    } else {
+        None
+    };
     let target_path = Path::new(CONFIG_DIR).join(&file_name);
     let previous_subscription = match fs::read_to_string(&target_path).await {
         Ok(content) => toml::from_str::<toml::Value>(&content)
@@ -2417,6 +2457,7 @@ async fn save_config(Json(req): Json<SaveConfigReq>) -> Json<ApiResponse<()>> {
 
     match fs::write(&target_path, &req.config).await {
         Ok(_) => {
+            state.set_local_reverse_proxy(&file_name, allow_reverse_proxy);
             if previous_subscription != subscription {
                 let _ = fs::remove_file(subscription_state_path(&file_name)).await;
             }
@@ -2603,6 +2644,7 @@ fn convert_config(cfg: StartConfig) -> anyhow::Result<CoreConfig> {
         dns,
         port_mapping,
         allow_port_mapping: cfg.allow_mapping,
+        allow_reverse_proxy: cfg.allow_reverse_proxy,
         udp_stun,
         tcp_stun,
         fec: cfg.fec,
@@ -2877,10 +2919,13 @@ mod tests {
     async fn subscription_save_rejects_invalid_local_dns_before_writing() {
         // Local fixture: a syntactically valid subscription using a dummy credential.
         let link = "vnt2://join/2/eyJ2IjoyLCJzZXJ2ZXIiOiJ0Y3A6Ly8xMjcuMC4wLjE6Mjk4NzIiLCJjZXJ0X21vZGUiOiJzdGFuZGFyZCIsImpvaW5faWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJjcmVkZW50aWFsX2tleSI6IkJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2MifQ";
-        let response = save_config(Json(SaveConfigReq {
-            file_name: None,
-            config: format!("subscription = '{link}'\ndns = ['010.26.0.3']"),
-        }))
+        let response = save_config(
+            State(new_test_state()),
+            Json(SaveConfigReq {
+                file_name: None,
+                config: format!("subscription = '{link}'\ndns = ['010.26.0.3']"),
+            }),
+        )
         .await;
         assert!(response.0.data.is_none());
         assert!(response.0.msg.contains("invalid DNS address"));
@@ -3159,6 +3204,7 @@ config_name = "local-label"
             dns: Vec::new(),
             port_mapping: Vec::new(),
             allow_mapping: false,
+            allow_reverse_proxy: false,
             udp_stun: Vec::new(),
             tcp_stun: Vec::new(),
             tunnel_addr: Vec::new(),

@@ -28,6 +28,7 @@ export const emptyFormData = () => ({
   device_mode_explicit: false,
   port_mapping: [],
   allow_mapping: false,
+  allow_reverse_proxy: false,
   device_name: "",
   device_id: "",
   tun_name: "",
@@ -236,6 +237,9 @@ device_mode = "tun"
 # 是否允许作为端口映射出口，开启(设置为true)后其他设备才可使用本设备的ip为"目标虚拟IP"
 # 开启后虚拟网络其他设备可以使用此设备当跳板访问其他网络
 # allow_mapping = false
+
+# 允许当前接入的 VNT 服务端通过本机反代 TCP 和 UDP
+# allow_reverse_proxy = false
 
 # MTU 设置
 # mtu = 1400

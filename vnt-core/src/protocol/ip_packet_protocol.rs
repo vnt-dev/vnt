@@ -119,6 +119,7 @@ pub enum MsgType {
     DestinationUnreachable = 30,
     SubscriptionConfigPush = 31,
     SubscriptionConfigAck = 32,
+    ReverseProxy = 34,
 }
 impl From<MsgType> for u8 {
     fn from(val: MsgType) -> Self {
@@ -163,6 +164,7 @@ impl TryFrom<u8> for MsgType {
             30 => MsgType::DestinationUnreachable,
             31 => MsgType::SubscriptionConfigPush,
             32 => MsgType::SubscriptionConfigAck,
+            34 => MsgType::ReverseProxy,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,

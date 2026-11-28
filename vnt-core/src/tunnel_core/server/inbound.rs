@@ -77,6 +77,10 @@ fn server_relay_allowed(msg_type: MsgType, allow_ikev2: bool, allow_wireguard: b
 }
 
 impl ServerTurnInboundHandler {
+    pub fn subscribe_reverse_proxy(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.policy.subscribe_reverse_proxy()
+    }
+
     pub fn reconcile_server_network(
         &self,
         ip: Ipv4Addr,
