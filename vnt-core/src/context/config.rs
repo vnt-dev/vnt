@@ -845,6 +845,10 @@ impl Config {
         if self.rtx || !self.port_mapping.is_empty() || self.allow_port_mapping {
             bail!("rtx, port_mapping and allow_mapping require a build with QUIC enabled");
         }
+        #[cfg(not(feature = "fec"))]
+        if self.fec {
+            bail!("FEC is disabled in this build; set fec = false");
+        }
         Ok(())
     }
 
@@ -1147,6 +1151,20 @@ mod tests {
         } else {
             let error = config.check().unwrap_err().to_string();
             assert!(error.contains("WSS is disabled"), "{error}");
+        }
+    }
+
+    #[test]
+    fn fec_configuration_requires_the_fec_feature() {
+        let config = Config {
+            fec: true,
+            ..Default::default()
+        };
+        if cfg!(feature = "fec") {
+            assert!(config.check_transport_features().is_ok());
+        } else {
+            let error = config.check_transport_features().unwrap_err().to_string();
+            assert!(error.contains("FEC is disabled"), "{error}");
         }
     }
 

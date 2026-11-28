@@ -5,11 +5,12 @@ edition = "2024"
 license = "Apache-2.0"
 
 [features]
-default = ["quic", "wss", "dynamic-http", "route-manager"]
+default = ["quic", "wss", "dynamic-http", "route-manager", "fec"]
 quic = ["vnt-core/quic"]
 wss = ["vnt-core/wss"]
 dynamic-http = ["vnt-core/dynamic-http"]
 route-manager = ["vnt-core/route-manager"]
+fec = ["vnt-core/fec"]
 
 [dependencies]
 

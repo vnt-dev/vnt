@@ -4,6 +4,7 @@ pub mod core;
 pub mod crypto;
 pub(crate) mod ethernet;
 pub(crate) mod event_script;
+#[cfg(feature = "fec")]
 pub(crate) mod fec;
 pub mod log_manager;
 pub mod managed_config;

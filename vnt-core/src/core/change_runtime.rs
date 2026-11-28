@@ -163,6 +163,7 @@ impl NetworkManager {
         };
         let policy = RuntimePolicy::from_config_with_handles(
             &change.config,
+            #[cfg(feature = "fec")]
             change.config.fec.then_some(self.fec_encoder.clone()),
             subnet_mapping,
             relay_subnets.clone(),
@@ -476,6 +477,7 @@ impl NetworkManager {
             puncher: links.puncher.clone(),
             packet_crypto: links.packet_crypto.clone(),
             enhanced_inbound: links.enhanced_inbound.clone(),
+            #[cfg(feature = "fec")]
             fec_decoder: links.fec_decoder.clone(),
             policy: links.policy.clone(),
             basic_outbound: links.basic_outbound.clone(),

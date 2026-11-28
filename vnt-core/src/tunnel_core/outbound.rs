@@ -117,6 +117,7 @@ impl BasicOutbound {
         self.packet_crypto.encrypt_reserve()
     }
 
+    #[cfg(feature = "fec")]
     pub fn fec_auth_reserve(&self) -> usize {
         self.packet_crypto.fec_auth_reserve()
     }
@@ -649,6 +650,7 @@ impl BasicOutbound {
 
     /// 认证并发送 FEC 外层包。FEC 内层已经是普通 AEAD 密文或 QUIC 密文，
     /// 外层只追加认证标签，不再重复加密。
+    #[cfg(feature = "fec")]
     pub async fn send_fec_packet(
         &self,
         net: NetworkAddr,
@@ -1071,15 +1073,16 @@ impl HybridOutbound {
 
         let len = packet.buffer().len() as u64;
 
-        let policy = self.policy.load();
-        if let Some(fec_encoder) = &policy.fec_encoder {
-            packet = fec_encoder.encode(packet)?;
+        #[cfg(feature = "fec")]
+        if let Some(fec_encoder) = &self.policy.load().fec_encoder {
+            let packet = fec_encoder.encode(packet)?;
             self.basic_outbound
                 .send_fec_packet(net, dest, packet)
                 .await?;
-        } else {
-            self.basic_outbound.send_raw(net, dest, packet).await?;
+            self.traffic_stats.record_tx(dest, len);
+            return Ok(());
         }
+        self.basic_outbound.send_raw(net, dest, packet).await?;
         self.traffic_stats.record_tx(dest, len);
         Ok(())
     }
@@ -1166,18 +1169,15 @@ impl HybridOutbound {
             .packet_compression
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
 
+        #[cfg(feature = "fec")]
         if let Some(fec_encoder) = &policy.fec_encoder {
             self.basic_outbound.encrypt_in_place(&mut packet)?;
-            packet = fec_encoder.encode(packet)?;
-            self.basic_outbound
-                .send_fec_packet(net, dest, packet)
-                .await?;
-        } else {
-            self.basic_outbound
-                .send_encrypted_packet(net, dest, packet)
-                .await?;
+            let packet = fec_encoder.encode(packet)?;
+            return self.basic_outbound.send_fec_packet(net, dest, packet).await;
         }
-        Ok(())
+        self.basic_outbound
+            .send_encrypted_packet(net, dest, packet)
+            .await
     }
 
     pub async fn ethernet_ipv4_outbound(
@@ -1262,20 +1262,23 @@ impl HybridOutbound {
         packet.set_ttl(15);
         packet.set_ethernet_flag(true);
         let policy = self.policy.load();
-        let mut packet = policy
+        let packet = policy
             .packet_compression
             .compress(packet, self.basic_outbound.encrypt_reserve())?;
+        #[cfg(feature = "fec")]
         if let Some(fec_encoder) = &policy.fec_encoder {
+            let mut packet = packet;
             self.basic_outbound.encrypt_in_place(&mut packet)?;
             let packet = fec_encoder.encode(packet)?;
             self.basic_outbound
                 .send_fec_packet(net, dest, packet)
                 .await?;
-        } else {
-            self.basic_outbound
-                .send_encrypted_packet(net, dest, packet)
-                .await?;
+            self.traffic_stats.record_tx(dest, len);
+            return Ok(());
         }
+        self.basic_outbound
+            .send_encrypted_packet(net, dest, packet)
+            .await?;
         self.traffic_stats.record_tx(dest, len);
         Ok(())
     }

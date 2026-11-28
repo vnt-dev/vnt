@@ -1,18 +1,23 @@
 use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, NetPacket};
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
+#[cfg(feature = "fec")]
 use ring::hmac;
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(feature = "fec")]
 use subtle::ConstantTimeEq;
 
 pub const TAG_LEN: usize = 16;
+#[cfg(feature = "fec")]
 pub const FEC_AUTH_TAG_LEN: usize = 16;
+#[cfg(feature = "fec")]
 const FEC_AUTH_KEY_LABEL: &[u8] = b"vnt-fec-auth-v1";
 
 #[derive(Clone)]
 pub struct PacketCrypto {
     key: LessSafeKey,
+    #[cfg(feature = "fec")]
     fec_auth_key: hmac::Key,
     /// 出站包序号，用于构造唯一 nonce。Clone 共享同一计数器。
     /// 随机起始值可避免进程重启后（相同密钥）复用低序号段的 nonce。
@@ -39,14 +44,18 @@ impl PacketCrypto {
             .collect::<String>()
     }
     pub fn new(key_bytes: [u8; 32]) -> io::Result<Self> {
-        let derivation_key = hmac::Key::new(hmac::HMAC_SHA256, &key_bytes);
-        let derived_auth_key = hmac::sign(&derivation_key, FEC_AUTH_KEY_LABEL);
-        let fec_auth_key = hmac::Key::new(hmac::HMAC_SHA256, derived_auth_key.as_ref());
+        #[cfg(feature = "fec")]
+        let fec_auth_key = {
+            let derivation_key = hmac::Key::new(hmac::HMAC_SHA256, &key_bytes);
+            let derived_auth_key = hmac::sign(&derivation_key, FEC_AUTH_KEY_LABEL);
+            hmac::Key::new(hmac::HMAC_SHA256, derived_auth_key.as_ref())
+        };
         let unbound = UnboundKey::new(&CHACHA20_POLY1305, &key_bytes)
             .map_err(|_| io::Error::other("failed to initialize ChaCha20-Poly1305 key"))?;
         let key = LessSafeKey::new(unbound);
         Ok(Self {
             key,
+            #[cfg(feature = "fec")]
             fec_auth_key,
             seq: Arc::new(AtomicU32::new(rand::random())),
         })
@@ -97,6 +106,7 @@ impl PacketCrypto {
 
     /// 计算 FEC 外层认证标签。只排除中继会递减的当前 TTL（低四位），
     /// 最大 TTL、其余头字段和完整 FEC payload 均参与认证。
+    #[cfg(feature = "fec")]
     fn fec_auth_tag<B: AsRef<[u8]>>(
         &self,
         pkt: &NetPacket<B>,
@@ -124,6 +134,7 @@ impl PacketCrypto {
         Ok(tag)
     }
 
+    #[cfg(feature = "fec")]
     pub fn authenticate_fec_in_place<B: AsRef<[u8]> + AsMut<[u8]>>(
         &self,
         pkt: &mut NetPacket<B>,
@@ -143,6 +154,7 @@ impl PacketCrypto {
         Ok(())
     }
 
+    #[cfg(feature = "fec")]
     pub fn verify_fec<B: AsRef<[u8]>>(&self, pkt: &NetPacket<B>) -> io::Result<()> {
         let payload_len = pkt
             .payload()
@@ -413,6 +425,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "fec")]
     fn build_fec_auth_packet(payload_len: usize) -> NetPacket<BytesMut> {
         let mut packet = NetPacket::new(BytesMut::zeroed(
             HEAD_LENGTH + payload_len + FEC_AUTH_TAG_LEN,
@@ -431,6 +444,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fec")]
     fn fec_auth_accepts_current_ttl_change() {
         let crypto = PacketCrypto::new([7u8; 32]).unwrap();
         let mut packet = build_fec_auth_packet(32);
@@ -441,6 +455,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fec")]
     fn fec_auth_rejects_authenticated_field_tampering() {
         let crypto = PacketCrypto::new([7u8; 32]).unwrap();
 
@@ -460,6 +475,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fec")]
     fn fec_auth_rejects_wrong_missing_truncated_and_random_tags() {
         let crypto = PacketCrypto::new([7u8; 32]).unwrap();
         let wrong_crypto = PacketCrypto::new([8u8; 32]).unwrap();

@@ -4,6 +4,7 @@ use crate::context::{AppState, NetworkRoute, PeerInfoMap, ServerInfoCollection};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::event_script::{EventScript, EventScriptType};
+#[cfg(feature = "fec")]
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::SharedNodeIdentity;
 use crate::protocol::control_message::{RegistrationMode, RequestMessage, ResponseMessage};
@@ -41,6 +42,7 @@ pub struct InboundHandlerConfig {
     pub puncher: NatPuncher,
     pub packet_crypto: PacketCrypto,
     pub enhanced_inbound: EnhancedInbound,
+    #[cfg(feature = "fec")]
     pub fec_decoder: FecDecoder,
     pub policy: RuntimePolicyStore,
     pub basic_outbound: BasicOutbound,

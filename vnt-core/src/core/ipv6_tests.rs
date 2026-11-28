@@ -57,7 +57,7 @@ async fn exercise_ipv6_transports(features: bool) {
             device_mode: mode,
             password: features.then(|| "ipv6-test-password".to_string()),
             compress: features,
-            fec: features,
+            fec: features && cfg!(feature = "fec"),
             no_punch: true,
             no_broadcast: true,
             tunnel_addr: vec![SocketAddr::from((Ipv4Addr::LOCALHOST, ports[index]))],
@@ -329,7 +329,7 @@ async fn ipv6_tun_tap_plain_transports() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn ipv6_tun_tap_encrypted_compressed_fec_transports() {
+async fn ipv6_tun_tap_encrypted_compressed_transports() {
     exercise_ipv6_transports(true).await;
 }
 
@@ -432,7 +432,7 @@ async fn ipv6_windows_kernel_ping_and_udp() {
             no_punch: true,
             password: Some("ipv6-kernel-password".into()),
             compress: true,
-            fec: true,
+            fec: cfg!(feature = "fec"),
             tunnel_addr: vec![SocketAddr::from((
                 Ipv4Addr::LOCALHOST,
                 if i == 0 { port } else { 0 },

@@ -6,6 +6,7 @@ use crate::enhanced_tunnel::inbound::EnhancedInbound;
 use crate::enhanced_tunnel::outbound::EnhancedOutbound;
 use crate::enhanced_tunnel::{TunnelComponents, TunnelConfig, enhanced_ipv4_tunnel};
 use crate::event_script::EventScript;
+#[cfg(feature = "fec")]
 use crate::fec::{FecDecoder, FecEncoder};
 use crate::log_manager::InstanceLog;
 use crate::nat::internal_nat::InternalNatInbound;
@@ -57,6 +58,7 @@ struct RegistrationContext {
     puncher: NatPuncher,
     packet_crypto: PacketCrypto,
     enhanced_inbound: EnhancedInbound,
+    #[cfg(feature = "fec")]
     fec_decoder: FecDecoder,
     policy: RuntimePolicyStore,
     basic_outbound: BasicOutbound,
@@ -70,6 +72,7 @@ struct ServerLinks {
     packet_crypto: PacketCrypto,
     puncher: NatPuncher,
     enhanced_inbound: EnhancedInbound,
+    #[cfg(feature = "fec")]
     fec_decoder: FecDecoder,
     policy: RuntimePolicyStore,
     basic_outbound: BasicOutbound,
@@ -86,7 +89,7 @@ impl ServerLinks {
         packet_crypto: PacketCrypto,
         puncher: NatPuncher,
         enhanced_inbound: EnhancedInbound,
-        fec_decoder: FecDecoder,
+        #[cfg(feature = "fec")] fec_decoder: FecDecoder,
         policy: RuntimePolicyStore,
         basic_outbound: BasicOutbound,
         default_interface: Option<rustp2p_core::socket::LocalInterface>,
@@ -99,6 +102,7 @@ impl ServerLinks {
             packet_crypto,
             puncher,
             enhanced_inbound,
+            #[cfg(feature = "fec")]
             fec_decoder,
             policy,
             basic_outbound,
@@ -130,6 +134,7 @@ pub struct NetworkManager {
     runtime_policy: RuntimePolicyStore,
     /// FEC 编码句柄：保留它使 `fec` 开关可以在运行期双向切换
     /// （policy 中是否引用该句柄决定编码是否生效）
+    #[cfg(feature = "fec")]
     fec_encoder: FecEncoder,
     /// 单实例锁：同一台机器、同一网络只允许一个客户端注册。
     ///
@@ -258,6 +263,7 @@ impl NetworkManager {
         let subnet_mapping = SubnetMappingTable::new(config.subnet_mapping.clone());
         let runtime_policy = RuntimePolicyStore::new(RuntimePolicy::from_config_with_handles(
             &config,
+            #[cfg(feature = "fec")]
             None,
             subnet_mapping.clone(),
             allow_subnet.clone(),
@@ -315,6 +321,7 @@ impl NetworkManager {
         );
         let subnet_packet_mapper = SubnetPacketMapper::default();
 
+        #[cfg(feature = "fec")]
         let fec_decoder = FecDecoder::new(packet_crypto.clone());
         let basic_outbound = BasicOutbound::new(
             tunnel_to_server.clone(),
@@ -348,21 +355,22 @@ impl NetworkManager {
                 punch_ctx,
             ));
         }
-        let shared_fec_encoder = FecEncoder::new(
-            &task_group,
-            basic_outbound.clone(),
-            app_state.network.clone(),
-        );
-        let fec_encoder = config.fec.then_some(shared_fec_encoder.clone());
-        runtime_policy.store(RuntimePolicy::from_config_with_handles(
-            &config,
-            fec_encoder.clone(),
-            subnet_mapping.clone(),
-            allow_subnet.clone(),
-            relay_subnets.clone(),
-        ));
-        // shared_fec_encoder 不丢弃：由 manager 保留句柄，
-        // apply_policy_change 才能双向热切换 fec 开关
+        #[cfg(feature = "fec")]
+        let shared_fec_encoder = {
+            let encoder = FecEncoder::new(
+                &task_group,
+                basic_outbound.clone(),
+                app_state.network.clone(),
+            );
+            runtime_policy.store(RuntimePolicy::from_config_with_handles(
+                &config,
+                config.fec.then(|| encoder.clone()),
+                subnet_mapping.clone(),
+                allow_subnet.clone(),
+                relay_subnets.clone(),
+            ));
+            encoder
+        };
 
         let hybrid_outbound = HybridOutbound::new(
             app_state.network.clone(),
@@ -464,6 +472,7 @@ impl NetworkManager {
                 packet_loss_stats: app_state.packet_loss_stats.clone(),
                 packet_crypto: packet_crypto.clone(),
                 enhanced_inbound: enhanced_inbound.clone(),
+                #[cfg(feature = "fec")]
                 fec_decoder: fec_decoder.clone(),
                 basic_outbound: basic_outbound.clone(),
                 punch_backoff: app_state.punch_backoff.clone(),
@@ -493,6 +502,7 @@ impl NetworkManager {
             packet_crypto.clone(),
             puncher.clone(),
             enhanced_inbound.clone(),
+            #[cfg(feature = "fec")]
             fec_decoder.clone(),
             runtime_policy.clone(),
             basic_outbound.clone(),
@@ -510,6 +520,7 @@ impl NetworkManager {
             puncher,
             packet_crypto,
             enhanced_inbound,
+            #[cfg(feature = "fec")]
             fec_decoder,
             policy: runtime_policy.clone(),
             basic_outbound: basic_outbound.clone(),
@@ -538,6 +549,7 @@ impl NetworkManager {
             tun_receiver,
             registration_status: registration_status_rx,
             runtime_policy: runtime_policy.clone(),
+            #[cfg(feature = "fec")]
             fec_encoder: shared_fec_encoder,
             instance_lock,
         };
@@ -701,6 +713,7 @@ impl NetworkManager {
                 puncher: ctx.puncher.clone(),
                 packet_crypto: ctx.packet_crypto.clone(),
                 enhanced_inbound: ctx.enhanced_inbound.clone(),
+                #[cfg(feature = "fec")]
                 fec_decoder: ctx.fec_decoder.clone(),
                 policy: ctx.policy.clone(),
                 basic_outbound: ctx.basic_outbound.clone(),

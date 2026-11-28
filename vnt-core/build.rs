@@ -18,14 +18,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // slice of the received frame instead of copying the embedded packet.
     config.bytes([".protocol.control_message.SelectiveBroadcast.data"]);
 
-    config.compile_protos(
-        &[
-            "proto/control_message.proto",
-            "proto/rpc.proto",
-            "proto/client.proto",
-            "proto/fec.proto",
-        ],
-        &["proto"],
-    )?;
+    let mut protos = vec![
+        "proto/control_message.proto",
+        "proto/rpc.proto",
+        "proto/client.proto",
+    ];
+    if cfg!(feature = "fec") {
+        protos.push("proto/fec.proto");
+    }
+    config.compile_protos(&protos, &["proto"])?;
     Ok(())
 }

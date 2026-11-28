@@ -3,6 +3,7 @@ use crate::context::nat::PunchBackoff;
 use crate::context::{NetworkAddr, NetworkRoute, PacketLossStats, PeerInfoMap};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
+#[cfg(feature = "fec")]
 use crate::fec::FecDecoder;
 use crate::protocol::client_message::{
     NETWORK_CODE_HASH_LEN, NodeIdentityTemplate, PeerHandshake, PunchInfo, SharedNodeIdentity,
@@ -233,6 +234,7 @@ pub(crate) struct P2pInboundConfig {
     pub packet_loss_stats: PacketLossStats,
     pub packet_crypto: PacketCrypto,
     pub enhanced_inbound: EnhancedInbound,
+    #[cfg(feature = "fec")]
     pub fec_decoder: FecDecoder,
     pub basic_outbound: BasicOutbound,
     pub punch_backoff: PunchBackoff,
@@ -251,6 +253,7 @@ pub(crate) struct P2pInboundHandler {
     packet_loss_stats: PacketLossStats,
     packet_crypto: PacketCrypto,
     enhanced_inbound: EnhancedInbound,
+    #[cfg(feature = "fec")]
     fec_decoder: FecDecoder,
     basic_outbound: BasicOutbound,
     punch_backoff: PunchBackoff,
@@ -270,6 +273,7 @@ impl P2pInboundHandler {
             packet_loss_stats: config.packet_loss_stats,
             packet_crypto: config.packet_crypto,
             enhanced_inbound: config.enhanced_inbound,
+            #[cfg(feature = "fec")]
             fec_decoder: config.fec_decoder,
             basic_outbound: config.basic_outbound,
             punch_backoff: config.punch_backoff,
@@ -354,8 +358,8 @@ impl P2pInboundHandler {
 
         // FEC 外层只有认证、没有 AEAD 加密，必须先验证认证并恢复内层密文包。
         if net_packet.is_fec() {
-            let packets = self.fec_decoder.receive(net_packet)?;
-            if let Some(packets) = packets {
+            #[cfg(feature = "fec")]
+            if let Some(packets) = self.fec_decoder.receive(net_packet)? {
                 for pkt in packets {
                     self.process_inner_packet(&net, route_key, tunnel, pkt)
                         .await?;

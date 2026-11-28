@@ -1,4 +1,6 @@
-use crate::crypto::chacha20_poly1305::{FEC_AUTH_TAG_LEN, TAG_LEN};
+#[cfg(feature = "fec")]
+use crate::crypto::chacha20_poly1305::FEC_AUTH_TAG_LEN;
+use crate::crypto::chacha20_poly1305::TAG_LEN;
 use crate::protocol::ip_packet_protocol::NetPacket;
 use std::io;
 use std::sync::Arc;
@@ -31,6 +33,7 @@ impl PacketCrypto {
     pub(crate) fn encrypt_reserve(&self) -> usize {
         if self.crypto.is_some() { TAG_LEN } else { 0 }
     }
+    #[cfg(feature = "fec")]
     pub(crate) fn fec_auth_reserve(&self) -> usize {
         if self.crypto.is_some() {
             FEC_AUTH_TAG_LEN
@@ -59,6 +62,7 @@ impl PacketCrypto {
         }
         Ok(())
     }
+    #[cfg(feature = "fec")]
     pub(crate) fn authenticate_fec_in_place<B: AsRef<[u8]> + AsMut<[u8]> + ExtendEnd>(
         &self,
         pkt: &mut NetPacket<B>,
@@ -69,6 +73,7 @@ impl PacketCrypto {
         }
         Ok(())
     }
+    #[cfg(feature = "fec")]
     pub(crate) fn verify_fec_in_place<B: AsRef<[u8]> + AsMut<[u8]> + ShrinkEnd>(
         &self,
         pkt: &mut NetPacket<B>,
@@ -84,10 +89,13 @@ impl PacketCrypto {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType};
+    use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
+    #[cfg(feature = "fec")]
+    use crate::protocol::ip_packet_protocol::MsgType;
     use crate::protocol::transmission::TransmissionBytes;
 
     #[test]
+    #[cfg(feature = "fec")]
     fn fec_auth_is_noop_without_password() {
         let crypto = PacketCrypto::new_from_str(None).unwrap();
         let mut packet = NetPacket::new(TransmissionBytes::zeroed(HEAD_LENGTH + 8)).unwrap();

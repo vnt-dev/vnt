@@ -1,5 +1,6 @@
 use crate::compression::PacketCompression;
 use crate::context::config::{Config, PeerAddress, PunchRule, TurnRule};
+#[cfg(feature = "fec")]
 use crate::fec::FecEncoder;
 use crate::nat::{AllowSubnetExternalRoute, SubnetMappingTable};
 use arc_swap::ArcSwap;
@@ -15,6 +16,7 @@ pub(crate) struct RuntimePolicy {
     pub packet_compression: PacketCompression,
     pub subnet_mapping: SubnetMappingTable,
     pub relay_subnets: AllowSubnetExternalRoute,
+    #[cfg(feature = "fec")]
     pub fec_encoder: Option<FecEncoder>,
     pub auto_sync_subnet: bool,
     pub no_broadcast: bool,
@@ -34,7 +36,7 @@ pub(crate) struct RuntimePolicy {
 impl RuntimePolicy {
     pub fn from_config_with_handles(
         config: &Config,
-        fec_encoder: Option<FecEncoder>,
+        #[cfg(feature = "fec")] fec_encoder: Option<FecEncoder>,
         subnet_mapping: SubnetMappingTable,
         _allow_subnet: AllowSubnetExternalRoute,
         relay_subnets: AllowSubnetExternalRoute,
@@ -46,6 +48,7 @@ impl RuntimePolicy {
             packet_compression: PacketCompression::new(config.compress),
             subnet_mapping,
             relay_subnets,
+            #[cfg(feature = "fec")]
             fec_encoder,
             auto_sync_subnet: config.auto_sync_subnet,
             no_broadcast: config.no_broadcast,

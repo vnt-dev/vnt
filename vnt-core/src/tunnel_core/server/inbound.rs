@@ -5,6 +5,7 @@ use crate::context::nat::{MyNatInfo, PunchBackoff};
 use crate::context::{NetworkAddr, NetworkRoute, PeerInfoMap, ServerInfoCollection};
 use crate::crypto::PacketCrypto;
 use crate::enhanced_tunnel::inbound::EnhancedInbound;
+#[cfg(feature = "fec")]
 use crate::fec::FecDecoder;
 use crate::nat::AllowSubnetExternalRoute;
 use crate::protocol::client_message::PunchInfo;
@@ -40,6 +41,7 @@ pub(crate) struct ServerTurnInboundHandler {
     puncher: NatPuncher,
     packet_crypto: PacketCrypto,
     enhanced_inbound: EnhancedInbound,
+    #[cfg(feature = "fec")]
     fec_decoder: FecDecoder,
     policy: RuntimePolicyStore,
     basic_outbound: crate::tunnel_core::outbound::BasicOutbound,
@@ -108,6 +110,7 @@ impl ServerTurnInboundHandler {
             puncher: config.puncher,
             packet_crypto: config.packet_crypto,
             enhanced_inbound: config.enhanced_inbound,
+            #[cfg(feature = "fec")]
             fec_decoder: config.fec_decoder,
             policy: config.policy,
             basic_outbound: config.basic_outbound,
@@ -307,8 +310,8 @@ impl ServerTurnInboundHandler {
 
         // FEC 外层只做认证，解码后再按每个内层包的类型决定是否 AEAD 解密。
         if net_packet.is_fec() {
-            let packets = self.fec_decoder.receive(net_packet)?;
-            if let Some(packets) = packets {
+            #[cfg(feature = "fec")]
+            if let Some(packets) = self.fec_decoder.receive(net_packet)? {
                 for pkt in packets {
                     self.process_inner_packet(network_addr, transport_client, pkt, None)
                         .await?;
