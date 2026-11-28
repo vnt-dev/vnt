@@ -2,8 +2,6 @@ use crate::crypto::PacketCrypto;
 use crate::nat::{NetInput, SubnetMapping};
 use crate::port_mapping::PortMapping;
 use crate::tls::verifier::CertValidationMode;
-#[cfg(not(feature = "quic"))]
-use crate::tunnel_core::server::transport::config::ProtocolType;
 use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAddress};
 use crate::utils::atomic64::AtomicU64;
 use anyhow::{anyhow, bail};
@@ -823,15 +821,13 @@ impl Config {
         Ok(())
     }
 
-    #[cfg(not(feature = "quic"))]
-    pub(crate) fn check_quic(&self) -> anyhow::Result<()> {
-        if self
-            .server_addr
-            .iter()
-            .any(|addr| addr.protocol_type == ProtocolType::Quic)
-        {
-            bail!("QUIC is disabled in this build; use a tcp:// or wss:// server");
+    pub(crate) fn check_transport_features(&self) -> anyhow::Result<()> {
+        for addr in &self.server_addr {
+            if let Some(protocol) = addr.protocol_type.disabled_protocol() {
+                bail!("{protocol} is disabled in this build; use a tcp:// server");
+            }
         }
+        #[cfg(not(feature = "quic"))]
         if self.rtx || !self.port_mapping.is_empty() || self.allow_port_mapping {
             bail!("rtx, port_mapping and allow_mapping require a build with QUIC enabled");
         }
@@ -839,8 +835,7 @@ impl Config {
     }
 
     pub fn check(&self) -> anyhow::Result<()> {
-        #[cfg(not(feature = "quic"))]
-        self.check_quic()?;
+        self.check_transport_features()?;
         self.check_tunnel_addr()?;
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         if self.device_mode == DeviceMode::Tap {
@@ -1073,7 +1068,7 @@ mod tests {
 
     #[test]
     fn multiple_servers_require_a_fixed_virtual_ip() {
-        let first: ProtocolAddress = "wss://127.0.0.1:29872".parse().unwrap();
+        let first: ProtocolAddress = "tcp://127.0.0.1:29872".parse().unwrap();
         let second: ProtocolAddress = "tcp://127.0.0.1:29873".parse().unwrap();
 
         assert!(Config::default().check().is_err());
@@ -1123,6 +1118,20 @@ mod tests {
             ..Default::default()
         };
         assert!(config.check().is_ok());
+    }
+
+    #[test]
+    fn wss_server_requires_the_wss_feature() {
+        let config = Config {
+            server_addr: vec!["wss://127.0.0.1:29872".parse().unwrap()],
+            ..Default::default()
+        };
+        if cfg!(feature = "wss") {
+            assert!(config.check().is_ok());
+        } else {
+            let error = config.check().unwrap_err().to_string();
+            assert!(error.contains("WSS is disabled"), "{error}");
+        }
     }
 
     #[cfg(not(feature = "quic"))]

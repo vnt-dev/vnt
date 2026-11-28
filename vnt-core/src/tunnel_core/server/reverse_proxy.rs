@@ -15,6 +15,7 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio::time::{Instant, timeout_at};
+#[cfg(feature = "wss")]
 use tokio_tungstenite::tungstenite::{self, Message};
 
 const SETUP: Duration = Duration::from_secs(10);
@@ -127,6 +128,7 @@ async fn connect(
         }
         #[cfg(not(feature = "quic"))]
         ProtocolType::Quic => anyhow::bail!("QUIC is disabled in this build"),
+        #[cfg(feature = "wss")]
         ProtocolType::Wss => {
             let socket = timeout_at(deadline, transport::wss::connect_wss(config)).await??;
             let (send, recv) = socket.split();
@@ -143,6 +145,8 @@ async fn connect(
             });
             run(send, recv, offer, policy, deadline).await
         }
+        #[cfg(not(feature = "wss"))]
+        ProtocolType::Wss => anyhow::bail!("WSS is disabled in this build"),
         ProtocolType::Dynamic => anyhow::bail!("unresolved reverse proxy transport"),
     }
 }

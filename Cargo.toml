@@ -30,9 +30,10 @@ sha2 = "0.11"
 windows-service.workspace = true
 
 [features]
-default = ["rolling-logs", "quic"]
+default = ["rolling-logs", "quic", "wss"]
 rolling-logs = ["dep:log4rs"]
 quic = ["vnt-core/quic"]
+wss = ["vnt-core/wss"]
 mini = []
 vnt-ipc = ["dep:vnt-ipc"]
 vnt-web = ["dep:vnt-web", "dep:form_urlencoded"]

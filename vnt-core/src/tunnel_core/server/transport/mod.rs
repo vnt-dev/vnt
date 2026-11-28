@@ -4,6 +4,7 @@ use crate::tunnel_core::server::transport::config::{ConnectConfig, ProtocolType}
 #[cfg(feature = "quic")]
 use crate::tunnel_core::server::transport::quic::QuicTransport;
 use crate::tunnel_core::server::transport::tcp::TlsTcpTransport;
+#[cfg(feature = "wss")]
 use crate::tunnel_core::server::transport::wss::WssTransport;
 use anyhow::{Context, bail};
 use bytes::Bytes;
@@ -13,6 +14,7 @@ pub mod config;
 #[cfg(feature = "quic")]
 pub(crate) mod quic;
 pub(crate) mod tcp;
+#[cfg(feature = "wss")]
 pub(crate) mod wss;
 
 #[derive(Default)]
@@ -20,6 +22,7 @@ pub(crate) enum TransportClient {
     #[cfg(feature = "quic")]
     Quic(QuicTransport),
     TlsTcp(TlsTcpTransport),
+    #[cfg(feature = "wss")]
     Wss(WssTransport),
     #[default]
     Pending,
@@ -34,6 +37,7 @@ impl TransportClient {
             #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.disconnect(),
             TransportClient::TlsTcp(c) => c.disconnect(),
+            #[cfg(feature = "wss")]
             TransportClient::Wss(c) => c.disconnect(),
             TransportClient::Pending => {}
         };
@@ -44,6 +48,7 @@ impl TransportClient {
             #[cfg(feature = "quic")]
             TransportClient::Quic(client) => client.disconnect(),
             TransportClient::TlsTcp(client) => client.graceful_disconnect().await,
+            #[cfg(feature = "wss")]
             TransportClient::Wss(client) => client.graceful_disconnect().await,
             TransportClient::Pending => {}
         }
@@ -63,6 +68,7 @@ impl TransportClient {
             #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.connect(config).await?,
             TransportClient::TlsTcp(c) => c.connect(config).await?,
+            #[cfg(feature = "wss")]
             TransportClient::Wss(c) => c.connect(config).await?,
             TransportClient::Pending => match config.protocol_type {
                 #[cfg(feature = "quic")]
@@ -78,11 +84,14 @@ impl TransportClient {
                     transport.connect(config).await?;
                     *self = TransportClient::TlsTcp(transport);
                 }
+                #[cfg(feature = "wss")]
                 ProtocolType::Wss => {
                     let mut transport = WssTransport::new();
                     transport.connect(config).await?;
                     *self = TransportClient::Wss(transport);
                 }
+                #[cfg(not(feature = "wss"))]
+                ProtocolType::Wss => bail!("WSS is disabled in this build"),
                 ProtocolType::Dynamic => {
                     bail!("unreachable connect")
                 }
@@ -96,6 +105,7 @@ impl TransportClient {
             #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.send(buf).await,
             TransportClient::TlsTcp(c) => c.send(buf).await,
+            #[cfg(feature = "wss")]
             TransportClient::Wss(c) => c.send(buf).await,
             TransportClient::Pending => {
                 bail!("Not connected");
@@ -107,6 +117,7 @@ impl TransportClient {
             #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.next().await,
             TransportClient::TlsTcp(c) => c.next().await,
+            #[cfg(feature = "wss")]
             TransportClient::Wss(c) => c.next().await,
 
             TransportClient::Pending => {

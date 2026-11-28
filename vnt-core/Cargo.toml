@@ -5,8 +5,9 @@ edition = "2024"
 license = "Apache-2.0"
 
 [features]
-default = ["quic"]
+default = ["quic", "wss"]
 quic = ["dep:quinn", "dep:rcgen"]
+wss = ["dep:tokio-tungstenite", "dep:tungstenite"]
 internal-bench = []
 
 [dependencies]
@@ -44,8 +45,8 @@ zerocopy = { version = "0.8.31", features = ["derive"] }
 socket2 = { version = "0.6.1", features = ["all"] }
 
 prost.workspace = true
-tokio-tungstenite = "0.30"
-tungstenite = "0.30"
+tokio-tungstenite = { version = "0.30", optional = true }
+tungstenite = { version = "0.30", optional = true }
 uuid = { version = "1.18.1", features = ["v4"] }
 ipnet.workspace = true
 getifaddrs = "0.6.0"

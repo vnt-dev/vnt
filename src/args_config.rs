@@ -823,10 +823,11 @@ server = ["{example_protocol}://1.2.3.4:29872"]
 # tcp_stun = ["stun.nextcloud.com:443"]
 "#,
             version = VERSION,
-            server_protocols = if cfg!(feature = "quic") {
-                "quic / tcp / wss / dynamic"
-            } else {
-                "tcp / wss / dynamic"
+            server_protocols = match (cfg!(feature = "quic"), cfg!(feature = "wss")) {
+                (true, true) => "quic / tcp / wss / dynamic",
+                (true, false) => "quic / tcp / dynamic",
+                (false, true) => "tcp / wss / dynamic",
+                (false, false) => "tcp / dynamic",
             },
             example_protocol = if cfg!(feature = "quic") { "quic" } else { "tcp" },
         );
