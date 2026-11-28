@@ -2,18 +2,25 @@ use crate::context::{NetworkAddr, SharedNetworkAddr};
 use crate::nat::AllowSubnetExternalRoute;
 use crate::protocol::ip_packet_protocol::HEAD_LENGTH;
 use crate::protocol::transmission::TransmissionBytes;
+#[cfg(feature = "quic")]
 use crate::runtime_config::RuntimePolicyStore;
 use crate::tunnel_core::outbound::HybridOutbound;
 use crate::utils::task_control::TaskGroup;
+#[cfg(feature = "quic")]
 use anyhow::Context;
+#[cfg(feature = "quic")]
 use bytes::BytesMut;
+#[cfg(feature = "quic")]
 use pnet_packet::ip::IpNextHeaderProtocol;
 use pnet_packet::ipv4::Ipv4Packet;
 use rustp2p_core::socket::LocalInterface;
+#[cfg(feature = "quic")]
 use std::net::{Ipv4Addr, SocketAddr};
+#[cfg(feature = "quic")]
 use std::str::FromStr;
 use std::sync::Arc;
 use tcp_ip::{IpStackConfig, IpStackRecv, IpStackSend};
+#[cfg(feature = "quic")]
 use tokio::io::{AsyncRead, AsyncWrite};
 
 #[cfg(not(target_os = "android"))]
@@ -22,10 +29,13 @@ mod tcp_nat;
 mod udp_nat;
 #[derive(Clone)]
 pub(crate) struct InternalNatInbound {
+    #[cfg(feature = "quic")]
     no_tun: bool,
     ip_stack_send: Arc<IpStackSend>,
     allow_subnet: AllowSubnetExternalRoute,
+    #[cfg(feature = "quic")]
     network: SharedNetworkAddr,
+    #[cfg(feature = "quic")]
     default_interface: Option<LocalInterface>,
 }
 impl InternalNatInbound {
@@ -64,10 +74,13 @@ impl InternalNatInbound {
             }
         });
         Ok(Self {
+            #[cfg(feature = "quic")]
             no_tun,
             ip_stack_send: Arc::new(ip_stack_send),
             allow_subnet,
+            #[cfg(feature = "quic")]
             network,
+            #[cfg(feature = "quic")]
             default_interface,
         })
     }
@@ -89,6 +102,7 @@ impl InternalNatInbound {
         }
         Ok(())
     }
+    #[cfg(feature = "quic")]
     pub async fn send_ipv4_payload(
         &self,
         protocol: IpNextHeaderProtocol,
@@ -117,6 +131,7 @@ async fn ip_stack_recv_task(
     }
 }
 
+#[cfg(feature = "quic")]
 impl InternalNatInbound {
     fn network_contains(&self, ip: &Ipv4Addr) -> bool {
         self.network
@@ -170,6 +185,7 @@ impl InternalNatInbound {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "quic")]
 pub(crate) struct PortMappingManager {
     no_tun: bool,
     policy: RuntimePolicyStore,
@@ -177,6 +193,7 @@ pub(crate) struct PortMappingManager {
     default_interface: Option<LocalInterface>,
 }
 
+#[cfg(feature = "quic")]
 impl PortMappingManager {
     pub fn new(
         no_tun: bool,

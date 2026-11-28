@@ -8,7 +8,7 @@ license = "Apache-2.0"
 crate-type = ["cdylib"]
 
 [dependencies]
-vnt-core.workspace = true
+vnt-core = { workspace = true, features = ["quic"] }
 
 jni = "0.21"
 tokio = { workspace = true, features = ["full"] }

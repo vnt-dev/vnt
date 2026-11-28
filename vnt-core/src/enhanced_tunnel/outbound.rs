@@ -1,4 +1,5 @@
 use crate::context::SharedNetworkAddr;
+#[cfg(feature = "quic")]
 use crate::enhanced_tunnel::quic_over::quic_outbound::EnhancedQuicOutbound;
 use crate::ethernet::{
     MacTable, build_arp_reply, is_broadcast_or_multicast, mac_from_ip, parse_arp_ipv4, parse_frame,
@@ -46,6 +47,7 @@ pub struct EnhancedOutbound {
 /// dispatcher. A TUN task holds the outer value for its full lifetime.
 struct EnhancedOutboundInner {
     network: SharedNetworkAddr,
+    #[cfg(feature = "quic")]
     enhanced_quic_outbound: EnhancedQuicOutbound,
     hybrid_outbound: HybridOutbound,
     subnet_mapping: SubnetMappingTable,
@@ -65,7 +67,7 @@ impl EnhancedOutbound {
     }
     pub fn new(
         network: SharedNetworkAddr,
-        enhanced_quic_outbound: EnhancedQuicOutbound,
+        #[cfg(feature = "quic")] enhanced_quic_outbound: EnhancedQuicOutbound,
         hybrid_outbound: HybridOutbound,
         subnet_mapping: SubnetMappingTable,
         subnet_packet_mapper: SubnetPacketMapper,
@@ -74,6 +76,7 @@ impl EnhancedOutbound {
         Self {
             inner: Arc::new(ArcSwap::from_pointee(EnhancedOutboundInner {
                 network,
+                #[cfg(feature = "quic")]
                 enhanced_quic_outbound,
                 hybrid_outbound,
                 subnet_mapping,
@@ -277,6 +280,7 @@ impl EnhancedOutboundInner {
             vec![data]
         };
         for data in packets {
+            #[cfg(feature = "quic")]
             if self
                 .enhanced_quic_outbound
                 .outbound(&net, data.as_ref())

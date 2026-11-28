@@ -5,9 +5,9 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
-vnt-core = { path = "vnt-core" }
-vnt-ipc = { path = "vnt-ipc", optional = true }
-vnt-web = { path = "vnt-web", optional = true }
+vnt-core.workspace = true
+vnt-ipc = { path = "vnt-ipc", optional = true, default-features = false }
+vnt-web = { path = "vnt-web", optional = true, default-features = false }
 form_urlencoded = { version = "1", optional = true }
 clap = { version = "4.5", features = ["derive", "env"] }
 
@@ -30,8 +30,9 @@ sha2 = "0.11"
 windows-service.workspace = true
 
 [features]
-default = ["rolling-logs"]
+default = ["rolling-logs", "quic"]
 rolling-logs = ["dep:log4rs"]
+quic = ["vnt-core/quic"]
 mini = []
 vnt-ipc = ["dep:vnt-ipc"]
 vnt-web = ["dep:vnt-web", "dep:form_urlencoded"]
@@ -55,7 +56,7 @@ required-features = ["vnt-web"]
 members = ["vnt-web", "vnt-ipc", "vnt-core", "vnt-jni", "vnt-desktop/src-tauri"]
 
 [workspace.dependencies]
-vnt-core = { path = "vnt-core" }
+vnt-core = { path = "vnt-core", default-features = false }
 
 tokio = "1"
 tokio-util = "0.7"

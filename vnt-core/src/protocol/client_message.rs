@@ -1,3 +1,4 @@
+#[cfg_attr(not(feature = "quic"), allow(dead_code))]
 mod proto {
     include!(concat!(env!("OUT_DIR"), "/protocol.client.rs"));
 }
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 use crate::protocol::ProtoToBytesMut;
+#[cfg(feature = "quic")]
 pub use proto::*;
 
 pub const NETWORK_CODE_HASH_LEN: usize = 16;

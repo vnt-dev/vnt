@@ -1,4 +1,6 @@
+#[cfg(feature = "quic")]
 use crate::enhanced_tunnel::quic_over::quic_client::QuicTunnelClient;
+#[cfg(feature = "quic")]
 use crate::utils::task_control::TaskGroup;
 use pnet_packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
 use std::fmt;
@@ -6,8 +8,10 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 
 pub(crate) mod tcp_port_mapping;
+#[cfg(feature = "quic")]
 pub(crate) mod udp_port_mapping;
 
+#[cfg(feature = "quic")]
 pub(crate) async fn port_mapping_start(
     task_group: &TaskGroup,
     list: Vec<PortMapping>,

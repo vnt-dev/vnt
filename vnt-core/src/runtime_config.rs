@@ -20,10 +20,12 @@ pub(crate) struct RuntimePolicy {
     pub no_broadcast: bool,
     pub allow_ikev2: bool,
     pub allow_wireguard: bool,
+    #[cfg(feature = "quic")]
     pub allow_mapping: bool,
     pub allow_reverse_proxy: bool,
     pub no_punch: bool,
     pub no_nat: bool,
+    #[cfg(feature = "quic")]
     pub rtx: bool,
     pub udp_stun: Arc<Vec<String>>,
     pub tcp_stun: Arc<Vec<String>>,
@@ -49,10 +51,12 @@ impl RuntimePolicy {
             no_broadcast: config.no_broadcast,
             allow_ikev2: config.allow_ikev2,
             allow_wireguard: config.allow_wireguard,
+            #[cfg(feature = "quic")]
             allow_mapping: config.allow_port_mapping,
             allow_reverse_proxy: config.allow_reverse_proxy,
             no_punch: config.no_punch,
             no_nat: config.no_nat,
+            #[cfg(feature = "quic")]
             rtx: config.rtx,
             udp_stun: Arc::new(config.udp_stun.clone()),
             tcp_stun: Arc::new(config.tcp_stun.clone()),

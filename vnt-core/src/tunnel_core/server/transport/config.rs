@@ -172,6 +172,11 @@ impl ConnectRegConfig {
 
         let mut connect_configs = Vec::new();
         for (protocol_type, server_domain) in server_domains {
+            #[cfg(not(feature = "quic"))]
+            if protocol_type == ProtocolType::Quic {
+                log::debug!("skipping QUIC server {server_domain}: QUIC is disabled in this build");
+                continue;
+            }
             // DNS 只负责解析 IP，端口由调用方从地址中解析后自行拼装
             let (host, port) = match crate::utils::addr::split_host_port(&server_domain) {
                 Ok(v) => v,

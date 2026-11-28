@@ -1056,6 +1056,7 @@ impl HybridOutbound {
         self.traffic_stats.record_tx(dest, len);
         Ok(())
     }
+    #[cfg(feature = "quic")]
     pub async fn outbound_raw(
         &self,
         dest: Ipv4Addr,

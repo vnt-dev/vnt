@@ -2,6 +2,8 @@ use crate::crypto::PacketCrypto;
 use crate::nat::{NetInput, SubnetMapping};
 use crate::port_mapping::PortMapping;
 use crate::tls::verifier::CertValidationMode;
+#[cfg(not(feature = "quic"))]
+use crate::tunnel_core::server::transport::config::ProtocolType;
 use crate::tunnel_core::server::transport::config::{ConnectRegConfig, ProtocolAddress};
 use crate::utils::atomic64::AtomicU64;
 use anyhow::{anyhow, bail};
@@ -821,7 +823,24 @@ impl Config {
         Ok(())
     }
 
+    #[cfg(not(feature = "quic"))]
+    pub(crate) fn check_quic(&self) -> anyhow::Result<()> {
+        if self
+            .server_addr
+            .iter()
+            .any(|addr| addr.protocol_type == ProtocolType::Quic)
+        {
+            bail!("QUIC is disabled in this build; use a tcp:// or wss:// server");
+        }
+        if self.rtx || !self.port_mapping.is_empty() || self.allow_port_mapping {
+            bail!("rtx, port_mapping and allow_mapping require a build with QUIC enabled");
+        }
+        Ok(())
+    }
+
     pub fn check(&self) -> anyhow::Result<()> {
+        #[cfg(not(feature = "quic"))]
+        self.check_quic()?;
         self.check_tunnel_addr()?;
         #[cfg(any(target_os = "android", target_os = "ios", target_os = "tvos"))]
         if self.device_mode == DeviceMode::Tap {
@@ -1054,7 +1073,7 @@ mod tests {
 
     #[test]
     fn multiple_servers_require_a_fixed_virtual_ip() {
-        let first: ProtocolAddress = "quic://127.0.0.1:29872".parse().unwrap();
+        let first: ProtocolAddress = "wss://127.0.0.1:29872".parse().unwrap();
         let second: ProtocolAddress = "tcp://127.0.0.1:29873".parse().unwrap();
 
         assert!(Config::default().check().is_err());
@@ -1097,12 +1116,50 @@ mod tests {
     #[test]
     fn server_relay_clients_allow_no_device_mode() {
         let config = Config {
-            server_addr: vec!["quic://127.0.0.1:29872".parse().unwrap()],
+            server_addr: vec!["tcp://127.0.0.1:29872".parse().unwrap()],
             device_mode: DeviceMode::No,
             allow_ikev2: true,
             allow_wireguard: true,
             ..Default::default()
         };
+        assert!(config.check().is_ok());
+    }
+
+    #[cfg(not(feature = "quic"))]
+    #[test]
+    fn quic_free_build_rejects_quic_configuration() {
+        let mut config = Config {
+            server_addr: vec!["quic://127.0.0.1:29872".parse().unwrap()],
+            ..Default::default()
+        };
+        assert!(config.check().unwrap_err().to_string().contains("tcp://"));
+
+        config.server_addr = vec!["tcp://127.0.0.1:29872".parse().unwrap()];
+        config.rtx = true;
+        assert!(config.check().unwrap_err().to_string().contains("rtx"));
+        config.rtx = false;
+        config.allow_port_mapping = true;
+        assert!(
+            config
+                .check()
+                .unwrap_err()
+                .to_string()
+                .contains("allow_mapping")
+        );
+        config.allow_port_mapping = false;
+        config.port_mapping = vec![
+            "tcp://127.0.0.1:9000-10.26.0.2-127.0.0.1:9000"
+                .parse()
+                .unwrap(),
+        ];
+        assert!(
+            config
+                .check()
+                .unwrap_err()
+                .to_string()
+                .contains("port_mapping")
+        );
+        config.port_mapping.clear();
         assert!(config.check().is_ok());
     }
 

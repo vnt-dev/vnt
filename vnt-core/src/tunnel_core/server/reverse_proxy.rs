@@ -119,11 +119,14 @@ async fn connect(
             let (send, recv) = framed.split();
             run(send, recv, offer, policy, deadline).await
         }
+        #[cfg(feature = "quic")]
         ProtocolType::Quic => {
             let (send, recv) =
                 timeout_at(deadline, transport::quic::connect_quic(config)).await??;
             run(send, recv, offer, policy, deadline).await
         }
+        #[cfg(not(feature = "quic"))]
+        ProtocolType::Quic => anyhow::bail!("QUIC is disabled in this build"),
         ProtocolType::Wss => {
             let socket = timeout_at(deadline, transport::wss::connect_wss(config)).await??;
             let (send, recv) = socket.split();

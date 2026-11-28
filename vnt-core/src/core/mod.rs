@@ -8,7 +8,9 @@ use crate::enhanced_tunnel::{TunnelComponents, TunnelConfig, enhanced_ipv4_tunne
 use crate::event_script::EventScript;
 use crate::fec::{FecDecoder, FecEncoder};
 use crate::log_manager::InstanceLog;
-use crate::nat::internal_nat::{InternalNatInbound, PortMappingManager};
+use crate::nat::internal_nat::InternalNatInbound;
+#[cfg(feature = "quic")]
+use crate::nat::internal_nat::PortMappingManager;
 use crate::nat::subnet_packet::SubnetPacketMapper;
 use crate::nat::{
     AllowSubnetExternalRoute, SubnetExternalRoute, SubnetMappingTable, advertised_subnets,
@@ -371,6 +373,7 @@ impl NetworkManager {
             subnet_packet_mapper.clone(),
             runtime_policy.clone(),
         );
+        #[cfg(feature = "quic")]
         let port_mapping_manager = PortMappingManager::new(
             config.device_mode == DeviceMode::No,
             runtime_policy.clone(),
@@ -420,21 +423,29 @@ impl NetworkManager {
 
         let tunnel_components = TunnelComponents {
             hybrid_outbound: hybrid_outbound.clone(),
+            #[cfg(feature = "quic")]
             external_route: subnet_external_route.clone(),
             subnet_mapping: subnet_mapping.clone(),
             subnet_packet_mapper: subnet_packet_mapper.clone(),
             internal_nat_inbound,
+            #[cfg(feature = "quic")]
             port_mapping_manager,
+            #[cfg(feature = "quic")]
             policy: runtime_policy.clone(),
         };
-        let (enhanced_inbound, enhanced_outbound, _quic_client) = enhanced_ipv4_tunnel(
+        let (enhanced_inbound, enhanced_outbound) = enhanced_ipv4_tunnel(
             app_state.clone(),
+            #[cfg(feature = "quic")]
             mtu_task_group.clone(),
+            #[cfg(feature = "quic")]
             task_group.clone(),
             enhanced_tun_inbound.clone(),
             TunnelConfig {
+                #[cfg(feature = "quic")]
                 mtu,
+                #[cfg(feature = "quic")]
                 password: config.password.clone(),
+                #[cfg(feature = "quic")]
                 port_mapping: config.port_mapping.clone(),
                 device_mode: config.device_mode,
             },

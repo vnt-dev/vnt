@@ -446,6 +446,8 @@ impl RuntimeChangeManager {
         #[cfg(unix)] tun_fd: Option<std::os::fd::OwnedFd>,
         #[cfg(not(unix))] _tun_fd: (),
     ) -> anyhow::Result<ChangeOutcome> {
+        #[cfg(not(feature = "quic"))]
+        change.config.check_quic()?;
         // MTU 低于 P2P 栈下限的配置会让后续实例创建失败，直接拒绝本次应用
         if let Some(mtu) = change.config.mtu
             && mtu < crate::core::MIN_MTU

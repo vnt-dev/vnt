@@ -1,13 +1,17 @@
 use crate::context::SharedNetworkAddr;
 use crate::utils::socket::connect_tcp;
 use crate::utils::task_control::TaskGroup;
+#[cfg(feature = "quic")]
 use anyhow::Context;
 use rustp2p_core::socket::LocalInterface;
+#[cfg(feature = "quic")]
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tcp_ip::IpStack;
 use tcp_ip::tcp::TcpListener;
+#[cfg(feature = "quic")]
 use tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(feature = "quic")]
 use tokio::net::ToSocketAddrs;
 
 pub async fn start_tcp_nat(
@@ -84,6 +88,7 @@ async fn stream_task(
     Ok(())
 }
 
+#[cfg(feature = "quic")]
 pub(crate) async fn stream_nat<R, W, A: ToSocketAddrs + Debug>(
     recv_stream: R,
     send_stream: W,

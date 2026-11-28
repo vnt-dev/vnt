@@ -1,18 +1,28 @@
+#[cfg(feature = "quic")]
 use crate::enhanced_tunnel::quic_over::quic_client::{QuicTunnelClient, send_handshake};
+#[cfg(feature = "quic")]
 use crate::port_mapping::PortMapping;
+#[cfg(feature = "quic")]
 use crate::protocol::client_message::{
     PortProxyHandshake, QuicProxyHandshake, quic_proxy_handshake,
 };
+#[cfg(feature = "quic")]
 use crate::utils::task_control::TaskGroup;
+#[cfg(feature = "quic")]
 use anyhow::Context;
+#[cfg(feature = "quic")]
 use pnet_packet::ip::IpNextHeaderProtocols;
+#[cfg(feature = "quic")]
 use std::net::{Ipv4Addr, SocketAddr};
+#[cfg(any(feature = "quic", test))]
 use tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(feature = "quic")]
 use tokio::net::{TcpListener, TcpStream};
 
 /// 双向转发：任一方向 EOF 时对另一端执行 shutdown 并继续转发剩余方向，
 /// 直到两个方向都完成。避免 select! 下任一方向先结束就 drop 另一方向
 /// 造成的半关闭截断（如对端半关闭后响应数据丢失）。
+#[cfg(any(feature = "quic", test))]
 pub(crate) async fn copy_bidirectional_split<T, R, W>(
     stream: &mut T,
     reader: R,
@@ -27,6 +37,7 @@ where
     Ok(tokio::io::copy_bidirectional(stream, &mut other).await?)
 }
 
+#[cfg(feature = "quic")]
 pub async fn start(
     task_group: &TaskGroup,
     list: &Vec<PortMapping>,
@@ -52,6 +63,7 @@ pub async fn start(
     Ok(())
 }
 
+#[cfg(feature = "quic")]
 async fn listen(
     task_group: &TaskGroup,
     listener: TcpListener,
@@ -83,6 +95,7 @@ async fn listen(
     }
 }
 
+#[cfg(feature = "quic")]
 async fn stream_copy(
     mut tcp_stream: TcpStream,
     src: SocketAddr,

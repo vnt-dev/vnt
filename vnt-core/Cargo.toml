@@ -5,6 +5,8 @@ edition = "2024"
 license = "Apache-2.0"
 
 [features]
+default = ["quic"]
+quic = ["dep:quinn", "dep:rcgen"]
 internal-bench = []
 
 [dependencies]
@@ -22,7 +24,7 @@ anyhow.workspace = true
 parking_lot.workspace = true
 arc-swap.workspace = true
 
-quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"] }
+quinn = { version = "0.11", optional = true, default-features = false, features = ["rustls", "runtime-tokio"] }
 
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -56,7 +58,7 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 base64 = "0.22"
-rcgen = "0.14.6"
+rcgen = { version = "0.14.6", optional = true }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "tvos")))'.dependencies]
 route_manager.workspace = true
@@ -84,6 +86,7 @@ protoc-bin-vendored = "3"
 
 [dev-dependencies]
 criterion = "0.5"
+rcgen = "0.14.6"
 
 [[bench]]
 name = "route_lookup"

@@ -156,7 +156,7 @@ export const formToToml = (form, source = "") => {
   return result;
 };
 
-// 新建配置的 TOML 模板(从旧代码逐字迁移)
+// 新建配置的 TOML 模板
 export const NEW_CONFIG_TEMPLATE = `# config_name = "配置名称"
 # --- 网络配置 ---
 # 网络编号，相同网络编号的会组在同一个虚拟网
@@ -164,7 +164,7 @@ network_code = "your_network_code"
 
 # 服务器地址列表；固定 IP 时在后台连接，也可删除此项完全无服务器运行
 # dynamic 协议默认使用 DNS TXT 解析，也可使用 dynamic://http(s)://接口地址获取换行分隔的服务器地址列表
-server = ["quic://1.2.3.4:29872"]
+server = ["tcp://1.2.3.4:29872"]
 
 # 可直连节点地址列表；支持 dynamic:// DNS TXT 或 HTTP(S) 地址列表
 # peer_address = ["1.2.3.4:29873", "tcp://192.168.1.10:29873", "dynamic://peers.example.com"]

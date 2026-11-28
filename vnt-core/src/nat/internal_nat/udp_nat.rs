@@ -1,17 +1,24 @@
 use crate::utils::task_control::{SubTask, TaskGroup};
+#[cfg(feature = "quic")]
 use anyhow::Context;
+#[cfg(feature = "quic")]
 use bytes::Bytes;
+#[cfg(feature = "quic")]
 use futures::{SinkExt, StreamExt};
 use rustp2p_core::socket::LocalInterface;
 use std::collections::HashMap;
+#[cfg(feature = "quic")]
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tcp_ip::IpStack;
+#[cfg(feature = "quic")]
 use tokio::io::{AsyncRead, AsyncWrite};
+#[cfg(feature = "quic")]
 use tokio::net::ToSocketAddrs;
 use tokio::sync::Mutex;
+#[cfg(feature = "quic")]
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 struct NatEntry {
@@ -208,6 +215,7 @@ fn spawn_nat_gc(task_group: &TaskGroup, nat: NatTable) {
     });
 }
 
+#[cfg(feature = "quic")]
 pub(crate) async fn stream_nat<R, W, A: ToSocketAddrs + Debug>(
     recv_stream: R,
     send_stream: W,

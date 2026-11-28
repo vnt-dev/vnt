@@ -1,5 +1,6 @@
 use crate::context::config::DeviceMode;
 use crate::context::{NetworkAddr, TrafficStats};
+#[cfg(feature = "quic")]
 use crate::enhanced_tunnel::quic_over::quic_inbound::EnhancedQuicInbound;
 use crate::ethernet::{MacTable, build_arp_reply, parse_arp_ipv4, parse_frame};
 use crate::nat::SubnetMappingTable;
@@ -9,7 +10,9 @@ use crate::protocol::ip_packet_protocol::{HEAD_LENGTH, MsgType, NetPacket};
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tun::enhanced_tun::EnhancedTunInbound;
 use crate::tunnel_core::outbound::HybridOutbound;
-use anyhow::{Context, bail};
+#[cfg(feature = "quic")]
+use anyhow::Context;
+use anyhow::bail;
 use arc_swap::ArcSwap;
 use pnet_packet::arp::ArpOperations;
 use pnet_packet::ethernet::EtherTypes;
@@ -28,6 +31,7 @@ pub(crate) struct EnhancedInbound {
 /// object as one unit.
 struct EnhancedInboundInner {
     tun_data_inbound: EnhancedTunInbound,
+    #[cfg(feature = "quic")]
     quic_inbound: EnhancedQuicInbound,
     internal_nat_inbound: Option<InternalNatInbound>,
     traffic_stats: TrafficStats,
@@ -42,7 +46,7 @@ impl EnhancedInbound {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         tun_data_inbound: EnhancedTunInbound,
-        quic_inbound: EnhancedQuicInbound,
+        #[cfg(feature = "quic")] quic_inbound: EnhancedQuicInbound,
         internal_nat_inbound: Option<InternalNatInbound>,
         traffic_stats: TrafficStats,
         device_mode: DeviceMode,
@@ -54,6 +58,7 @@ impl EnhancedInbound {
         Self {
             inner: Arc::new(ArcSwap::from_pointee(EnhancedInboundInner {
                 tun_data_inbound,
+                #[cfg(feature = "quic")]
                 quic_inbound,
                 internal_nat_inbound,
                 traffic_stats,
@@ -191,6 +196,7 @@ impl EnhancedInboundInner {
                     .inbound(buf, network_addr, src, ethernet)
                     .await?;
             }
+            #[cfg(feature = "quic")]
             MsgType::Quic => {
                 let payload = buf.into_bytes().freeze();
                 self.quic_inbound

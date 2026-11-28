@@ -54,11 +54,7 @@ pub(crate) async fn quic_tunnel_start(
     config: QuicTunnelConfig,
     components: QuicTunnelComponents,
     port_mapping_root: TaskGroup,
-) -> anyhow::Result<(
-    EnhancedQuicInbound,
-    Option<EnhancedQuicOutbound>,
-    QuicTunnelClient,
-)> {
+) -> anyhow::Result<(EnhancedQuicInbound, Option<EnhancedQuicOutbound>)> {
     let ip_stack_config = IpStackConfig::builder().mtu(config.mtu).build();
     let (ip_stack, ip_socket, quic_outbound) = if let Some(tun_data_sender) = tun_data_sender {
         let (ip_stack, ip_stack_send, ip_stack_recv) = tcp_ip::ip_stack(ip_stack_config)?;
@@ -106,15 +102,11 @@ pub(crate) async fn quic_tunnel_start(
         )
         .await;
     }
-    crate::port_mapping::port_mapping_start(
-        &port_mapping_root,
-        config.port_mapping,
-        quic_client.clone(),
-    )
-    .await?;
+    crate::port_mapping::port_mapping_start(&port_mapping_root, config.port_mapping, quic_client)
+        .await?;
 
     let quic_inbound = EnhancedQuicInbound::new(inbound);
-    Ok((quic_inbound, quic_outbound, quic_client))
+    Ok((quic_inbound, quic_outbound))
 }
 async fn create_quic_endpoint(
     password: String,

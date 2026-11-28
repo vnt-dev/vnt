@@ -1,6 +1,7 @@
 use crate::protocol::ip_packet_protocol::NetPacket;
 use crate::protocol::transmission::TransmissionBytes;
 use crate::tunnel_core::server::transport::config::{ConnectConfig, ProtocolType};
+#[cfg(feature = "quic")]
 use crate::tunnel_core::server::transport::quic::QuicTransport;
 use crate::tunnel_core::server::transport::tcp::TlsTcpTransport;
 use crate::tunnel_core::server::transport::wss::WssTransport;
@@ -9,12 +10,14 @@ use bytes::Bytes;
 use std::time::Duration;
 
 pub mod config;
+#[cfg(feature = "quic")]
 pub(crate) mod quic;
 pub(crate) mod tcp;
 pub(crate) mod wss;
 
 #[derive(Default)]
 pub(crate) enum TransportClient {
+    #[cfg(feature = "quic")]
     Quic(QuicTransport),
     TlsTcp(TlsTcpTransport),
     Wss(WssTransport),
@@ -28,6 +31,7 @@ impl TransportClient {
     }
     pub fn disconnect(&mut self) {
         match self {
+            #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.disconnect(),
             TransportClient::TlsTcp(c) => c.disconnect(),
             TransportClient::Wss(c) => c.disconnect(),
@@ -37,6 +41,7 @@ impl TransportClient {
     }
     pub async fn graceful_disconnect(&mut self) {
         match self {
+            #[cfg(feature = "quic")]
             TransportClient::Quic(client) => client.disconnect(),
             TransportClient::TlsTcp(client) => client.graceful_disconnect().await,
             TransportClient::Wss(client) => client.graceful_disconnect().await,
@@ -55,15 +60,19 @@ impl TransportClient {
     }
     pub async fn connect(&mut self, config: &ConnectConfig) -> anyhow::Result<()> {
         match self {
+            #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.connect(config).await?,
             TransportClient::TlsTcp(c) => c.connect(config).await?,
             TransportClient::Wss(c) => c.connect(config).await?,
             TransportClient::Pending => match config.protocol_type {
+                #[cfg(feature = "quic")]
                 ProtocolType::Quic => {
                     let mut transport = QuicTransport::new();
                     transport.connect(config).await?;
                     *self = TransportClient::Quic(transport);
                 }
+                #[cfg(not(feature = "quic"))]
+                ProtocolType::Quic => bail!("QUIC is disabled in this build"),
                 ProtocolType::TlsTcp => {
                     let mut transport = TlsTcpTransport::new();
                     transport.connect(config).await?;
@@ -84,6 +93,7 @@ impl TransportClient {
 
     pub async fn send(&mut self, buf: Bytes) -> anyhow::Result<()> {
         match self {
+            #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.send(buf).await,
             TransportClient::TlsTcp(c) => c.send(buf).await,
             TransportClient::Wss(c) => c.send(buf).await,
@@ -94,6 +104,7 @@ impl TransportClient {
     }
     pub async fn next(&mut self) -> anyhow::Result<TransmissionBytes> {
         match self {
+            #[cfg(feature = "quic")]
             TransportClient::Quic(c) => c.next().await,
             TransportClient::TlsTcp(c) => c.next().await,
             TransportClient::Wss(c) => c.next().await,

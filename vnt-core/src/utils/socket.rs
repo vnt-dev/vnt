@@ -149,6 +149,7 @@ pub(crate) fn bind_udp(
 /// Query the kernel's current IP MTU for the selected route. UDP connect only
 /// selects a route; it does not send packets. Use a separate socket so Quinn's
 /// endpoint stays unconnected and can handle connection migration.
+#[cfg(any(feature = "quic", test))]
 pub(crate) fn udp_route_mtu(
     peer: SocketAddr,
     interface: Option<&LocalInterface>,
@@ -162,6 +163,7 @@ pub(crate) fn udp_route_mtu(
 }
 
 #[cfg(any(target_os = "linux", target_os = "android", windows))]
+#[cfg(any(feature = "quic", test))]
 fn connected_udp_mtu(socket: &Socket, is_ipv6: bool) -> io::Result<u32> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use libc::{IP_MTU, IPPROTO_IP, IPPROTO_IPV6, IPV6_MTU};
@@ -219,6 +221,7 @@ fn connected_udp_mtu(socket: &Socket, is_ipv6: bool) -> io::Result<u32> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+#[cfg(any(feature = "quic", test))]
 fn connected_udp_mtu(_socket: &Socket, _is_ipv6: bool) -> io::Result<u32> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -313,6 +316,7 @@ pub(crate) async fn connect_tcp_reuse_port(
     Ok(stream)
 }
 
+#[cfg(feature = "quic")]
 pub(crate) async fn connect_tcp_resolved<A: tokio::net::ToSocketAddrs>(
     addr: A,
     interface: Option<&LocalInterface>,
