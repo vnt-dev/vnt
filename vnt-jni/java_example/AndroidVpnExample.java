@@ -238,8 +238,7 @@ public class AndroidVpnExample extends VpnService {
     public void onDestroy() {
         super.onDestroy();
         running = false;
-        // 注意：worker 若阻塞在 nextEvent，会在下一次事件到达时退出
-        // （守护线程，不阻塞进程退出）；nativeStop 已清理 native 资源。
+        // 唤醒等待首份订阅配置、网络注册或运行时事件的 worker。
         VntManager.destroy();
     }
 

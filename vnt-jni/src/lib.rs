@@ -8,6 +8,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(unix)]
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -27,7 +28,7 @@ struct GlobalState {
     runtime: Arc<Runtime>,
     /// 配置管理器：订阅连接与组网实例的生命周期持有者
     managers: HashMap<i64, Arc<tokio::sync::Mutex<RuntimeChangeManager>>>,
-    /// 不持有管理器锁即可取消 next_event，包括没有组网实例的订阅等待。
+    /// 创建中的实例也登记令牌，使销毁可以取消首次订阅等待。
     shutdown_tokens: HashMap<i64, CancellationToken>,
     /// API实例
     vnt_apis: HashMap<i64, VntApi>,
@@ -35,8 +36,6 @@ struct GlobalState {
     logs: Arc<LogManager>,
     /// nextEvent 收到的最新快照，等待 applyRuntimeChange 消费
     pending_changes: HashMap<i64, RuntimeChange>,
-    /// 下一个实例ID
-    next_id: i64,
 }
 
 impl GlobalState {
@@ -48,14 +47,24 @@ impl GlobalState {
             vnt_apis: HashMap::new(),
             logs: Arc::new(LogManager::new()),
             pending_changes: HashMap::new(),
-            next_id: 1,
         })
+    }
+
+    fn stop(self) {
+        self.runtime.block_on(async {
+            for manager in self.managers.into_values() {
+                manager.lock().await.stop().await;
+            }
+        });
     }
 }
 
 lazy_static::lazy_static! {
     static ref GLOBAL_STATE: Mutex<Option<GlobalState>> = Mutex::new(None);
 }
+
+// 旧 Java 对象可能在重新初始化后继续调用 JNI，句柄在进程内不重复使用。
+static NEXT_NETWORK_ID: AtomicI64 = AtomicI64::new(1);
 
 /// 从 panic payload 中提取错误消息
 fn panic_message(e: Box<dyn std::any::Any + Send>) -> String {
@@ -129,10 +138,25 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeInit(
 /// 销毁JNI模块
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_vnt_VntManager_nativeDestroy(_env: JNIEnv, _class: JClass) {
-    let _ = catch_jni_panic(|| {
-        let mut state = GLOBAL_STATE.lock();
-        *state = None;
-    });
+    let _ = catch_jni_panic(destroy);
+}
+
+fn destroy() {
+    let state = GLOBAL_STATE.lock().take();
+    let Some(state) = state else {
+        return;
+    };
+    for shutdown in state.shutdown_tokens.values() {
+        shutdown.cancel();
+    }
+
+    // 停止实例和销毁 Tokio runtime 都可能等待，由后台线程处理。
+    if let Err(error) = std::thread::Builder::new()
+        .name("vnt-jni-destroy".into())
+        .spawn(move || state.stop())
+    {
+        log::error!("Failed to start VNT cleanup thread: {error}");
+    }
 }
 
 /// 创建网络实例
@@ -143,71 +167,99 @@ pub extern "system" fn Java_com_vnt_VntManager_nativeCreateNetwork<'local>(
     config_json: JString<'local>,
 ) -> jlong {
     jni_guard!(env, -1, {
-        let mut created_log_id: Option<i64> = None;
-        let result: anyhow::Result<i64> = (|| {
-            let mut global_state = GLOBAL_STATE.lock();
-            let state = global_state.as_mut().context("VNT not initialized")?;
-            let runtime = state.runtime.clone();
-
-            // 提前分配句柄：实例日志从创建第一步起即可写入与查询
-            let id = state.next_id;
-            state.next_id += 1;
-            created_log_id = Some(id);
-            let instance_log = state.logs.instance(&id.to_string());
-
-            // 解析配置JSON
+        let result = create_network(|| {
             let config_str: String = env.get_string(&config_json)?.into();
-            #[derive(serde::Deserialize)]
-            struct SubscriptionBootstrap {
-                subscription: Option<String>,
-                #[serde(default)]
-                subscription_instance_id: Option<String>,
-            }
-            let bootstrap: SubscriptionBootstrap = serde_json::from_str(&config_str)?;
-            let mut subscription = bootstrap
-                .subscription
-                .as_deref()
-                .map(Subscription::parse)
-                .transpose()?;
-            if let Some(link) = &mut subscription {
-                // 任务级稳定实例 ID：跨进程重启保持服务端视角的身份一致
-                if let Some(hex_id) = bootstrap.subscription_instance_id.as_deref() {
-                    let instance_id = hex::decode(hex_id)
-                        .context("subscription_instance_id 必须是 64 位十六进制字符串")?;
-                    link.set_instance_id(instance_id)?;
-                }
-            }
-            let local_config = parse_config_from_json(&config_str, subscription.is_some())?;
-
-            // 配置管理器：订阅模式内部等待服务端首份配置并启动首个组网
-            // 实例；虚拟网卡由宿主持有 fd 后经 nativeStartTun 启动
-            let manager = runtime.block_on(RuntimeChangeManager::new(
-                local_config,
-                subscription,
-                instance_log,
-            ))?;
-            state.shutdown_tokens.insert(id, manager.shutdown_token());
-            state
-                .managers
-                .insert(id, Arc::new(tokio::sync::Mutex::new(manager)));
-
-            Ok(id)
-        })();
+            parse_network_config(&config_str)
+        });
 
         match result {
             Ok(id) => id,
             Err(e) => {
-                // 创建失败：清理实例日志，避免按 handle 堆积
-                if let Some(id) = created_log_id
-                    && let Some(state) = GLOBAL_STATE.lock().as_mut()
-                {
-                    state.logs.remove(&id.to_string());
-                }
                 let _ = env.throw(format!("Failed to create network: {:?}", e));
                 -1
             }
         }
     })
+}
+
+fn create_network(
+    load_config: impl FnOnce() -> anyhow::Result<(Config, Option<Subscription>)>,
+) -> anyhow::Result<i64> {
+    let shutdown = CancellationToken::new();
+    let (id, runtime, instance_log) = {
+        let mut global_state = GLOBAL_STATE.lock();
+        let state = global_state.as_mut().context("VNT not initialized")?;
+        let id = NEXT_NETWORK_ID.fetch_add(1, Ordering::Relaxed);
+        state.shutdown_tokens.insert(id, shutdown.clone());
+        (
+            id,
+            state.runtime.clone(),
+            state.logs.instance(&id.to_string()),
+        )
+    };
+
+    let result = load_config().and_then(|(config, subscription)| {
+        runtime.block_on(RuntimeChangeManager::new_with_shutdown(
+            config,
+            subscription,
+            instance_log,
+            shutdown,
+        ))
+    });
+
+    // 只向创建时的全局状态提交实例。
+    let mut global_state = GLOBAL_STATE.lock();
+    let state = global_state
+        .as_mut()
+        .filter(|state| Arc::ptr_eq(&state.runtime, &runtime));
+    match result {
+        Ok(mut manager) => {
+            if let Some(state) = state
+                && state.shutdown_tokens.contains_key(&id)
+            {
+                state
+                    .managers
+                    .insert(id, Arc::new(tokio::sync::Mutex::new(manager)));
+                return Ok(id);
+            }
+            drop(global_state);
+            runtime.block_on(manager.stop());
+            anyhow::bail!("组网启动已取消");
+        }
+        Err(error) => {
+            if let Some(state) = state {
+                state.shutdown_tokens.remove(&id);
+                state.logs.remove(&id.to_string());
+            }
+            Err(error)
+        }
+    }
+}
+
+fn parse_network_config(config_str: &str) -> anyhow::Result<(Config, Option<Subscription>)> {
+    #[derive(serde::Deserialize)]
+    struct SubscriptionBootstrap {
+        subscription: Option<String>,
+        #[serde(default)]
+        subscription_instance_id: Option<String>,
+    }
+
+    let bootstrap: SubscriptionBootstrap = serde_json::from_str(config_str)?;
+    let mut subscription = bootstrap
+        .subscription
+        .as_deref()
+        .map(Subscription::parse)
+        .transpose()?;
+    if let Some(link) = &mut subscription
+        && let Some(hex_id) = bootstrap.subscription_instance_id.as_deref()
+    {
+        // 任务级稳定实例 ID：跨进程重启保持服务端视角的身份一致
+        let instance_id =
+            hex::decode(hex_id).context("subscription_instance_id 必须是 64 位十六进制字符串")?;
+        link.set_instance_id(instance_id)?;
+    }
+    let config = parse_config_from_json(config_str, subscription.is_some())?;
+    Ok((config, subscription))
 }
 
 /// 获取实例最近日志（每个实例保留最后 50 条）
@@ -660,7 +712,9 @@ pub extern "system" fn Java_com_vnt_VntNetwork_nativeStop(
         let result: anyhow::Result<()> = (|| {
             let (manager, runtime) = {
                 let mut global_state = GLOBAL_STATE.lock();
-                let state = global_state.as_mut().context("VNT not initialized")?;
+                let Some(state) = global_state.as_mut() else {
+                    return Ok(());
+                };
                 let manager = state.managers.remove(&handle);
                 if let Some(shutdown) = state.shutdown_tokens.remove(&handle) {
                     shutdown.cancel();
@@ -1584,7 +1638,76 @@ mod tests {
         assert_eq!(peer.read(&mut [0]).unwrap(), 0);
     }
 
-    const SUBSCRIPTION: &str = "vnt2://join/2/eyJ2IjoyLCJzZXJ2ZXIiOiJ0Y3A6Ly8xMjcuMC4wLjE6Mjk4NzIiLCJjZXJ0X21vZGUiOiJzdGFuZGFyZCIsImpvaW5faWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJjcmVkZW50aWFsX2tleSI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEifQ";
+    const SUBSCRIPTION: &str = "vnt2://join/2/eyJ2IjoyLCJzZXJ2ZXIiOiJ0Y3A6Ly8xMjcuMC4wLjE6Mjk4NzIiLCJjZXJ0X21vZGUiOiJzdGFuZGFyZCIsImpvaW5faWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJjcmVkZW50aWFsX2tleSI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEifQ";
+
+    #[test]
+    fn destroy_cancels_startup_wait_and_allows_reinitialization() {
+        use std::sync::mpsc;
+
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut subscription = Subscription::parse(SUBSCRIPTION).unwrap();
+        subscription.server = format!("tcp://{}", server.local_addr().unwrap());
+        let config = parse_config_from_json("{}", true).unwrap();
+        *GLOBAL_STATE.lock() = Some(GlobalState::new().unwrap());
+
+        let (created, result) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = create_network(|| Ok((config, Some(subscription))));
+            let _ = created.send(result);
+        });
+        let (connected, connection) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = connected.send(server.accept());
+        });
+        let _connection = connection
+            .recv_timeout(Duration::from_secs(5))
+            .expect("subscription worker must connect")
+            .unwrap();
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        // Keep a second creation in flight until after the next initialization.
+        let (loading, started) = mpsc::channel();
+        let (resume, paused) = mpsc::channel();
+        let stale_creation = std::thread::spawn(move || {
+            create_network(|| {
+                loading.send(()).unwrap();
+                paused.recv_timeout(Duration::from_secs(10)).unwrap();
+                anyhow::bail!("invalid config");
+            })
+        });
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let stale_id = (NEXT_NETWORK_ID.load(Ordering::Relaxed) - 1).to_string();
+
+        let (destroyed, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            destroy();
+            let _ = destroyed.send(());
+        });
+        finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("destroy must return while the server has sent no configuration");
+
+        let replacement = GlobalState::new().unwrap();
+        let replacement_log = replacement.logs.instance(&stale_id);
+        *GLOBAL_STATE.lock() = Some(replacement);
+        resume.send(()).unwrap();
+        assert_eq!(
+            stale_creation.join().unwrap().unwrap_err().to_string(),
+            "invalid config"
+        );
+
+        let error = result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("destroy must wake the startup wait")
+            .unwrap_err();
+        assert!(error.to_string().contains("组网启动在获取初始配置前被取消"));
+        let replacement = GLOBAL_STATE.lock().take().unwrap();
+        assert!(replacement.managers.is_empty());
+        assert!(Arc::ptr_eq(
+            &replacement.logs.get(&stale_id).unwrap(),
+            &replacement_log
+        ));
+    }
 
     #[test]
     fn json_identity_is_used_verbatim_before_the_first_envelope() {

@@ -29,7 +29,7 @@ public class VntManager {
     }
 
     /**
-     * 销毁VNT模块（全局清理）
+     * 取消正在启动的组网，并在后台清理 VNT 资源。
      */
     public static void destroy() {
         nativeDestroy();

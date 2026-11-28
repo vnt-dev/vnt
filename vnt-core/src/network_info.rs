@@ -175,8 +175,8 @@ impl RuntimeChangeManager {
     }
 
     /// Create a manager whose final shutdown can be requested by its supervisor.
-    /// The token wakes event and registration waits; the supervisor must still
-    /// await `stop` to finish releasing resources.
+    /// The token wakes initial configuration, event and registration waits;
+    /// the supervisor must still await `stop` for a successfully created manager.
     pub async fn new_with_shutdown(
         local_config: Config,
         subscription: Option<Subscription>,
@@ -195,7 +195,12 @@ impl RuntimeChangeManager {
             log,
             instance: None,
         };
-        let config = manager.effective_config().await?;
+        let shutdown = manager.shutdown.clone();
+        let config = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => anyhow::bail!("组网启动在获取初始配置前被取消"),
+            result = manager.effective_config() => result?,
+        };
         manager.start_instance(config).await?;
         Ok(manager)
     }
