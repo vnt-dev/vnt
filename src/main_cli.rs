@@ -42,8 +42,7 @@ async fn report_existing_client(error: &anyhow::Error) -> bool {
     println!("本机已有 VNT 客户端在为同一网络运行，无需重复启动。");
     println!("（单实例锁：{}）", held.name);
     println!();
-    let ctrl_cmd = vnt_ipc::message::ipc_request::IpcCmd::AppInfo(Default::default());
-    if vnt_ipc::client::run_client(ctrl_cmd, None).await.is_ok() {
+    if vnt_ipc::client::run_app_info(None).await.is_ok() {
         return true;
     }
     match vnt2::instance_probe::probe_desktop_kernel().await {

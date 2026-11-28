@@ -19,6 +19,41 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub async fn run_client(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<()> {
     let stop_requested = matches!(cmd, IpcCmd::Stop(_));
+    let payload = request(cmd, port).await?;
+    if stop_requested != matches!(payload, ResponsePayload::Stop(_)) {
+        anyhow::bail!("Unexpected response to the control command");
+    }
+    match payload {
+        ResponsePayload::AppInfo(info) => {
+            print_app_info(info);
+        }
+        ResponsePayload::ClientIps(list) => print_client_ip_list(list)?,
+        ResponsePayload::ClientList(list) => {
+            print_client_list(list)?;
+        }
+        ResponsePayload::AllRoute(route_list) => {
+            print_route_list(route_list)?;
+        }
+        ResponsePayload::Stop(result) if result.accepted => {
+            println!("Stop requested.");
+        }
+        ResponsePayload::Stop(_) => {
+            anyhow::bail!("Stop denied: the instance has no stop token or the token is invalid");
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_app_info(port: Option<u16>) -> anyhow::Result<()> {
+    let cmd = IpcCmd::AppInfo(Default::default());
+    let ResponsePayload::AppInfo(info) = request(cmd, port).await? else {
+        anyhow::bail!("Unexpected response to the info command");
+    };
+    print_app_info(info);
+    Ok(())
+}
+
+async fn request(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<ResponsePayload> {
     let path = get_port_file_path();
     let port = if let Some(port) = port {
         port
@@ -48,31 +83,9 @@ pub async fn run_client(cmd: IpcCmd, port: Option<u16>) -> anyhow::Result<()> {
         .context("Response timed out")?
         .context("Unexpected end of stream")??;
     let response = IpcResponse::decode(response).context("decode response error")?;
-    let payload = response
+    response
         .response_payload
-        .context("response payload is empty")?;
-    if stop_requested != matches!(payload, ResponsePayload::Stop(_)) {
-        anyhow::bail!("Unexpected response to the control command");
-    }
-    match payload {
-        ResponsePayload::AppInfo(info) => {
-            print_app_info(info);
-        }
-        ResponsePayload::ClientIps(list) => print_client_ip_list(list)?,
-        ResponsePayload::ClientList(list) => {
-            print_client_list(list)?;
-        }
-        ResponsePayload::AllRoute(route_list) => {
-            print_route_list(route_list)?;
-        }
-        ResponsePayload::Stop(result) if result.accepted => {
-            println!("Stop requested.");
-        }
-        ResponsePayload::Stop(_) => {
-            anyhow::bail!("Stop denied: the instance has no stop token or the token is invalid");
-        }
-    };
-    Ok(())
+        .context("response payload is empty")
 }
 
 fn key_style(s: &str) -> console::StyledObject<&str> {
