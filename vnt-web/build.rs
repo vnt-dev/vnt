@@ -4,10 +4,11 @@
 //! - 产物已是最新则跳过，不拖慢增量编译
 //! - 找不到 pnpm 时：已有产物则告警并沿用；没有产物则报错并给出指引
 //! - 设置环境变量 VNT_WEB_SKIP_UI_BUILD=1 可完全跳过前端构建
+//! - 嵌入前用 gzip 压缩能缩小的静态资源，由浏览器解压
 
 use std::error::Error;
-use std::io;
-use std::path::Path;
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
@@ -34,19 +35,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         "cargo:rerun-if-changed={}",
         ui_dir.join("package.json").display()
     );
-    // 产物被删除时也要重新运行
-    println!(
-        "cargo:rerun-if-changed={}",
-        static_dir.join("index.html").display()
-    );
+    println!("cargo:rerun-if-changed={}", static_dir.display());
     println!("cargo:rerun-if-env-changed=VNT_WEB_SKIP_UI_BUILD");
 
+    ensure_static_assets(&ui_dir, &static_dir, workspace_root)?;
+    let out_dir = PathBuf::from(
+        std::env::var_os("OUT_DIR")
+            .ok_or_else(|| io::Error::other("OUT_DIR is required to embed Web assets"))?,
+    );
+    embed_static_assets(&static_dir, &out_dir)?;
+    Ok(())
+}
+
+fn ensure_static_assets(ui_dir: &Path, static_dir: &Path, workspace_root: &Path) -> io::Result<()> {
     if std::env::var("VNT_WEB_SKIP_UI_BUILD").is_ok() {
-        ensure_static_placeholder(&static_dir)?;
-        return Ok(());
+        return ensure_static_placeholder(static_dir);
     }
 
-    if static_is_fresh(&ui_dir, &static_dir) {
+    if static_is_fresh(ui_dir, static_dir) {
         return Ok(());
     }
 
@@ -70,6 +76,63 @@ fn main() -> Result<(), Box<dyn Error>> {
         run_command(pnpm, &["install", "--frozen-lockfile"], workspace_root)?;
     }
     run_command(pnpm, &["--filter", "vnt-web-ui", "build"], workspace_root)?;
+    Ok(())
+}
+
+fn embed_static_assets(static_dir: &Path, out_dir: &Path) -> io::Result<()> {
+    let mut files = Vec::new();
+    collect_static_files(static_dir, &mut files)?;
+    files.sort();
+
+    let mut data = BufWriter::new(std::fs::File::create(out_dir.join("web-assets.bin"))?);
+    let mut index = BufWriter::new(std::fs::File::create(out_dir.join("web-assets.rs"))?);
+    writeln!(
+        index,
+        "static ASSETS: [(&str, EmbeddedAsset); {}] = [",
+        files.len()
+    )?;
+    let mut offset = 0;
+    for file in files {
+        let path = file
+            .strip_prefix(static_dir)
+            .expect("asset under static root");
+        let path = path
+            .iter()
+            .map(|part| {
+                part.to_str()
+                    .ok_or_else(|| io::Error::other("Web asset paths must be UTF-8"))
+            })
+            .collect::<io::Result<Vec<_>>>()?
+            .join("/");
+        let bytes = std::fs::read(file)?;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(&bytes)?;
+        let compressed = encoder.finish()?;
+        let use_compression = !path.ends_with(".gz") && compressed.len() < bytes.len();
+        let stored = if use_compression { &compressed } else { &bytes };
+        data.write_all(stored)?;
+        let end = offset + stored.len();
+        writeln!(
+            index,
+            "    ({path:?}, EmbeddedAsset::new({offset}..{end}, {use_compression})),"
+        )?;
+        offset = end;
+    }
+    writeln!(index, "];")?;
+    index.flush()?;
+    data.flush()
+}
+
+fn collect_static_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            collect_static_files(&entry.path(), files)?;
+        } else if kind.is_file() {
+            files.push(entry.path());
+        }
+    }
     Ok(())
 }
 
@@ -139,7 +202,7 @@ fn newest_mtime(dir: &Path) -> Option<SystemTime> {
     newest
 }
 
-/// 跳过构建时保证 static/ 存在，使 rust_embed 可以编译
+/// 跳过构建时保证 static/ 有可嵌入的入口页面
 fn ensure_static_placeholder(static_dir: &Path) -> io::Result<()> {
     if static_dir.join("index.html").is_file() {
         return Ok(());

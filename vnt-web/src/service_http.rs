@@ -14,7 +14,6 @@ use ipnet::Ipv4Net;
 use mime_guess::from_path;
 use parking_lot::Mutex;
 use rand::RngExt;
-use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(test)]
@@ -1054,9 +1053,19 @@ async fn logging_middleware(req: Request, next: axum::middleware::Next) -> Respo
     response
 }
 
-#[derive(RustEmbed)]
-#[folder = "static/"]
-struct Asset;
+struct EmbeddedAsset {
+    range: std::ops::Range<usize>,
+    gzip: bool,
+}
+
+impl EmbeddedAsset {
+    const fn new(range: std::ops::Range<usize>, gzip: bool) -> Self {
+        Self { range, gzip }
+    }
+}
+
+static EMBEDDED_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/web-assets.bin"));
+include!(concat!(env!("OUT_DIR"), "/web-assets.rs"));
 
 /// VNT 业务服务。独立 Web 程序与需要进程内嵌入的调用方共用同一组 handler。
 #[derive(Clone)]
@@ -1377,7 +1386,48 @@ fn resolve_static_path(path: &str) -> Option<PathBuf> {
     Some(local_path)
 }
 
-async fn static_handler(uri: Uri) -> impl IntoResponse {
+fn accepts_gzip(headers: &HeaderMap) -> bool {
+    if !headers.contains_key(header::ACCEPT_ENCODING) {
+        return true;
+    }
+
+    let mut wildcard = None;
+    for value in headers.get_all(header::ACCEPT_ENCODING) {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        for item in value.split(',') {
+            let (coding, weight) = item.trim().split_once(';').unwrap_or((item, ""));
+            let coding = coding.trim();
+            if !coding.eq_ignore_ascii_case("gzip") && coding != "*" {
+                continue;
+            }
+            let accepted = match weight.trim().split_once('=') {
+                Some((name, value)) if name.trim().eq_ignore_ascii_case("q") => {
+                    let value = value.trim();
+                    value == "1"
+                        || value.strip_prefix("1.").is_some_and(|fraction| {
+                            fraction.len() <= 3 && fraction.bytes().all(|digit| digit == b'0')
+                        })
+                        || value.strip_prefix("0.").is_some_and(|fraction| {
+                            fraction.len() <= 3
+                                && fraction.bytes().all(|digit| digit.is_ascii_digit())
+                                && fraction.bytes().any(|digit| digit != b'0')
+                        })
+                }
+                None => weight.is_empty(),
+                _ => false,
+            };
+            if coding.eq_ignore_ascii_case("gzip") {
+                return accepted;
+            }
+            wildcard = Some(accepted);
+        }
+    }
+    wildcard.unwrap_or(false)
+}
+
+async fn static_handler(uri: Uri, request_headers: HeaderMap) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
 
@@ -1396,10 +1446,23 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     }
 
     // 从内嵌数据中读取
-    if let Some(content) = Asset::get(path) {
+    if let Some((_, asset)) = ASSETS.iter().find(|(name, _)| *name == path) {
         log::debug!("Serving file from embedded assets: {}", path);
-        let headers = build_headers_for_path(path);
-        return (headers, Body::from(content.data)).into_response();
+        let mut headers = build_headers_for_path(path);
+        if asset.gzip {
+            headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+            if !accepts_gzip(&request_headers) {
+                return (
+                    StatusCode::NOT_ACCEPTABLE,
+                    [(header::VARY, "Accept-Encoding")],
+                    "This embedded asset requires gzip support.",
+                )
+                    .into_response();
+            }
+            headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        }
+        let bytes = &EMBEDDED_DATA[asset.range.clone()];
+        return (headers, Body::from(bytes)).into_response();
     }
 
     (StatusCode::NOT_FOUND, "404 Not Found").into_response()
@@ -3130,6 +3193,25 @@ config_name = "local-label"
         // 其他扩展名拒绝（list_configs 只列 *.toml，保存了也不可见）
         assert!(normalize_config_file_name("a.txt".to_string()).is_err());
         assert!(normalize_config_file_name("a.json".to_string()).is_err());
+    }
+
+    #[test]
+    fn gzip_negotiation_respects_explicit_exclusions() {
+        assert!(accepts_gzip(&HeaderMap::new()));
+        for (encoding, expected) in [
+            ("gzip", true),
+            ("br, GZIP;q=0.4", true),
+            ("*;q=1, gzip;q=0.000", false),
+            ("*;q=0, gzip;q=1.000", true),
+            ("br, *", true),
+            ("gzip;q=1.1", false),
+            ("identity", false),
+            ("", false),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ACCEPT_ENCODING, HeaderValue::from_static(encoding));
+            assert_eq!(accepts_gzip(&headers), expected, "{encoding:?}");
+        }
     }
 
     #[test]
