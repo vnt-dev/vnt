@@ -263,9 +263,12 @@ jobs:
       - name: Run build Vnt
         if: ${{ ! endsWith(matrix.TARGET, 'freebsd') && ! contains(matrix.TARGET, '-win7-') }}
         run: |
+          mini_build_flags=()
           if [[ "$TARGET" == mips-unknown-linux-musl || "$TARGET" == mipsel-unknown-linux-musl ]]; then
             export CARGO_PROFILE_RELEASE_PANIC=immediate-abort
             build=(cargo +nightly build -Z build-std=std,panic_abort -Z panic-immediate-abort)
+            # Replace the default build-std features to omit backtrace symbolization in Mini.
+            mini_build_flags=(-Z build-std-features=panic-unwind)
           else
             build=(cargo build)
           fi
@@ -274,8 +277,9 @@ jobs:
           "${build[@]}" --bin vnt2_cli --features vnt-ipc
           "${build[@]}" --bin vnt2_ctrl --features vnt-ipc
           if [[ "$TARGET" == *-linux-* ]]; then
-            "${build[@]}" --target-dir target/mini --no-default-features --bin vnt2_web --features vnt-web,mini
-            "${build[@]}" --target-dir target/mini --no-default-features --bin vnt2_cli --features vnt-ipc,mini
+            mini_build=("${build[@]}" "${mini_build_flags[@]}" --target-dir target/mini --no-default-features)
+            "${mini_build[@]}" --bin vnt2_web --features vnt-web,mini
+            "${mini_build[@]}" --bin vnt2_cli --features vnt-ipc,mini
           fi
           ldd ./target/$TARGET/release/vnt2_web || true
           file ./target/$TARGET/release/vnt2_web || true
