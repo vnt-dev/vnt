@@ -267,8 +267,8 @@ jobs:
           if [[ "$TARGET" == mips-unknown-linux-musl || "$TARGET" == mipsel-unknown-linux-musl ]]; then
             export CARGO_PROFILE_RELEASE_PANIC=immediate-abort
             build=(cargo +nightly build -Z build-std=std,panic_abort -Z panic-immediate-abort)
-            # Replace the default build-std features to omit backtrace symbolization in Mini.
-            mini_build_flags=(-Z build-std-features=panic-unwind)
+            # Build a smaller standard library without backtrace symbolization in Mini.
+            mini_build_flags=(-Z build-std-features=panic-unwind,optimize_for_size)
           else
             build=(cargo build)
           fi
